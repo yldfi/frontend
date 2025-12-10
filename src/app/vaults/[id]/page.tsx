@@ -2,11 +2,12 @@
 
 import dynamic from "next/dynamic";
 import { Loader2 } from "lucide-react";
+import { use } from "react";
 
 // Dynamic import with SSR disabled to avoid Turbopack bundling wagmi/rainbowkit during SSR
 // These libraries pull in pino/thread-stream which have problematic test files
-const HomePageContent = dynamic(
-  () => import("@/components/HomePageContent").then((mod) => mod.HomePageContent),
+const VaultPageContent = dynamic(
+  () => import("@/components/VaultPageContent").then((mod) => mod.VaultPageContent),
   {
     ssr: false,
     loading: () => (
@@ -17,6 +18,11 @@ const HomePageContent = dynamic(
   }
 );
 
-export default function Home() {
-  return <HomePageContent />;
+export default function VaultPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = use(params);
+  return <VaultPageContent id={id} />;
 }
