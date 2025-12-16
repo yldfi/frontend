@@ -7,6 +7,12 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  "kv_namespaces": [
+    {
+      "binding": "VAULT_CACHE",
+      "id": "196d1aceae10469bb4bde0495b3e3ae0"
+    }
+  ],
   "routes": [
     { "pattern": "yldfi.co/*", "zone_name": "yldfi.co" },
     { "pattern": "www.yldfi.co/*", "zone_name": "yldfi.co" }

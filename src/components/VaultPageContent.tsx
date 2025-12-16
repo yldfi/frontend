@@ -59,7 +59,7 @@ const vaultsData: Record<string, {
     fees: { management: 0, performance: 20 },
     underlyingStrategy: "0xCa960E6DF1150100586c51382f619efCCcF72706",
     links: {
-      curve: "https://curve.finance/lend/#/ethereum/markets/one-way-market-35/vault/deposit",
+      curve: "https://www.curve.finance/lend/ethereum/markets/one-way-market-35/create",
       etherscan: "https://etherscan.io/address/0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86",
     },
     logo: "/ycvxcrv-128.png",
@@ -120,9 +120,10 @@ export function VaultPageContent({ id }: { id: string }) {
   const { pricePerShare, pricePerShareFormatted, isLoading: ppsLoading } = usePricePerShare(vaultAddressTyped);
 
   // Fetch user balances
-  const { formatted: tokenBalanceFormatted, isLoading: tokenBalanceLoading } = useTokenBalance(CVXCRV_ADDRESS);
+  const { formatted: tokenBalanceFormatted, balance: tokenBalanceRaw, isLoading: tokenBalanceLoading } = useTokenBalance(CVXCRV_ADDRESS);
   const {
     formatted: vaultBalanceFormatted,
+    balance: vaultBalanceRaw,
     isLoading: vaultBalanceLoading,
   } = useVaultBalance(
     vaultAddressTyped,
@@ -132,6 +133,9 @@ export function VaultPageContent({ id }: { id: string }) {
 
   const tokenBalance = parseFloat(tokenBalanceFormatted) || 0;
   const vaultBalance = parseFloat(vaultBalanceFormatted) || 0;
+  // Raw formatted strings preserve full precision for MAX button
+  const tokenBalanceMax = tokenBalanceFormatted;
+  const vaultBalanceMax = vaultBalanceFormatted;
   const exchangeRate = pricePerShare;
 
   // Vault actions (approve, deposit, withdraw)
@@ -412,15 +416,15 @@ export function VaultPageContent({ id }: { id: string }) {
                 {/* Your Position - Always visible when connected with balance */}
                 {isConnected && vaultBalance > 0 && (
                   <div className="bg-[var(--muted)]/30 p-5 border-b border-[var(--border)]">
-                    <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-center justify-between gap-4">
                       <div>
                         <span className="text-xs uppercase tracking-wider text-[var(--muted-foreground)]">Your Position</span>
-                        <div className="flex items-baseline gap-2 mt-1">
+                        <div className="mt-1">
                           <span className="mono text-2xl font-semibold">
-                            {vaultBalanceLoading ? "..." : `$${(vaultBalance * pricePerShare * cvxCrvPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                            {vaultBalanceLoading ? "..." : vaultBalance.toFixed(4)}
                           </span>
-                          <span className="text-sm text-[var(--muted-foreground)]">
-                            {vaultBalanceLoading ? "" : `${vaultBalance.toFixed(4)} ${vault.symbol}`}
+                          <span className="text-sm text-[var(--muted-foreground)] ml-1">
+                            {vault.symbol}
                           </span>
                         </div>
                       </div>
@@ -430,9 +434,9 @@ export function VaultPageContent({ id }: { id: string }) {
                           href={vault.links.curve}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="collateral-link mt-3"
+                          className="collateral-link shrink-0"
                         >
-                          <span>
+                          <span className="whitespace-nowrap">
                             <Image src="/curve-logo.png" alt="Curve" width={14} height={14} className="inline-block" />
                             Use as Collateral
                             <ArrowUpRight size={12} />
@@ -478,7 +482,7 @@ export function VaultPageContent({ id }: { id: string }) {
                         {activeTab === "deposit" ? "Amount" : "Shares"}
                       </span>
                       <button
-                        onClick={() => setAmount(maxAmount.toString())}
+                        onClick={() => setAmount(activeTab === "deposit" ? tokenBalanceMax : vaultBalanceMax)}
                         className="text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors cursor-pointer"
                       >
                         Balance: <span className="mono">
@@ -495,11 +499,11 @@ export function VaultPageContent({ id }: { id: string }) {
                         value={amount}
                         onChange={(e) => setAmount(e.target.value)}
                         placeholder="0.00"
-                        className="w-full bg-[var(--muted)] rounded-lg p-4 pr-24 mono text-xl focus:outline-none focus:ring-1 focus:ring-[var(--border-hover)] placeholder:text-[var(--muted-foreground)]/50"
+                        className="w-full bg-[var(--muted)] rounded-lg p-4 pr-36 mono text-base focus:outline-none focus:ring-1 focus:ring-[var(--border-hover)] placeholder:text-[var(--muted-foreground)]/50"
                       />
                       <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
                         <button
-                          onClick={() => setAmount(maxAmount.toString())}
+                          onClick={() => setAmount(activeTab === "deposit" ? tokenBalanceMax : vaultBalanceMax)}
                           className="px-2 py-1 text-xs font-medium bg-[var(--background)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded transition-colors cursor-pointer"
                         >
                           MAX
@@ -531,11 +535,11 @@ export function VaultPageContent({ id }: { id: string }) {
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm text-[var(--muted-foreground)]">You receive</span>
                     </div>
-                    <div className="bg-[var(--muted)] rounded-lg p-4 flex items-center justify-between">
-                      <span className="mono text-xl text-[var(--foreground)]">
+                    <div className="bg-[var(--muted)] rounded-lg p-4 flex items-center justify-between gap-2">
+                      <span className="mono text-base text-[var(--foreground)] truncate min-w-0 flex-1">
                         {outputAmount > 0 ? outputAmount.toFixed(4) : "0.00"}
                       </span>
-                      <span className="mono text-sm font-medium min-w-[3.75rem] text-right">
+                      <span className="mono text-sm font-medium shrink-0">
                         {activeTab === "deposit" ? vault.symbol : vault.token}
                       </span>
                     </div>

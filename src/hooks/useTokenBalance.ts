@@ -47,6 +47,9 @@ export function useTokenBalance(
     ],
     query: {
       enabled: isConnected && !!userAddress,
+      refetchInterval: 12000, // Refetch every 12 seconds (approx 1 block)
+      staleTime: 0, // Always refetch on wallet change
+      refetchOnMount: true,
     },
   });
 

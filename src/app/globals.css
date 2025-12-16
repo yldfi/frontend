@@ -53,6 +53,7 @@
 
 html {
   scroll-behavior: smooth;
+  overscroll-behavior: none;
 }
 
 body {
@@ -62,6 +63,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   line-height: 1.6;
+  overscroll-behavior: none;
 }
 
 /* Selection */
@@ -176,8 +178,9 @@ input[type="number"] {
 .collateral-link span {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 5px 11px;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 14px;
   background: var(--background);
   border-radius: 5px;
   transition: background 0.2s ease;

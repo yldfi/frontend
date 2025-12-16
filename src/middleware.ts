@@ -138,7 +138,6 @@ const blockedPageHtml = `<!DOCTYPE html>
     <h1>Access Restricted</h1>
     <div class="card">
       <p>This interface is not available in your region due to regulatory restrictions.</p>
-      <p>If you believe this is an error, <a href="mailto:contact@yldfi.co">contact support</a>.</p>
     </div>
     <div class="footer">
       <p>&copy; ${new Date().getFullYear()} YLD.fi. All rights reserved.</p>

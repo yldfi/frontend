@@ -8,11 +8,10 @@ import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { PixelAnimation } from "@/components/PixelAnimation";
 import { Logo } from "@/components/Logo";
-import { useCurveLendingVault, formatCurveVaultData } from "@/hooks/useCurveLendingData";
 import { useYearnVault, formatYearnVaultData, calculateStrategyNetApy } from "@/hooks/useYearnVault";
 import { useMultipleVaultBalances } from "@/hooks/useVaultBalance";
-import { useCvxCrvPrice } from "@/hooks/useCvxCrvPrice";
 import { useMultiplePricePerShare } from "@/hooks/usePricePerShare";
+import { useVaultCache } from "@/hooks/useVaultCache";
 
 // Contract addresses
 const YCVXCRV_ADDRESS = "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86";
@@ -56,19 +55,18 @@ function formatNumber(num: number): string {
 export function HomePageContent() {
   const { isConnected } = useAccount();
 
-  // Fetch Yearn vault data
+  // Fetch cached vault data (fast, from edge)
+  const { data: cacheData, isLoading: cacheLoading } = useVaultCache();
+
+  // Fetch Yearn vault data (for APY from Kong API)
   const { data: ycvxcrvData, isLoading: ycvxcrvLoading } = useYearnVault(YCVXCRV_ADDRESS);
   const { data: yscvxcrvData, isLoading: yscvxcrvLoading } = useYearnVault(YSCVXCRV_ADDRESS);
 
   const ycvxcrvVault = formatYearnVaultData(ycvxcrvData?.vault, ycvxcrvData?.vaultStrategies);
   const yscvxcrvVault = formatYearnVaultData(yscvxcrvData?.vault, yscvxcrvData?.vaultStrategies);
 
-  // Fetch Curve lending data for yCVXCRV (for LlamaLend-specific data)
-  const { vault: curveVault, isLoading: curveLoading } = useCurveLendingVault(YCVXCRV_ADDRESS);
-  const curveData = formatCurveVaultData(curveVault);
-
-  // Fetch cvxCRV price from on-chain oracles
-  const { price: cvxCrvPrice } = useCvxCrvPrice();
+  // Use cached cvxCRV price (falls back to 0 if cache not ready)
+  const cvxCrvPrice = cacheData?.cvxCrvPrice ?? 0;
 
   // Fetch price per share from on-chain
   const { prices: pricePerShareData, isLoading: ppsLoading } = useMultiplePricePerShare([
@@ -93,7 +91,8 @@ export function HomePageContent() {
     },
   ]);
 
-  const isLoading = ycvxcrvLoading || yscvxcrvLoading;
+  // Use cache for fast initial load, Yearn API for APY
+  const isLoading = cacheLoading && ycvxcrvLoading;
 
   // Build vault list with live data
   // yCVXCRV vault: uses net APY from Kong (after 15% vault fee)
@@ -101,9 +100,13 @@ export function HomePageContent() {
   const vaultNetApy = ycvxcrvVault?.apy ?? 0;
   const strategyNetApy = calculateStrategyNetApy(vaultNetApy); // Remove vault's 15% fee
 
+  // Use cached TVL (fast) or fall back to Yearn API TVL
+  const ycvxcrvTvl = cacheData?.ycvxcrv?.tvlUsd ?? ycvxcrvVault?.tvl ?? 0;
+  const yscvxcrvTvl = cacheData?.yscvxcrv?.tvlUsd ?? yscvxcrvVault?.tvl ?? 0;
+
   const vaults = vaultConfigs.map((config, index) => ({
     ...config,
-    tvl: config.id === "ycvxcrv" ? (ycvxcrvVault?.tvl ?? 0) : (yscvxcrvVault?.tvl ?? 0),
+    tvl: config.id === "ycvxcrv" ? ycvxcrvTvl : yscvxcrvTvl,
     apy: config.id === "ycvxcrv"
       ? vaultNetApy                // Vault: net APY after 15% vault fee
       : strategyNetApy,            // Strategy: net APY without vault fee (only 5% strategy fee)
@@ -112,19 +115,23 @@ export function HomePageContent() {
   }));
 
   // Total TVL - use strategy TVL since vault deposits flow into strategy
-  // Strategy TVL = direct strategy deposits + vault deposits (which are allocated to strategy)
-  const totalTvl = yscvxcrvVault?.tvl ?? 0;
+  const totalTvl = yscvxcrvTvl;
   const totalTvlFormatted = totalTvl >= 1_000_000
     ? `$${(totalTvl / 1_000_000).toFixed(2)}M`
     : totalTvl >= 1_000
     ? `$${(totalTvl / 1_000).toFixed(1)}K`
     : `$${totalTvl.toFixed(2)}`;
 
+  // Calculate average APY
+  const avgApy = vaults.length > 0
+    ? vaults.reduce((sum, v) => sum + v.apy, 0) / vaults.length
+    : 0;
+
   // Stats with live data
   const stats = [
     { label: "Total Value Locked", value: isLoading ? "..." : totalTvlFormatted },
     { label: "Vaults", value: vaultConfigs.length.toString() },
-    { label: "Tokenized Strategies", value: "Immutable" },
+    { label: "Avg APY", value: isLoading ? "..." : `${avgApy.toFixed(1)}%` },
   ];
 
   return (
@@ -156,11 +163,11 @@ export function HomePageContent() {
                 [001] YLD_fi
               </p>
               <h1 className="text-4xl md:text-5xl lg:text-6xl font-medium tracking-tight leading-[1.1] mb-6 animate-fade-in-up opacity-0 delay-100">
-                Automated yield
+                Deposit
                 <br />
-                maximization for
+                Compound
                 <br />
-                <span className="text-[var(--muted-foreground)]">DeFi natives</span>
+                <span className="text-[var(--muted-foreground)]">Earn</span>
               </h1>
               <p className="text-lg text-[var(--muted-foreground)] max-w-xl mb-8 animate-fade-in-up opacity-0 delay-200">
                 Deposit into ERC-4626 vaults built on Yearn V3 architecture.
@@ -249,7 +256,7 @@ export function HomePageContent() {
                     <p className="text-sm text-[var(--muted-foreground)] mb-3 leading-relaxed">
                       {vault.description}
                     </p>
-                    <div className="flex items-center gap-1.5 mb-4">
+                    <div className="flex items-center gap-2.5 mb-4">
                       {vault.badges?.map((badge) => (
                         badge === "Collateral (LlamaLend)" ? (
                           <span key={badge} className="collateral-badge inline-flex items-center px-2 py-1 text-[11px] font-medium bg-[var(--muted)] text-[var(--muted-foreground)] rounded whitespace-nowrap">
@@ -302,7 +309,7 @@ export function HomePageContent() {
                         <h3 className="text-lg font-medium group-hover:text-[var(--accent)] transition-colors">
                           {vault.name}
                         </h3>
-                        <div className="flex items-center gap-1 mt-1">
+                        <div className="flex items-center gap-2 mt-1">
                           {vault.badges?.map((badge) => (
                             badge === "Collateral (LlamaLend)" ? (
                               <span key={badge} className="collateral-badge inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-[var(--muted)] text-[var(--muted-foreground)] rounded whitespace-nowrap">
