@@ -142,7 +142,7 @@ export function HomePageContent() {
           <Link href="/" className="flex items-center gap-2">
             <Logo size={28} />
             <span className="mono text-lg font-medium tracking-tight">
-              YLD<span className="text-[var(--muted-foreground)]">_</span>fi
+              yld<span className="text-[var(--muted-foreground)]">_</span>fi
             </span>
           </Link>
 
@@ -160,7 +160,7 @@ export function HomePageContent() {
           <div className="max-w-6xl mx-auto px-6 py-24 md:py-32 relative z-10">
             <div className="max-w-3xl">
               <p className="mono text-sm text-[var(--muted-foreground)] mb-4 animate-fade-in">
-                [001] YLD_fi
+                [001] yld_fi
               </p>
               <h1 className="text-4xl md:text-5xl lg:text-6xl font-medium tracking-tight leading-[1.1] mb-6 animate-fade-in-up opacity-0 delay-100">
                 Deposit
@@ -425,7 +425,7 @@ export function HomePageContent() {
               <Logo size={32} />
               <div>
                 <p className="mono text-lg font-medium mb-1">
-                  YLD<span className="text-[var(--muted-foreground)]">_</span>fi
+                  yld<span className="text-[var(--muted-foreground)]">_</span>fi
                 </p>
                 <p className="text-sm text-[var(--muted-foreground)]">
                   Automated yield optimization

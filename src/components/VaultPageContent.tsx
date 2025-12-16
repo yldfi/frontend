@@ -246,7 +246,7 @@ export function VaultPageContent({ id }: { id: string }) {
           <Link href="/" className="flex items-center gap-2">
             <Logo size={28} />
             <span className="mono text-lg font-medium tracking-tight">
-              YLD<span className="text-[var(--muted-foreground)]">_</span>fi
+              yld<span className="text-[var(--muted-foreground)]">_</span>fi
             </span>
           </Link>
           <CustomConnectButton />

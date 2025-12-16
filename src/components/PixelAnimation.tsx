@@ -18,6 +18,8 @@ export function PixelAnimation() {
   const animationRef = useRef<number>(0);
   const particlesRef = useRef<Particle[]>([]);
   const mouseRef = useRef({ x: 0, y: 0 });
+  const dimensionsRef = useRef({ width: 0, height: 0 });
+  const lastTimeRef = useRef<number>(0);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -33,6 +35,8 @@ export function PixelAnimation() {
       canvas.width = rect.width * dpr;
       canvas.height = rect.height * dpr;
       ctx.scale(dpr, dpr);
+      // Cache dimensions for animation loop (avoids getBoundingClientRect on every frame)
+      dimensionsRef.current = { width: rect.width, height: rect.height };
       initParticles();
     };
 
@@ -84,27 +88,34 @@ export function PixelAnimation() {
       };
     };
 
-    // Animation loop
-    const animate = () => {
-      const rect = canvas.getBoundingClientRect();
-      ctx.clearRect(0, 0, rect.width, rect.height);
+    // Animation loop with time-based updates (prevents jump on iOS scroll)
+    const animate = (currentTime: number) => {
+      // Cap delta time to prevent large jumps after scroll pauses rAF
+      const deltaTime = Math.min(currentTime - lastTimeRef.current, 50);
+      lastTimeRef.current = currentTime;
+
+      const { width, height } = dimensionsRef.current;
+      ctx.clearRect(0, 0, width, height);
 
       const particles = particlesRef.current;
       const mouse = mouseRef.current;
 
+      // Time-based speed factor (normalize to ~60fps)
+      const speedFactor = deltaTime / 16.67;
+
       particles.forEach((particle) => {
-        // Update position with subtle movement
-        particle.x += particle.vx;
-        particle.y += particle.vy;
+        // Update position with subtle movement (time-based)
+        particle.x += particle.vx * speedFactor;
+        particle.y += particle.vy * speedFactor;
 
         // Boundary wrapping
-        if (particle.x < 0) particle.x = rect.width;
-        if (particle.x > rect.width) particle.x = 0;
-        if (particle.y < 0) particle.y = rect.height;
-        if (particle.y > rect.height) particle.y = 0;
+        if (particle.x < 0) particle.x = width;
+        if (particle.x > width) particle.x = 0;
+        if (particle.y < 0) particle.y = height;
+        if (particle.y > height) particle.y = 0;
 
         // Smooth alpha transition
-        particle.alpha += (particle.targetAlpha - particle.alpha) * 0.02;
+        particle.alpha += (particle.targetAlpha - particle.alpha) * 0.02 * speedFactor;
 
         // Randomly change target alpha
         if (Math.random() > 0.995) {
@@ -160,7 +171,8 @@ export function PixelAnimation() {
     resize();
     window.addEventListener("resize", resize);
     canvas.addEventListener("mousemove", handleMouseMove);
-    animate();
+    lastTimeRef.current = performance.now();
+    animationRef.current = requestAnimationFrame(animate);
 
     return () => {
       window.removeEventListener("resize", resize);

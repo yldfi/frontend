@@ -22,7 +22,7 @@ export default function PrivacyPage() {
               className="rounded-full"
             />
             <span className="mono text-lg font-medium">
-              YLD<span className="text-[var(--muted-foreground)]">_</span>fi
+              yld<span className="text-[var(--muted-foreground)]">_</span>fi
             </span>
           </Link>
         </div>

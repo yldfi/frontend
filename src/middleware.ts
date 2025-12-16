@@ -133,7 +133,7 @@ const blockedPageHtml = `<!DOCTYPE html>
   <div class="container">
     <div class="brand">
       <img src="/logo-128.png" alt="YLD.fi" class="logo">
-      <p class="brand-text">YLD<span>_</span>fi</p>
+      <p class="brand-text">yld<span>_</span>fi</p>
     </div>
     <h1>Access Restricted</h1>
     <div class="card">
