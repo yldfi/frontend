@@ -162,6 +162,12 @@ input[type="number"] {
   -moz-appearance: textfield;
 }
 
+/* Animated rainbow gradient */
+@keyframes rainbowSlide {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
 /* Collateral link - compact with logo rainbow gradient border */
 .collateral-link {
   display: inline-flex;
@@ -171,7 +177,9 @@ input[type="number"] {
   font-size: 13px;
   font-weight: 500;
   border-radius: 6px;
-  background: linear-gradient(135deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6);
+  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6, #ef4444);
+  background-size: 200% 100%;
+  animation: rainbowSlide 3s linear infinite;
   transition: all 0.2s ease;
 }
 
@@ -200,6 +208,8 @@ input[type="number"] {
   position: absolute;
   inset: -1px;
   border-radius: 5px;
-  background: linear-gradient(135deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6);
+  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6, #ef4444);
+  background-size: 200% 100%;
+  animation: rainbowSlide 3s linear infinite;
   z-index: -1;
 }
