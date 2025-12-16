@@ -55,7 +55,7 @@ export function CustomConnectButton() {
                     <button
                       onClick={openConnectModal}
                       type="button"
-                      className="mono text-sm px-4 py-2 border border-[var(--border)] rounded-md hover:border-[var(--border-hover)] hover:bg-[var(--muted)] transition-all"
+                      className="mono text-sm px-4 py-2 border border-[var(--border)] rounded-md hover:border-[var(--border-hover)] hover:bg-[var(--muted)] transition-all cursor-pointer"
                     >
                       Connect
                     </button>
@@ -66,7 +66,7 @@ export function CustomConnectButton() {
                   <button
                     onClick={isWrongNetwork ? () => setShowNetworkModal(true) : openAccountModal}
                     type="button"
-                    className={`mono text-sm px-4 py-2 border rounded-md transition-all ${
+                    className={`mono text-sm px-4 py-2 border rounded-md transition-all cursor-pointer ${
                       isWrongNetwork
                         ? "border-[var(--destructive)] text-[var(--destructive)] hover:bg-[var(--destructive)]/10"
                         : "border-[var(--border)] hover:border-[var(--border-hover)] hover:bg-[var(--muted)]"

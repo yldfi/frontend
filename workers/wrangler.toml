@@ -1,0 +1,10 @@
+name = "yldfi-cache"
+main = "vault-cache.ts"
+compatibility_date = "2024-09-23"
+
+[triggers]
+crons = ["*/5 * * * *"]  # Every 5 minutes
+
+[[kv_namespaces]]
+binding = "VAULT_CACHE"
+id = "196d1aceae10469bb4bde0495b3e3ae0"
