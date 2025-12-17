@@ -2,7 +2,7 @@
 
 import { useReadContract, useWriteContract, useWaitForTransactionReceipt, useAccount } from "wagmi";
 import { parseUnits, maxUint256 } from "viem";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 
 const ERC20_ABI = [
   {
@@ -70,8 +70,7 @@ export function useVaultActions(
   decimals: number = 18
 ) {
   const { address: userAddress } = useAccount();
-  const [status, setStatus] = useState<TransactionStatus>("idle");
-  const [error, setError] = useState<string | null>(null);
+  const [actionState, setActionState] = useState<"idle" | "approving" | "depositing" | "withdrawing">("idle");
 
   // Check allowance
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
@@ -119,59 +118,46 @@ export function useVaultActions(
     hash: withdrawHash,
   });
 
-  // Handle approval success
+  // Derive status from state (avoids setState in effects)
+  const status: TransactionStatus = useMemo(() => {
+    // Error states take priority
+    if (approveError || depositError || withdrawError) return "error";
+    // Success states
+    if (isDepositSuccess || isWithdrawSuccess) return "success";
+    // Approval success means we go back to idle (ready for deposit/withdraw)
+    if (isApprovalSuccess) return "idle";
+    // Pending transaction states
+    if (isApprovalPending) return "waitingApproval";
+    if (isDepositPending || isWithdrawPending) return "waitingTx";
+    // User-initiated action states
+    if (actionState === "approving") return "approving";
+    if (actionState === "depositing") return "depositing";
+    if (actionState === "withdrawing") return "withdrawing";
+    return "idle";
+  }, [
+    approveError, depositError, withdrawError,
+    isDepositSuccess, isWithdrawSuccess, isApprovalSuccess,
+    isApprovalPending, isDepositPending, isWithdrawPending,
+    actionState
+  ]);
+
+  // Derive error message
+  const error = useMemo(() => {
+    if (approveError) return approveError.message || "Approval failed";
+    if (depositError) return depositError.message || "Deposit failed";
+    if (withdrawError) return withdrawError.message || "Withdraw failed";
+    return null;
+  }, [approveError, depositError, withdrawError]);
+
+  // Refetch allowance after approval success (external side effect only)
   useEffect(() => {
     if (isApprovalSuccess) {
       refetchAllowance();
-      setStatus("idle");
     }
   }, [isApprovalSuccess, refetchAllowance]);
 
-  // Handle deposit success
-  useEffect(() => {
-    if (isDepositSuccess) {
-      setStatus("success");
-    }
-  }, [isDepositSuccess]);
-
-  // Handle withdraw success
-  useEffect(() => {
-    if (isWithdrawSuccess) {
-      setStatus("success");
-    }
-  }, [isWithdrawSuccess]);
-
-  // Handle errors
-  useEffect(() => {
-    if (approveError) {
-      setStatus("error");
-      setError(approveError.message || "Approval failed");
-    }
-  }, [approveError]);
-
-  useEffect(() => {
-    if (depositError) {
-      setStatus("error");
-      setError(depositError.message || "Deposit failed");
-    }
-  }, [depositError]);
-
-  useEffect(() => {
-    if (withdrawError) {
-      setStatus("error");
-      setError(withdrawError.message || "Withdraw failed");
-    }
-  }, [withdrawError]);
-
-  // Update status based on pending states
-  useEffect(() => {
-    if (isApprovalPending) setStatus("waitingApproval");
-    else if (isDepositPending) setStatus("waitingTx");
-    else if (isWithdrawPending) setStatus("waitingTx");
-  }, [isApprovalPending, isDepositPending, isWithdrawPending]);
-
   // Check if approval is needed for a given amount
-  const needsApproval = (amount: string): boolean => {
+  const needsApproval = useCallback((amount: string): boolean => {
     if (!amount || !allowance) return true;
     try {
       const amountWei = parseUnits(amount, decimals);
@@ -179,13 +165,12 @@ export function useVaultActions(
     } catch {
       return true;
     }
-  };
+  }, [allowance, decimals]);
 
   // Approve max
-  const approve = async () => {
+  const approve = useCallback(() => {
     if (!userAddress) return;
-    setStatus("approving");
-    setError(null);
+    setActionState("approving");
 
     writeApprove({
       address: tokenAddress,
@@ -193,13 +178,12 @@ export function useVaultActions(
       functionName: "approve",
       args: [vaultAddress, maxUint256],
     });
-  };
+  }, [userAddress, tokenAddress, vaultAddress, writeApprove]);
 
   // Deposit
-  const deposit = async (amount: string) => {
+  const deposit = useCallback((amount: string) => {
     if (!userAddress || !amount) return;
-    setStatus("depositing");
-    setError(null);
+    setActionState("depositing");
 
     const amountWei = parseUnits(amount, decimals);
 
@@ -209,13 +193,12 @@ export function useVaultActions(
       functionName: "deposit",
       args: [amountWei, userAddress],
     });
-  };
+  }, [userAddress, vaultAddress, decimals, writeDeposit]);
 
   // Withdraw (using redeem for shares)
-  const withdraw = async (shares: string) => {
+  const withdraw = useCallback((shares: string) => {
     if (!userAddress || !shares) return;
-    setStatus("withdrawing");
-    setError(null);
+    setActionState("withdrawing");
 
     const sharesWei = parseUnits(shares, decimals);
 
@@ -225,16 +208,15 @@ export function useVaultActions(
       functionName: "redeem",
       args: [sharesWei, userAddress, userAddress],
     });
-  };
+  }, [userAddress, vaultAddress, decimals, writeWithdraw]);
 
   // Reset state
-  const reset = () => {
-    setStatus("idle");
-    setError(null);
+  const reset = useCallback(() => {
+    setActionState("idle");
     resetApprove();
     resetDeposit();
     resetWithdraw();
-  };
+  }, [resetApprove, resetDeposit, resetWithdraw]);
 
   return {
     allowance: allowance as bigint | undefined,
