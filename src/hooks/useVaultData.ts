@@ -1,7 +1,6 @@
 "use client";
 
 import { useReadContracts } from "wagmi";
-import { formatUnits } from "viem";
 
 // Yearn V3 Vault ABI (minimal for reading fees)
 const vaultAbi = [

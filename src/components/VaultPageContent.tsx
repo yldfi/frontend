@@ -18,9 +18,9 @@ import { usePricePerShare } from "@/hooks/usePricePerShare";
 import { useVaultActions } from "@/hooks/useVaultActions";
 import { useZapQuote } from "@/hooks/useZapQuote";
 import { useZapActions } from "@/hooks/useZapActions";
-import { useEnsoTokens, DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
+import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { TokenSelector } from "@/components/TokenSelector";
-import { CVXCRV_ADDRESS as ENSO_CVXCRV_ADDRESS, ETH_ADDRESS } from "@/lib/enso";
+import { ETH_ADDRESS } from "@/lib/enso";
 import type { EnsoToken, ZapDirection } from "@/types/enso";
 import {
   trackVaultView,
@@ -100,21 +100,17 @@ export function VaultPageContent({ id }: { id: string }) {
   const [zapInputToken, setZapInputToken] = useState<EnsoToken | null>(DEFAULT_ETH_TOKEN);
   const [zapOutputToken, setZapOutputToken] = useState<EnsoToken | null>(DEFAULT_ETH_TOKEN);
   const [zapAmount, setZapAmount] = useState("");
-  const [zapSlippage, setZapSlippage] = useState("10"); // basis points, "10" = 0.1%
+  // Load slippage from localStorage with lazy initialization
+  const [zapSlippage, setZapSlippage] = useState(() => {
+    if (typeof window === "undefined") return "10";
+    return localStorage.getItem("yldfi-zap-slippage") ?? "10";
+  });
   const [showSlippageModal, setShowSlippageModal] = useState(false);
   const [showPriceImpactModal, setShowPriceImpactModal] = useState(false);
   const [priceImpactConfirmText, setPriceImpactConfirmText] = useState("");
 
   // Price impact threshold for confirmation (5%)
   const PRICE_IMPACT_CONFIRM_THRESHOLD = 5;
-
-  // Load slippage from localStorage on mount
-  useEffect(() => {
-    const savedSlippage = localStorage.getItem("yldfi-zap-slippage");
-    if (savedSlippage) {
-      setZapSlippage(savedSlippage);
-    }
-  }, []);
 
   // Save slippage to localStorage when changed
   const updateSlippage = (value: string) => {
@@ -153,10 +149,9 @@ export function VaultPageContent({ id }: { id: string }) {
   const { pricePerShare, pricePerShareFormatted, isLoading: ppsLoading } = usePricePerShare(vaultAddressTyped);
 
   // Fetch user balances
-  const { formatted: tokenBalanceFormatted, balance: tokenBalanceRaw, isLoading: tokenBalanceLoading } = useTokenBalance(CVXCRV_ADDRESS);
+  const { formatted: tokenBalanceFormatted, isLoading: tokenBalanceLoading } = useTokenBalance(CVXCRV_ADDRESS);
   const {
     formatted: vaultBalanceFormatted,
-    balance: vaultBalanceRaw,
     isLoading: vaultBalanceLoading,
   } = useVaultBalance(
     vaultAddressTyped,
@@ -218,7 +213,6 @@ export function VaultPageContent({ id }: { id: string }) {
     error: zapActionError,
     isLoading: zapIsLoading,
     isSuccess: zapIsSuccess,
-    zapHash,
   } = useZapActions(zapQuote);
 
   const inputAmount = parseFloat(amount) || 0;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   useAccount,
   useWriteContract,
@@ -44,10 +44,19 @@ export type ZapStatus =
   | "success"
   | "error";
 
+// Helper to parse error messages
+function parseErrorMessage(error: Error | null, defaultMsg: string): string | null {
+  if (!error) return null;
+  const msg = error.message || defaultMsg;
+  if (msg.includes("User rejected") || msg.includes("user rejected")) {
+    return "Transaction cancelled";
+  }
+  return msg;
+}
+
 export function useZapActions(quote: ZapQuote | null | undefined) {
   const { address: userAddress } = useAccount();
-  const [status, setStatus] = useState<ZapStatus>("idle");
-  const [error, setError] = useState<string | null>(null);
+  const [actionState, setActionState] = useState<"idle" | "approving" | "zapping">("idle");
 
   const isEth =
     quote?.inputToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
@@ -88,8 +97,32 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   const { isLoading: isZapPending, isSuccess: isZapSuccess } =
     useWaitForTransactionReceipt({ hash: zapHash });
 
+  // Derive status from state (avoids setState in effects)
+  const status: ZapStatus = useMemo(() => {
+    // Error states take priority
+    if (approveError || zapError) return "error";
+    // Success state
+    if (isZapSuccess) return "success";
+    // Approval success means we go back to idle (ready for zap)
+    if (isApprovalSuccess) return "idle";
+    // Pending transaction states
+    if (isApprovalPending) return "waitingApproval";
+    if (isZapPending) return "waitingTx";
+    // User-initiated action states
+    if (actionState === "approving") return "approving";
+    if (actionState === "zapping") return "zapping";
+    return "idle";
+  }, [approveError, zapError, isZapSuccess, isApprovalSuccess, isApprovalPending, isZapPending, actionState]);
+
+  // Derive error message from errors
+  const error = useMemo(() => {
+    if (approveError) return parseErrorMessage(approveError, "Approval failed");
+    if (zapError) return parseErrorMessage(zapError, "Zap transaction failed");
+    return null;
+  }, [approveError, zapError]);
+
   // Check if approval needed
-  const needsApproval = (): boolean => {
+  const needsApproval = useCallback((): boolean => {
     if (isEth || !quote) return false;
     try {
       const amountWei = parseUnits(
@@ -100,61 +133,19 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     } catch {
       return true;
     }
-  };
+  }, [isEth, quote, allowance]);
 
-  // Handle approval success
+  // Refetch allowance after approval success (external side effect only)
   useEffect(() => {
     if (isApprovalSuccess) {
       refetchAllowance();
-      setStatus("idle");
     }
   }, [isApprovalSuccess, refetchAllowance]);
 
-  // Handle zap success
-  useEffect(() => {
-    if (isZapSuccess) {
-      setStatus("success");
-    }
-  }, [isZapSuccess]);
-
-  // Handle errors
-  useEffect(() => {
-    if (approveError) {
-      setStatus("error");
-      const msg = approveError.message || "Approval failed";
-      // Check for user rejection
-      if (msg.includes("User rejected") || msg.includes("user rejected")) {
-        setError("Transaction cancelled");
-      } else {
-        setError(msg);
-      }
-    }
-  }, [approveError]);
-
-  useEffect(() => {
-    if (zapError) {
-      setStatus("error");
-      const msg = zapError.message || "Zap transaction failed";
-      // Check for user rejection
-      if (msg.includes("User rejected") || msg.includes("user rejected")) {
-        setError("Transaction cancelled");
-      } else {
-        setError(msg);
-      }
-    }
-  }, [zapError]);
-
-  // Update status for pending states
-  useEffect(() => {
-    if (isApprovalPending) setStatus("waitingApproval");
-    else if (isZapPending) setStatus("waitingTx");
-  }, [isApprovalPending, isZapPending]);
-
   // Approve max tokens
-  const approve = async () => {
+  const approve = useCallback(() => {
     if (!userAddress || isEth || !tokenAddress) return;
-    setStatus("approving");
-    setError(null);
+    setActionState("approving");
 
     writeApprove({
       address: tokenAddress,
@@ -162,13 +153,12 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       functionName: "approve",
       args: [ENSO_ROUTER as `0x${string}`, maxUint256],
     });
-  };
+  }, [userAddress, isEth, tokenAddress, writeApprove]);
 
   // Execute zap transaction
-  const executeZap = async () => {
+  const executeZap = useCallback(() => {
     if (!quote || !userAddress) return;
-    setStatus("zapping");
-    setError(null);
+    setActionState("zapping");
 
     // Send the transaction from Enso's route response
     sendTransaction({
@@ -176,15 +166,14 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       data: quote.tx.data as `0x${string}`,
       value: BigInt(quote.tx.value || "0"),
     });
-  };
+  }, [quote, userAddress, sendTransaction]);
 
   // Reset state
-  const reset = () => {
-    setStatus("idle");
-    setError(null);
+  const reset = useCallback(() => {
+    setActionState("idle");
     resetApprove();
     resetZap();
-  };
+  }, [resetApprove, resetZap]);
 
   return {
     needsApproval,
