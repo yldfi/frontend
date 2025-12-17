@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { useAccount } from "wagmi";
+import { useAccount, useBalance } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
 import { ArrowLeft, ArrowUpRight, ExternalLink, Loader2 } from "lucide-react";
@@ -16,6 +16,12 @@ import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { useCvxCrvPrice } from "@/hooks/useCvxCrvPrice";
 import { usePricePerShare } from "@/hooks/usePricePerShare";
 import { useVaultActions } from "@/hooks/useVaultActions";
+import { useZapQuote } from "@/hooks/useZapQuote";
+import { useZapActions } from "@/hooks/useZapActions";
+import { useEnsoTokens, DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
+import { TokenSelector } from "@/components/TokenSelector";
+import { CVXCRV_ADDRESS as ENSO_CVXCRV_ADDRESS, ETH_ADDRESS } from "@/lib/enso";
+import type { EnsoToken, ZapDirection } from "@/types/enso";
 import {
   trackVaultView,
   trackDepositInitiated,
@@ -84,10 +90,37 @@ const vaultsData: Record<string, {
 export function VaultPageContent({ id }: { id: string }) {
   const vault = vaultsData[id];
 
-  const { isConnected } = useAccount();
+  const { isConnected, address: userAddress } = useAccount();
   const { openConnectModal } = useConnectModal();
-  const [activeTab, setActiveTab] = useState<"deposit" | "withdraw">("deposit");
+  const [activeTab, setActiveTab] = useState<"deposit" | "withdraw" | "zap">("deposit");
   const [amount, setAmount] = useState("");
+
+  // Zap state
+  const [zapDirection, setZapDirection] = useState<ZapDirection>("in");
+  const [zapInputToken, setZapInputToken] = useState<EnsoToken | null>(DEFAULT_ETH_TOKEN);
+  const [zapOutputToken, setZapOutputToken] = useState<EnsoToken | null>(DEFAULT_ETH_TOKEN);
+  const [zapAmount, setZapAmount] = useState("");
+  const [zapSlippage, setZapSlippage] = useState("10"); // basis points, "10" = 0.1%
+  const [showSlippageModal, setShowSlippageModal] = useState(false);
+  const [showPriceImpactModal, setShowPriceImpactModal] = useState(false);
+  const [priceImpactConfirmText, setPriceImpactConfirmText] = useState("");
+
+  // Price impact threshold for confirmation (5%)
+  const PRICE_IMPACT_CONFIRM_THRESHOLD = 5;
+
+  // Load slippage from localStorage on mount
+  useEffect(() => {
+    const savedSlippage = localStorage.getItem("yldfi-zap-slippage");
+    if (savedSlippage) {
+      setZapSlippage(savedSlippage);
+    }
+  }, []);
+
+  // Save slippage to localStorage when changed
+  const updateSlippage = (value: string) => {
+    setZapSlippage(value);
+    localStorage.setItem("yldfi-zap-slippage", value);
+  };
 
   // Fetch Yearn Kong API data
   const { data: yearnData, isLoading: yearnLoading } = useYearnVault(vault?.contractAddress ?? "");
@@ -138,6 +171,18 @@ export function VaultPageContent({ id }: { id: string }) {
   const vaultBalanceMax = vaultBalanceFormatted;
   const exchangeRate = pricePerShare;
 
+  // Zap input token balance (for MAX button)
+  const isZapInputEth = zapInputToken?.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
+  const { data: zapInputBalance } = useBalance({
+    address: userAddress,
+    token: isZapInputEth ? undefined : (zapInputToken?.address as `0x${string}`),
+    query: {
+      enabled: !!userAddress && !!zapInputToken,
+    },
+  });
+  const zapInputBalanceFormatted = zapInputBalance?.formatted ?? "0";
+  const zapInputBalanceNum = parseFloat(zapInputBalanceFormatted) || 0;
+
   // Vault actions (approve, deposit, withdraw)
   const {
     needsApproval,
@@ -152,6 +197,29 @@ export function VaultPageContent({ id }: { id: string }) {
     depositHash,
     withdrawHash,
   } = useVaultActions(vaultAddressTyped, CVXCRV_ADDRESS, 18);
+
+  // Zap quote - fetch route from Enso
+  const { quote: zapQuote, isLoading: zapQuoteLoading, error: zapQuoteError } = useZapQuote({
+    inputToken: zapDirection === "in" ? zapInputToken : null,
+    outputToken: zapDirection === "out" ? zapOutputToken : null,
+    inputAmount: zapAmount,
+    direction: zapDirection,
+    vaultAddress: vault?.contractAddress ?? "",
+    slippage: zapSlippage,
+  });
+
+  // Zap actions (approve + execute)
+  const {
+    needsApproval: zapNeedsApproval,
+    approve: zapApprove,
+    executeZap,
+    reset: resetZapActions,
+    status: zapStatus,
+    error: zapActionError,
+    isLoading: zapIsLoading,
+    isSuccess: zapIsSuccess,
+    zapHash,
+  } = useZapActions(zapQuote);
 
   const inputAmount = parseFloat(amount) || 0;
   const outputAmount = activeTab === "deposit"
@@ -236,6 +304,12 @@ export function VaultPageContent({ id }: { id: string }) {
   if (isSuccess && amount) {
     setAmount("");
     resetVaultActions();
+  }
+
+  // Reset zap on success
+  if (zapIsSuccess && zapAmount) {
+    setZapAmount("");
+    resetZapActions();
   }
 
   return (
@@ -416,16 +490,23 @@ export function VaultPageContent({ id }: { id: string }) {
                 {/* Your Position - Always visible when connected with balance */}
                 {isConnected && vaultBalance > 0 && (
                   <div className="bg-[var(--muted)]/30 p-5 border-b border-[var(--border)]">
-                    <div className="flex items-center justify-between gap-4">
-                      <div>
+                    <div className="flex flex-wrap items-center justify-center gap-4">
+                      <div className="text-center basis-full sm:basis-auto">
                         <span className="text-xs uppercase tracking-wider text-[var(--muted-foreground)]">Your Position</span>
                         <div className="mt-1">
-                          <span className="mono text-2xl font-semibold">
-                            {vaultBalanceLoading ? "..." : vaultBalance.toFixed(4)}
-                          </span>
-                          <span className="text-sm text-[var(--muted-foreground)] ml-1">
-                            {vault.symbol}
-                          </span>
+                          {(() => {
+                            const formatted = vaultBalanceLoading ? "..." : vaultBalance.toFixed(4);
+                            const len = formatted.length;
+                            // Scale font based on length
+                            const sizeClass = len > 16 ? "text-xs" : len > 13 ? "text-sm" : len > 10 ? "text-base" : len > 8 ? "text-lg" : "text-xl";
+                            const symbolSize = len > 10 ? "text-xs" : "text-sm";
+                            return (
+                              <>
+                                <span className={`mono font-semibold ${sizeClass}`}>{formatted}</span>
+                                <span className={`${symbolSize} text-[var(--muted-foreground)] ml-1`}>{vault.symbol}</span>
+                              </>
+                            );
+                          })()}
                         </div>
                       </div>
                       {/* Collateral link - only for vault type with holdings */}
@@ -450,12 +531,13 @@ export function VaultPageContent({ id }: { id: string }) {
                 {/* Tabs */}
                 <div className="p-5 pb-0">
                   <div className="flex border-b border-[var(--border)]">
-                    {(["deposit", "withdraw"] as const).map((tab) => (
+                    {(["deposit", "withdraw", "zap"] as const).map((tab) => (
                       <button
                         key={tab}
                         onClick={() => {
                           setActiveTab(tab);
                           setAmount("");
+                          setZapAmount("");
                         }}
                         className={cn(
                           "flex-1 pb-3 text-sm font-medium transition-all capitalize relative cursor-pointer",
@@ -475,129 +557,401 @@ export function VaultPageContent({ id }: { id: string }) {
 
                 {/* Form */}
                 <div className="p-5 space-y-5">
-                  {/* Input */}
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm text-[var(--muted-foreground)]">
-                        {activeTab === "deposit" ? "Amount" : "Shares"}
-                      </span>
-                      <button
-                        onClick={() => setAmount(activeTab === "deposit" ? tokenBalanceMax : vaultBalanceMax)}
-                        className="text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors cursor-pointer"
-                      >
-                        Balance: <span className="mono">
-                          {(activeTab === "deposit" ? tokenBalanceLoading : vaultBalanceLoading)
-                            ? "..."
-                            : (activeTab === "deposit" ? tokenBalance : vaultBalance).toFixed(4)
-                          }
-                        </span>
-                      </button>
-                    </div>
-                    <div className="relative">
-                      <input
-                        type="number"
-                        value={amount}
-                        onChange={(e) => setAmount(e.target.value)}
-                        placeholder="0.00"
-                        className="w-full bg-[var(--muted)] rounded-lg p-4 pr-36 mono text-base focus:outline-none focus:ring-1 focus:ring-[var(--border-hover)] placeholder:text-[var(--muted-foreground)]/50"
-                      />
-                      <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                        <button
-                          onClick={() => setAmount(activeTab === "deposit" ? tokenBalanceMax : vaultBalanceMax)}
-                          className="px-2 py-1 text-xs font-medium bg-[var(--background)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded transition-colors cursor-pointer"
-                        >
-                          MAX
-                        </button>
-                        <span className="mono text-sm font-medium min-w-[3.75rem] text-right">
-                          {activeTab === "deposit" ? vault.token : vault.symbol}
-                        </span>
+                  {/* Deposit/Withdraw Form */}
+                  {activeTab !== "zap" && (
+                    <>
+                      {/* Input */}
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm text-[var(--muted-foreground)]">Amount</span>
+                          <span className="text-xs mono text-[var(--muted-foreground)]">
+                            {(activeTab === "deposit" ? tokenBalanceLoading : vaultBalanceLoading)
+                              ? "..."
+                              : (activeTab === "deposit" ? tokenBalance : vaultBalance).toFixed(4)
+                            }
+                          </span>
+                        </div>
+                        <div className="bg-[var(--muted)] rounded-lg p-4 flex items-center gap-2 focus-within:ring-2 focus-within:ring-[var(--accent)] transition-shadow">
+                          <input
+                            type="number"
+                            value={amount}
+                            onChange={(e) => setAmount(e.target.value)}
+                            placeholder="0.00"
+                            className="flex-1 min-w-0 bg-transparent mono text-base outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
+                          />
+                          <span className="mono text-sm font-medium shrink-0">
+                            {activeTab === "deposit" ? vault.token : vault.symbol}
+                          </span>
+                          <button
+                            onClick={() => setAmount(activeTab === "deposit" ? tokenBalanceMax : vaultBalanceMax)}
+                            className="shrink-0 px-2 py-1 text-xs font-medium bg-[var(--background)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded transition-colors cursor-pointer"
+                          >
+                            MAX
+                          </button>
+                        </div>
+                        <p className={cn(
+                          "text-xs mt-2 h-4",
+                          hasInsufficientBalance ? "text-[var(--destructive)]" : "invisible"
+                        )}>
+                          {hasInsufficientBalance ? "Insufficient balance" : "\u00A0"}
+                        </p>
                       </div>
-                    </div>
-                    <p className={cn(
-                      "text-xs mt-2 h-4",
-                      hasInsufficientBalance ? "text-[var(--destructive)]" : "invisible"
-                    )}>
-                      {hasInsufficientBalance ? "Insufficient balance" : "\u00A0"}
-                    </p>
-                  </div>
 
-                  {/* Arrow indicator */}
-                  <div className="flex justify-center">
-                    <div className="w-8 h-8 rounded-full bg-[var(--muted)] flex items-center justify-center">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--muted-foreground)]">
-                        <path d="M12 5v14M19 12l-7 7-7-7"/>
-                      </svg>
-                    </div>
-                  </div>
+                      {/* Arrow indicator */}
+                      <div className="flex justify-center">
+                        <div className="w-8 h-8 rounded-full bg-[var(--muted)] flex items-center justify-center">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--muted-foreground)]">
+                            <path d="M12 5v14M19 12l-7 7-7-7"/>
+                          </svg>
+                        </div>
+                      </div>
 
-                  {/* Output */}
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm text-[var(--muted-foreground)]">You receive</span>
-                    </div>
-                    <div className="bg-[var(--muted)] rounded-lg p-4 flex items-center justify-between gap-2">
-                      <span className="mono text-base text-[var(--foreground)] truncate min-w-0 flex-1">
-                        {outputAmount > 0 ? outputAmount.toFixed(4) : "0.00"}
-                      </span>
-                      <span className="mono text-sm font-medium shrink-0">
-                        {activeTab === "deposit" ? vault.symbol : vault.token}
-                      </span>
-                    </div>
-                  </div>
+                      {/* Output */}
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm text-[var(--muted-foreground)]">You receive</span>
+                        </div>
+                        <div className="bg-[var(--muted)] rounded-lg p-4 flex items-center gap-2">
+                          <span className="mono text-base text-[var(--foreground)] flex-1">
+                            {outputAmount > 0 ? outputAmount.toFixed(4) : "0.00"}
+                          </span>
+                          <span className="mono text-sm font-medium shrink-0">
+                            {activeTab === "deposit" ? vault.symbol : vault.token}
+                          </span>
+                        </div>
+                      </div>
 
-                  {/* Details */}
-                  <div className="space-y-2 text-sm">
-                    <div className="flex items-center justify-between py-1">
-                      <span className="text-[var(--muted-foreground)]">Exchange rate</span>
-                      <span className="mono">1 {vault.token} = {(1 / exchangeRate).toFixed(4)} {vault.symbol}</span>
-                    </div>
-                    <div className={cn(
-                      "flex items-center justify-between py-1",
-                      inputAmount > 0 ? "" : "invisible"
-                    )}>
-                      <span className="text-[var(--muted-foreground)]">Value</span>
-                      <span className="mono">~${(inputAmount * cvxCrvPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                    </div>
-                  </div>
+                      {/* Details */}
+                      <div className="space-y-2 text-sm">
+                        <div className="flex items-center justify-between py-1">
+                          <span className="text-[var(--muted-foreground)]">Exchange rate</span>
+                          <span className="mono">1 {vault.token} = {(1 / exchangeRate).toFixed(4)} {vault.symbol}</span>
+                        </div>
+                        <div className={cn(
+                          "flex items-center justify-between py-1",
+                          inputAmount > 0 ? "" : "invisible"
+                        )}>
+                          <span className="text-[var(--muted-foreground)]">Value</span>
+                          {/* For deposit: input is cvxCRV, for withdraw: output is cvxCRV */}
+                          <span className="mono">~${((activeTab === "deposit" ? inputAmount : outputAmount) * cvxCrvPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        </div>
+                      </div>
 
-                  {/* Action button */}
-                  {isConnected ? (
-                    <button
-                      onClick={handleSubmit}
-                      disabled={!inputAmount || hasInsufficientBalance || isLoading}
-                      className={cn(
-                        "w-full py-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-base",
-                        !inputAmount || hasInsufficientBalance
-                          ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                          : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer"
-                      )}
-                    >
-                      {isLoading ? (
-                        <>
-                          <Loader2 size={18} className="animate-spin" />
-                          {txStatus === "approving" || txStatus === "waitingApproval"
-                            ? "Approving..."
-                            : txStatus === "depositing" || txStatus === "withdrawing"
-                            ? "Confirming..."
-                            : "Processing..."}
-                        </>
-                      ) : !inputAmount ? (
-                        "Enter amount"
-                      ) : hasInsufficientBalance ? (
-                        "Insufficient balance"
-                      ) : activeTab === "deposit" ? (
-                        requiresApproval ? "Approve" : "Deposit"
+                      {/* Action button */}
+                      {isConnected ? (
+                        <button
+                          onClick={handleSubmit}
+                          disabled={!inputAmount || hasInsufficientBalance || isLoading}
+                          className={cn(
+                            "w-full py-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-base",
+                            !inputAmount || hasInsufficientBalance
+                              ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                              : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer"
+                          )}
+                        >
+                          {isLoading ? (
+                            <>
+                              <Loader2 size={18} className="animate-spin" />
+                              {txStatus === "approving" || txStatus === "waitingApproval"
+                                ? "Approving..."
+                                : txStatus === "depositing" || txStatus === "withdrawing"
+                                ? "Confirming..."
+                                : "Processing..."}
+                            </>
+                          ) : !inputAmount ? (
+                            "Enter amount"
+                          ) : hasInsufficientBalance ? (
+                            "Insufficient balance"
+                          ) : activeTab === "deposit" ? (
+                            requiresApproval ? "Approve" : "Deposit"
+                          ) : (
+                            "Withdraw"
+                          )}
+                        </button>
                       ) : (
-                        "Withdraw"
+                        <button
+                          onClick={openConnectModal}
+                          className="w-full py-4 bg-[var(--foreground)] text-[var(--background)] rounded-lg font-medium hover:opacity-90 transition-all cursor-pointer"
+                        >
+                          Connect Wallet
+                        </button>
                       )}
-                    </button>
-                  ) : (
-                    <button
-                      onClick={openConnectModal}
-                      className="w-full py-4 bg-[var(--foreground)] text-[var(--background)] rounded-lg font-medium hover:opacity-90 transition-all cursor-pointer"
-                    >
-                      Connect Wallet
-                    </button>
+                    </>
+                  )}
+
+                  {/* Zap Form */}
+                  {activeTab === "zap" && (
+                    <>
+                      {/* Direction Toggle + Settings */}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            setZapDirection("in");
+                            setZapAmount("");
+                          }}
+                          className={cn(
+                            "flex-1 py-2 text-sm rounded-lg transition-colors",
+                            zapDirection === "in"
+                              ? "bg-[var(--foreground)] text-[var(--background)]"
+                              : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                          )}
+                        >
+                          Zap In
+                        </button>
+                        <button
+                          onClick={() => {
+                            setZapDirection("out");
+                            setZapAmount("");
+                          }}
+                          className={cn(
+                            "flex-1 py-2 text-sm rounded-lg transition-colors",
+                            zapDirection === "out"
+                              ? "bg-[var(--foreground)] text-[var(--background)]"
+                              : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                          )}
+                        >
+                          Zap Out
+                        </button>
+                      </div>
+
+                      {/* Zap In */}
+                      {zapDirection === "in" && (
+                        <>
+                          {/* Input Token + Amount */}
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-sm text-[var(--muted-foreground)]">Amount</span>
+                              <span className="text-xs mono text-[var(--muted-foreground)]">{zapInputBalanceNum.toFixed(4)}</span>
+                            </div>
+                            <div className="bg-[var(--muted)] rounded-lg p-4 flex items-center gap-2 focus-within:ring-2 focus-within:ring-[var(--accent)] transition-shadow">
+                              <input
+                                type="number"
+                                value={zapAmount}
+                                onChange={(e) => setZapAmount(e.target.value)}
+                                placeholder="0.00"
+                                className="flex-1 min-w-0 bg-transparent mono text-base outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
+                              />
+                              <TokenSelector
+                                selectedToken={zapInputToken}
+                                onSelect={setZapInputToken}
+                                excludeTokens={[vault.contractAddress, CVXCRV_ADDRESS]} // Exclude vault token & cvxCRV (use Deposit tab)
+                              />
+                              <button
+                                onClick={() => setZapAmount(zapInputBalanceFormatted)}
+                                className="shrink-0 px-2 py-1 text-xs font-medium bg-[var(--background)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded transition-colors cursor-pointer"
+                              >
+                                MAX
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Arrow */}
+                          <div className="flex justify-center">
+                            <div className="w-8 h-8 rounded-full bg-[var(--muted)] flex items-center justify-center">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--muted-foreground)]">
+                                <path d="M12 5v14M19 12l-7 7-7-7"/>
+                              </svg>
+                            </div>
+                          </div>
+
+                          {/* Output */}
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-sm text-[var(--muted-foreground)]">You receive</span>
+                            </div>
+                            <div className="bg-[var(--muted)] rounded-lg p-4 flex items-center gap-2">
+                              <span className="mono text-base text-[var(--foreground)] flex-1">
+                                {zapQuoteLoading ? (
+                                  <span className="text-[var(--muted-foreground)]">Loading...</span>
+                                ) : zapQuote ? (
+                                  Number(zapQuote.outputAmountFormatted).toFixed(4)
+                                ) : (
+                                  "0.00"
+                                )}
+                              </span>
+                              <span className="mono text-sm font-medium shrink-0">{vault.symbol}</span>
+                            </div>
+                          </div>
+                        </>
+                      )}
+
+                      {/* Zap Out */}
+                      {zapDirection === "out" && (
+                        <>
+                          {/* Input - Vault Shares */}
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-sm text-[var(--muted-foreground)]">Amount</span>
+                              <span className="text-xs mono text-[var(--muted-foreground)]">{vaultBalance.toFixed(4)}</span>
+                            </div>
+                            <div className="bg-[var(--muted)] rounded-lg p-4 flex items-center gap-2 focus-within:ring-2 focus-within:ring-[var(--accent)] transition-shadow">
+                              <input
+                                type="number"
+                                value={zapAmount}
+                                onChange={(e) => setZapAmount(e.target.value)}
+                                placeholder="0.00"
+                                className="flex-1 min-w-0 bg-transparent mono text-base outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
+                              />
+                              <span className="mono text-sm font-medium shrink-0">{vault.symbol}</span>
+                              <button
+                                onClick={() => setZapAmount(vaultBalanceMax)}
+                                className="shrink-0 px-2 py-1 text-xs font-medium bg-[var(--background)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded transition-colors cursor-pointer"
+                              >
+                                MAX
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Arrow */}
+                          <div className="flex justify-center">
+                            <div className="w-8 h-8 rounded-full bg-[var(--muted)] flex items-center justify-center">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--muted-foreground)]">
+                                <path d="M12 5v14M19 12l-7 7-7-7"/>
+                              </svg>
+                            </div>
+                          </div>
+
+                          {/* Output Token */}
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-sm text-[var(--muted-foreground)]">You receive</span>
+                            </div>
+                            <div className="bg-[var(--muted)] rounded-lg p-4 flex items-center gap-2">
+                              <span className="mono text-base text-[var(--foreground)] flex-1">
+                                {zapQuoteLoading ? (
+                                  <span className="text-[var(--muted-foreground)]">Loading...</span>
+                                ) : zapQuote ? (
+                                  Number(zapQuote.outputAmountFormatted).toFixed(4)
+                                ) : (
+                                  "0.00"
+                                )}
+                              </span>
+                              <TokenSelector
+                                selectedToken={zapOutputToken}
+                                onSelect={setZapOutputToken}
+                                excludeTokens={[vault.contractAddress, CVXCRV_ADDRESS]} // Exclude vault token & cvxCRV (use Withdraw tab)
+                              />
+                            </div>
+                          </div>
+                        </>
+                      )}
+
+                      {/* Zap Details */}
+                      {zapQuote && (
+                        <div className="space-y-2 text-sm">
+                          <div className="flex items-center justify-between py-1">
+                            <span className="text-[var(--muted-foreground)]">Rate</span>
+                            <span className="mono">
+                              1 {zapDirection === "in" ? zapInputToken?.symbol : vault.symbol} = {zapQuote.exchangeRate.toFixed(4)} {zapDirection === "in" ? vault.symbol : zapOutputToken?.symbol}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between py-1">
+                            <span className="text-[var(--muted-foreground)]">Price Impact</span>
+                            <span className={cn(
+                              "mono",
+                              (zapQuote.priceImpact ?? 0) > 2 ? "text-[var(--destructive)]" : (zapQuote.priceImpact ?? 0) > 1 ? "text-[var(--warning)]" : ""
+                            )}>
+                              {zapQuote.priceImpact != null ? `${zapQuote.priceImpact.toFixed(2)}%` : "—"}
+                            </span>
+                          </div>
+                          {/* Show value - for zap in, use output (vault shares) × cvxCRV price */}
+                          <div className="flex items-center justify-between py-1">
+                            <span className="text-[var(--muted-foreground)]">Value</span>
+                            <span className="mono">
+                              ~${(
+                                zapDirection === "in"
+                                  ? Number(zapQuote.outputAmountFormatted) * pricePerShare * cvxCrvPrice
+                                  : Number(zapAmount) * pricePerShare * cvxCrvPrice
+                              ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Error display */}
+                      {(zapQuoteError || zapActionError) && (
+                        <p className="text-xs text-[var(--destructive)]">
+                          {zapQuoteError?.message || zapActionError}
+                        </p>
+                      )}
+
+                      {/* Zap Action Button */}
+                      {isConnected ? (
+                        <button
+                          onClick={() => {
+                            if (zapNeedsApproval()) {
+                              zapApprove();
+                            } else if ((zapQuote?.priceImpact ?? 0) >= PRICE_IMPACT_CONFIRM_THRESHOLD) {
+                              // High price impact - show confirmation modal
+                              setPriceImpactConfirmText("");
+                              setShowPriceImpactModal(true);
+                            } else {
+                              executeZap();
+                            }
+                          }}
+                          disabled={!zapQuote || zapIsLoading || zapQuoteLoading}
+                          className={cn(
+                            "w-full py-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-base",
+                            !zapQuote || zapQuoteLoading
+                              ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                              : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer"
+                          )}
+                        >
+                          {zapIsLoading ? (
+                            <>
+                              <Loader2 size={18} className="animate-spin" />
+                              {zapStatus === "approving" || zapStatus === "waitingApproval"
+                                ? "Approving..."
+                                : "Zapping..."}
+                            </>
+                          ) : zapQuoteLoading ? (
+                            "Getting quote..."
+                          ) : !zapAmount || Number(zapAmount) === 0 ? (
+                            "Enter amount"
+                          ) : !zapQuote ? (
+                            "No route found"
+                          ) : zapNeedsApproval() ? (
+                            "Approve"
+                          ) : (
+                            `Zap ${zapDirection === "in" ? "In" : "Out"}`
+                          )}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={openConnectModal}
+                          className="w-full py-4 bg-[var(--foreground)] text-[var(--background)] rounded-lg font-medium hover:opacity-90 transition-all cursor-pointer"
+                        >
+                          Connect Wallet
+                        </button>
+                      )}
+
+                      {/* Enso Attribution + Slippage Settings */}
+                      <div className="flex items-center justify-between pt-2">
+                        <a
+                          href="https://www.enso.build"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1.5 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+                        >
+                          <span>Powered by</span>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src="/enso.png" alt="Enso" width={14} height={14} className="rounded-sm" />
+                          <span className="font-medium">Enso</span>
+                        </a>
+                        <button
+                          onClick={() => setShowSlippageModal(true)}
+                          className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
+                          title="Slippage settings"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="4" y1="6" x2="20" y2="6"/>
+                            <circle cx="8" cy="6" r="2"/>
+                            <line x1="4" y1="18" x2="20" y2="18"/>
+                            <circle cx="16" cy="18" r="2"/>
+                          </svg>
+                        </button>
+                      </div>
+                    </>
                   )}
                 </div>
               </div>
@@ -605,6 +959,150 @@ export function VaultPageContent({ id }: { id: string }) {
           </div>
         </div>
       </main>
+
+      {/* Slippage Settings Modal */}
+      {showSlippageModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => setShowSlippageModal(false)}
+          />
+          <div className="relative bg-[var(--background)] border border-[var(--border)] rounded-xl w-full max-w-sm p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-medium">Slippage Tolerance</h3>
+              <button
+                onClick={() => setShowSlippageModal(false)}
+                className="p-1 hover:bg-[var(--muted)] rounded transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <p className="text-sm text-[var(--muted-foreground)]">
+              Maximum price change you&apos;re willing to accept. Higher slippage may result in worse rates.
+            </p>
+
+            {/* Preset buttons */}
+            <div className="flex gap-2">
+              {["10", "50", "100", "300"].map((value) => (
+                <button
+                  key={value}
+                  onClick={() => updateSlippage(value)}
+                  className={cn(
+                    "flex-1 py-2 text-sm rounded-lg transition-colors",
+                    zapSlippage === value
+                      ? "bg-[var(--foreground)] text-[var(--background)]"
+                      : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                  )}
+                >
+                  {(Number(value) / 100).toFixed(1)}%
+                </button>
+              ))}
+            </div>
+
+            {/* Custom input */}
+            <div>
+              <label className="text-sm text-[var(--muted-foreground)] mb-2 block">Custom</label>
+              <div className="relative">
+                <input
+                  type="number"
+                  value={(Number(zapSlippage) / 100).toString()}
+                  onChange={(e) => {
+                    const percent = parseFloat(e.target.value) || 0;
+                    const bps = Math.round(percent * 100).toString();
+                    updateSlippage(bps);
+                  }}
+                  step="0.1"
+                  min="0.01"
+                  max="50"
+                  className="w-full bg-[var(--muted)] rounded-lg p-3 pr-8 mono text-base focus:outline-none focus:ring-1 focus:ring-[var(--border-hover)]"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]">%</span>
+              </div>
+            </div>
+
+            {/* Warning for high slippage */}
+            {Number(zapSlippage) > 300 && (
+              <p className="text-xs text-[var(--warning)] flex items-center gap-1.5">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                High slippage increases risk of unfavorable trades
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Price Impact Confirmation Modal */}
+      {showPriceImpactModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => setShowPriceImpactModal(false)}
+          />
+          <div className="relative bg-[var(--background)] border border-[var(--border)] rounded-xl w-full max-w-sm p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-medium text-[var(--destructive)]">High Price Impact Warning</h3>
+              <button
+                onClick={() => setShowPriceImpactModal(false)}
+                className="p-1 hover:bg-[var(--muted)] rounded transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="bg-[var(--destructive)]/10 border border-[var(--destructive)]/20 rounded-lg p-4">
+              <p className="text-sm text-[var(--foreground)]">
+                This transaction has a <span className="font-bold text-[var(--destructive)]">{zapQuote?.priceImpact?.toFixed(2)}%</span> price impact.
+                You may receive significantly less value than expected.
+              </p>
+            </div>
+
+            <p className="text-sm text-[var(--muted-foreground)]">
+              Type <span className="font-mono font-bold text-[var(--foreground)]">CONFIRM</span> below to acknowledge the risk and proceed.
+            </p>
+
+            <input
+              type="text"
+              value={priceImpactConfirmText}
+              onChange={(e) => setPriceImpactConfirmText(e.target.value.toUpperCase())}
+              placeholder="Type CONFIRM"
+              className="w-full bg-[var(--muted)] rounded-lg p-3 mono text-base focus:outline-none focus:ring-2 focus:ring-[var(--destructive)] placeholder:text-[var(--muted-foreground)]/50"
+              autoFocus
+            />
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowPriceImpactModal(false)}
+                className="flex-1 py-3 rounded-lg font-medium transition-all bg-[var(--muted)] text-[var(--foreground)] hover:bg-[var(--muted)]/80"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setShowPriceImpactModal(false);
+                  setPriceImpactConfirmText("");
+                  executeZap();
+                }}
+                disabled={priceImpactConfirmText !== "CONFIRM"}
+                className={cn(
+                  "flex-1 py-3 rounded-lg font-medium transition-all",
+                  priceImpactConfirmText === "CONFIRM"
+                    ? "bg-[var(--destructive)] text-white hover:opacity-90 cursor-pointer"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                )}
+              >
+                Zap {zapDirection === "in" ? "In" : "Out"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

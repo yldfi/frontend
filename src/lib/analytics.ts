@@ -155,7 +155,7 @@ export function trackNetworkSwitch(
 
 // Error Events
 export function trackTransactionError(
-  action: "deposit" | "withdraw" | "approval",
+  action: "deposit" | "withdraw" | "approval" | "zap",
   vaultId: string,
   errorMessage: string
 ): void {
@@ -168,13 +168,49 @@ export function trackTransactionError(
 
 // Cancelled Events (user rejected in wallet)
 export function trackTransactionCancelled(
-  action: "deposit" | "withdraw" | "approval",
+  action: "deposit" | "withdraw" | "approval" | "zap",
   vaultId: string
 ): void {
   trackEvent("transaction_cancelled", {
     action,
     vault_id: vaultId,
   });
+}
+
+// Zap Events
+export function trackZapInitiated(
+  vaultId: string,
+  direction: "in" | "out",
+  inputToken: string,
+  outputToken: string,
+  inputAmount: string
+): void {
+  trackEvent("zap_initiated", {
+    vault_id: vaultId,
+    direction,
+    input_token: inputToken,
+    output_token: outputToken,
+    input_amount: inputAmount,
+  });
+}
+
+export function trackZapSuccess(
+  vaultId: string,
+  direction: "in" | "out",
+  inputToken: string,
+  outputToken: string,
+  inputAmount: string,
+  outputAmount: string
+): void {
+  trackEvent("zap_success", {
+    vault_id: vaultId,
+    direction,
+    input_token: inputToken,
+    output_token: outputToken,
+    input_amount: inputAmount,
+    output_amount: outputAmount,
+  });
+  setUserProperty("has_used_zap", true);
 }
 
 /**
