@@ -29,6 +29,7 @@ describe("analytics.ts integration", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useFakeTimers();
     mockGtag = vi.fn();
     originalGtag = (globalThis as Record<string, unknown>).gtag;
     (globalThis as Record<string, unknown>).gtag = mockGtag;
@@ -36,6 +37,8 @@ describe("analytics.ts integration", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllTimers();
     if (originalGtag === undefined) {
       (globalThis as Record<string, unknown>).gtag = undefined;
     } else {
@@ -70,12 +73,39 @@ describe("analytics.ts integration", () => {
       // This should queue the event
       trackEvent("queued_event", { test: true });
 
-      // Now add gtag
+      // Event not sent yet since gtag not available
+      expect(mockGtag).not.toHaveBeenCalled();
+
+      // Add gtag back
       (globalThis as Record<string, unknown>).gtag = mockGtag;
 
-      // Event should eventually be processed (tested via timeout in real code)
-      // For this test, we just verify no error is thrown
+      // Advance timer to let interval check run
+      vi.advanceTimersByTime(150);
+
+      // Event should be processed from queue
+      expect(mockGtag).toHaveBeenCalledWith("event", "queued_event", { test: true });
+    });
+
+    it("processes multiple queued events when gtag loads", () => {
+      (globalThis as Record<string, unknown>).gtag = undefined;
+
+      // Queue multiple events
+      trackEvent("event1", { a: 1 });
+      trackEvent("event2", { b: 2 });
+      trackEvent("event3", { c: 3 });
+
       expect(mockGtag).not.toHaveBeenCalled();
+
+      // Add gtag back
+      (globalThis as Record<string, unknown>).gtag = mockGtag;
+
+      // Advance timer
+      vi.advanceTimersByTime(150);
+
+      // All events should be processed
+      expect(mockGtag).toHaveBeenCalledWith("event", "event1", { a: 1 });
+      expect(mockGtag).toHaveBeenCalledWith("event", "event2", { b: 2 });
+      expect(mockGtag).toHaveBeenCalledWith("event", "event3", { c: 3 });
     });
   });
 
@@ -298,6 +328,62 @@ describe("analytics.ts integration", () => {
       expect(isUserRejection(null)).toBe(false);
       expect(isUserRejection(undefined)).toBe(false);
       expect(isUserRejection({})).toBe(false);
+    });
+
+    it("handles object with no message property", () => {
+      expect(isUserRejection({ code: 4001 })).toBe(false);
+      expect(isUserRejection({ name: "Error" })).toBe(false);
+    });
+
+    it("handles numbers and booleans", () => {
+      expect(isUserRejection(42)).toBe(false);
+      expect(isUserRejection(true)).toBe(false);
+      expect(isUserRejection(false)).toBe(false);
+    });
+
+    it("handles nested error with rejection in shortMessage", () => {
+      // Some wallets put rejection info in shortMessage
+      const error = { shortMessage: "User rejected the request" };
+      expect(isUserRejection(error)).toBe(false); // Only checks message prop
+    });
+  });
+
+  describe("edge cases", () => {
+    it("handles special characters in event params", () => {
+      trackEvent("test_event", {
+        message: "Hello <script>alert('xss')</script>",
+        address: "0x123'--; DROP TABLE users;",
+      });
+
+      expect(mockGtag).toHaveBeenCalledWith("event", "test_event", {
+        message: "Hello <script>alert('xss')</script>",
+        address: "0x123'--; DROP TABLE users;",
+      });
+    });
+
+    it("handles very long vault addresses", () => {
+      const longAddress = "0x" + "a".repeat(100);
+      trackVaultView(longAddress, "TestVault");
+
+      expect(mockGtag).toHaveBeenCalledWith("event", "vault_view", {
+        vault_id: longAddress,
+        vault_name: "TestVault",
+      });
+    });
+
+    it("handles empty string params", () => {
+      trackEvent("test_event", { empty: "" });
+
+      expect(mockGtag).toHaveBeenCalledWith("event", "test_event", { empty: "" });
+    });
+
+    it("handles numeric values in params", () => {
+      trackEvent("test_event", { count: 42, amount: 1.5 });
+
+      expect(mockGtag).toHaveBeenCalledWith("event", "test_event", {
+        count: 42,
+        amount: 1.5
+      });
     });
   });
 });
