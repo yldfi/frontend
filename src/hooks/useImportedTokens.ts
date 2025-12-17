@@ -5,28 +5,31 @@ import type { EnsoToken } from "@/types/enso";
 
 const STORAGE_KEY = "yldfi-imported-tokens";
 
+// Helper to load tokens from localStorage (runs only on client)
+function loadTokensFromStorage(): EnsoToken[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.error("Failed to load imported tokens:", e);
+  }
+  return [];
+}
+
 /**
  * Hook to manage user-imported tokens with localStorage persistence
  */
 export function useImportedTokens() {
-  const [importedTokens, setImportedTokens] = useState<EnsoToken[]>([]);
-  const [isLoaded, setIsLoaded] = useState(false);
-
-  // Load from localStorage on mount
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
-          setImportedTokens(parsed);
-        }
-      }
-    } catch (e) {
-      console.error("Failed to load imported tokens:", e);
-    }
-    setIsLoaded(true);
-  }, []);
+  // Use lazy initialization to load from localStorage
+  const [importedTokens, setImportedTokens] = useState<EnsoToken[]>(loadTokensFromStorage);
+  // isLoaded starts as true since we're using lazy initialization
+  const [isLoaded] = useState(true);
 
   // Save to localStorage when tokens change
   useEffect(() => {

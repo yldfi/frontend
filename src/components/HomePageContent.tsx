@@ -60,7 +60,7 @@ export function HomePageContent() {
 
   // Fetch Yearn vault data (for APY from Kong API)
   const { data: ycvxcrvData, isLoading: ycvxcrvLoading } = useYearnVault(YCVXCRV_ADDRESS);
-  const { data: yscvxcrvData, isLoading: yscvxcrvLoading } = useYearnVault(YSCVXCRV_ADDRESS);
+  const { data: yscvxcrvData } = useYearnVault(YSCVXCRV_ADDRESS);
 
   const ycvxcrvVault = formatYearnVaultData(ycvxcrvData?.vault, ycvxcrvData?.vaultStrategies);
   const yscvxcrvVault = formatYearnVaultData(yscvxcrvData?.vault, yscvxcrvData?.vaultStrategies);
@@ -69,7 +69,7 @@ export function HomePageContent() {
   const cvxCrvPrice = cacheData?.cvxCrvPrice ?? 0;
 
   // Fetch price per share from on-chain
-  const { prices: pricePerShareData, isLoading: ppsLoading } = useMultiplePricePerShare([
+  const { prices: pricePerShareData } = useMultiplePricePerShare([
     YCVXCRV_ADDRESS as `0x${string}`,
     YSCVXCRV_ADDRESS as `0x${string}`,
   ]);
@@ -78,7 +78,7 @@ export function HomePageContent() {
   const yscvxcrvPricePerShare = pricePerShareData[1]?.pricePerShare ?? 1;
 
   // Fetch user vault balances
-  const { balances, isLoading: balancesLoading } = useMultipleVaultBalances([
+  const { balances } = useMultipleVaultBalances([
     {
       address: YCVXCRV_ADDRESS as `0x${string}`,
       pricePerShare: ycvxcrvPricePerShare,
