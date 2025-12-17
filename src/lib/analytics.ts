@@ -31,6 +31,10 @@ type EventParams = Record<string, string | number | boolean | undefined>;
 // Queue for events that fire before gtag is ready
 const eventQueue: Array<{ eventName: string; params?: EventParams }> = [];
 let isProcessingQueue = false;
+let eventQueueIntervalId: ReturnType<typeof setInterval> | null = null;
+
+// Maximum queue size to prevent memory leaks
+const MAX_QUEUE_SIZE = 100;
 
 /**
  * Process queued events once gtag is available
@@ -39,6 +43,13 @@ function processEventQueue(): void {
   if (isProcessingQueue || typeof window === "undefined" || !window.gtag) return;
 
   isProcessingQueue = true;
+
+  // Clear the interval since gtag is now available
+  if (eventQueueIntervalId) {
+    clearInterval(eventQueueIntervalId);
+    eventQueueIntervalId = null;
+  }
+
   while (eventQueue.length > 0) {
     const event = eventQueue.shift();
     if (event) {
@@ -73,30 +84,45 @@ export function trackEvent(eventName: string, params?: EventParams): void {
     // Also process any queued events
     processEventQueue();
   } else {
-    // Queue the event for later
-    eventQueue.push({ eventName, params });
+    // Queue the event for later (with size limit to prevent memory leaks)
+    if (eventQueue.length < MAX_QUEUE_SIZE) {
+      eventQueue.push({ eventName, params });
+    }
 
-    // Set up a check for when gtag becomes available
-    const checkGtag = setInterval(() => {
-      if (window.gtag) {
-        clearInterval(checkGtag);
-        processEventQueue();
-      }
-    }, 100);
+    // Set up a single interval to check for gtag (avoid race condition)
+    if (!eventQueueIntervalId) {
+      eventQueueIntervalId = setInterval(() => {
+        if (window.gtag) {
+          processEventQueue();
+        }
+      }, 100);
 
-    // Stop checking after 10 seconds
-    setTimeout(() => clearInterval(checkGtag), 10000);
+      // Stop checking after 10 seconds
+      setTimeout(() => {
+        if (eventQueueIntervalId) {
+          clearInterval(eventQueueIntervalId);
+          eventQueueIntervalId = null;
+        }
+      }, 10000);
+    }
   }
 }
 
 // Queue for user properties that are set before gtag is ready
 const userPropertyQueue: Array<{ name: string; value: string | boolean }> = [];
+let userPropertyQueueIntervalId: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Process queued user properties once gtag is available
  */
 function processUserPropertyQueue(): void {
   if (typeof window === "undefined" || !window.gtag) return;
+
+  // Clear the interval since gtag is now available
+  if (userPropertyQueueIntervalId) {
+    clearInterval(userPropertyQueueIntervalId);
+    userPropertyQueueIntervalId = null;
+  }
 
   while (userPropertyQueue.length > 0) {
     const prop = userPropertyQueue.shift();
@@ -129,16 +155,26 @@ export function setUserProperty(name: string, value: string | boolean): void {
     }
     processUserPropertyQueue();
   } else {
-    userPropertyQueue.push({ name, value });
+    // Queue the property (with size limit to prevent memory leaks)
+    if (userPropertyQueue.length < MAX_QUEUE_SIZE) {
+      userPropertyQueue.push({ name, value });
+    }
 
-    const checkGtag = setInterval(() => {
-      if (window.gtag) {
-        clearInterval(checkGtag);
-        processUserPropertyQueue();
-      }
-    }, 100);
+    // Set up a single interval to check for gtag (avoid race condition)
+    if (!userPropertyQueueIntervalId) {
+      userPropertyQueueIntervalId = setInterval(() => {
+        if (window.gtag) {
+          processUserPropertyQueue();
+        }
+      }, 100);
 
-    setTimeout(() => clearInterval(checkGtag), 10000);
+      setTimeout(() => {
+        if (userPropertyQueueIntervalId) {
+          clearInterval(userPropertyQueueIntervalId);
+          userPropertyQueueIntervalId = null;
+        }
+      }, 10000);
+    }
   }
 }
 

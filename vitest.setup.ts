@@ -43,6 +43,9 @@ vi.mock("wagmi", () => ({
     address: undefined,
     isConnected: false,
   })),
+  usePublicClient: vi.fn(() => ({
+    readContract: vi.fn(),
+  })),
   useWriteContract: vi.fn(() => ({
     writeContract: vi.fn(),
     writeContractAsync: vi.fn(),
