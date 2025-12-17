@@ -120,6 +120,50 @@ describe("enso.ts integration", () => {
 
       expect(tokens[0].logoURI).toBeUndefined();
     });
+
+    it("handles 400 bad request error", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+      } as Response);
+
+      await expect(fetchEnsoTokenList()).rejects.toThrow("Failed to fetch token list");
+    });
+
+    it("handles 429 rate limit error", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+      } as Response);
+
+      await expect(fetchEnsoTokenList()).rejects.toThrow("Failed to fetch token list");
+    });
+
+    it("handles network timeout", async () => {
+      mockFetch.mockRejectedValueOnce(new Error("Network timeout"));
+
+      await expect(fetchEnsoTokenList()).rejects.toThrow("Network timeout");
+    });
+
+    it("handles malformed API response (missing data)", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({}),
+      } as Response);
+
+      // The actual code throws when data is missing - this is expected
+      await expect(fetchEnsoTokenList()).rejects.toThrow();
+    });
+
+    it("handles empty token list", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ data: [] }),
+      } as Response);
+
+      const tokens = await fetchEnsoTokenList();
+      expect(tokens).toHaveLength(0);
+    });
   });
 
   describe("fetchWalletBalances", () => {
@@ -185,6 +229,17 @@ describe("enso.ts integration", () => {
       expect(prices).toEqual([]);
       expect(mockFetch).not.toHaveBeenCalled();
     });
+
+    it("handles API error for token prices", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+      } as Response);
+
+      await expect(
+        fetchTokenPrices(["0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"])
+      ).rejects.toThrow();
+    });
   });
 
   describe("fetchRoute", () => {
@@ -248,6 +303,38 @@ describe("enso.ts integration", () => {
 
       const callUrl = mockFetch.mock.calls[0][0] as string;
       expect(callUrl).toContain("slippage=50");
+    });
+
+    it("handles route API failure", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+      } as Response);
+
+      await expect(
+        fetchRoute({
+          fromAddress: "0x1234567890123456789012345678901234567890",
+          tokenIn: ETH_ADDRESS,
+          tokenOut: CVXCRV_ADDRESS,
+          amountIn: "1000000000000000000",
+        })
+      ).rejects.toThrow();
+    });
+
+    it("handles no route found (400 error)", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+      } as Response);
+
+      await expect(
+        fetchRoute({
+          fromAddress: "0x1234567890123456789012345678901234567890",
+          tokenIn: ETH_ADDRESS,
+          tokenOut: CVXCRV_ADDRESS,
+          amountIn: "1000000000000000000",
+        })
+      ).rejects.toThrow();
     });
   });
 

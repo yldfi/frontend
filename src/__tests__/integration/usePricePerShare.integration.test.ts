@@ -121,6 +121,117 @@ describe("usePricePerShare integration", () => {
         })
       );
     });
+
+    // Edge cases
+    it("handles PPS < 1 (vault losing value)", () => {
+      mockUseReadContracts.mockReturnValue({
+        data: [
+          { result: 18, status: "success" },
+          { result: BigInt("500000000000000000"), status: "success" }, // 0.5 PPS
+        ],
+        isLoading: false,
+        error: null,
+      } as ReturnType<typeof useReadContracts>);
+
+      const { result } = renderHook(() => usePricePerShare(VAULT_ADDRESS));
+
+      expect(result.current.pricePerShare).toBe(0.5);
+      expect(result.current.pricePerShareFormatted).toBe("0.5000");
+    });
+
+    it("handles extremely high PPS (100x gain)", () => {
+      mockUseReadContracts.mockReturnValue({
+        data: [
+          { result: 18, status: "success" },
+          { result: BigInt("100000000000000000000"), status: "success" }, // 100 PPS
+        ],
+        isLoading: false,
+        error: null,
+      } as ReturnType<typeof useReadContracts>);
+
+      const { result } = renderHook(() => usePricePerShare(VAULT_ADDRESS));
+
+      expect(result.current.pricePerShare).toBe(100);
+    });
+
+    it("handles 6 decimals (USDC-like vault)", () => {
+      mockUseReadContracts.mockReturnValue({
+        data: [
+          { result: 6, status: "success" },
+          { result: BigInt("1050000"), status: "success" }, // 1.05 with 6 decimals
+        ],
+        isLoading: false,
+        error: null,
+      } as ReturnType<typeof useReadContracts>);
+
+      const { result } = renderHook(() => usePricePerShare(VAULT_ADDRESS));
+
+      expect(result.current.decimals).toBe(6);
+      // Note: The hook uses 10**18 for args regardless, so PPS calc depends on implementation
+    });
+
+    it("handles 8 decimals (WBTC-like vault)", () => {
+      mockUseReadContracts.mockReturnValue({
+        data: [
+          { result: 8, status: "success" },
+          { result: BigInt("105000000"), status: "success" }, // 1.05 with 8 decimals
+        ],
+        isLoading: false,
+        error: null,
+      } as ReturnType<typeof useReadContracts>);
+
+      const { result } = renderHook(() => usePricePerShare(VAULT_ADDRESS));
+
+      expect(result.current.decimals).toBe(8);
+    });
+
+    it("handles partial failure - decimals succeeds, convertToAssets fails", () => {
+      mockUseReadContracts.mockReturnValue({
+        data: [
+          { result: 18, status: "success" },
+          { result: undefined, status: "failure" },
+        ],
+        isLoading: false,
+        error: null,
+      } as ReturnType<typeof useReadContracts>);
+
+      const { result } = renderHook(() => usePricePerShare(VAULT_ADDRESS));
+
+      // Should fallback to default PPS of 1
+      expect(result.current.pricePerShare).toBe(1);
+    });
+
+    it("handles partial failure - decimals fails, convertToAssets succeeds", () => {
+      mockUseReadContracts.mockReturnValue({
+        data: [
+          { result: undefined, status: "failure" },
+          { result: BigInt("1050000000000000000"), status: "success" },
+        ],
+        isLoading: false,
+        error: null,
+      } as ReturnType<typeof useReadContracts>);
+
+      const { result } = renderHook(() => usePricePerShare(VAULT_ADDRESS));
+
+      // Should use default decimals of 18
+      expect(result.current.decimals).toBe(18);
+    });
+
+    it("handles zero PPS (vault exploited/drained) - falls back to 1", () => {
+      mockUseReadContracts.mockReturnValue({
+        data: [
+          { result: 18, status: "success" },
+          { result: BigInt("0"), status: "success" }, // 0 PPS
+        ],
+        isLoading: false,
+        error: null,
+      } as ReturnType<typeof useReadContracts>);
+
+      const { result } = renderHook(() => usePricePerShare(VAULT_ADDRESS));
+
+      // Hook returns fallback of 1 when PPS is 0 to avoid display/calculation issues
+      expect(result.current.pricePerShare).toBe(1);
+    });
   });
 
   describe("useMultiplePricePerShare", () => {
@@ -181,6 +292,44 @@ describe("usePricePerShare integration", () => {
 
       expect(result.current.prices).toHaveLength(0);
       expect(result.current.isLoading).toBe(false);
+    });
+
+    it("handles mixed success/failure across vaults", () => {
+      mockUseReadContracts.mockReturnValue({
+        data: [
+          { result: 18, status: "success" }, // vault 1 decimals
+          { result: BigInt("1050000000000000000"), status: "success" }, // vault 1 PPS
+          { result: undefined, status: "failure" }, // vault 2 decimals failed
+          { result: undefined, status: "failure" }, // vault 2 PPS failed
+        ],
+        isLoading: false,
+        error: null,
+      } as ReturnType<typeof useReadContracts>);
+
+      const { result } = renderHook(() =>
+        useMultiplePricePerShare(VAULT_ADDRESSES)
+      );
+
+      expect(result.current.prices[0].pricePerShare).toBe(1.05);
+      expect(result.current.prices[1].pricePerShare).toBe(1); // fallback
+    });
+
+    it("handles single vault in array", () => {
+      mockUseReadContracts.mockReturnValue({
+        data: [
+          { result: 18, status: "success" },
+          { result: BigInt("1200000000000000000"), status: "success" },
+        ],
+        isLoading: false,
+        error: null,
+      } as ReturnType<typeof useReadContracts>);
+
+      const { result } = renderHook(() =>
+        useMultiplePricePerShare([VAULT_ADDRESSES[0]])
+      );
+
+      expect(result.current.prices).toHaveLength(1);
+      expect(result.current.prices[0].pricePerShare).toBe(1.2);
     });
   });
 });
