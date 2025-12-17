@@ -10,8 +10,16 @@ export default defineConfig({
     setupFiles: ["./vitest.setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     coverage: {
+      provider: "v8",
       reporter: ["text", "json", "html"],
-      exclude: ["node_modules/", "vitest.setup.ts"],
+      exclude: [
+        "node_modules/",
+        "vitest.setup.ts",
+        "src/__tests__/**",
+        "**/*.d.ts",
+        "**/*.config.*",
+      ],
+      include: ["src/**/*.{ts,tsx}"],
     },
   },
   resolve: {
