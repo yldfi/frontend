@@ -14,9 +14,11 @@
  * - network_switch: When user switches networks
  */
 
+import { isAnalyticsAllowed } from "@/components/CookieConsent";
+
 declare global {
   interface Window {
-    gtag: (
+    gtag?: (
       command: "event" | "config" | "set",
       action: string,
       params?: Record<string, unknown>
@@ -26,29 +28,117 @@ declare global {
 
 type EventParams = Record<string, string | number | boolean | undefined>;
 
+// Queue for events that fire before gtag is ready
+const eventQueue: Array<{ eventName: string; params?: EventParams }> = [];
+let isProcessingQueue = false;
+
+/**
+ * Process queued events once gtag is available
+ */
+function processEventQueue(): void {
+  if (isProcessingQueue || typeof window === "undefined" || !window.gtag) return;
+
+  isProcessingQueue = true;
+  while (eventQueue.length > 0) {
+    const event = eventQueue.shift();
+    if (event) {
+      try {
+        window.gtag("event", event.eventName, event.params);
+      } catch (error) {
+        console.error("Analytics error processing queued event:", error);
+      }
+    }
+  }
+  isProcessingQueue = false;
+}
+
 /**
  * Track a custom event in Google Analytics
+ * Events are queued if gtag isn't ready yet
+ * Respects user consent for EEA visitors
  */
 export function trackEvent(eventName: string, params?: EventParams): void {
+  if (typeof window === "undefined") return;
+
+  // Check if analytics is allowed (respects EEA consent)
+  if (!isAnalyticsAllowed()) return;
+
+  // If gtag is ready, send immediately
+  if (window.gtag) {
+    try {
+      window.gtag("event", eventName, params);
+    } catch (error) {
+      console.error("Analytics error:", error);
+    }
+    // Also process any queued events
+    processEventQueue();
+  } else {
+    // Queue the event for later
+    eventQueue.push({ eventName, params });
+
+    // Set up a check for when gtag becomes available
+    const checkGtag = setInterval(() => {
+      if (window.gtag) {
+        clearInterval(checkGtag);
+        processEventQueue();
+      }
+    }, 100);
+
+    // Stop checking after 10 seconds
+    setTimeout(() => clearInterval(checkGtag), 10000);
+  }
+}
+
+// Queue for user properties that are set before gtag is ready
+const userPropertyQueue: Array<{ name: string; value: string | boolean }> = [];
+
+/**
+ * Process queued user properties once gtag is available
+ */
+function processUserPropertyQueue(): void {
   if (typeof window === "undefined" || !window.gtag) return;
 
-  try {
-    window.gtag("event", eventName, params);
-  } catch (error) {
-    console.error("Analytics error:", error);
+  while (userPropertyQueue.length > 0) {
+    const prop = userPropertyQueue.shift();
+    if (prop) {
+      try {
+        window.gtag("set", "user_properties", { [prop.name]: prop.value });
+      } catch (error) {
+        console.error("Analytics error processing queued user property:", error);
+      }
+    }
   }
 }
 
 /**
  * Set a user property in Google Analytics
+ * Properties are queued if gtag isn't ready yet
+ * Respects user consent for EEA visitors
  */
 export function setUserProperty(name: string, value: string | boolean): void {
-  if (typeof window === "undefined" || !window.gtag) return;
+  if (typeof window === "undefined") return;
 
-  try {
-    window.gtag("set", "user_properties", { [name]: value });
-  } catch (error) {
-    console.error("Analytics error:", error);
+  // Check if analytics is allowed (respects EEA consent)
+  if (!isAnalyticsAllowed()) return;
+
+  if (window.gtag) {
+    try {
+      window.gtag("set", "user_properties", { [name]: value });
+    } catch (error) {
+      console.error("Analytics error:", error);
+    }
+    processUserPropertyQueue();
+  } else {
+    userPropertyQueue.push({ name, value });
+
+    const checkGtag = setInterval(() => {
+      if (window.gtag) {
+        clearInterval(checkGtag);
+        processUserPropertyQueue();
+      }
+    }, 100);
+
+    setTimeout(() => clearInterval(checkGtag), 10000);
   }
 }
 

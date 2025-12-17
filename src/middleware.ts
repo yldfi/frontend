@@ -25,6 +25,40 @@ const BLOCKED_COUNTRIES = new Set([
   "SS", // South Sudan
 ]);
 
+// EEA (European Economic Area) countries - require cookie consent under GDPR
+const EEA_COUNTRIES = new Set([
+  "AT", // Austria
+  "BE", // Belgium
+  "BG", // Bulgaria
+  "HR", // Croatia
+  "CY", // Cyprus
+  "CZ", // Czech Republic
+  "DK", // Denmark
+  "EE", // Estonia
+  "FI", // Finland
+  "FR", // France
+  "DE", // Germany
+  "GR", // Greece
+  "HU", // Hungary
+  "IE", // Ireland
+  "IT", // Italy
+  "LV", // Latvia
+  "LT", // Lithuania
+  "LU", // Luxembourg
+  "MT", // Malta
+  "NL", // Netherlands
+  "PL", // Poland
+  "PT", // Portugal
+  "RO", // Romania
+  "SK", // Slovakia
+  "SI", // Slovenia
+  "ES", // Spain
+  "SE", // Sweden
+  "IS", // Iceland
+  "LI", // Liechtenstein
+  "NO", // Norway
+]);
+
 // Custom HTML page for blocked users - matches webapp styling
 const blockedPageHtml = `<!DOCTYPE html>
 <html lang="en" class="dark">
@@ -177,7 +211,25 @@ export function middleware(request: NextRequest) {
     });
   }
 
-  return NextResponse.next();
+  // Set EEA cookie for consent management
+  const response = NextResponse.next();
+  const isEEA = EEA_COUNTRIES.has(country);
+
+  // In development, don't overwrite manually set geo_region cookie (for testing)
+  const existingGeoRegion = request.cookies.get("geo_region")?.value;
+  const isDev = process.env.NODE_ENV === "development";
+
+  if (!isDev || !existingGeoRegion) {
+    response.cookies.set("geo_region", isEEA ? "EEA" : "OTHER", {
+      httpOnly: false, // Must be readable by JavaScript
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 60 * 60 * 24, // 24 hours
+      path: "/",
+    });
+  }
+
+  return response;
 }
 
 // Configure which paths the middleware runs on

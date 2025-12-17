@@ -2,6 +2,8 @@
 
 import dynamic from "next/dynamic";
 import { type ReactNode } from "react";
+import { CookieConsent } from "@/components/CookieConsent";
+import { GoogleAnalytics } from "@/components/GoogleAnalytics";
 
 const Providers = dynamic(
   () => import("@/components/Providers").then((mod) => mod.Providers),
@@ -9,5 +11,13 @@ const Providers = dynamic(
 );
 
 export function ClientProviders({ children }: { children: ReactNode }) {
-  return <Providers>{children}</Providers>;
+  const gaId = process.env.NEXT_PUBLIC_GA_ID;
+
+  return (
+    <Providers>
+      {children}
+      <CookieConsent />
+      {gaId && <GoogleAnalytics gaId={gaId} />}
+    </Providers>
+  );
 }
