@@ -11,12 +11,14 @@ import { AnalyticsProvider } from "@/components/AnalyticsProvider";
 import "@rainbow-me/rainbowkit/styles.css";
 
 // Custom avatar that uses our CORS proxy for ENS avatars
-const CustomAvatar: AvatarComponent = ({ address, ensImage, size }) => {
+// We intentionally ignore RainbowKit's ensImage prop to avoid CORS errors
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const CustomAvatar: AvatarComponent = ({ address, ensImage: _ensImage, size }) => {
   const { data: ensName } = useEnsName({ address: address as `0x${string}`, chainId: 1 });
   const [error, setError] = useState(false);
 
-  // Compute avatar URL directly (no useEffect needed)
-  const avatarUrl = ensImage || (ensName ? `/api/avatar/${ensName}` : null);
+  // Always use our CORS proxy - ignore RainbowKit's ensImage to avoid CORS errors
+  const avatarUrl = ensName ? `/api/avatar/${ensName}` : null;
 
   // Fallback gradient based on address
   const color1 = `#${address.slice(2, 8)}`;
