@@ -3,26 +3,47 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WagmiProvider } from "wagmi";
 import { RainbowKitProvider, darkTheme, AvatarComponent } from "@rainbow-me/rainbowkit";
+import { useEnsName } from "wagmi";
 import { config } from "@/config/wagmi";
 import { useState } from "react";
 import { AnalyticsProvider } from "@/components/AnalyticsProvider";
 
 import "@rainbow-me/rainbowkit/styles.css";
 
-// Custom avatar to avoid ENS avatar CORS issues with euc.li
-const CustomAvatar: AvatarComponent = ({ address, size }) => {
-  // Generate a consistent color from the address
-  const color = `#${address.slice(2, 8)}`;
+// Custom avatar that uses our CORS proxy for ENS avatars
+const CustomAvatar: AvatarComponent = ({ address, ensImage, size }) => {
+  const { data: ensName } = useEnsName({ address: address as `0x${string}`, chainId: 1 });
+  const [error, setError] = useState(false);
+
+  // Compute avatar URL directly (no useEffect needed)
+  const avatarUrl = ensImage || (ensName ? `/api/avatar/${ensName}` : null);
+
+  // Fallback gradient based on address
+  const color1 = `#${address.slice(2, 8)}`;
   const color2 = `#${address.slice(-6)}`;
 
+  if (error || !avatarUrl) {
+    return (
+      <div
+        style={{
+          width: size,
+          height: size,
+          borderRadius: "50%",
+          background: `linear-gradient(135deg, ${color1} 0%, ${color2} 100%)`,
+        }}
+      />
+    );
+  }
+
   return (
-    <div
-      style={{
-        width: size,
-        height: size,
-        borderRadius: "50%",
-        background: `linear-gradient(135deg, ${color} 0%, ${color2} 100%)`,
-      }}
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={avatarUrl}
+      alt="ENS Avatar"
+      width={size}
+      height={size}
+      style={{ borderRadius: "50%" }}
+      onError={() => setError(true)}
     />
   );
 };
