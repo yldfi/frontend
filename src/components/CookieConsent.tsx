@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { updateGoogleConsent } from "./GoogleAnalytics";
 
 // Cookie utility functions
 function getCookie(name: string): string | null {
@@ -58,6 +59,7 @@ function shouldShowConsentBanner(): boolean {
 
 /**
  * Cookie consent banner - only shows for EEA visitors
+ * Implements Google Consent Mode v2 by updating consent state
  */
 export function CookieConsent() {
   const [showBanner, setShowBanner] = useState(() => shouldShowConsentBanner());
@@ -66,13 +68,16 @@ export function CookieConsent() {
     setCookie("analytics_consent", "accepted", 365);
     setShowBanner(false);
 
-    // Reload to enable analytics with consent
-    window.location.reload();
+    // Update Google Consent Mode - grant all consent
+    updateGoogleConsent(true);
   };
 
   const handleReject = () => {
     setCookie("analytics_consent", "rejected", 365);
     setShowBanner(false);
+
+    // Update Google Consent Mode - deny all consent
+    updateGoogleConsent(false);
   };
 
   if (!showBanner) return null;
