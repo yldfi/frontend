@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 
 // Test the middleware logic by extracting testable functions
 // Since Next.js server components are hard to test directly, we test the business logic
