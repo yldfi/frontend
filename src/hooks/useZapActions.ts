@@ -9,7 +9,7 @@ import {
   useSendTransaction,
 } from "wagmi";
 import { parseUnits, maxUint256 } from "viem";
-import { ENSO_ROUTER, ETH_ADDRESS } from "@/lib/enso";
+import { ETH_ADDRESS } from "@/lib/enso";
 import type { ZapQuote } from "@/types/enso";
 
 const ERC20_ABI = [
@@ -62,14 +62,17 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     quote?.inputToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
   const tokenAddress = quote?.inputToken.address as `0x${string}` | undefined;
 
+  // Get the router address from the quote (Enso may use different routers)
+  const routerAddress = quote?.tx?.to as `0x${string}` | undefined;
+
   // Check allowance for non-ETH tokens
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
     address: tokenAddress,
     abi: ERC20_ABI,
     functionName: "allowance",
-    args: userAddress ? [userAddress, ENSO_ROUTER as `0x${string}`] : undefined,
+    args: userAddress && routerAddress ? [userAddress, routerAddress] : undefined,
     query: {
-      enabled: !!userAddress && !isEth && !!tokenAddress,
+      enabled: !!userAddress && !isEth && !!tokenAddress && !!routerAddress,
     },
   });
 
@@ -144,16 +147,16 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
   // Approve max tokens
   const approve = useCallback(() => {
-    if (!userAddress || isEth || !tokenAddress) return;
+    if (!userAddress || isEth || !tokenAddress || !routerAddress) return;
     setActionState("approving");
 
     writeApprove({
       address: tokenAddress,
       abi: ERC20_ABI,
       functionName: "approve",
-      args: [ENSO_ROUTER as `0x${string}`, maxUint256],
+      args: [routerAddress, maxUint256],
     });
-  }, [userAddress, isEth, tokenAddress, writeApprove]);
+  }, [userAddress, isEth, tokenAddress, routerAddress, writeApprove]);
 
   // Execute zap transaction
   const executeZap = useCallback(() => {
