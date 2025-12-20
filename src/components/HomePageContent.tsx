@@ -141,7 +141,7 @@ export function HomePageContent() {
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <Logo size={28} />
-            <span className="mono text-lg font-medium tracking-tight">
+            <span className="mono text-lg font-medium tracking-tight leading-none">
               yld<span className="text-[var(--muted-foreground)]">_</span>fi
             </span>
           </Link>

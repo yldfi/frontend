@@ -105,7 +105,6 @@ const blockedPageHtml = `<!DOCTYPE html>
       width: 64px;
       height: 64px;
       border-radius: 50%;
-      margin-bottom: 24px;
     }
     .brand {
       display: flex;
@@ -118,6 +117,7 @@ const blockedPageHtml = `<!DOCTYPE html>
       font-family: 'JetBrains Mono', monospace;
       font-size: 1.25rem;
       font-weight: 500;
+      margin-bottom: 0;
     }
     .brand-text span {
       color: var(--muted-foreground);
