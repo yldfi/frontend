@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Access Restricted | YLD.fi</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <style>
+    :root {
+      --background: #09090b;
+      --foreground: #fafafa;
+      --muted: #18181b;
+      --muted-foreground: #a1a1aa;
+      --border: #27272a;
+      --accent: #f59e0b;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background: var(--background);
+      color: var(--foreground);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      -webkit-font-smoothing: antialiased;
+      line-height: 1.6;
+    }
+    .container { max-width: 480px; text-align: center; }
+    .logo { width: 64px; height: 64px; border-radius: 50%; }
+    .brand { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 32px; }
+    .brand-text { font-family: 'JetBrains Mono', monospace; font-size: 1.25rem; font-weight: 500; margin-bottom: 0; }
+    .brand-text span { color: var(--muted-foreground); }
+    h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 16px; }
+    p { color: var(--muted-foreground); line-height: 1.6; margin-bottom: 12px; font-size: 0.9375rem; }
+    .card { background: var(--muted); border: 1px solid var(--border); border-radius: 8px; padding: 24px; margin: 24px 0; }
+    .card p:last-child { margin-bottom: 0; }
+    .footer { margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--border); }
+    .footer p { font-size: 0.75rem; margin-bottom: 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="brand">
+      <img src="/logo-128.png" alt="YLD.fi" class="logo">
+      <p class="brand-text">yld<span>_</span>fi</p>
+    </div>
+    <h1>Access Restricted</h1>
+    <div class="card">
+      <p>This interface is not available in your region due to regulatory restrictions.</p>
+    </div>
+    <div class="footer">
+      <p>© 2025 YLD.fi. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>
