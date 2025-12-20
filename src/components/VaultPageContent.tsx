@@ -313,7 +313,7 @@ export function VaultPageContent({ id }: { id: string }) {
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <Logo size={28} />
-            <span className="mono text-lg font-medium tracking-tight">
+            <span className="mono text-lg font-medium tracking-tight leading-none">
               yld<span className="text-[var(--muted-foreground)]">_</span>fi
             </span>
           </Link>
@@ -549,8 +549,8 @@ export function VaultPageContent({ id }: { id: string }) {
                   </div>
                 </div>
 
-                {/* Form */}
-                <div className="p-5 space-y-5">
+                {/* Form - min-height prevents layout shift when switching tabs */}
+                <div className="p-5 space-y-5 min-h-[502px]">
                   {/* Deposit/Withdraw Form */}
                   {activeTab !== "zap" && (
                     <>
@@ -862,12 +862,13 @@ export function VaultPageContent({ id }: { id: string }) {
                         </div>
                       )}
 
-                      {/* Error display */}
-                      {(zapQuoteError || zapActionError) && (
-                        <p className="text-xs text-[var(--destructive)]">
-                          {zapQuoteError?.message || zapActionError}
-                        </p>
-                      )}
+                      {/* Error display - fixed height to prevent layout shift */}
+                      <p className={cn(
+                        "text-xs h-4",
+                        (zapQuoteError || zapActionError) ? "text-[var(--destructive)]" : "invisible"
+                      )}>
+                        {zapQuoteError?.message || zapActionError || "\u00A0"}
+                      </p>
 
                       {/* Zap Action Button */}
                       {isConnected ? (

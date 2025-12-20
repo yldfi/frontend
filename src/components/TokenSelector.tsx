@@ -200,7 +200,7 @@ export function TokenSelector({
         onClick={() => !disabled && setIsOpen(true)}
         disabled={disabled}
         className={cn(
-          "flex items-center gap-1.5 px-2 h-6 rounded-md border border-[var(--border)]",
+          "flex items-center gap-1.5 px-2 h-6 min-w-[72px] rounded-md border border-[var(--border)]",
           "hover:border-[var(--border-hover)] transition-colors",
           "bg-[var(--muted)]",
           disabled && "opacity-50 cursor-not-allowed"
