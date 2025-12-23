@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 /**
  * Explorer API - Server-side Etherscan proxy with Cloudflare KV caching
@@ -42,14 +43,16 @@ async function rateLimitedFetch(url: string): Promise<Response> {
   return fetch(url);
 }
 
-// Get KV namespace - returns null if not available (local dev)
-// Note: KV caching is disabled for now due to OpenNext/Cloudflare compatibility issues
-// The API still works, but responses are not cached in KV
-async function getKV(): Promise<KVNamespace | null> {
-  // TODO: Re-enable once OpenNext supports getCloudflareContext properly
-  // For now, the API works without KV caching - each request goes to Etherscan
-  // Rate limiting still works to prevent hitting API limits
-  return null;
+// Get KV namespace from Cloudflare context
+// Returns null in local dev if bindings aren't configured
+function getKV(): KVNamespace | null {
+  try {
+    const ctx = getCloudflareContext();
+    return (ctx.env as { EXPLORER_CACHE?: KVNamespace }).EXPLORER_CACHE || null;
+  } catch {
+    // Not running in Cloudflare environment (local dev without bindings)
+    return null;
+  }
 }
 
 export async function GET(request: NextRequest) {
@@ -74,7 +77,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Etherscan API key not configured" }, { status: 500 });
   }
 
-  const kv = await getKV();
+  const kv = getKV();
 
   try {
     switch (action) {
