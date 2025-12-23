@@ -52,7 +52,7 @@ export function ContractView({
     isLoading: true,
   });
   const [expandedAddresses, setExpandedAddresses] = useState<Set<string>>(new Set());
-  const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed || depth > 0);
+  const [isCollapsed, setIsCollapsed] = useState(depth > 0 ? (defaultCollapsed ?? true) : false);
   const [showRawValues, setShowRawValues] = useState<Set<string>>(new Set());
   const [natspec, setNatspec] = useState<NatSpec | null>(null);
   const [safeInfo, setSafeInfo] = useState<GnosisSafeInfo | null>(null);
@@ -271,13 +271,13 @@ export function ContractView({
   const linkedAddresses = extractAddresses(contractData.values);
   const linkedCount = linkedAddresses.length;
 
-  // Depth colors using design system rainbow palette
+  // Depth colors - neutral borders that don't imply links
   const depthColors = [
-    "border-[var(--rainbow-blue)]",
+    "border-[var(--border)]",
+    "border-[var(--muted-foreground)]",
     "border-[var(--success)]",
-    "border-[var(--rainbow-cyan)]",
-    "border-[var(--accent)]",
     "border-[var(--rainbow-red)]",
+    "border-[var(--foreground)]/50",
   ];
 
   const borderColor = depthColors[depth % depthColors.length];
@@ -373,10 +373,15 @@ export function ContractView({
                   : "Max depth reached"
         }
       >
-        {canExpand && <span className="text-xs">{isExpanded ? "▼" : "▶"}</span>}
-        {addr}
+        {/* Fixed-width indicator slot to prevent text shifting */}
+        {canExpand && (
+          <span className="text-xs w-3 inline-block shrink-0">
+            {isExpanded ? "▼" : "▶"}
+          </span>
+        )}
+        <span className="break-all">{addr}</span>
         {isImplementation && (
-          <span className="text-xs bg-[var(--rainbow-cyan)]/50 px-1 rounded">impl</span>
+          <span className="text-xs bg-[var(--muted)] px-1 rounded text-[var(--muted-foreground)]">impl</span>
         )}
         {isEOA && (
           <span className="text-xs bg-[var(--muted)] px-1 rounded">EOA</span>
@@ -407,13 +412,17 @@ export function ContractView({
     >
       {/* Header */}
       <div
-        className="flex items-center justify-between p-4 cursor-pointer hover:bg-[var(--muted)]/50 transition-colors"
-        onClick={() => setIsCollapsed(!isCollapsed)}
+        className={`flex items-center justify-between p-4 transition-colors ${
+          depth > 0 ? "cursor-pointer hover:bg-[var(--muted)]/50" : ""
+        }`}
+        onClick={depth > 0 ? () => setIsCollapsed(!isCollapsed) : undefined}
       >
         <div className="flex items-center gap-3 min-w-0 flex-1">
-          <span className="text-[var(--muted-foreground)] text-lg">
-            {isCollapsed ? "▶" : "▼"}
-          </span>
+          {depth > 0 && (
+            <span className="text-[var(--muted-foreground)] text-lg w-5 inline-block text-center shrink-0">
+              {isCollapsed ? "▶" : "▼"}
+            </span>
+          )}
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
               {contractData.isLoading ? (
@@ -433,7 +442,7 @@ export function ContractView({
                 </span>
               )}
               {contractData.implementationAddress && (
-                <span className="text-xs bg-[var(--rainbow-cyan)] px-2 py-1 rounded text-white">Proxy</span>
+                <span className="text-xs bg-[var(--muted)] px-2 py-1 rounded text-[var(--muted-foreground)]">Proxy</span>
               )}
               {safeInfo && (
                 <span className="text-xs bg-[var(--success)] px-2 py-1 rounded text-white">
@@ -455,7 +464,7 @@ export function ContractView({
                 href={`https://etherscan.io/address/${contractData.implementationAddress}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs text-[var(--rainbow-cyan)] hover:text-[var(--accent)] mono truncate block"
+                className="text-xs text-[var(--muted-foreground)]/70 hover:text-[var(--accent)] mono truncate block"
                 onClick={(e) => e.stopPropagation()}
               >
                 impl: {contractData.implementationAddress}
@@ -464,14 +473,11 @@ export function ContractView({
           </div>
         </div>
 
-        <div className="flex items-center gap-2 ml-2">
-          {contractData.isLoading && <Loader2 size={20} className="animate-spin text-[var(--accent)]" />}
-          {!contractData.isLoading && linkedCount > 0 && (
-            <span className="text-xs bg-[var(--accent)] px-2 py-1 rounded text-[var(--accent-foreground)]">
-              {linkedCount} linked
-            </span>
-          )}
-        </div>
+        {!contractData.isLoading && linkedCount > 0 && (
+          <span className="text-xs bg-[var(--muted)] px-2 py-1 rounded text-[var(--muted-foreground)] ml-2">
+            {linkedCount} linked
+          </span>
+        )}
       </div>
 
       {/* Content */}
@@ -479,8 +485,8 @@ export function ContractView({
         <div className="px-4 pb-4">
           {/* Contract-level documentation */}
           {natspec?.contractNotice && (
-            <div className="bg-[var(--accent)]/10 border border-[var(--accent)]/30 rounded p-3 mb-4">
-              <p className="text-[var(--accent)] text-sm">{natspec.contractNotice}</p>
+            <div className="bg-[var(--muted)]/50 border border-[var(--border)] rounded p-3 mb-4">
+              <p className="text-[var(--muted-foreground)] text-sm italic">{natspec.contractNotice}</p>
             </div>
           )}
 

@@ -96,7 +96,7 @@ export function VaultPageContent({ id }: { id: string }) {
   const [activeTab, setActiveTab] = useState<"deposit" | "withdraw" | "zap">("deposit");
 
   // Contract explorer state
-  const { isOpen: explorerOpen, address: explorerAddress, title: explorerTitle, openExplorer, closeExplorer } = useContractExplorer();
+  const { isOpen: explorerOpen, address: explorerAddress, title: explorerTitle, lastUpdated: explorerLastUpdated, icon: explorerIcon, openExplorer, closeExplorer } = useContractExplorer();
   const [amount, setAmount] = useState("");
 
   // Zap state
@@ -417,8 +417,8 @@ export function VaultPageContent({ id }: { id: string }) {
                     </span>
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => openExplorer(vault.contractAddress, vault.name)}
-                        className="mono text-xs px-2 py-1 bg-[var(--muted)] hover:bg-[var(--muted)]/80 rounded flex items-center gap-1 transition-colors"
+                        onClick={() => openExplorer(vault.contractAddress, vault.name, vault.logo)}
+                        className="mono text-xs px-2 py-1 bg-[var(--muted)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] rounded flex items-center gap-1 transition-colors"
                       >
                         <Search size={10} />
                         Explore
@@ -439,8 +439,8 @@ export function VaultPageContent({ id }: { id: string }) {
                       <span className="text-[var(--muted-foreground)]">Strategy</span>
                       <div className="flex items-center gap-2">
                         <button
-                          onClick={() => openExplorer(vault.underlyingStrategy!, "yscvxCRV Strategy")}
-                          className="mono text-xs px-2 py-1 bg-[var(--muted)] hover:bg-[var(--muted)]/80 rounded flex items-center gap-1 transition-colors"
+                          onClick={() => openExplorer(vault.underlyingStrategy!, "yscvxCRV Strategy", vault.logo)}
+                          className="mono text-xs px-2 py-1 bg-[var(--muted)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] rounded flex items-center gap-1 transition-colors"
                         >
                           <Search size={10} />
                           Explore
@@ -1127,6 +1127,8 @@ export function VaultPageContent({ id }: { id: string }) {
         isOpen={explorerOpen}
         onClose={closeExplorer}
         title={explorerTitle}
+        lastUpdated={explorerLastUpdated}
+        icon={explorerIcon}
       />
     </div>
   );
