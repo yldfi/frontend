@@ -104,26 +104,28 @@ export async function fetchEnsoTokenList(): Promise<EnsoToken[]> {
     throw new Error("Failed to fetch token list");
   }
 
-  const data = await response.json();
-  const rawTokens = data.data || data || [];
+  interface RawToken {
+    address?: string;
+    chainId?: number;
+    name?: string;
+    symbol?: string;
+    decimals?: number;
+    logosUri?: string[];
+    type?: string;
+  }
+
+  const data = (await response.json()) as { data?: RawToken[] } | RawToken[];
+  const rawTokens: RawToken[] = (Array.isArray(data) ? data : data.data) || [];
 
   // Map to our type
   const tokens: EnsoToken[] = rawTokens
-    .filter((t: { address?: string; symbol?: string }) => t.address && t.symbol)
-    .map((t: {
-      address: string;
-      chainId: number;
-      name?: string;
-      symbol?: string;
-      decimals: number;
-      logosUri?: string[];
-      type?: string;
-    }) => ({
-      address: t.address,
-      chainId: t.chainId,
+    .filter((t) => t.address && t.symbol)
+    .map((t) => ({
+      address: t.address!,
+      chainId: t.chainId || CHAIN_ID,
       name: t.name || t.symbol || "Unknown",
       symbol: t.symbol || "???",
-      decimals: t.decimals,
+      decimals: t.decimals || 18,
       logoURI: t.logosUri?.[0], // Take first logo
       type: (t.type as "base" | "defi") || "base",
     }));
@@ -235,11 +237,11 @@ export async function fetchTokens(params?: {
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
+    const error = (await response.json().catch(() => ({}))) as { message?: string };
     throw new Error(error.message || "Failed to fetch tokens");
   }
 
-  return response.json();
+  return response.json() as Promise<EnsoTokensResponse>;
 }
 
 /**
@@ -274,11 +276,11 @@ export async function fetchRoute(params: {
   );
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
+    const error = (await response.json().catch(() => ({}))) as { message?: string };
     throw new Error(error.message || "Failed to fetch route");
   }
 
-  return response.json();
+  return response.json() as Promise<EnsoRouteResponse>;
 }
 
 /**
@@ -361,11 +363,11 @@ export async function fetchBundle(params: {
   );
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
+    const error = (await response.json().catch(() => ({}))) as { message?: string };
     throw new Error(error.message || "Failed to bundle actions");
   }
 
-  return response.json();
+  return response.json() as Promise<EnsoBundleResponse>;
 }
 
 /**

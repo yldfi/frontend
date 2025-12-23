@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useAccount, useBalance } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
-import { ArrowLeft, ArrowUpRight, ExternalLink, Loader2 } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, ExternalLink, Loader2, Search } from "lucide-react";
+import { ContractExplorer, useContractExplorer } from "@/components/ContractExplorer";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
@@ -93,6 +94,9 @@ export function VaultPageContent({ id }: { id: string }) {
   const { isConnected, address: userAddress } = useAccount();
   const { openConnectModal } = useConnectModal();
   const [activeTab, setActiveTab] = useState<"deposit" | "withdraw" | "zap">("deposit");
+
+  // Contract explorer state
+  const { isOpen: explorerOpen, address: explorerAddress, title: explorerTitle, openExplorer, closeExplorer } = useContractExplorer();
   const [amount, setAmount] = useState("");
 
   // Zap state
@@ -411,28 +415,46 @@ export function VaultPageContent({ id }: { id: string }) {
                     <span className="text-[var(--muted-foreground)]">
                       {vault.type === "strategy" ? "Strategy" : "Vault"}
                     </span>
-                    <a
-                      href={vault.links?.etherscan || `https://etherscan.io/address/${vault.contractAddress}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mono text-sm flex items-center gap-1 hover:text-[var(--accent)] transition-colors"
-                    >
-                      {vault.contractAddress.slice(0, 6)}...{vault.contractAddress.slice(-4)}
-                      <ExternalLink size={12} />
-                    </a>
-                  </div>
-                  {vault.underlyingStrategy && vault.type === "vault" && (
-                    <div className="flex items-center justify-between py-3 border-b border-[var(--border)]">
-                      <span className="text-[var(--muted-foreground)]">Strategy</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => openExplorer(vault.contractAddress, vault.name)}
+                        className="mono text-xs px-2 py-1 bg-[var(--muted)] hover:bg-[var(--muted)]/80 rounded flex items-center gap-1 transition-colors"
+                      >
+                        <Search size={10} />
+                        Explore
+                      </button>
                       <a
-                        href={`https://etherscan.io/address/${vault.underlyingStrategy}`}
+                        href={vault.links?.etherscan || `https://etherscan.io/address/${vault.contractAddress}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="mono text-sm flex items-center gap-1 hover:text-[var(--accent)] transition-colors"
                       >
-                        {vault.underlyingStrategy.slice(0, 6)}...{vault.underlyingStrategy.slice(-4)}
+                        {vault.contractAddress.slice(0, 6)}...{vault.contractAddress.slice(-4)}
                         <ExternalLink size={12} />
                       </a>
+                    </div>
+                  </div>
+                  {vault.underlyingStrategy && vault.type === "vault" && (
+                    <div className="flex items-center justify-between py-3 border-b border-[var(--border)]">
+                      <span className="text-[var(--muted-foreground)]">Strategy</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => openExplorer(vault.underlyingStrategy!, "yscvxCRV Strategy")}
+                          className="mono text-xs px-2 py-1 bg-[var(--muted)] hover:bg-[var(--muted)]/80 rounded flex items-center gap-1 transition-colors"
+                        >
+                          <Search size={10} />
+                          Explore
+                        </button>
+                        <a
+                          href={`https://etherscan.io/address/${vault.underlyingStrategy}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mono text-sm flex items-center gap-1 hover:text-[var(--accent)] transition-colors"
+                        >
+                          {vault.underlyingStrategy.slice(0, 6)}...{vault.underlyingStrategy.slice(-4)}
+                          <ExternalLink size={12} />
+                        </a>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1098,6 +1120,14 @@ export function VaultPageContent({ id }: { id: string }) {
           </div>
         </div>
       )}
+
+      {/* Contract Explorer Modal */}
+      <ContractExplorer
+        address={explorerAddress}
+        isOpen={explorerOpen}
+        onClose={closeExplorer}
+        title={explorerTitle}
+      />
     </div>
   );
 }
