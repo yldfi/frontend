@@ -84,7 +84,6 @@ export async function GET(request: NextRequest) {
   }
 
   const kv = getKV();
-  console.log(`[Explorer API] ${action} for ${normalizedAddress.slice(0, 10)}... | KV available: ${!!kv}`);
 
   try {
     switch (action) {
@@ -95,10 +94,8 @@ export async function GET(request: NextRequest) {
         if (kv) {
           const cached = await kv.get(cacheKey);
           if (cached) {
-            console.log(`[Explorer API] ${action} → KV HIT`);
             return NextResponse.json({ result: JSON.parse(cached), cached: true }, { headers: cacheHeaders });
           }
-          console.log(`[Explorer API] ${action} → KV MISS, fetching from Etherscan`);
         }
 
         // Fetch from Etherscan
@@ -130,10 +127,8 @@ export async function GET(request: NextRequest) {
         if (kv) {
           const cached = await kv.get(cacheKey);
           if (cached) {
-            console.log(`[Explorer API] ${action} → KV HIT`);
             return NextResponse.json({ result: cached, cached: true }, { headers: cacheHeaders });
           }
-          console.log(`[Explorer API] ${action} → KV MISS, fetching from Etherscan`);
         }
 
         // Fetch from Etherscan
@@ -162,10 +157,8 @@ export async function GET(request: NextRequest) {
         if (kv) {
           const cached = await kv.get(cacheKey);
           if (cached) {
-            console.log(`[Explorer API] ${action} → KV HIT`);
             return NextResponse.json({ result: JSON.parse(cached), cached: true }, { headers: cacheHeaders });
           }
-          console.log(`[Explorer API] ${action} → KV MISS, fetching from Etherscan`);
         }
 
         // Fetch from Etherscan

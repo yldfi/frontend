@@ -35,7 +35,6 @@ interface ApiResponse<T> {
 
 async function fetchFromApi<T>(action: string, address: string, chainId: number = 1): Promise<{ result: T; kvCached: boolean }> {
   const url = `/api/explorer?action=${action}&address=${address}&chainId=${chainId}`;
-  console.log(`[Explorer] Fetching ${action} for ${address.slice(0, 10)}...`);
   const response = await fetch(url);
 
   if (!response.ok) {
@@ -44,7 +43,6 @@ async function fetchFromApi<T>(action: string, address: string, chainId: number 
   }
 
   const data = (await response.json()) as ApiResponse<T>;
-  console.log(`[Explorer] ${action} for ${address.slice(0, 10)}... → ${data.cached ? "KV CACHE" : "ETHERSCAN API"}`);
   return { result: data.result, kvCached: data.cached };
 }
 
@@ -54,7 +52,6 @@ export async function getContractABI(address: string, chainId: number = 1): Prom
   // Check in-memory cache first
   const cacheKey = `${chainId}_${normalizedAddress}`;
   if (abiCache.has(cacheKey)) {
-    console.log(`[Explorer] getABI for ${address.slice(0, 10)}... → MEMORY CACHE`);
     return abiCache.get(cacheKey)!;
   }
 
@@ -69,7 +66,6 @@ export async function getContractName(address: string, chainId: number = 1): Pro
   // Check in-memory cache first
   const cacheKey = `${chainId}_${normalizedAddress}`;
   if (nameCache.has(cacheKey)) {
-    console.log(`[Explorer] getName for ${address.slice(0, 10)}... → MEMORY CACHE`);
     return nameCache.get(cacheKey)!;
   }
 
@@ -89,7 +85,6 @@ export async function getContractNatSpec(address: string, chainId: number = 1): 
   // Check in-memory cache first
   const cacheKey = `${chainId}_${normalizedAddress}`;
   if (natspecCache.has(cacheKey)) {
-    console.log(`[Explorer] getNatSpec for ${address.slice(0, 10)}... → MEMORY CACHE`);
     return natspecCache.get(cacheKey)!;
   }
 
