@@ -3,6 +3,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { formatUsd } from "@/lib/utils";
 import { QUERY_CONFIG } from "@/config/query";
+import { CURVE_CONTROLLERS } from "@/config/vaults";
+import { fetchWithRetry } from "@/lib/fetchWithRetry";
 
 interface CurveLendingVault {
   id: string;
@@ -80,13 +82,16 @@ interface CurveApiResponse {
   };
 }
 
-// Map of yCVXCRV vault address to Curve lending market controller
-const VAULT_TO_CURVE_CONTROLLER: Record<string, string> = {
-  "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86": "0x24174143cCF438f0A1F6dCF93B468C127123A96E",
-};
+// Map of vault address to Curve lending market controller
+// Using centralized config from src/config/vaults.ts
+const VAULT_TO_CURVE_CONTROLLER: Record<string, string> = CURVE_CONTROLLERS;
 
 async function fetchCurveLendingData(): Promise<CurveLendingVault[]> {
-  const response = await fetch("https://api.curve.finance/v1/getLendingVaults/all/ethereum");
+  const response = await fetchWithRetry(
+    "https://api.curve.finance/v1/getLendingVaults/all/ethereum",
+    undefined,
+    { maxRetries: 2 }
+  );
   if (!response.ok) {
     throw new Error("Failed to fetch Curve lending data");
   }
