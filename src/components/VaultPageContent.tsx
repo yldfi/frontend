@@ -271,7 +271,7 @@ export function VaultPageContent({ id }: { id: string }) {
         </div>
       </header>
 
-      <main className="pt-16">
+      <main className="pt-16 overflow-x-hidden">
         {/* Back link */}
         <div className="border-b border-[var(--border)]">
           <div className="max-w-6xl mx-auto px-6 py-4">
@@ -447,8 +447,8 @@ export function VaultPageContent({ id }: { id: string }) {
             </div>
 
             {/* Right column - Action Card */}
-            <div className="lg:col-span-2">
-              <div className="sticky top-24 border border-[var(--border)] rounded-xl overflow-hidden">
+            <div className="lg:col-span-2 min-w-0">
+              <div className="sticky top-24 border border-[var(--border)] rounded-xl overflow-hidden w-full">
                 {/* Your Position - Always visible when connected with balance */}
                 {isConnected && vaultBalance > 0 && (
                   <div className="bg-[var(--muted)]/30 p-5 border-b border-[var(--border)]">
@@ -638,6 +638,9 @@ export function VaultPageContent({ id }: { id: string }) {
                           Connect Wallet
                         </button>
                       )}
+
+                      {/* Spacer to match Zap tab's Enso footer height */}
+                      <div className="h-[28px]" />
                     </>
                   )}
 
