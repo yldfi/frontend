@@ -18,6 +18,8 @@ interface ContractExplorerProps {
   isOpen: boolean;
   onClose: () => void;
   title?: string;
+  lastUpdated?: Date;
+  icon?: string;
 }
 
 export function ContractExplorer({
@@ -25,8 +27,21 @@ export function ContractExplorer({
   isOpen,
   onClose,
   title,
+  lastUpdated,
+  icon,
 }: ContractExplorerProps) {
   const mounted = useIsMounted();
+
+  // Format the last updated timestamp
+  const formatTimestamp = (date: Date) => {
+    return date.toLocaleString("en-GB", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
 
   // Close on escape key
   useEffect(() => {
@@ -63,10 +78,24 @@ export function ContractExplorer({
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-[var(--border)] shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-2 h-2 rounded-full bg-[var(--success)] animate-pulse" />
-            <h2 className="font-medium text-lg">
-              {title || "Contract Explorer"}
-            </h2>
+            {icon && (
+              <img
+                src={icon}
+                alt=""
+                className="w-6 h-6"
+              />
+            )}
+            {!icon && <div className="w-2 h-2 rounded-full bg-[var(--success)] animate-pulse" />}
+            <div>
+              <h2 className="font-medium text-lg">
+                {title ? `${title} Contract Explorer` : "Contract Explorer"}
+              </h2>
+              {lastUpdated && (
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  last updated: {formatTimestamp(lastUpdated)}
+                </p>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             {/* Address badge */}
@@ -117,16 +146,20 @@ export function useContractExplorer() {
     isOpen: boolean;
     address: string;
     title?: string;
+    lastUpdated?: Date;
+    icon?: string;
   }>({
     isOpen: false,
     address: "",
   });
 
-  const openExplorer = useCallback((address: string, title?: string) => {
+  const openExplorer = useCallback((address: string, title?: string, icon?: string) => {
     setExplorerState({
       isOpen: true,
       address,
       title,
+      lastUpdated: new Date(),
+      icon,
     });
   }, []);
 
