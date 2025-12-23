@@ -3,7 +3,6 @@
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useSwitchChain } from "wagmi";
 import { mainnet } from "wagmi/chains";
-import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 
 // Inner component to properly use hooks
@@ -13,27 +12,19 @@ function ConnectButtonContent({
   openAccountModal,
   openConnectModal,
   mounted,
-  showNetworkModal,
-  setShowNetworkModal,
-  handleSwitchToEthereum,
+  onSwitchNetwork,
 }: {
   account: { displayName: string } | undefined;
   chain: { unsupported?: boolean } | undefined;
   openAccountModal: () => void;
   openConnectModal: () => void;
   mounted: boolean;
-  showNetworkModal: boolean;
-  setShowNetworkModal: (show: boolean) => void;
-  handleSwitchToEthereum: () => void;
+  onSwitchNetwork: () => void;
 }) {
   const ready = mounted;
   const connected = ready && account && chain;
+  // Derive modal visibility directly - no useEffect needed
   const isWrongNetwork = connected && chain.unsupported;
-
-  // Show modal when on wrong network
-  useEffect(() => {
-    setShowNetworkModal(!!isWrongNetwork);
-  }, [isWrongNetwork, setShowNetworkModal]);
 
   return (
     <>
@@ -62,7 +53,7 @@ function ConnectButtonContent({
 
           return (
             <button
-              onClick={isWrongNetwork ? () => setShowNetworkModal(true) : openAccountModal}
+              onClick={isWrongNetwork ? onSwitchNetwork : openAccountModal}
               type="button"
               className={`mono text-sm px-4 py-2 border rounded-md transition-all cursor-pointer ${
                 isWrongNetwork
@@ -76,8 +67,8 @@ function ConnectButtonContent({
         })()}
       </div>
 
-      {/* Wrong Network Modal - rendered via portal to body */}
-      {showNetworkModal && isWrongNetwork && typeof document !== "undefined" && createPortal(
+      {/* Wrong Network Modal - shown when on wrong network (derived, not state) */}
+      {isWrongNetwork && typeof document !== "undefined" && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
           <div className="relative bg-[var(--background)] border border-[var(--border)] rounded-lg p-6 max-w-sm w-full shadow-xl">
@@ -86,7 +77,7 @@ function ConnectButtonContent({
               YLD.fi is only available on Ethereum mainnet. Please switch your network to continue.
             </p>
             <button
-              onClick={handleSwitchToEthereum}
+              onClick={onSwitchNetwork}
               className="w-full px-4 py-2 text-sm bg-white text-black rounded-md hover:bg-white/90 transition-all font-medium"
             >
               Switch to Ethereum
@@ -101,11 +92,9 @@ function ConnectButtonContent({
 
 export function CustomConnectButton() {
   const { switchChain } = useSwitchChain();
-  const [showNetworkModal, setShowNetworkModal] = useState(false);
 
   const handleSwitchToEthereum = () => {
     switchChain({ chainId: mainnet.id });
-    setShowNetworkModal(false);
   };
 
   return (
@@ -123,9 +112,7 @@ export function CustomConnectButton() {
           openAccountModal={openAccountModal}
           openConnectModal={openConnectModal}
           mounted={mounted}
-          showNetworkModal={showNetworkModal}
-          setShowNetworkModal={setShowNetworkModal}
-          handleSwitchToEthereum={handleSwitchToEthereum}
+          onSwitchNetwork={handleSwitchToEthereum}
         />
       )}
     </ConnectButton.Custom>

@@ -11,6 +11,10 @@
     {
       "binding": "VAULT_CACHE",
       "id": "196d1aceae10469bb4bde0495b3e3ae0"
+    },
+    {
+      "binding": "EXPLORER_CACHE",
+      "id": "f7acb436175d46b0a9da72a2d304294d"
     }
   ],
   "routes": [

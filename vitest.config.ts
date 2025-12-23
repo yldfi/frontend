@@ -26,6 +26,10 @@ export default defineConfig({
         "src/components/Logo.tsx", // SVG component
         "src/components/CustomConnectButton.tsx", // Wallet connect wrapper
         "src/components/AnalyticsProvider.tsx", // Analytics wrapper
+        "src/lib/explorer/**", // Contract explorer utilities
+        "src/components/ContractExplorer.tsx", // Contract explorer modal
+        "src/components/ContractView.tsx", // Contract view component
+        "src/types/explorer.ts", // Explorer type definitions
       ],
       include: ["src/**/*.{ts,tsx}"],
       thresholds: {
