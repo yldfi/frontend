@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, ChevronRight, ChevronDown } from "lucide-react";
 import type { ContractData } from "@/types/explorer";
 import {
   readAllViewValues,
@@ -375,8 +375,8 @@ export function ContractView({
       >
         {/* Fixed-width indicator slot to prevent text shifting */}
         {canExpand && (
-          <span className="text-xs w-3 inline-block shrink-0">
-            {isExpanded ? "▼" : "▶"}
+          <span className="w-4 inline-block shrink-0">
+            {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </span>
         )}
         <span className="break-all">{addr}</span>
@@ -412,72 +412,69 @@ export function ContractView({
     >
       {/* Header */}
       <div
-        className={`flex items-center justify-between p-4 transition-colors ${
+        className={`flex items-start gap-2 p-4 transition-colors ${
           depth > 0 ? "cursor-pointer hover:bg-[var(--muted)]/50" : ""
         }`}
         onClick={depth > 0 ? () => setIsCollapsed(!isCollapsed) : undefined}
       >
-        <div className="flex items-center gap-3 min-w-0 flex-1">
-          {depth > 0 && (
-            <span className="text-[var(--muted-foreground)] text-lg w-5 inline-block text-center shrink-0">
-              {isCollapsed ? "▶" : "▼"}
-            </span>
-          )}
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 flex-wrap">
-              {contractData.isLoading ? (
-                <span className="inline-block h-5 w-32 bg-[var(--muted)] animate-pulse rounded" />
-              ) : (
-                <h2
-                  className={`font-semibold text-[var(--foreground)] truncate ${
-                    depth === 0 ? "text-lg" : "text-base"
-                  }`}
-                >
-                  {contractData.name || "Contract"}
-                </h2>
-              )}
-              {sourceName && (
-                <span className="text-xs bg-[var(--muted)] px-2 py-1 rounded text-[var(--muted-foreground)]">
-                  {sourceName}
-                </span>
-              )}
-              {contractData.implementationAddress && (
-                <span className="text-xs bg-[var(--muted)] px-2 py-1 rounded text-[var(--muted-foreground)]">Proxy</span>
-              )}
-              {safeInfo && (
-                <span className="text-xs bg-[var(--success)] px-2 py-1 rounded text-white">
-                  Multisig {safeInfo.threshold}/{safeInfo.owners.length}
-                </span>
-              )}
-            </div>
-            <a
-              href={`https://etherscan.io/address/${address}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm text-[var(--muted-foreground)] hover:text-[var(--accent)] mono truncate block"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {address}
-            </a>
-            {contractData.implementationAddress && (
-              <a
-                href={`https://etherscan.io/address/${contractData.implementationAddress}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-[var(--muted-foreground)]/70 hover:text-[var(--accent)] mono truncate block"
-                onClick={(e) => e.stopPropagation()}
-              >
-                impl: {contractData.implementationAddress}
-              </a>
-            )}
-          </div>
-        </div>
-
-        {!contractData.isLoading && linkedCount > 0 && (
-          <span className="text-xs bg-[var(--muted)] px-2 py-1 rounded text-[var(--muted-foreground)] ml-2">
-            {linkedCount} linked
+        {depth > 0 && (
+          <span className="text-[var(--muted-foreground)] w-5 inline-block text-center shrink-0 mt-1">
+            {isCollapsed ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
           </span>
         )}
+        <div className="min-w-0 flex-1 overflow-hidden">
+          <div className="flex items-center gap-2 flex-wrap">
+            {contractData.isLoading ? (
+              <span className="inline-block h-5 w-32 bg-[var(--muted)] animate-pulse rounded" />
+            ) : (
+              <h2
+                className={`font-semibold text-[var(--foreground)] break-words ${
+                  depth === 0 ? "text-lg" : "text-base"
+                }`}
+              >
+                {contractData.name || "Contract"}
+              </h2>
+            )}
+            {sourceName && (
+              <span className="text-xs bg-[var(--muted)] px-2 py-1 rounded text-[var(--muted-foreground)] shrink-0">
+                {sourceName}
+              </span>
+            )}
+            {contractData.implementationAddress && (
+              <span className="text-xs bg-[var(--muted)] px-2 py-1 rounded text-[var(--muted-foreground)] shrink-0">Proxy</span>
+            )}
+            {safeInfo && (
+              <span className="text-xs bg-[var(--success)] px-2 py-1 rounded text-white shrink-0">
+                Multisig {safeInfo.threshold}/{safeInfo.owners.length}
+              </span>
+            )}
+            {!contractData.isLoading && linkedCount > 0 && (
+              <span className="text-xs bg-[var(--muted)] px-2 py-1 rounded text-[var(--muted-foreground)] shrink-0">
+                {linkedCount} linked
+              </span>
+            )}
+          </div>
+          <a
+            href={`https://etherscan.io/address/${address}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-[var(--muted-foreground)] hover:text-[var(--accent)] mono break-all block"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {address}
+          </a>
+          {contractData.implementationAddress && (
+            <a
+              href={`https://etherscan.io/address/${contractData.implementationAddress}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-[var(--muted-foreground)]/70 hover:text-[var(--accent)] mono break-all block"
+              onClick={(e) => e.stopPropagation()}
+            >
+              impl: {contractData.implementationAddress}
+            </a>
+          )}
+        </div>
       </div>
 
       {/* Content */}
