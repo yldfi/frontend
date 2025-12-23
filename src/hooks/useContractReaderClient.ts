@@ -19,12 +19,6 @@ export function useContractReaderClient() {
     if (publicClient) {
       // Cast to PublicClient since wagmi's type is slightly different but compatible
       setSharedClient(publicClient as unknown as PublicClient);
-      console.log("[ContractReader] Using wagmi public client");
     }
-
-    return () => {
-      // Don't clear on unmount - other components may still need it
-      // setSharedClient(null);
-    };
   }, [publicClient]);
 }
