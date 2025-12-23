@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 /**
- * Playwright E2E test configuration for YLD.fi
+ * Playwright E2E test configuration for yld_fi
  */
 export default defineConfig({
   testDir: "./e2e",

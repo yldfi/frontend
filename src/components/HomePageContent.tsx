@@ -181,7 +181,7 @@ export function HomePageContent() {
                   View Vaults
                 </a>
                 <a
-                  href="https://yldfi.gitbook.io/docs"
+                  href="https://yld_fi.gitbook.io/docs"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-2 px-5 py-2.5 border border-[var(--border)] text-sm font-medium rounded-md hover:bg-[var(--muted)] transition-colors"
@@ -435,7 +435,7 @@ export function HomePageContent() {
 
             <div className="flex items-center gap-4">
               <a
-                href="https://yldfi.gitbook.io/docs"
+                href="https://yld_fi.gitbook.io/docs"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
@@ -444,7 +444,7 @@ export function HomePageContent() {
                 <BookOpen size={18} />
               </a>
               <a
-                href="https://github.com/yldfi"
+                href="https://github.com/yld_fi"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
@@ -466,7 +466,7 @@ export function HomePageContent() {
 
           <div className="mt-12 pt-6 border-t border-[var(--border)] flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <p className="text-xs text-[var(--muted-foreground)]">
-              &copy; {new Date().getFullYear()} YLD.fi. All rights reserved.
+              &copy; {new Date().getFullYear()} yld_fi. All rights reserved.
             </p>
             <div className="flex items-center gap-4">
               <a
