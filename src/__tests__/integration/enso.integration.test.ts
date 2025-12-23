@@ -151,8 +151,9 @@ describe("enso.ts integration", () => {
         json: () => Promise.resolve({}),
       } as Response);
 
-      // The actual code throws when data is missing - this is expected
-      await expect(fetchEnsoTokenList()).rejects.toThrow();
+      // Returns empty array for malformed responses (graceful degradation)
+      const tokens = await fetchEnsoTokenList();
+      expect(tokens).toEqual([]);
     });
 
     it("handles empty token list", async () => {
