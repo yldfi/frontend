@@ -313,12 +313,8 @@ export async function readAllViewValues(
 
   // Check in-memory cache first
   if (valuesCache.has(normalizedAddress)) {
-    console.log(`[ContractReader] readAllViewValues for ${address.slice(0, 10)}... → MEMORY CACHE`);
     return valuesCache.get(normalizedAddress)!;
   }
-
-  console.log(`[ContractReader] readAllViewValues for ${address.slice(0, 10)}... → RPC MULTICALL`);
-  const startTime = performance.now();
 
   let implementationAddress: string | undefined;
 
@@ -382,9 +378,6 @@ export async function readAllViewValues(
       error: undefined,
     };
   });
-
-  const elapsed = performance.now() - startTime;
-  console.log(`[ContractReader] Multicall completed: ${viewFunctions.length} calls in ${elapsed.toFixed(0)}ms`);
 
   const result = { values, abi, implementationAddress };
   valuesCache.set(normalizedAddress, result);
