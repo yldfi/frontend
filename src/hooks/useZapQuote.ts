@@ -113,8 +113,8 @@ export function useZapQuote({
     (direction === "in" ? !!inputToken : !!outputToken);
 
   // Check if this is a vault-to-vault zap
-  // Zap Out: current vault → another YLD.fi vault
-  // Zap In: another YLD.fi vault → current vault
+  // Zap Out: current vault → another yld_fi vault
+  // Zap In: another yld_fi vault → current vault
   const isVaultToVaultOut = direction === "out" && outputToken && isYldfiVault(outputToken.address);
   const isVaultToVaultIn = direction === "in" && inputToken && isYldfiVault(inputToken.address);
   const isVaultToVault = isVaultToVaultOut || isVaultToVaultIn;

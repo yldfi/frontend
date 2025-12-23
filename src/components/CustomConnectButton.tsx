@@ -74,7 +74,7 @@ function ConnectButtonContent({
           <div className="relative bg-[var(--background)] border border-[var(--border)] rounded-lg p-6 max-w-sm w-full shadow-xl">
             <h3 className="text-lg font-medium mb-2">Wrong Network</h3>
             <p className="text-sm text-[var(--muted-foreground)] mb-6">
-              YLD.fi is only available on Ethereum mainnet. Please switch your network to continue.
+              yld_fi is only available on Ethereum mainnet. Please switch your network to continue.
             </p>
             <button
               onClick={onSwitchNetwork}
