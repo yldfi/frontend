@@ -181,7 +181,7 @@ export function HomePageContent() {
                   View Vaults
                 </a>
                 <a
-                  href="https://yld_fi.gitbook.io/docs"
+                  href="https://yldfi.gitbook.io/docs"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-2 px-5 py-2.5 border border-[var(--border)] text-sm font-medium rounded-md hover:bg-[var(--muted)] transition-colors"
@@ -435,7 +435,7 @@ export function HomePageContent() {
 
             <div className="flex items-center gap-4">
               <a
-                href="https://yld_fi.gitbook.io/docs"
+                href="https://yldfi.gitbook.io/docs"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
@@ -444,7 +444,7 @@ export function HomePageContent() {
                 <BookOpen size={18} />
               </a>
               <a
-                href="https://github.com/yld_fi"
+                href="https://github.com/yldfi"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"

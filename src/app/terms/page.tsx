@@ -189,10 +189,10 @@ export default function TermsPage() {
               If you have questions about these Terms of Service or believe you are seeing a restricted access message in error,
               please contact us at{" "}
               <a
-                href="mailto:contact@yld_fi.co"
+                href="mailto:contact@yldfi.co"
                 className="text-[var(--accent)] hover:underline"
               >
-                contact@yld_fi.co
+                contact@yldfi.co
               </a>.
             </p>
           </section>

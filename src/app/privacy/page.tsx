@@ -189,10 +189,10 @@ export default function PrivacyPage() {
             <p className="text-[var(--muted-foreground)] leading-relaxed">
               If you have questions about this Privacy Policy, please contact us at{" "}
               <a
-                href="mailto:contact@yld_fi.co"
+                href="mailto:contact@yldfi.co"
                 className="text-[var(--accent)] hover:underline"
               >
-                contact@yld_fi.co
+                contact@yldfi.co
               </a>.
             </p>
           </section>
