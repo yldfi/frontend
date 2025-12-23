@@ -5,24 +5,36 @@ import {
   formatUnits,
   type PublicClient,
   type Abi,
+  type MulticallContracts,
 } from "viem";
 import { mainnet } from "viem/chains";
 import type { ABIItem, ContractValue } from "@/types/explorer";
 import { getContractABI, isValidAddress, isZeroAddress } from "./etherscan";
 
-// Use PublicNode free RPC
-const RPC_URL = "https://ethereum-rpc.publicnode.com";
+// Fallback RPC for when no wagmi client is available
+const FALLBACK_RPC_URL = "https://ethereum-rpc.publicnode.com";
 
-let client: PublicClient | null = null;
+let fallbackClient: PublicClient | null = null;
 
-function getClient(): PublicClient {
-  if (!client) {
-    client = createPublicClient({
+function getFallbackClient(): PublicClient {
+  if (!fallbackClient) {
+    fallbackClient = createPublicClient({
       chain: mainnet,
-      transport: http(RPC_URL),
+      transport: http(FALLBACK_RPC_URL),
     });
   }
-  return client;
+  return fallbackClient;
+}
+
+// Module-level client that can be set by the app
+let sharedClient: PublicClient | null = null;
+
+export function setSharedClient(client: PublicClient | null) {
+  sharedClient = client;
+}
+
+function getClient(): PublicClient {
+  return sharedClient || getFallbackClient();
 }
 
 // In-memory caches for the session
@@ -293,9 +305,6 @@ export async function readContractValue(
   return { value: result, type: outputType };
 }
 
-// Small delay between calls
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 export async function readAllViewValues(
   address: string,
   abi?: ABIItem[]
@@ -304,8 +313,12 @@ export async function readAllViewValues(
 
   // Check in-memory cache first
   if (valuesCache.has(normalizedAddress)) {
+    console.log(`[ContractReader] readAllViewValues for ${address.slice(0, 10)}... → MEMORY CACHE`);
     return valuesCache.get(normalizedAddress)!;
   }
+
+  console.log(`[ContractReader] readAllViewValues for ${address.slice(0, 10)}... → RPC MULTICALL`);
+  const startTime = performance.now();
 
   let implementationAddress: string | undefined;
 
@@ -331,31 +344,47 @@ export async function readAllViewValues(
   }
 
   const viewFunctions = getViewFunctions(abi);
-  const values: ContractValue[] = [];
+  const publicClient = getClient();
 
-  // Process sequentially to avoid rate limiting
-  for (const func of viewFunctions) {
-    try {
-      const { value, type } = await readContractValue(address, abi!, func.name!);
-      values.push({
-        name: func.name!,
-        value,
-        type,
-        isAddress: type === "address" || (type === "address[]" && Array.isArray(value)),
-        error: undefined,
-      });
-    } catch (error) {
-      values.push({
+  // Build multicall contracts array
+  const contracts = viewFunctions.map((func) => ({
+    address: address as `0x${string}`,
+    abi: abi as Abi,
+    functionName: func.name!,
+  })) as MulticallContracts<Abi[]>;
+
+  // Execute all reads in a single batched RPC call
+  const results = await publicClient.multicall({
+    contracts,
+    allowFailure: true, // Don't throw on individual failures
+  });
+
+  // Map results to ContractValue format
+  const values: ContractValue[] = viewFunctions.map((func, index) => {
+    const result = results[index];
+    const outputType = func.outputs?.[0]?.type || "unknown";
+
+    if (result.status === "failure") {
+      return {
         name: func.name!,
         value: null,
-        type: func.outputs?.[0]?.type || "unknown",
+        type: outputType,
         isAddress: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
+        error: result.error?.message || "Call failed",
+      };
     }
-    // Small delay between calls
-    await delay(50);
-  }
+
+    return {
+      name: func.name!,
+      value: result.result,
+      type: outputType,
+      isAddress: outputType === "address" || (outputType === "address[]" && Array.isArray(result.result)),
+      error: undefined,
+    };
+  });
+
+  const elapsed = performance.now() - startTime;
+  console.log(`[ContractReader] Multicall completed: ${viewFunctions.length} calls in ${elapsed.toFixed(0)}ms`);
 
   const result = { values, abi, implementationAddress };
   valuesCache.set(normalizedAddress, result);
