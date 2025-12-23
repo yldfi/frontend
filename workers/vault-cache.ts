@@ -14,14 +14,15 @@ const PRICE_PER_SHARE = "0x99530b06"; // pricePerShare()
 const DECIMALS = "0x313ce567"; // decimals()
 
 /**
- * Safely convert BigInt with 18 decimals to Number
- * Avoids precision loss for values > Number.MAX_SAFE_INTEGER
+ * Convert BigInt with 18 decimals to Number
+ * Divides first to reduce magnitude before Number conversion.
+ * Note: Precision loss possible if intPart > Number.MAX_SAFE_INTEGER (~9e15),
+ * but typical vault TVLs are well below this threshold.
  */
 function bigIntToNumber18(value: bigint): number {
   const divisor = 10n ** 18n;
   const intPart = value / divisor;
   const fracPart = value % divisor;
-  // Integer part after division is safe, fractional part is always < 10^18
   return Number(intPart) + Number(fracPart) / 1e18;
 }
 
