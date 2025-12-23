@@ -88,10 +88,12 @@ describe("enso.ts integration", () => {
     });
 
     it("throws error on failed fetch", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-      } as Response);
+      // Mock failure for all retry attempts (initial + 2 retries)
+      const failedResponse = { ok: false, status: 500 } as Response;
+      mockFetch
+        .mockResolvedValueOnce(failedResponse)
+        .mockResolvedValueOnce(failedResponse)
+        .mockResolvedValueOnce(failedResponse);
 
       await expect(fetchEnsoTokenList()).rejects.toThrow(
         "Failed to fetch token list"
@@ -131,16 +133,23 @@ describe("enso.ts integration", () => {
     });
 
     it("handles 429 rate limit error", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 429,
-      } as Response);
+      // Mock failure for all retry attempts (429 triggers retry)
+      const rateLimitResponse = { ok: false, status: 429 } as Response;
+      mockFetch
+        .mockResolvedValueOnce(rateLimitResponse)
+        .mockResolvedValueOnce(rateLimitResponse)
+        .mockResolvedValueOnce(rateLimitResponse);
 
       await expect(fetchEnsoTokenList()).rejects.toThrow("Failed to fetch token list");
     });
 
     it("handles network timeout", async () => {
-      mockFetch.mockRejectedValueOnce(new Error("Network timeout"));
+      // Mock network error for all retry attempts
+      const networkError = new Error("Network timeout");
+      mockFetch
+        .mockRejectedValueOnce(networkError)
+        .mockRejectedValueOnce(networkError)
+        .mockRejectedValueOnce(networkError);
 
       await expect(fetchEnsoTokenList()).rejects.toThrow("Network timeout");
     });
