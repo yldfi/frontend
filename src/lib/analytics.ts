@@ -1,5 +1,5 @@
 /**
- * Google Analytics 4 Event Tracking for YLD.fi
+ * Google Analytics 4 Event Tracking for yld_fi
  *
  * Events tracked:
  * - wallet_connect: When user connects wallet

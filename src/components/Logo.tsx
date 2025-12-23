@@ -6,7 +6,7 @@ export function Logo({ size = 32 }: { size?: number }) {
   return (
     <Image
       src="/logo-128.png"
-      alt="YLD.fi"
+      alt="yld_fi"
       width={size}
       height={size}
       className="rounded-full"

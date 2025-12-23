@@ -15,11 +15,11 @@ export const CVXCRV_ADDRESS = "0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7";
 // Enso router contract address (for approvals)
 export const ENSO_ROUTER = "0x80EbA3855878739F4710233A8a19d89Bdd2ffB8E";
 
-// YLD.fi referral code for Enso attribution
+// yld_fi referral code for Enso attribution
 export const ENSO_REFERRAL_CODE = "yldfi";
 
 
-// Custom tokens not in Uniswap list (Convex ecosystem + YLD.fi vaults)
+// Custom tokens not in Uniswap list (Convex ecosystem + yld_fi vaults)
 export const CUSTOM_TOKENS: EnsoToken[] = [
   {
     address: ETH_ADDRESS,
@@ -48,11 +48,11 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
     logoURI: "https://assets.coingecko.com/coins/images/30118/thumb/crvusd.jpeg",
     type: "base",
   },
-  // YLD.fi vault tokens
+  // yld_fi vault tokens
   {
     address: "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86",
     chainId: 1,
-    name: "YLD.fi cvxCRV yVault",
+    name: "yld_fi cvxCRV yVault",
     symbol: "ycvxCRV",
     decimals: 18,
     logoURI: "/ycvxcrv-128.png",
@@ -61,7 +61,7 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
   {
     address: "0xCa960E6DF1150100586c51382f619efCCcF72706",
     chainId: 1,
-    name: "YLD.fi Convex cvxCRV Compounder",
+    name: "yld_fi Convex cvxCRV Compounder",
     symbol: "yscvxCRV",
     decimals: 18,
     logoURI: "/yscvxcrv-128.png",
@@ -317,14 +317,14 @@ export function filterTokens(tokens: EnsoToken[], query: string): EnsoToken[] {
   );
 }
 
-// YLD.fi vault addresses (for vault-to-vault routing)
+// yld_fi vault addresses (for vault-to-vault routing)
 export const YLDFI_VAULT_ADDRESSES = {
   ycvxCRV: "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86",
   yscvxCRV: "0xCa960E6DF1150100586c51382f619efCCcF72706",
 } as const;
 
 /**
- * Check if an address is a YLD.fi vault
+ * Check if an address is a yld_fi vault
  */
 export function isYldfiVault(address: string): boolean {
   const lowerAddress = address.toLowerCase();

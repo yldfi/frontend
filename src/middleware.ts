@@ -65,7 +65,7 @@ const blockedPageHtml = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Access Restricted | YLD.fi</title>
+  <title>Access Restricted | yld_fi</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
@@ -166,7 +166,7 @@ const blockedPageHtml = `<!DOCTYPE html>
 <body>
   <div class="container">
     <div class="brand">
-      <img src="/logo-128.png" alt="YLD.fi" class="logo">
+      <img src="/logo-128.png" alt="yld_fi" class="logo">
       <p class="brand-text">yld<span>_</span>fi</p>
     </div>
     <h1>Access Restricted</h1>
@@ -174,7 +174,7 @@ const blockedPageHtml = `<!DOCTYPE html>
       <p>This interface is not available in your region due to regulatory restrictions.</p>
     </div>
     <div class="footer">
-      <p>&copy; ${new Date().getFullYear()} YLD.fi. All rights reserved.</p>
+      <p>&copy; ${new Date().getFullYear()} yld_fi. All rights reserved.</p>
     </div>
   </div>
 </body>
