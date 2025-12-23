@@ -10,30 +10,8 @@ import {
 } from "wagmi";
 import { parseUnits, maxUint256 } from "viem";
 import { ETH_ADDRESS } from "@/lib/enso";
+import { ERC20_APPROVAL_ABI } from "@/lib/abis";
 import type { ZapQuote } from "@/types/enso";
-
-const ERC20_ABI = [
-  {
-    name: "allowance",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "owner", type: "address" },
-      { name: "spender", type: "address" },
-    ],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    name: "approve",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "spender", type: "address" },
-      { name: "amount", type: "uint256" },
-    ],
-    outputs: [{ name: "", type: "bool" }],
-  },
-] as const;
 
 export type ZapStatus =
   | "idle"
@@ -68,7 +46,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   // Check allowance for non-ETH tokens
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
     address: tokenAddress,
-    abi: ERC20_ABI,
+    abi: ERC20_APPROVAL_ABI,
     functionName: "allowance",
     args: userAddress && routerAddress ? [userAddress, routerAddress] : undefined,
     query: {
@@ -152,7 +130,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
     writeApprove({
       address: tokenAddress,
-      abi: ERC20_ABI,
+      abi: ERC20_APPROVAL_ABI,
       functionName: "approve",
       args: [routerAddress, maxUint256],
     });

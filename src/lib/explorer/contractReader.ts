@@ -1,6 +1,7 @@
 import {
   createPublicClient,
   http,
+  fallback,
   getAddress,
   formatUnits,
   type PublicClient,
@@ -11,8 +12,12 @@ import { mainnet } from "viem/chains";
 import type { ABIItem, ContractValue } from "@/types/explorer";
 import { getContractABI, isValidAddress, isZeroAddress } from "./etherscan";
 
-// Fallback RPC for when no wagmi client is available
-const FALLBACK_RPC_URL = "https://ethereum-rpc.publicnode.com";
+// Fallback RPC endpoints (same as wagmi.ts for consistency)
+const FALLBACK_RPC_URLS = [
+  "https://cloudflare-eth.com",
+  "https://ethereum-rpc.publicnode.com",
+  "https://rpc.ankr.com/eth",
+];
 
 let fallbackClient: PublicClient | null = null;
 
@@ -20,7 +25,7 @@ function getFallbackClient(): PublicClient {
   if (!fallbackClient) {
     fallbackClient = createPublicClient({
       chain: mainnet,
-      transport: http(FALLBACK_RPC_URL),
+      transport: fallback(FALLBACK_RPC_URLS.map((url) => http(url))),
     });
   }
   return fallbackClient;

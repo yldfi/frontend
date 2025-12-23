@@ -1,6 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { formatUsd } from "@/lib/utils";
+import { QUERY_CONFIG } from "@/config/query";
 
 interface YearnVaultAsset {
   address: string;
@@ -128,8 +130,7 @@ export function useYearnVault(address: string, chainId: number = 1) {
   return useQuery({
     queryKey: ["yearn-vault", chainId, address],
     queryFn: () => fetchYearnVault(chainId, address),
-    staleTime: 60 * 1000, // 1 minute
-    refetchInterval: 60 * 1000, // Refetch every minute
+    ...QUERY_CONFIG.vaultData,
     enabled: !!address,
   });
 }
@@ -215,10 +216,4 @@ export function formatYearnVaultData(
     totalAssets: vault.totalAssets,
     strategies,
   };
-}
-
-function formatUsd(value: number): string {
-  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
-  if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
-  return `$${value.toFixed(2)}`;
 }
