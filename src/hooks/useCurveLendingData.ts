@@ -1,6 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { formatUsd } from "@/lib/utils";
+import { QUERY_CONFIG } from "@/config/query";
 
 interface CurveLendingVault {
   id: string;
@@ -96,8 +98,7 @@ export function useCurveLendingData() {
   return useQuery({
     queryKey: ["curve-lending-data"],
     queryFn: fetchCurveLendingData,
-    staleTime: 60 * 1000, // 1 minute
-    refetchInterval: 60 * 1000, // Refetch every minute
+    ...QUERY_CONFIG.vaultData,
   });
 }
 
@@ -169,10 +170,4 @@ export function formatCurveVaultData(vault: CurveLendingVault | undefined): Vaul
     withdrawUrl: vault.lendingVaultUrls.withdraw,
     borrowUrl: vault.lendingVaultUrls.borrow,
   };
-}
-
-function formatUsd(value: number): string {
-  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
-  if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
-  return `$${value.toFixed(2)}`;
 }

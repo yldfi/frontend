@@ -3,32 +3,8 @@
 import { useReadContracts } from "wagmi";
 import { useMemo } from "react";
 import { isAddress } from "viem";
+import { ERC20_METADATA_ABI } from "@/lib/abis";
 import type { EnsoToken } from "@/types/enso";
-
-// ERC20 ABI for token metadata
-const ERC20_METADATA_ABI = [
-  {
-    name: "name",
-    type: "function",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "string" }],
-  },
-  {
-    name: "symbol",
-    type: "function",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "string" }],
-  },
-  {
-    name: "decimals",
-    type: "function",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint8" }],
-  },
-] as const;
 
 /**
  * Fetch token metadata from blockchain by address
