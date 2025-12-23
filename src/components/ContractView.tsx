@@ -150,16 +150,7 @@ export function ContractView({
 
         if (!isMountedRef.current) return;
 
-        // Only show implementation name if it's meaningful (not a generic base contract)
-        const genericImplNames = [
-          "tokenizedstrategy",
-          "proxy",
-          "upgradeable",
-          "erc1967proxy",
-          "transparentupgradeableproxy",
-          "adminupgradeabilityproxy",
-        ];
-        if (implName && !genericImplNames.includes(implName.toLowerCase())) {
+        if (implName) {
           setImplementationName(implName);
         }
 
