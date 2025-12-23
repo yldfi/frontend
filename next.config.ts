@@ -8,6 +8,8 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
+  // Silence Turbopack warning about webpack config without turbopack config
+  turbopack: {},
   webpack: (config) => {
     // Fix warnings from third-party packages that include optional/unused dependencies
     config.resolve.fallback = {
