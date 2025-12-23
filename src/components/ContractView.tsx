@@ -18,6 +18,7 @@ import {
   getContractNatSpec,
   type NatSpec,
 } from "@/lib/explorer/etherscan";
+import { useContractReaderClient } from "@/hooks/useContractReaderClient";
 
 // Cache for pre-fetched contract names and EOA detection
 const prefetchedNames = new Map<string, string | null>();
@@ -43,6 +44,9 @@ export function ContractView({
   visitedAddresses,
   defaultCollapsed = false,
 }: ContractViewProps) {
+  // Sync wagmi public client with contract reader (only at root level)
+  useContractReaderClient();
+
   // Use stable reference for visitedAddresses
   const stableVisitedAddresses = visitedAddresses ?? EMPTY_SET;
 
