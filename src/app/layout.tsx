@@ -16,7 +16,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://yld_fi.co"),
+  metadataBase: new URL("https://yldfi.co"),
   title: "yld_fi - Automated Yield Optimization",
   description:
     "Deposit into optimized ERC-4626 vaults with auto-compounding strategies.",
