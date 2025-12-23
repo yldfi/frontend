@@ -524,5 +524,23 @@ export function formatValue(value: unknown, type: string, name?: string): string
     return value;
   }
 
+  // Handle numbers (uint8, uint16, etc. may come as Number instead of BigInt)
+  if (typeof value === "number") {
+    if (name && isBasisPointsField(name) && value <= 10000) {
+      return formatBasisPoints(value);
+    }
+    if (name && isDurationField(name)) {
+      const duration = formatDuration(value);
+      if (duration) {
+        return duration;
+      }
+    }
+    // Check if it looks like a timestamp
+    if (value > 1577836800 && value < 1893456000) {
+      return new Date(value * 1000).toLocaleString();
+    }
+    return value.toLocaleString();
+  }
+
   return String(value);
 }
