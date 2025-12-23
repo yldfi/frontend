@@ -10,6 +10,7 @@ import {
   ETH_ADDRESS,
 } from "@/lib/enso";
 import { useImportedTokens } from "@/hooks/useImportedTokens";
+import { QUERY_CONFIG } from "@/config/query";
 import type { EnsoToken } from "@/types/enso";
 
 // Default ETH token for when we need it immediately
@@ -22,6 +23,34 @@ export const DEFAULT_ETH_TOKEN: EnsoToken = {
   logoURI: "https://assets.coingecko.com/coins/images/279/thumb/ethereum.png",
   type: "base",
 };
+
+// Shared token lookup hook - uses query cache to avoid recreating Maps
+function useTokenLookup() {
+  const { data: ensoTokens, isLoading } = useQuery({
+    queryKey: ["enso-token-list"],
+    queryFn: fetchEnsoTokenList,
+    ...QUERY_CONFIG.tokenList,
+    refetchOnWindowFocus: false,
+    // Build lookup map once in select, cached by React Query
+    select: (tokens) => {
+      const map = new Map<string, EnsoToken>();
+      // Add custom tokens first (highest priority)
+      for (const token of CUSTOM_TOKENS) {
+        map.set(token.address.toLowerCase(), token);
+      }
+      // Add Enso tokens (won't override custom tokens)
+      for (const token of tokens) {
+        const key = token.address.toLowerCase();
+        if (!map.has(key)) {
+          map.set(key, token);
+        }
+      }
+      return map;
+    },
+  });
+
+  return { tokenMap: ensoTokens, isLoading };
+}
 
 export function useEnsoTokens() {
   const [searchQuery, setSearchQuery] = useState("");
@@ -36,7 +65,7 @@ export function useEnsoTokens() {
   } = useQuery({
     queryKey: ["enso-token-list"],
     queryFn: fetchEnsoTokenList,
-    staleTime: 30 * 60 * 1000, // 30 minutes
+    ...QUERY_CONFIG.tokenList,
     refetchOnWindowFocus: false,
   });
 
@@ -97,19 +126,16 @@ export function useEnsoTokens() {
 }
 
 /**
- * Get a specific token by address
+ * Get a specific token by address - optimized to use cached Map lookup
+ * instead of recreating the full token list on each call
  */
 export function useEnsoToken(address: string | undefined) {
-  const { allTokens, isLoading } = useEnsoTokens();
+  const { tokenMap, isLoading } = useTokenLookup();
 
-  const token = useMemo(() => {
-    if (!address) return null;
-    return (
-      allTokens.find(
-        (t) => t.address.toLowerCase() === address.toLowerCase()
-      ) || null
-    );
-  }, [allTokens, address]);
+  // O(1) Map lookup instead of O(n) array find
+  const token = address && tokenMap
+    ? tokenMap.get(address.toLowerCase()) || null
+    : null;
 
   return { token, isLoading };
 }

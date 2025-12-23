@@ -3,64 +3,7 @@
 import { useReadContract, useWriteContract, useWaitForTransactionReceipt, useAccount } from "wagmi";
 import { parseUnits, maxUint256 } from "viem";
 import { useState, useEffect, useMemo, useCallback } from "react";
-
-const ERC20_ABI = [
-  {
-    name: "allowance",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "owner", type: "address" },
-      { name: "spender", type: "address" },
-    ],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    name: "approve",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "spender", type: "address" },
-      { name: "amount", type: "uint256" },
-    ],
-    outputs: [{ name: "", type: "bool" }],
-  },
-] as const;
-
-const VAULT_ABI = [
-  {
-    name: "deposit",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "assets", type: "uint256" },
-      { name: "receiver", type: "address" },
-    ],
-    outputs: [{ name: "shares", type: "uint256" }],
-  },
-  {
-    name: "withdraw",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "assets", type: "uint256" },
-      { name: "receiver", type: "address" },
-      { name: "owner", type: "address" },
-    ],
-    outputs: [{ name: "shares", type: "uint256" }],
-  },
-  {
-    name: "redeem",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "shares", type: "uint256" },
-      { name: "receiver", type: "address" },
-      { name: "owner", type: "address" },
-    ],
-    outputs: [{ name: "assets", type: "uint256" }],
-  },
-] as const;
+import { ERC20_APPROVAL_ABI, VAULT_ABI } from "@/lib/abis";
 
 export type TransactionStatus = "idle" | "approving" | "waitingApproval" | "depositing" | "withdrawing" | "waitingTx" | "success" | "error";
 
@@ -75,7 +18,7 @@ export function useVaultActions(
   // Check allowance
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
     address: tokenAddress,
-    abi: ERC20_ABI,
+    abi: ERC20_APPROVAL_ABI,
     functionName: "allowance",
     args: userAddress ? [userAddress, vaultAddress] : undefined,
     query: {
@@ -174,7 +117,7 @@ export function useVaultActions(
 
     writeApprove({
       address: tokenAddress,
-      abi: ERC20_ABI,
+      abi: ERC20_APPROVAL_ABI,
       functionName: "approve",
       args: [vaultAddress, maxUint256],
     });

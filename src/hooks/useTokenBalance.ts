@@ -2,23 +2,8 @@
 
 import { useReadContracts, useAccount } from "wagmi";
 import { formatUnits } from "viem";
-
-const ERC20_ABI = [
-  {
-    name: "balanceOf",
-    type: "function",
-    stateMutability: "view",
-    inputs: [{ name: "account", type: "address" }],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    name: "decimals",
-    type: "function",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint8" }],
-  },
-] as const;
+import { ERC20_BALANCE_ABI } from "@/lib/abis";
+import { QUERY_CONFIG } from "@/config/query";
 
 interface TokenBalanceResult {
   balance: bigint;
@@ -35,20 +20,19 @@ export function useTokenBalance(
     contracts: [
       {
         address: tokenAddress,
-        abi: ERC20_ABI,
+        abi: ERC20_BALANCE_ABI,
         functionName: "balanceOf",
         args: userAddress ? [userAddress] : undefined,
       },
       {
         address: tokenAddress,
-        abi: ERC20_ABI,
+        abi: ERC20_BALANCE_ABI,
         functionName: "decimals",
       },
     ],
     query: {
       enabled: isConnected && !!userAddress,
-      refetchInterval: 12000, // Refetch every 12 seconds (approx 1 block)
-      staleTime: 0, // Always refetch on wallet change
+      ...QUERY_CONFIG.balance,
       refetchOnMount: true,
     },
   });
