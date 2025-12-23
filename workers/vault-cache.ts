@@ -13,12 +13,58 @@ const TOTAL_ASSETS = "0x01e1d114"; // totalAssets()
 const PRICE_PER_SHARE = "0x99530b06"; // pricePerShare()
 const DECIMALS = "0x313ce567"; // decimals()
 
+/**
+ * Safely convert BigInt with 18 decimals to Number
+ * Avoids precision loss for values > Number.MAX_SAFE_INTEGER
+ */
+function bigIntToNumber18(value: bigint): number {
+  const divisor = 10n ** 18n;
+  const intPart = value / divisor;
+  const fracPart = value % divisor;
+  // Integer part after division is safe, fractional part is always < 10^18
+  return Number(intPart) + Number(fracPart) / 1e18;
+}
+
 interface Env {
   VAULT_CACHE: KVNamespace;
 }
 
+/**
+ * Fetch with retry for worker environment
+ */
+async function fetchWithRetry(
+  url: string,
+  init?: RequestInit,
+  maxRetries = 3
+): Promise<Response> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, init);
+      if (response.ok || attempt === maxRetries) {
+        return response;
+      }
+      // Retry on 5xx and 429
+      if (response.status >= 500 || response.status === 429) {
+        await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt < maxRetries) {
+        await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
+        continue;
+      }
+    }
+  }
+
+  throw lastError || new Error("Failed after retries");
+}
+
 async function ethCall(to: string, data: string): Promise<string> {
-  const response = await fetch(RPC_URL, {
+  const response = await fetchWithRetry(RPC_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -44,17 +90,19 @@ async function getVaultData(vaultAddress: string) {
   return {
     totalAssets: totalAssets.toString(),
     pricePerShare: pricePerShare.toString(),
-    // Convert to human readable (18 decimals)
-    tvl: Number(totalAssets) / 1e18,
-    pps: Number(pricePerShare) / 1e18,
+    // Convert to human readable (18 decimals) - using safe conversion
+    tvl: bigIntToNumber18(totalAssets),
+    pps: bigIntToNumber18(pricePerShare),
   };
 }
 
 async function getCvxCrvPrice(): Promise<number> {
-  // Fetch from Curve prices API
+  // Fetch from Curve prices API with retry
   try {
-    const response = await fetch(
-      `https://prices.curve.fi/v1/usd_price/ethereum/${CVXCRV_TOKEN}`
+    const response = await fetchWithRetry(
+      `https://prices.curve.fi/v1/usd_price/ethereum/${CVXCRV_TOKEN}`,
+      undefined,
+      2
     );
     if (response.ok) {
       const data = (await response.json()) as { data: { usd_price: number } };

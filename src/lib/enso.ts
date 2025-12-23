@@ -2,6 +2,8 @@
 // Docs: https://docs.enso.build
 
 import type { EnsoToken, EnsoTokensResponse, EnsoRouteResponse, EnsoBundleAction, EnsoBundleResponse } from "@/types/enso";
+import { TOKENS, VAULTS, VAULT_ADDRESSES, isYldfiVault as checkIsYldfiVault } from "@/config/vaults";
+import { fetchWithRetry } from "@/lib/fetchWithRetry";
 
 const ENSO_API_BASE = "https://api.enso.finance/api/v1";
 const CHAIN_ID = 1; // Ethereum mainnet
@@ -9,8 +11,8 @@ const CHAIN_ID = 1; // Ethereum mainnet
 // ETH placeholder address used by Enso
 export const ETH_ADDRESS = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
-// cvxCRV token address
-export const CVXCRV_ADDRESS = "0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7";
+// cvxCRV token address - exported for backwards compatibility
+export const CVXCRV_ADDRESS = TOKENS.CVXCRV;
 
 // Enso router contract address (for approvals)
 export const ENSO_ROUTER = "0x80EbA3855878739F4710233A8a19d89Bdd2ffB8E";
@@ -48,25 +50,16 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
     logoURI: "https://assets.coingecko.com/coins/images/30118/thumb/crvusd.jpeg",
     type: "base",
   },
-  // yld_fi vault tokens
-  {
-    address: "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86",
+  // yld_fi vault tokens - from centralized config
+  ...Object.values(VAULTS).map((vault) => ({
+    address: vault.address,
     chainId: 1,
-    name: "yld_fi cvxCRV yVault",
-    symbol: "ycvxCRV",
-    decimals: 18,
-    logoURI: "/ycvxcrv-128.png",
-    type: "defi",
-  },
-  {
-    address: "0xCa960E6DF1150100586c51382f619efCCcF72706",
-    chainId: 1,
-    name: "yld_fi Convex cvxCRV Compounder",
-    symbol: "yscvxCRV",
-    decimals: 18,
-    logoURI: "/yscvxcrv-128.png",
-    type: "defi",
-  },
+    name: `yld_fi ${vault.name}`,
+    symbol: vault.symbol,
+    decimals: vault.decimals,
+    logoURI: vault.logo,
+    type: "defi" as const,
+  })),
 ];
 
 // Popular token addresses for sorting priority
@@ -81,8 +74,7 @@ export const POPULAR_TOKENS = [
   "0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B", // CVX
   CVXCRV_ADDRESS, // cvxCRV
   "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E", // crvUSD
-  "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86", // ycvxCRV
-  "0xCa960E6DF1150100586c51382f619efCCcF72706", // yscvxCRV
+  ...Object.values(VAULT_ADDRESSES), // yld_fi vaults
 ];
 
 /**
@@ -96,9 +88,11 @@ export async function fetchEnsoTokenList(): Promise<EnsoToken[]> {
     pageSize: "1000",
   });
 
-  const response = await fetch(`${ENSO_API_BASE}/tokens?${searchParams}`, {
-    headers: getHeaders(),
-  });
+  const response = await fetchWithRetry(
+    `${ENSO_API_BASE}/tokens?${searchParams}`,
+    { headers: getHeaders() },
+    { maxRetries: 2 }
+  );
 
   if (!response.ok) {
     throw new Error("Failed to fetch token list");
@@ -270,9 +264,10 @@ export async function fetchRoute(params: {
     searchParams.set("receiver", params.receiver);
   }
 
-  const response = await fetch(
+  const response = await fetchWithRetry(
     `${ENSO_API_BASE}/shortcuts/route?${searchParams}`,
-    { headers: getHeaders() }
+    { headers: getHeaders() },
+    { maxRetries: 2 }
   );
 
   if (!response.ok) {
@@ -318,20 +313,17 @@ export function filterTokens(tokens: EnsoToken[], query: string): EnsoToken[] {
 }
 
 // yld_fi vault addresses (for vault-to-vault routing)
+// Re-export with backwards-compatible naming (ycvxCRV vs YCVXCRV)
 export const YLDFI_VAULT_ADDRESSES = {
-  ycvxCRV: "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86",
-  yscvxCRV: "0xCa960E6DF1150100586c51382f619efCCcF72706",
+  ycvxCRV: VAULT_ADDRESSES.YCVXCRV,
+  yscvxCRV: VAULT_ADDRESSES.YSCVXCRV,
 } as const;
 
 /**
  * Check if an address is a yld_fi vault
+ * Uses centralized config from src/config/vaults.ts
  */
-export function isYldfiVault(address: string): boolean {
-  const lowerAddress = address.toLowerCase();
-  return Object.values(YLDFI_VAULT_ADDRESSES).some(
-    (vaultAddr) => vaultAddr.toLowerCase() === lowerAddress
-  );
-}
+export const isYldfiVault = checkIsYldfiVault;
 
 /**
  * Bundle multiple DeFi actions into a single transaction
@@ -353,13 +345,14 @@ export async function fetchBundle(params: {
     searchParams.set("receiver", params.receiver);
   }
 
-  const response = await fetch(
+  const response = await fetchWithRetry(
     `${ENSO_API_BASE}/shortcuts/bundle?${searchParams}`,
     {
       method: "POST",
       headers: getHeaders(),
       body: JSON.stringify(params.actions),
-    }
+    },
+    { maxRetries: 2 }
   );
 
   if (!response.ok) {

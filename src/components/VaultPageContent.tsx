@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { useAccount, useBalance } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
@@ -22,6 +23,7 @@ import { useZapActions } from "@/hooks/useZapActions";
 import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS } from "@/lib/enso";
+import { getVault, getParentVault, TOKENS, type VaultConfig } from "@/config/vaults";
 import type { EnsoToken, ZapDirection } from "@/types/enso";
 import {
   trackVaultView,
@@ -36,60 +38,8 @@ import {
   isUserRejection,
 } from "@/lib/analytics";
 
-// Token addresses
-const CVXCRV_ADDRESS = "0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7" as `0x${string}`;
-
-// Vault/Strategy data
-const vaultsData: Record<string, {
-  name: string;
-  symbol: string;
-  token: string;
-  description: string;
-  longDescription: string;
-  contractAddress: string;
-  strategy: string;
-  type: "vault" | "strategy";
-  fees: { management: number; performance: number };
-  links: { curve?: string; etherscan?: string };
-  underlyingStrategy?: string;
-  logo?: string;
-}> = {
-  ycvxcrv: {
-    name: "ycvxCRV",
-    symbol: "ycvxCRV",
-    token: "cvxCRV",
-    type: "vault",
-    description: "Auto-compounding vault for cvxCRV tokens via Convex Finance",
-    longDescription: "Deposits are allocated to the yscvxCRV strategy, which auto-compounds cvxCRV staking rewards from Convex. Use as collateral on Curve LlamaLend to borrow crvUSD. 15% of the 20% performance fee on yield is distributed to LlamaLend lenders to encourage borrowing liquidity.",
-    contractAddress: "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86",
-    strategy: "Convex cvxCRV Compounder",
-    fees: { management: 0, performance: 20 },
-    underlyingStrategy: "0xCa960E6DF1150100586c51382f619efCCcF72706",
-    links: {
-      curve: "https://www.curve.finance/lend/ethereum/markets/one-way-market-35/create",
-      etherscan: "https://etherscan.io/address/0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86",
-    },
-    logo: "/ycvxcrv-128.png",
-  },
-  yscvxcrv: {
-    name: "yscvxCRV",
-    symbol: "yscvxCRV",
-    token: "cvxCRV",
-    type: "strategy",
-    description: "Pure auto-compounding cvxCRV strategy",
-    longDescription: "This strategy accepts cvxCRV deposits and stakes them on Convex Finance. Earned CRV, CVX, and 3CRV rewards are automatically harvested, swapped to cvxCRV, and re-deposited to compound your position. Lower 5% performance fee but cannot be used as collateral on LlamaLend.",
-    contractAddress: "0xCa960E6DF1150100586c51382f619efCCcF72706",
-    strategy: "Convex cvxCRV Compounder",
-    fees: { management: 0, performance: 5 },
-    links: {
-      etherscan: "https://etherscan.io/address/0xCa960E6DF1150100586c51382f619efCCcF72706",
-    },
-    logo: "/yscvxcrv-128.png",
-  },
-};
-
 export function VaultPageContent({ id }: { id: string }) {
-  const vault = vaultsData[id];
+  const vault = getVault(id);
 
   const { isConnected, address: userAddress } = useAccount();
   const { openConnectModal } = useConnectModal();
@@ -123,11 +73,11 @@ export function VaultPageContent({ id }: { id: string }) {
   };
 
   // Fetch Yearn Kong API data
-  const { data: yearnData, isLoading: yearnLoading } = useYearnVault(vault?.contractAddress ?? "");
+  const { data: yearnData, isLoading: yearnLoading } = useYearnVault(vault?.address ?? "");
   const yearnVault = formatYearnVaultData(yearnData?.vault, yearnData?.vaultStrategies);
 
   // For strategy, also fetch parent vault data to get gross APR for calculating net APY
-  const parentVaultAddress = vault?.type === "strategy" ? "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86" : null;
+  const parentVaultAddress = vault?.type === "strategy" ? getParentVault(vault.address)?.address ?? null : null;
   const { data: parentVaultData, isLoading: parentLoading } = useYearnVault(parentVaultAddress ?? "", 1);
   const parentVault = formatYearnVaultData(parentVaultData?.vault, parentVaultData?.vaultStrategies);
 
@@ -141,7 +91,7 @@ export function VaultPageContent({ id }: { id: string }) {
 
   // Fetch Curve lending market data (only for vault type)
   const { vault: curveVault } = useCurveLendingVault(
-    vault?.type === "vault" ? vault?.contractAddress ?? "" : ""
+    vault?.type === "vault" ? vault?.address ?? "" : ""
   );
   const curveData = formatCurveVaultData(curveVault);
 
@@ -149,11 +99,11 @@ export function VaultPageContent({ id }: { id: string }) {
   const { price: cvxCrvPrice } = useCvxCrvPrice();
 
   // Fetch price per share from on-chain
-  const vaultAddressTyped = (vault?.contractAddress ?? "0x0000000000000000000000000000000000000000") as `0x${string}`;
+  const vaultAddressTyped = (vault?.address ?? "0x0000000000000000000000000000000000000000") as `0x${string}`;
   const { pricePerShare, pricePerShareFormatted, isLoading: ppsLoading } = usePricePerShare(vaultAddressTyped);
 
   // Fetch user balances
-  const { formatted: tokenBalanceFormatted, isLoading: tokenBalanceLoading } = useTokenBalance(CVXCRV_ADDRESS);
+  const { formatted: tokenBalanceFormatted, isLoading: tokenBalanceLoading } = useTokenBalance(TOKENS.CVXCRV);
   const {
     formatted: vaultBalanceFormatted,
     isLoading: vaultBalanceLoading,
@@ -195,7 +145,7 @@ export function VaultPageContent({ id }: { id: string }) {
     isSuccess,
     depositHash,
     withdrawHash,
-  } = useVaultActions(vaultAddressTyped, CVXCRV_ADDRESS, 18);
+  } = useVaultActions(vaultAddressTyped, TOKENS.CVXCRV, 18);
 
   // Zap quote - fetch route from Enso
   const { quote: zapQuote, isLoading: zapQuoteLoading, error: zapQuoteError } = useZapQuote({
@@ -203,7 +153,7 @@ export function VaultPageContent({ id }: { id: string }) {
     outputToken: zapDirection === "out" ? zapOutputToken : null,
     inputAmount: zapAmount,
     direction: zapDirection,
-    vaultAddress: vault?.contractAddress ?? "",
+    vaultAddress: vault?.address ?? "",
     slippage: zapSlippage,
   });
 
@@ -241,15 +191,15 @@ export function VaultPageContent({ id }: { id: string }) {
     if (prevTxStatus.current !== txStatus && vault) {
       // Track approval success
       if (prevTxStatus.current === "waitingApproval" && txStatus === "idle") {
-        trackApprovalSuccess(vault.token, id);
+        trackApprovalSuccess(vault.assetSymbol, id);
       }
       // Track deposit success (only when we have a tx hash confirming it happened)
       if (prevTxStatus.current === "waitingTx" && txStatus === "success" && activeTab === "deposit" && depositHash) {
-        trackDepositSuccess(id, amount, vault.token);
+        trackDepositSuccess(id, amount, vault.assetSymbol);
       }
       // Track withdraw success (only when we have a tx hash confirming it happened)
       if (prevTxStatus.current === "waitingTx" && txStatus === "success" && activeTab === "withdraw" && withdrawHash) {
-        trackWithdrawSuccess(id, amount, vault.token);
+        trackWithdrawSuccess(id, amount, vault.assetSymbol);
       }
       // Track errors or cancellations
       if (txStatus === "error" && prevTxStatus.current !== "error") {
@@ -271,11 +221,7 @@ export function VaultPageContent({ id }: { id: string }) {
   }, [txStatus, txError, vault, id, amount, activeTab, depositHash, withdrawHash]);
 
   if (!vault) {
-    return (
-      <div className="min-h-screen bg-[var(--background)] flex items-center justify-center">
-        <p className="text-[var(--muted-foreground)]">Vault not found</p>
-      </div>
-    );
+    notFound();
   }
 
   // Check if approval needed for deposit
@@ -286,14 +232,14 @@ export function VaultPageContent({ id }: { id: string }) {
 
     if (activeTab === "deposit") {
       if (requiresApproval) {
-        trackApprovalInitiated(vault.token, id);
+        trackApprovalInitiated(vault.assetSymbol, id);
         approve();
       } else {
-        trackDepositInitiated(id, amount, vault.token);
+        trackDepositInitiated(id, amount, vault.assetSymbol);
         deposit(amount);
       }
     } else {
-      trackWithdrawInitiated(id, amount, vault.token);
+      trackWithdrawInitiated(id, amount, vault.assetSymbol);
       withdraw(amount);
     }
   };
@@ -387,7 +333,7 @@ export function VaultPageContent({ id }: { id: string }) {
                 <div>
                   <p className="text-sm text-[var(--muted-foreground)] mb-1">Token</p>
                   <p className="mono text-2xl font-medium">
-                    {vault.token}
+                    {vault.assetSymbol}
                   </p>
                 </div>
               </div>
@@ -417,19 +363,19 @@ export function VaultPageContent({ id }: { id: string }) {
                     </span>
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => openExplorer(vault.contractAddress, vault.name, vault.logo)}
+                        onClick={() => openExplorer(vault.address, vault.name, vault.logo)}
                         className="mono text-xs px-2 py-1 bg-[var(--muted)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] rounded flex items-center gap-1 transition-colors"
                       >
                         <Search size={10} />
                         Explore
                       </button>
                       <a
-                        href={vault.links?.etherscan || `https://etherscan.io/address/${vault.contractAddress}`}
+                        href={vault.links?.etherscan || `https://etherscan.io/address/${vault.address}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="mono text-sm flex items-center gap-1 hover:text-[var(--accent)] transition-colors"
                       >
-                        {vault.contractAddress.slice(0, 6)}...{vault.contractAddress.slice(-4)}
+                        {vault.address.slice(0, 6)}...{vault.address.slice(-4)}
                         <ExternalLink size={12} />
                       </a>
                     </div>
@@ -596,7 +542,7 @@ export function VaultPageContent({ id }: { id: string }) {
                             className="flex-1 min-w-0 bg-transparent mono text-base outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
                           />
                           <span className="mono text-sm font-medium shrink-0">
-                            {activeTab === "deposit" ? vault.token : vault.symbol}
+                            {activeTab === "deposit" ? vault.assetSymbol : vault.symbol}
                           </span>
                           <button
                             onClick={() => setAmount(activeTab === "deposit" ? tokenBalanceMax : vaultBalanceMax)}
@@ -632,7 +578,7 @@ export function VaultPageContent({ id }: { id: string }) {
                             {outputAmount > 0 ? outputAmount.toFixed(4) : "0.00"}
                           </span>
                           <span className="mono text-sm font-medium shrink-0">
-                            {activeTab === "deposit" ? vault.symbol : vault.token}
+                            {activeTab === "deposit" ? vault.symbol : vault.assetSymbol}
                           </span>
                         </div>
                       </div>
@@ -641,7 +587,7 @@ export function VaultPageContent({ id }: { id: string }) {
                       <div className="space-y-2 text-sm">
                         <div className="flex items-center justify-between py-1">
                           <span className="text-[var(--muted-foreground)]">Exchange rate</span>
-                          <span className="mono">1 {vault.token} = {(1 / exchangeRate).toFixed(4)} {vault.symbol}</span>
+                          <span className="mono">1 {vault.assetSymbol} = {(1 / exchangeRate).toFixed(4)} {vault.symbol}</span>
                         </div>
                         <div className={cn(
                           "flex items-center justify-between py-1",
@@ -750,7 +696,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               <TokenSelector
                                 selectedToken={zapInputToken}
                                 onSelect={setZapInputToken}
-                                excludeTokens={[vault.contractAddress, CVXCRV_ADDRESS]} // Exclude vault token & cvxCRV (use Deposit tab)
+                                excludeTokens={[vault.address, TOKENS.CVXCRV]} // Exclude vault token & cvxCRV (use Deposit tab)
                               />
                               <button
                                 onClick={() => setZapAmount(zapInputBalanceFormatted)}
@@ -845,7 +791,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               <TokenSelector
                                 selectedToken={zapOutputToken}
                                 onSelect={setZapOutputToken}
-                                excludeTokens={[vault.contractAddress, CVXCRV_ADDRESS]} // Exclude vault token & cvxCRV (use Withdraw tab)
+                                excludeTokens={[vault.address, TOKENS.CVXCRV]} // Exclude vault token & cvxCRV (use Withdraw tab)
                               />
                             </div>
                           </div>

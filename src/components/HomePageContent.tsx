@@ -5,52 +5,29 @@ import { CustomConnectButton } from "@/components/CustomConnectButton";
 import { ArrowUpRight, Github, BookOpen, Send } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
-import { cn } from "@/lib/utils";
+import { cn, formatUsd } from "@/lib/utils";
 import { PixelAnimation } from "@/components/PixelAnimation";
 import { Logo } from "@/components/Logo";
 import { useYearnVault, formatYearnVaultData, calculateStrategyNetApy } from "@/hooks/useYearnVault";
 import { useMultipleVaultBalances } from "@/hooks/useVaultBalance";
 import { useMultiplePricePerShare } from "@/hooks/usePricePerShare";
 import { useVaultCache } from "@/hooks/useVaultCache";
+import { VAULTS, VAULT_ADDRESSES } from "@/config/vaults";
 
-// Contract addresses
-const YCVXCRV_ADDRESS = "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86";
-const YSCVXCRV_ADDRESS = "0xCa960E6DF1150100586c51382f619efCCcF72706";
-
-const vaultConfigs = [
-  {
-    id: "ycvxcrv",
-    name: "ycvxCRV",
-    description: "Auto-compounding cvxCRV staking rewards via Convex. Use as collateral on Curve LlamaLend to borrow crvUSD.",
-    token: "cvxCRV",
-    chain: "Ethereum",
-    contractAddress: YCVXCRV_ADDRESS,
-    badges: ["cvxCRV", "Compounder", "Collateral (LlamaLend)"],
-    type: "vault" as const,
-    fee: 20,
-    feeBreakdown: "15% to LlamaLend lenders + 5% strategy",
-    logo: "/ycvxcrv-64.png",
-  },
-  {
-    id: "yscvxcrv",
-    name: "yscvxCRV",
-    description: "Auto-compounding cvxCRV staking rewards via Convex. Lower 5% fee but no collateral support.",
-    token: "cvxCRV",
-    chain: "Ethereum",
-    contractAddress: YSCVXCRV_ADDRESS,
-    badges: ["cvxCRV", "Compounder"],
-    type: "strategy" as const,
-    fee: 5,
-    feeBreakdown: "5% strategy",
-    logo: "/yscvxcrv-64.png",
-  },
-];
-
-function formatNumber(num: number): string {
-  if (num >= 1_000_000) return `$${(num / 1_000_000).toFixed(2)}M`;
-  if (num >= 1_000) return `$${(num / 1_000).toFixed(1)}K`;
-  return `$${num.toFixed(2)}`;
-}
+// Build vault configs from centralized config
+const vaultConfigs = Object.values(VAULTS).map((vault) => ({
+  id: vault.id,
+  name: vault.name,
+  description: vault.description,
+  token: vault.assetSymbol,
+  chain: vault.chain,
+  contractAddress: vault.address,
+  badges: vault.badges,
+  type: vault.type,
+  fee: vault.fees.performance,
+  feeBreakdown: vault.feeBreakdown,
+  logo: vault.logoSmall,
+}));
 
 export function HomePageContent() {
   const { isConnected } = useAccount();
@@ -59,8 +36,8 @@ export function HomePageContent() {
   const { data: cacheData, isLoading: cacheLoading } = useVaultCache();
 
   // Fetch Yearn vault data (for APY from Kong API)
-  const { data: ycvxcrvData, isLoading: ycvxcrvLoading } = useYearnVault(YCVXCRV_ADDRESS);
-  const { data: yscvxcrvData } = useYearnVault(YSCVXCRV_ADDRESS);
+  const { data: ycvxcrvData, isLoading: ycvxcrvLoading } = useYearnVault(VAULT_ADDRESSES.YCVXCRV);
+  const { data: yscvxcrvData } = useYearnVault(VAULT_ADDRESSES.YSCVXCRV);
 
   const ycvxcrvVault = formatYearnVaultData(ycvxcrvData?.vault, ycvxcrvData?.vaultStrategies);
   const yscvxcrvVault = formatYearnVaultData(yscvxcrvData?.vault, yscvxcrvData?.vaultStrategies);
@@ -70,8 +47,8 @@ export function HomePageContent() {
 
   // Fetch price per share from on-chain
   const { prices: pricePerShareData } = useMultiplePricePerShare([
-    YCVXCRV_ADDRESS as `0x${string}`,
-    YSCVXCRV_ADDRESS as `0x${string}`,
+    VAULT_ADDRESSES.YCVXCRV,
+    VAULT_ADDRESSES.YSCVXCRV,
   ]);
 
   const ycvxcrvPricePerShare = pricePerShareData[0]?.pricePerShare ?? 1;
@@ -80,12 +57,12 @@ export function HomePageContent() {
   // Fetch user vault balances
   const { balances } = useMultipleVaultBalances([
     {
-      address: YCVXCRV_ADDRESS as `0x${string}`,
+      address: VAULT_ADDRESSES.YCVXCRV,
       pricePerShare: ycvxcrvPricePerShare,
       assetPriceUsd: cvxCrvPrice,
     },
     {
-      address: YSCVXCRV_ADDRESS as `0x${string}`,
+      address: VAULT_ADDRESSES.YSCVXCRV,
       pricePerShare: yscvxcrvPricePerShare,
       assetPriceUsd: cvxCrvPrice,
     },
@@ -279,7 +256,7 @@ export function HomePageContent() {
                       </div>
                       <div className="text-center">
                         <p className="mono text-base font-medium">
-                          {isLoading ? "..." : formatNumber(vault.tvl)}
+                          {isLoading ? "..." : formatUsd(vault.tvl)}
                         </p>
                         <p className="text-[10px] text-[var(--muted-foreground)] mt-0.5">TVL</p>
                       </div>
@@ -338,7 +315,7 @@ export function HomePageContent() {
                       </div>
                       <div className="text-right w-20">
                         <p className="mono text-lg font-medium">
-                          {isLoading ? "..." : formatNumber(vault.tvl)}
+                          {isLoading ? "..." : formatUsd(vault.tvl)}
                         </p>
                         <p className="text-xs text-[var(--muted-foreground)]">TVL</p>
                       </div>
