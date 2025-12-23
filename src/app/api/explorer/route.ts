@@ -14,7 +14,13 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
  */
 
 const ETHERSCAN_API_BASE = "https://api.etherscan.io/v2/api";
-const CACHE_TTL = 24 * 60 * 60; // 24 hours in seconds
+const CACHE_TTL = 24 * 60 * 60; // 24 hours in seconds (KV cache)
+const BROWSER_CACHE_TTL = 60 * 60; // 1 hour in seconds (browser cache)
+
+// Cache headers for successful responses
+const cacheHeaders = {
+  "Cache-Control": `public, max-age=${BROWSER_CACHE_TTL}, s-maxage=${BROWSER_CACHE_TTL}`,
+};
 
 // Etherscan API response types
 interface EtherscanResponse {
@@ -88,7 +94,7 @@ export async function GET(request: NextRequest) {
         if (kv) {
           const cached = await kv.get(cacheKey);
           if (cached) {
-            return NextResponse.json({ result: JSON.parse(cached), cached: true });
+            return NextResponse.json({ result: JSON.parse(cached), cached: true }, { headers: cacheHeaders });
           }
         }
 
@@ -111,7 +117,7 @@ export async function GET(request: NextRequest) {
           await kv.put(cacheKey, JSON.stringify(abi), { expirationTtl: CACHE_TTL });
         }
 
-        return NextResponse.json({ result: abi, cached: false });
+        return NextResponse.json({ result: abi, cached: false }, { headers: cacheHeaders });
       }
 
       case "getName": {
@@ -121,7 +127,7 @@ export async function GET(request: NextRequest) {
         if (kv) {
           const cached = await kv.get(cacheKey);
           if (cached) {
-            return NextResponse.json({ result: cached, cached: true });
+            return NextResponse.json({ result: cached, cached: true }, { headers: cacheHeaders });
           }
         }
 
@@ -131,7 +137,7 @@ export async function GET(request: NextRequest) {
         const data = (await response.json()) as EtherscanResponse;
 
         if (data.status !== "1" || !Array.isArray(data.result) || !data.result[0]) {
-          return NextResponse.json({ result: null, cached: false });
+          return NextResponse.json({ result: null, cached: false }, { headers: cacheHeaders });
         }
 
         const name = data.result[0].ContractName || null;
@@ -141,7 +147,7 @@ export async function GET(request: NextRequest) {
           await kv.put(cacheKey, name, { expirationTtl: CACHE_TTL });
         }
 
-        return NextResponse.json({ result: name, cached: false });
+        return NextResponse.json({ result: name, cached: false }, { headers: cacheHeaders });
       }
 
       case "getNatSpec": {
@@ -151,7 +157,7 @@ export async function GET(request: NextRequest) {
         if (kv) {
           const cached = await kv.get(cacheKey);
           if (cached) {
-            return NextResponse.json({ result: JSON.parse(cached), cached: true });
+            return NextResponse.json({ result: JSON.parse(cached), cached: true }, { headers: cacheHeaders });
           }
         }
 
@@ -162,7 +168,7 @@ export async function GET(request: NextRequest) {
 
         if (data.status !== "1" || !Array.isArray(data.result) || !data.result[0]?.SourceCode) {
           const emptyNatspec = { functions: {} };
-          return NextResponse.json({ result: emptyNatspec, cached: false });
+          return NextResponse.json({ result: emptyNatspec, cached: false }, { headers: cacheHeaders });
         }
 
         let sourceCode = data.result[0].SourceCode;
@@ -197,7 +203,7 @@ export async function GET(request: NextRequest) {
           await kv.put(cacheKey, JSON.stringify(natspec), { expirationTtl: CACHE_TTL });
         }
 
-        return NextResponse.json({ result: natspec, cached: false });
+        return NextResponse.json({ result: natspec, cached: false }, { headers: cacheHeaders });
       }
 
       default:
