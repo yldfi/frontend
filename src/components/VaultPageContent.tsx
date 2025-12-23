@@ -518,7 +518,7 @@ export function VaultPageContent({ id }: { id: string }) {
                 </div>
 
                 {/* Form - min-height prevents layout shift when switching tabs */}
-                <div className="p-5 space-y-5 min-h-[502px]">
+                <div className="p-5 space-y-5 min-h-[622px]">
                   {/* Deposit/Withdraw Form */}
                   {activeTab !== "zap" && (
                     <>
@@ -798,37 +798,46 @@ export function VaultPageContent({ id }: { id: string }) {
                         </>
                       )}
 
-                      {/* Zap Details */}
-                      {zapQuote && (
-                        <div className="space-y-2 text-sm">
-                          <div className="flex items-center justify-between py-1">
-                            <span className="text-[var(--muted-foreground)]">Rate</span>
-                            <span className="mono">
-                              1 {zapDirection === "in" ? zapInputToken?.symbol : vault.symbol} = {zapQuote.exchangeRate.toFixed(4)} {zapDirection === "in" ? vault.symbol : zapOutputToken?.symbol}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between py-1">
-                            <span className="text-[var(--muted-foreground)]">Price Impact</span>
-                            <span className={cn(
-                              "mono",
-                              (zapQuote.priceImpact ?? 0) > 2 ? "text-[var(--destructive)]" : (zapQuote.priceImpact ?? 0) > 1 ? "text-[var(--warning)]" : ""
-                            )}>
-                              {zapQuote.priceImpact != null ? `${zapQuote.priceImpact.toFixed(2)}%` : "—"}
-                            </span>
-                          </div>
-                          {/* Show value - for zap in, use output (vault shares) × cvxCRV price */}
-                          <div className="flex items-center justify-between py-1">
-                            <span className="text-[var(--muted-foreground)]">Value</span>
-                            <span className="mono">
-                              ~${(
+                      {/* Zap Details - always render to prevent layout shift */}
+                      <div className={cn(
+                        "space-y-2 text-sm",
+                        !zapQuote && "invisible"
+                      )}>
+                        <div className="flex items-center justify-between py-1">
+                          <span className="text-[var(--muted-foreground)]">Rate</span>
+                          <span className="mono">
+                            {zapQuote ? (
+                              <>1 {zapDirection === "in" ? zapInputToken?.symbol : vault.symbol} = {zapQuote.exchangeRate.toFixed(4)} {zapDirection === "in" ? vault.symbol : zapOutputToken?.symbol}</>
+                            ) : (
+                              "—"
+                            )}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between py-1">
+                          <span className="text-[var(--muted-foreground)]">Price Impact</span>
+                          <span className={cn(
+                            "mono",
+                            zapQuote && (zapQuote.priceImpact ?? 0) > 2 ? "text-[var(--destructive)]" : zapQuote && (zapQuote.priceImpact ?? 0) > 1 ? "text-[var(--warning)]" : ""
+                          )}>
+                            {zapQuote?.priceImpact != null ? `${zapQuote.priceImpact.toFixed(2)}%` : "—"}
+                          </span>
+                        </div>
+                        {/* Show value - for zap in, use output (vault shares) × cvxCRV price */}
+                        <div className="flex items-center justify-between py-1">
+                          <span className="text-[var(--muted-foreground)]">Value</span>
+                          <span className="mono">
+                            {zapQuote ? (
+                              <>~${(
                                 zapDirection === "in"
                                   ? Number(zapQuote.outputAmountFormatted) * pricePerShare * cvxCrvPrice
                                   : Number(zapAmount) * pricePerShare * cvxCrvPrice
-                              ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </span>
-                          </div>
+                              ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</>
+                            ) : (
+                              "—"
+                            )}
+                          </span>
                         </div>
-                      )}
+                      </div>
 
                       {/* Error display - fixed height to prevent layout shift */}
                       <p className={cn(
