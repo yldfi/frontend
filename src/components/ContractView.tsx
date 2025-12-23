@@ -61,6 +61,7 @@ export function ContractView({
   const [natspec, setNatspec] = useState<NatSpec | null>(null);
   const [safeInfo, setSafeInfo] = useState<GnosisSafeInfo | null>(null);
   const [detectedEOAs, setDetectedEOAs] = useState<Set<string>>(new Set());
+  const [implementationName, setImplementationName] = useState<string | null>(null);
 
   // Track if component is mounted to avoid state updates after unmount
   const isMountedRef = useRef(true);
@@ -139,14 +140,28 @@ export function ContractView({
 
         const { values, abi, implementationAddress } = contractResult;
 
-        // Fetch NatSpec and check for Gnosis Safe in parallel
+        // Fetch NatSpec, Gnosis Safe info, and implementation name in parallel
         const natspecAddress = implementationAddress || address;
-        const [natspecResult, safeResult] = await Promise.all([
+        const [natspecResult, safeResult, implName] = await Promise.all([
           getContractNatSpec(natspecAddress).catch(() => null),
           getGnosisSafeInfo(address).catch(() => null),
+          implementationAddress ? getContractName(implementationAddress).catch(() => null) : Promise.resolve(null),
         ]);
 
         if (!isMountedRef.current) return;
+
+        // Only show implementation name if it's meaningful (not a generic base contract)
+        const genericImplNames = [
+          "tokenizedstrategy",
+          "proxy",
+          "upgradeable",
+          "erc1967proxy",
+          "transparentupgradeableproxy",
+          "adminupgradeabilityproxy",
+        ];
+        if (implName && !genericImplNames.includes(implName.toLowerCase())) {
+          setImplementationName(implName);
+        }
 
         // Use on-chain name() if Etherscan returns a generic name
         let displayName = name || undefined;
@@ -472,10 +487,13 @@ export function ContractView({
               href={`https://etherscan.io/address/${contractData.implementationAddress}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-xs text-[var(--muted-foreground)]/70 hover:text-[var(--accent)] mono break-all block"
+              className="text-xs text-[var(--muted-foreground)]/70 hover:text-[var(--accent)] break-all block"
               onClick={(e) => e.stopPropagation()}
             >
-              impl: {contractData.implementationAddress}
+              <span className="mono">impl: {contractData.implementationAddress}</span>
+              {implementationName && (
+                <span className="ml-2 text-[var(--muted-foreground)]">({implementationName})</span>
+              )}
             </a>
           )}
         </div>
