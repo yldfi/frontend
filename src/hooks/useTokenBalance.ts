@@ -9,6 +9,7 @@ interface TokenBalanceResult {
   balance: bigint;
   decimals: number;
   formatted: string;
+  refetch: () => void;
 }
 
 export function useTokenBalance(
@@ -16,7 +17,7 @@ export function useTokenBalance(
 ): TokenBalanceResult & { isLoading: boolean } {
   const { address: userAddress, isConnected } = useAccount();
 
-  const { data, isLoading } = useReadContracts({
+  const { data, isLoading, refetch } = useReadContracts({
     contracts: [
       {
         address: tokenAddress,
@@ -46,5 +47,6 @@ export function useTokenBalance(
     decimals,
     formatted,
     isLoading: isLoading && isConnected,
+    refetch,
   };
 }

@@ -103,10 +103,11 @@ export function VaultPageContent({ id }: { id: string }) {
   const { pricePerShare, pricePerShareFormatted, isLoading: ppsLoading } = usePricePerShare(vaultAddressTyped);
 
   // Fetch user balances
-  const { formatted: tokenBalanceFormatted, isLoading: tokenBalanceLoading } = useTokenBalance(TOKENS.CVXCRV);
+  const { formatted: tokenBalanceFormatted, isLoading: tokenBalanceLoading, refetch: refetchTokenBalance } = useTokenBalance(TOKENS.CVXCRV);
   const {
     formatted: vaultBalanceFormatted,
     isLoading: vaultBalanceLoading,
+    refetch: refetchVaultBalance,
   } = useVaultBalance(
     vaultAddressTyped,
     pricePerShare,
@@ -122,7 +123,7 @@ export function VaultPageContent({ id }: { id: string }) {
 
   // Zap input token balance (for MAX button)
   const isZapInputEth = zapInputToken?.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
-  const { data: zapInputBalance } = useBalance({
+  const { data: zapInputBalance, refetch: refetchZapInputBalance } = useBalance({
     address: userAddress,
     token: isZapInputEth ? undefined : (zapInputToken?.address as `0x${string}`),
     query: {
@@ -167,6 +168,7 @@ export function VaultPageContent({ id }: { id: string }) {
     error: zapActionError,
     isLoading: zapIsLoading,
     isSuccess: zapIsSuccess,
+    zapHash,
   } = useZapActions(zapQuote);
 
   const inputAmount = parseFloat(amount) || 0;
@@ -244,17 +246,45 @@ export function VaultPageContent({ id }: { id: string }) {
     }
   };
 
-  // Reset on success and clear amount
-  if (isSuccess && amount) {
-    setAmount("");
-    resetVaultActions();
-  }
+  // Track transaction hashes to detect new successful transactions
+  const lastHandledDepositHash = useRef<string | null>(null);
+  const lastHandledWithdrawHash = useRef<string | null>(null);
+  const lastHandledZapHash = useRef<string | null>(null);
 
-  // Reset zap on success
-  if (zapIsSuccess && zapAmount) {
-    setZapAmount("");
-    resetZapActions();
-  }
+  // Handle deposit/withdraw success - refetch balances and reset form
+  useEffect(() => {
+    const currentHash = depositHash || withdrawHash;
+    if (isSuccess && currentHash && currentHash !== lastHandledDepositHash.current && currentHash !== lastHandledWithdrawHash.current) {
+      // Mark as handled
+      if (depositHash) lastHandledDepositHash.current = depositHash;
+      if (withdrawHash) lastHandledWithdrawHash.current = withdrawHash;
+      // Refetch all balances after successful deposit/withdraw
+      refetchTokenBalance();
+      refetchVaultBalance();
+      // Clear form and reset state (use setTimeout to avoid sync setState in effect)
+      setTimeout(() => {
+        setAmount("");
+        resetVaultActions();
+      }, 0);
+    }
+  }, [isSuccess, depositHash, withdrawHash, refetchTokenBalance, refetchVaultBalance, resetVaultActions]);
+
+  // Handle zap success - refetch balances and reset form
+  useEffect(() => {
+    if (zapIsSuccess && zapHash && zapHash !== lastHandledZapHash.current) {
+      // Mark as handled
+      lastHandledZapHash.current = zapHash;
+      // Refetch all balances after successful zap
+      refetchTokenBalance();
+      refetchVaultBalance();
+      refetchZapInputBalance();
+      // Clear form and reset state (use setTimeout to avoid sync setState in effect)
+      setTimeout(() => {
+        setZapAmount("");
+        resetZapActions();
+      }, 0);
+    }
+  }, [zapIsSuccess, zapHash, refetchTokenBalance, refetchVaultBalance, refetchZapInputBalance, resetZapActions]);
 
   return (
     <div className="min-h-screen bg-[var(--background)]">
