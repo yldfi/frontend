@@ -10,6 +10,7 @@ interface VaultBalanceResult {
   decimals: number;
   formatted: string;
   formattedUsd: string;
+  refetch: () => void;
 }
 
 export function useVaultBalance(
@@ -19,7 +20,7 @@ export function useVaultBalance(
 ): VaultBalanceResult & { isLoading: boolean } {
   const { address: userAddress, isConnected } = useAccount();
 
-  const { data, isLoading } = useReadContracts({
+  const { data, isLoading, refetch } = useReadContracts({
     contracts: [
       {
         address: vaultAddress,
@@ -61,6 +62,7 @@ export function useVaultBalance(
     formatted,
     formattedUsd,
     isLoading: isLoading && isConnected,
+    refetch,
   };
 }
 
