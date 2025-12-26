@@ -48,29 +48,20 @@ export function useVaultActions(
     error: withdrawError,
   } = useWriteContract();
 
-  // Wait for transactions - poll every 2 seconds until confirmed
+  // Wait for transactions - poll every 1 second until confirmed
   const { isLoading: isApprovalPending, isSuccess: isApprovalSuccess } = useWaitForTransactionReceipt({
     hash: approveHash,
-    confirmations: 1,
-    query: {
-      refetchInterval: 2000,
-    },
+    pollingInterval: 1_000,
   });
 
   const { isLoading: isDepositPending, isSuccess: isDepositSuccess } = useWaitForTransactionReceipt({
     hash: depositHash,
-    confirmations: 1,
-    query: {
-      refetchInterval: 2000,
-    },
+    pollingInterval: 1_000,
   });
 
   const { isLoading: isWithdrawPending, isSuccess: isWithdrawSuccess } = useWaitForTransactionReceipt({
     hash: withdrawHash,
-    confirmations: 1,
-    query: {
-      refetchInterval: 2000,
-    },
+    pollingInterval: 1_000,
   });
 
   // Derive status from state (avoids setState in effects)
