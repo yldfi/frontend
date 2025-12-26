@@ -70,24 +70,18 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     error: zapError,
   } = useSendTransaction();
 
-  // Wait for approval - poll every 2 seconds until confirmed
+  // Wait for approval - poll every 1 second until confirmed
   const { isLoading: isApprovalPending, isSuccess: isApprovalSuccess } =
     useWaitForTransactionReceipt({
       hash: approveHash,
-      confirmations: 1,
-      query: {
-        refetchInterval: 2000,
-      },
+      pollingInterval: 1_000,
     });
 
-  // Wait for zap - poll every 2 seconds until confirmed
+  // Wait for zap - poll every 1 second until confirmed
   const { isLoading: isZapPending, isSuccess: isZapSuccess } =
     useWaitForTransactionReceipt({
       hash: zapHash,
-      confirmations: 1,
-      query: {
-        refetchInterval: 2000,
-      },
+      pollingInterval: 1_000,
     });
 
   // Derive status from state (avoids setState in effects)
