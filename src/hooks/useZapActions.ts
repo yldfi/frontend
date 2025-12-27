@@ -20,6 +20,7 @@ export type ZapStatus =
   | "zapping"
   | "waitingTx"
   | "success"
+  | "reverted"
   | "error";
 
 // Helper to parse error messages
@@ -71,23 +72,29 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   } = useSendTransaction();
 
   // Wait for approval - poll every 1 second until confirmed
-  const { isLoading: isApprovalPending, isSuccess: isApprovalSuccess } =
+  const { isLoading: isApprovalPending, isSuccess: isApprovalSuccess, data: approvalReceipt } =
     useWaitForTransactionReceipt({
       hash: approveHash,
       pollingInterval: 1_000,
     });
 
   // Wait for zap - poll every 1 second until confirmed
-  const { isLoading: isZapPending, isSuccess: isZapSuccess } =
+  const { isLoading: isZapPending, isSuccess: isZapSuccess, data: zapReceipt } =
     useWaitForTransactionReceipt({
       hash: zapHash,
       pollingInterval: 1_000,
     });
 
+  // Check if transactions reverted (mined but failed)
+  const isApprovalReverted = approvalReceipt?.status === "reverted";
+  const isZapReverted = zapReceipt?.status === "reverted";
+
   // Derive status from state (avoids setState in effects)
   const status: ZapStatus = useMemo(() => {
-    // Error states take priority
+    // Error states take priority (wallet errors, RPC errors)
     if (approveError || zapError) return "error";
+    // Reverted transactions (mined but failed on-chain)
+    if (isZapReverted || isApprovalReverted) return "reverted";
     // Success state
     if (isZapSuccess) return "success";
     // Approval success means we go back to idle (ready for zap)
@@ -99,14 +106,16 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     if (actionState === "approving") return "approving";
     if (actionState === "zapping") return "zapping";
     return "idle";
-  }, [approveError, zapError, isZapSuccess, isApprovalSuccess, isApprovalPending, isZapPending, actionState]);
+  }, [approveError, zapError, isZapReverted, isApprovalReverted, isZapSuccess, isApprovalSuccess, isApprovalPending, isZapPending, actionState]);
 
-  // Derive error message from errors
+  // Derive error message from errors or reverts
   const error = useMemo(() => {
     if (approveError) return parseErrorMessage(approveError, "Approval failed");
     if (zapError) return parseErrorMessage(zapError, "Zap transaction failed");
+    if (isApprovalReverted) return "Approval transaction reverted";
+    if (isZapReverted) return "Zap transaction reverted";
     return null;
-  }, [approveError, zapError]);
+  }, [approveError, zapError, isApprovalReverted, isZapReverted]);
 
   // Check if approval needed
   const needsApproval = useCallback((): boolean => {
@@ -169,8 +178,9 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     reset,
     status,
     error,
-    isLoading: status !== "idle" && status !== "success" && status !== "error",
+    isLoading: status !== "idle" && status !== "success" && status !== "error" && status !== "reverted",
     isSuccess: status === "success",
+    isReverted: status === "reverted",
     zapHash,
     refetchAllowance,
   };

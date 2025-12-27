@@ -5,7 +5,7 @@ import { parseUnits, maxUint256 } from "viem";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { ERC20_APPROVAL_ABI, VAULT_ABI } from "@/lib/abis";
 
-export type TransactionStatus = "idle" | "approving" | "waitingApproval" | "depositing" | "withdrawing" | "waitingTx" | "success" | "error";
+export type TransactionStatus = "idle" | "approving" | "waitingApproval" | "depositing" | "withdrawing" | "waitingTx" | "success" | "reverted" | "error";
 
 export function useVaultActions(
   vaultAddress: `0x${string}`,
@@ -49,25 +49,32 @@ export function useVaultActions(
   } = useWriteContract();
 
   // Wait for transactions - poll every 1 second until confirmed
-  const { isLoading: isApprovalPending, isSuccess: isApprovalSuccess } = useWaitForTransactionReceipt({
+  const { isLoading: isApprovalPending, isSuccess: isApprovalSuccess, data: approvalReceipt } = useWaitForTransactionReceipt({
     hash: approveHash,
     pollingInterval: 1_000,
   });
 
-  const { isLoading: isDepositPending, isSuccess: isDepositSuccess } = useWaitForTransactionReceipt({
+  const { isLoading: isDepositPending, isSuccess: isDepositSuccess, data: depositReceipt } = useWaitForTransactionReceipt({
     hash: depositHash,
     pollingInterval: 1_000,
   });
 
-  const { isLoading: isWithdrawPending, isSuccess: isWithdrawSuccess } = useWaitForTransactionReceipt({
+  const { isLoading: isWithdrawPending, isSuccess: isWithdrawSuccess, data: withdrawReceipt } = useWaitForTransactionReceipt({
     hash: withdrawHash,
     pollingInterval: 1_000,
   });
 
+  // Check if transactions reverted (mined but failed on-chain)
+  const isApprovalReverted = approvalReceipt?.status === "reverted";
+  const isDepositReverted = depositReceipt?.status === "reverted";
+  const isWithdrawReverted = withdrawReceipt?.status === "reverted";
+
   // Derive status from state (avoids setState in effects)
   const status: TransactionStatus = useMemo(() => {
-    // Error states take priority
+    // Error states take priority (wallet errors, RPC errors)
     if (approveError || depositError || withdrawError) return "error";
+    // Reverted transactions (mined but failed on-chain)
+    if (isApprovalReverted || isDepositReverted || isWithdrawReverted) return "reverted";
     // Success states
     if (isDepositSuccess || isWithdrawSuccess) return "success";
     // Approval success means we go back to idle (ready for deposit/withdraw)
@@ -82,18 +89,22 @@ export function useVaultActions(
     return "idle";
   }, [
     approveError, depositError, withdrawError,
+    isApprovalReverted, isDepositReverted, isWithdrawReverted,
     isDepositSuccess, isWithdrawSuccess, isApprovalSuccess,
     isApprovalPending, isDepositPending, isWithdrawPending,
     actionState
   ]);
 
-  // Derive error message
+  // Derive error message from errors or reverts
   const error = useMemo(() => {
     if (approveError) return approveError.message || "Approval failed";
     if (depositError) return depositError.message || "Deposit failed";
     if (withdrawError) return withdrawError.message || "Withdraw failed";
+    if (isApprovalReverted) return "Approval transaction reverted";
+    if (isDepositReverted) return "Deposit transaction reverted";
+    if (isWithdrawReverted) return "Withdraw transaction reverted";
     return null;
-  }, [approveError, depositError, withdrawError]);
+  }, [approveError, depositError, withdrawError, isApprovalReverted, isDepositReverted, isWithdrawReverted]);
 
   // Refetch allowance after approval success (external side effect only)
   useEffect(() => {
@@ -173,8 +184,9 @@ export function useVaultActions(
     reset,
     status,
     error,
-    isLoading: status !== "idle" && status !== "success" && status !== "error",
+    isLoading: status !== "idle" && status !== "success" && status !== "error" && status !== "reverted",
     isSuccess: status === "success",
+    isReverted: status === "reverted",
     refetchAllowance,
     // Transaction hashes for tracking
     depositHash,
