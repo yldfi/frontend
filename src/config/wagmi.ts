@@ -3,11 +3,12 @@ import { mainnet } from "wagmi/chains";
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
 
 // RPC endpoints with fallbacks for reliability
-// Primary: Cloudflare's public gateway, then PublicNode, then Ankr
+// LlamaNodes and dRPC have better caching behavior for tx receipts
 const mainnetTransport = fallback([
+  http("https://eth.llamarpc.com"),
+  http("https://eth.drpc.org"),
   http("https://cloudflare-eth.com"),
   http("https://ethereum-rpc.publicnode.com"),
-  http("https://rpc.ankr.com/eth"),
   http(), // Default RPC as last fallback
 ]);
 
