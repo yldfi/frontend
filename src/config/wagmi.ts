@@ -1,14 +1,16 @@
-import { http, fallback } from "wagmi";
+import { http, fallback, unstable_connector } from "wagmi";
 import { mainnet } from "wagmi/chains";
+import { injected } from "wagmi/connectors";
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
 
 // RPC endpoints with fallbacks for reliability
-// LlamaNodes and dRPC have better caching behavior for tx receipts
+// First try the user's wallet RPC (MetaMask uses Infura, etc.)
+// Then fall back to public RPCs if needed
 const mainnetTransport = fallback([
+  unstable_connector(injected),
   http("https://eth.llamarpc.com"),
   http("https://eth.drpc.org"),
   http("https://cloudflare-eth.com"),
-  http("https://ethereum-rpc.publicnode.com"),
   http(), // Default RPC as last fallback
 ]);
 
