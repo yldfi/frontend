@@ -144,6 +144,7 @@ export function VaultPageContent({ id }: { id: string }) {
     error: txError,
     isLoading,
     isSuccess,
+    isReverted,
     depositHash,
     withdrawHash,
   } = useVaultActions(vaultAddressTyped, TOKENS.CVXCRV, 18);
@@ -168,6 +169,7 @@ export function VaultPageContent({ id }: { id: string }) {
     error: zapActionError,
     isLoading: zapIsLoading,
     isSuccess: zapIsSuccess,
+    isReverted: zapIsReverted,
     zapHash,
   } = useZapActions(zapQuote);
 
@@ -251,14 +253,15 @@ export function VaultPageContent({ id }: { id: string }) {
   const lastHandledWithdrawHash = useRef<string | null>(null);
   const lastHandledZapHash = useRef<string | null>(null);
 
-  // Handle deposit/withdraw success - refetch balances and reset form
+  // Handle deposit/withdraw completion (success or revert) - refetch balances and reset form
   useEffect(() => {
     const currentHash = depositHash || withdrawHash;
-    if (isSuccess && currentHash && currentHash !== lastHandledDepositHash.current && currentHash !== lastHandledWithdrawHash.current) {
+    const isComplete = isSuccess || isReverted;
+    if (isComplete && currentHash && currentHash !== lastHandledDepositHash.current && currentHash !== lastHandledWithdrawHash.current) {
       // Mark as handled
       if (depositHash) lastHandledDepositHash.current = depositHash;
       if (withdrawHash) lastHandledWithdrawHash.current = withdrawHash;
-      // Refetch all balances after successful deposit/withdraw
+      // Refetch all balances after tx completes (even on revert, tokens are still there)
       refetchTokenBalance();
       refetchVaultBalance();
       // Clear form and reset state (use setTimeout to avoid sync setState in effect)
@@ -267,14 +270,15 @@ export function VaultPageContent({ id }: { id: string }) {
         resetVaultActions();
       }, 0);
     }
-  }, [isSuccess, depositHash, withdrawHash, refetchTokenBalance, refetchVaultBalance, resetVaultActions]);
+  }, [isSuccess, isReverted, depositHash, withdrawHash, refetchTokenBalance, refetchVaultBalance, resetVaultActions]);
 
-  // Handle zap success - refetch balances and reset form
+  // Handle zap completion (success or revert) - refetch balances and reset form
   useEffect(() => {
-    if (zapIsSuccess && zapHash && zapHash !== lastHandledZapHash.current) {
+    const isComplete = zapIsSuccess || zapIsReverted;
+    if (isComplete && zapHash && zapHash !== lastHandledZapHash.current) {
       // Mark as handled
       lastHandledZapHash.current = zapHash;
-      // Refetch all balances after successful zap
+      // Refetch all balances after tx completes (even on revert, tokens are still there)
       refetchTokenBalance();
       refetchVaultBalance();
       refetchZapInputBalance();
@@ -284,7 +288,7 @@ export function VaultPageContent({ id }: { id: string }) {
         resetZapActions();
       }, 0);
     }
-  }, [zapIsSuccess, zapHash, refetchTokenBalance, refetchVaultBalance, refetchZapInputBalance, resetZapActions]);
+  }, [zapIsSuccess, zapIsReverted, zapHash, refetchTokenBalance, refetchVaultBalance, refetchZapInputBalance, resetZapActions]);
 
   return (
     <div className="min-h-screen bg-[var(--background)]">
@@ -583,9 +587,9 @@ export function VaultPageContent({ id }: { id: string }) {
                         </div>
                         <p className={cn(
                           "text-xs mt-2 h-4",
-                          hasInsufficientBalance ? "text-[var(--destructive)]" : "invisible"
+                          (hasInsufficientBalance || txError) ? "text-[var(--destructive)]" : "invisible"
                         )}>
-                          {hasInsufficientBalance ? "Insufficient balance" : "\u00A0"}
+                          {hasInsufficientBalance ? "Insufficient balance" : txError || "\u00A0"}
                         </p>
                       </div>
 
