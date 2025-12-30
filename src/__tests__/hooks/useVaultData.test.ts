@@ -345,13 +345,6 @@ describe("useVaultData logic", () => {
   });
 
   describe("contracts array for vault reads", () => {
-    const vaultAbi = [
-      { name: "accountant" },
-      { name: "totalAssets" },
-      { name: "pricePerShare" },
-      { name: "decimals" },
-    ];
-
     function buildVaultContracts(vaultAddress: string) {
       return [
         { address: vaultAddress, functionName: "accountant" },
