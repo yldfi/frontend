@@ -78,13 +78,8 @@ export function ContractExplorer({
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-[var(--border)] shrink-0">
           <div className="flex items-center gap-3">
-            {icon && (
-              <img
-                src={icon}
-                alt=""
-                className="w-6 h-6"
-              />
-            )}
+            {/* eslint-disable-next-line @next/next/no-img-element -- External token icons from various sources */}
+            {icon && <img src={icon} alt="" className="w-6 h-6" />}
             {!icon && <div className="w-2 h-2 rounded-full bg-[var(--success)] animate-pulse" />}
             <div>
               <h2 className="font-medium text-lg">

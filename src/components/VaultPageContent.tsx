@@ -23,7 +23,7 @@ import { useZapActions } from "@/hooks/useZapActions";
 import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS } from "@/lib/enso";
-import { getVault, getParentVault, TOKENS, type VaultConfig } from "@/config/vaults";
+import { getVault, getParentVault, TOKENS } from "@/config/vaults";
 import type { EnsoToken, ZapDirection } from "@/types/enso";
 import {
   trackVaultView,

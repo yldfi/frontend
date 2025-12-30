@@ -243,12 +243,6 @@ describe("useTokenMetadata logic", () => {
   });
 
   describe("contracts array construction", () => {
-    const ERC20_METADATA_ABI = [
-      { name: "name", type: "function" },
-      { name: "symbol", type: "function" },
-      { name: "decimals", type: "function" },
-    ];
-
     function buildContractsArray(tokenAddress: string | undefined) {
       if (!tokenAddress) return undefined;
 

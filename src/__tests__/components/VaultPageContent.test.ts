@@ -322,8 +322,6 @@ describe("VaultPageContent logic", () => {
   });
 
   describe("slippage localStorage", () => {
-    const SLIPPAGE_KEY = "zapSlippage";
-
     function saveSlippage(slippage: number): string {
       return JSON.stringify(slippage);
     }

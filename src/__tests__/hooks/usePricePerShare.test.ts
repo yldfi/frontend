@@ -179,11 +179,6 @@ describe("usePricePerShare logic", () => {
   });
 
   describe("contracts array construction", () => {
-    const ERC4626_ABI = [
-      { name: "decimals", type: "function" },
-      { name: "convertToAssets", type: "function" },
-    ];
-
     function buildContractsArray(
       vaultAddresses: string[]
     ): Array<{ address: string; functionName: string }> {

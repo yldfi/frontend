@@ -429,13 +429,12 @@ describe("lib/analytics", () => {
 
   describe("window/gtag availability checks", () => {
     it("handles window undefined (SSR)", () => {
-      function trackEventSafe(eventName: string): boolean {
-        if (typeof window === "undefined") return false;
-        return true;
+      function isWindowDefined(): boolean {
+        return typeof window !== "undefined";
       }
 
       // In test environment, window is defined
-      expect(trackEventSafe("test")).toBe(true);
+      expect(isWindowDefined()).toBe(true);
     });
 
     it("handles gtag undefined", () => {
