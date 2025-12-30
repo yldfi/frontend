@@ -1,11 +1,11 @@
 import { test, expect } from "@playwright/test";
 
-// ycvxCRV vault address on mainnet
-const VAULT_ADDRESS = "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86";
+// ycvxCRV vault ID (route uses ID, not address)
+const VAULT_ID = "ycvxcrv";
 
 test.describe("Vault Page", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto(`/vault/${VAULT_ADDRESS}`);
+    await page.goto(`/vaults/${VAULT_ID}`);
   });
 
   test("displays vault name and symbol", async ({ page }) => {
@@ -64,20 +64,21 @@ test.describe("Vault Page", () => {
   });
 });
 
-test.describe("Vault Page - Invalid Address", () => {
-  test("handles invalid vault address gracefully", async ({ page }) => {
-    await page.goto("/vault/0xinvalid");
+test.describe("Vault Page - Invalid ID", () => {
+  test("handles invalid vault ID gracefully", async ({ page }) => {
+    await page.goto("/vaults/invalid-vault-id");
 
-    // Should show error message or redirect
-    // The page should still render without crashing
+    // Should show 404 page
     await expect(page.locator("body")).toBeVisible();
+    await expect(page.getByText(/404|not found/i)).toBeVisible();
   });
 
-  test("handles non-existent vault address", async ({ page }) => {
-    // Valid address format but not a vault
-    await page.goto("/vault/0x0000000000000000000000000000000000000000");
+  test("handles non-existent vault ID", async ({ page }) => {
+    // Valid format but not a vault
+    await page.goto("/vaults/nonexistent");
 
-    // Should handle gracefully
+    // Should show 404 page
     await expect(page.locator("body")).toBeVisible();
+    await expect(page.getByText(/404|not found/i)).toBeVisible();
   });
 });

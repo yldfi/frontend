@@ -6,26 +6,26 @@ test.describe("Homepage", () => {
   });
 
   test("displays the homepage", async ({ page }) => {
-    // Check page title
-    await expect(page).toHaveTitle(/YLD\.fi/);
+    // Check page title contains yld_fi
+    await expect(page).toHaveTitle(/yld_fi/i);
   });
 
   test("displays vault cards", async ({ page }) => {
-    // Wait for vault cards to load
-    const vaultCards = page.locator('[data-testid="vault-card"]');
+    // Wait for vault links to load (vault cards are links to /vaults/)
+    const vaultLinks = page.locator('a[href^="/vaults/"]');
 
-    // Should have at least one vault card (may need to wait for data)
-    await expect(vaultCards.first()).toBeVisible({ timeout: 10000 });
+    // Should have at least one vault link
+    await expect(vaultLinks.first()).toBeVisible({ timeout: 10000 });
   });
 
   test("can navigate to vault page", async ({ page }) => {
-    // Click on first vault card
-    const firstVault = page.locator('[data-testid="vault-card"]').first();
+    // Click on first vault link
+    const firstVault = page.locator('a[href^="/vaults/"]').first();
     await expect(firstVault).toBeVisible({ timeout: 10000 });
     await firstVault.click();
 
     // Should navigate to vault page
-    await expect(page).toHaveURL(/\/vault\//);
+    await expect(page).toHaveURL(/\/vaults\//);
   });
 
   test("displays connect wallet button when not connected", async ({
