@@ -25,14 +25,13 @@ test.describe("Vault Page", () => {
   });
 
   test("displays deposit/withdraw tabs", async ({ page }) => {
-    // Look for deposit tab or button
-    const depositTab = page.getByRole("tab", { name: /deposit/i });
-    const depositButton = page.getByRole("button", { name: /deposit/i });
+    // Look for deposit button (it's a button element, not a tab)
+    const depositButton = page.getByRole("button", { name: "Deposit" });
+    await expect(depositButton).toBeVisible({ timeout: 10000 });
 
-    // Either tab or button should be visible
-    const hasDepositUI =
-      (await depositTab.isVisible()) || (await depositButton.isVisible());
-    expect(hasDepositUI).toBe(true);
+    // Also check withdraw button exists
+    const withdrawButton = page.getByRole("button", { name: "Withdraw" });
+    await expect(withdrawButton).toBeVisible();
   });
 
   test("shows zap token selector", async ({ page }) => {
@@ -49,9 +48,11 @@ test.describe("Vault Page", () => {
   });
 
   test("displays connect wallet prompt for transactions", async ({ page }) => {
-    // When not connected, should show connect wallet prompt
-    const connectButton = page.getByRole("button", { name: /connect/i });
-    await expect(connectButton).toBeVisible();
+    // When not connected, should show "Connect Wallet" button in form
+    const connectWalletButton = page.getByRole("button", {
+      name: "Connect Wallet",
+    });
+    await expect(connectWalletButton).toBeVisible({ timeout: 10000 });
   });
 
   test("can navigate back to home", async ({ page }) => {
