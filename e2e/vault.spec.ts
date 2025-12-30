@@ -69,17 +69,15 @@ test.describe("Vault Page - Invalid ID", () => {
   test("handles invalid vault ID gracefully", async ({ page }) => {
     await page.goto("/vaults/invalid-vault-id");
 
-    // Should show 404 page
-    await expect(page.locator("body")).toBeVisible();
-    await expect(page.getByText(/404|not found/i)).toBeVisible();
+    // Should show 404 page with heading
+    await expect(page.getByRole("heading", { name: "404" })).toBeVisible();
   });
 
   test("handles non-existent vault ID", async ({ page }) => {
     // Valid format but not a vault
     await page.goto("/vaults/nonexistent");
 
-    // Should show 404 page
-    await expect(page.locator("body")).toBeVisible();
-    await expect(page.getByText(/404|not found/i)).toBeVisible();
+    // Should show 404 page with heading
+    await expect(page.getByRole("heading", { name: "404" })).toBeVisible();
   });
 });
