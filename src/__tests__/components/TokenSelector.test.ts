@@ -300,13 +300,8 @@ describe("TokenSelector logic", () => {
   });
 
   describe("token logo fallback", () => {
-    function getTokenLogoUrl(
-      logoURI: string | undefined,
-      address: string
-    ): string | null {
-      if (logoURI) return logoURI;
-      // Could return a default or generate from address
-      return null;
+    function getTokenLogoUrl(logoURI: string | undefined): string | null {
+      return logoURI ?? null;
     }
 
     function shouldShowFallback(logoError: boolean, logoURI: string | undefined): boolean {
@@ -314,12 +309,12 @@ describe("TokenSelector logic", () => {
     }
 
     it("returns logoURI when available", () => {
-      const url = getTokenLogoUrl("https://example.com/logo.png", "0x123");
+      const url = getTokenLogoUrl("https://example.com/logo.png");
       expect(url).toBe("https://example.com/logo.png");
     });
 
     it("returns null when no logoURI", () => {
-      const url = getTokenLogoUrl(undefined, "0x123");
+      const url = getTokenLogoUrl(undefined);
       expect(url).toBe(null);
     });
 

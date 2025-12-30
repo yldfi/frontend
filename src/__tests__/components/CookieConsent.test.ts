@@ -137,10 +137,6 @@ describe("CookieConsent logic", () => {
   });
 
   describe("geo region detection", () => {
-    interface GeoHeaders {
-      "cf-ipcountry"?: string;
-    }
-
     const EEA_COUNTRIES = [
       "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR",
       "DE", "GR", "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL",
