@@ -37,13 +37,14 @@ const tenderlyTransport = fallback([
   http(), // Fallback to chain's default RPC
 ]);
 
-// Include Tenderly fork in development mode
-const isDev = process.env.NODE_ENV === "development";
+// Include Tenderly fork in development mode only
+// Use optional chaining to avoid errors in edge runtimes
+const isDev = typeof process !== "undefined" && process.env?.NODE_ENV === "development";
 const chains = isDev ? [mainnet, tenderlyFork] as const : [mainnet] as const;
 
 export const config = getDefaultConfig({
   appName: "yld_fi",
-  projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "demo",
+  projectId: (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID) || "demo",
   chains,
   transports: {
     [mainnet.id]: mainnetTransport,
