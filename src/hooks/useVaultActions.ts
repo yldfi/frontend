@@ -7,12 +7,54 @@ import { ERC20_APPROVAL_ABI, VAULT_ABI } from "@/lib/abis";
 
 export type TransactionStatus = "idle" | "approving" | "waitingApproval" | "depositing" | "withdrawing" | "waitingTx" | "success" | "reverted" | "error";
 
+// Helper to parse error messages into user-friendly format
+function parseErrorMessage(error: Error | null, defaultMsg: string): string | null {
+  if (!error) return null;
+  const msg = error.message || defaultMsg;
+
+  // User rejection
+  if (msg.includes("User rejected") || msg.includes("user rejected") || msg.includes("User declined")) {
+    return "Transaction cancelled";
+  }
+
+  // Insufficient funds
+  if (msg.includes("insufficient funds") || msg.includes("exceeds balance")) {
+    return "Insufficient funds for transaction";
+  }
+
+  // Gas estimation failed
+  if (msg.includes("gas required exceeds") || msg.includes("out of gas")) {
+    return "Transaction would fail: out of gas";
+  }
+
+  // Extract revert reason
+  const revertMatch = msg.match(/reverted with the following reason:\s*\n?\s*(.+?)(?:\n|$)/i);
+  if (revertMatch) {
+    const reason = revertMatch[1].trim();
+    if (reason.toLowerCase() === "execution reverted") {
+      return "Transaction failed: execution reverted";
+    }
+    return `Transaction failed: ${reason}`;
+  }
+
+  // Fallback: truncate very long messages
+  if (msg.length > 100) {
+    const firstLine = msg.split('\n')[0];
+    if (firstLine.length <= 100) {
+      return firstLine;
+    }
+    return msg.slice(0, 97) + "...";
+  }
+
+  return msg;
+}
+
 export function useVaultActions(
   vaultAddress: `0x${string}`,
   tokenAddress: `0x${string}`,
   decimals: number = 18
 ) {
-  const { address: userAddress } = useAccount();
+  const { address: userAddress, chainId } = useAccount();
   const [actionState, setActionState] = useState<"idle" | "approving" | "depositing" | "withdrawing">("idle");
 
   // Check allowance
@@ -21,6 +63,7 @@ export function useVaultActions(
     abi: ERC20_APPROVAL_ABI,
     functionName: "allowance",
     args: userAddress ? [userAddress, vaultAddress] : undefined,
+    chainId, // Use connected chain
     query: {
       enabled: !!userAddress,
     },
@@ -71,14 +114,13 @@ export function useVaultActions(
 
   // Derive status from state (avoids setState in effects)
   const status: TransactionStatus = useMemo(() => {
-    // Error states take priority (wallet errors, RPC errors)
-    if (approveError || depositError || withdrawError) return "error";
-    // Reverted transactions (mined but failed on-chain)
+    // On-chain state takes priority - if we have a receipt, respect its status
+    // This handles the case where a tx is mined but reverts on-chain
     if (isApprovalReverted || isDepositReverted || isWithdrawReverted) return "reverted";
-    // Success states
     if (isDepositSuccess || isWithdrawSuccess) return "success";
-    // Approval success means we go back to idle (ready for deposit/withdraw)
     if (isApprovalSuccess) return "idle";
+    // Error states for pre-send failures (wallet rejection, simulation failure, RPC errors)
+    if (approveError || depositError || withdrawError) return "error";
     // Pending transaction states
     if (isApprovalPending) return "waitingApproval";
     if (isDepositPending || isWithdrawPending) return "waitingTx";
@@ -97,9 +139,9 @@ export function useVaultActions(
 
   // Derive error message from errors or reverts
   const error = useMemo(() => {
-    if (approveError) return approveError.message || "Approval failed";
-    if (depositError) return depositError.message || "Deposit failed";
-    if (withdrawError) return withdrawError.message || "Withdraw failed";
+    if (approveError) return parseErrorMessage(approveError, "Approval failed");
+    if (depositError) return parseErrorMessage(depositError, "Deposit failed");
+    if (withdrawError) return parseErrorMessage(withdrawError, "Withdraw failed");
     if (isApprovalReverted) return "Approval transaction reverted";
     if (isDepositReverted) return "Deposit transaction reverted";
     if (isWithdrawReverted) return "Withdraw transaction reverted";

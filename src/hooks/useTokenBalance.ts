@@ -15,7 +15,7 @@ interface TokenBalanceResult {
 export function useTokenBalance(
   tokenAddress: `0x${string}`
 ): TokenBalanceResult & { isLoading: boolean } {
-  const { address: userAddress, isConnected } = useAccount();
+  const { address: userAddress, isConnected, chainId } = useAccount();
 
   const { data, isLoading, refetch } = useReadContracts({
     contracts: [
@@ -24,11 +24,13 @@ export function useTokenBalance(
         abi: ERC20_BALANCE_ABI,
         functionName: "balanceOf",
         args: userAddress ? [userAddress] : undefined,
+        chainId, // Use connected chain
       },
       {
         address: tokenAddress,
         abi: ERC20_BALANCE_ABI,
         functionName: "decimals",
+        chainId, // Use connected chain
       },
     ],
     query: {
