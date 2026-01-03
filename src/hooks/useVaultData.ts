@@ -1,6 +1,6 @@
 "use client";
 
-import { useReadContracts } from "wagmi";
+import { useReadContracts, useAccount } from "wagmi";
 
 // Yearn V3 Vault ABI (minimal for reading fees)
 const vaultAbi = [
@@ -85,13 +85,15 @@ export interface VaultData {
 }
 
 export function useVaultData(vaultAddress: `0x${string}`): VaultData {
+  const { chainId } = useAccount();
+
   // First, read vault data including accountant address
   const { data: vaultData, isLoading: vaultLoading, error: vaultError } = useReadContracts({
     contracts: [
-      { address: vaultAddress, abi: vaultAbi, functionName: "accountant" },
-      { address: vaultAddress, abi: vaultAbi, functionName: "totalAssets" },
-      { address: vaultAddress, abi: vaultAbi, functionName: "pricePerShare" },
-      { address: vaultAddress, abi: vaultAbi, functionName: "decimals" },
+      { address: vaultAddress, abi: vaultAbi, functionName: "accountant", chainId },
+      { address: vaultAddress, abi: vaultAbi, functionName: "totalAssets", chainId },
+      { address: vaultAddress, abi: vaultAbi, functionName: "pricePerShare", chainId },
+      { address: vaultAddress, abi: vaultAbi, functionName: "decimals", chainId },
     ],
   });
 
@@ -100,9 +102,9 @@ export function useVaultData(vaultAddress: `0x${string}`): VaultData {
   // Then read accountant fees
   const { data: accountantData, isLoading: accountantLoading, error: accountantError } = useReadContracts({
     contracts: accountantAddress ? [
-      { address: accountantAddress, abi: accountantAbi, functionName: "useCustomConfig", args: [vaultAddress] },
-      { address: accountantAddress, abi: accountantAbi, functionName: "customConfig", args: [vaultAddress] },
-      { address: accountantAddress, abi: accountantAbi, functionName: "defaultConfig" },
+      { address: accountantAddress, abi: accountantAbi, functionName: "useCustomConfig", args: [vaultAddress], chainId },
+      { address: accountantAddress, abi: accountantAbi, functionName: "customConfig", args: [vaultAddress], chainId },
+      { address: accountantAddress, abi: accountantAbi, functionName: "defaultConfig", chainId },
     ] : [],
     query: {
       enabled: !!accountantAddress,

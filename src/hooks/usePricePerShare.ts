@@ -1,6 +1,6 @@
 "use client";
 
-import { useReadContracts } from "wagmi";
+import { useReadContracts, useAccount } from "wagmi";
 import { formatUnits } from "viem";
 
 // ERC-4626 standard ABI for price per share calculation
@@ -22,18 +22,22 @@ const ERC4626_ABI = [
 ] as const;
 
 export function usePricePerShare(vaultAddress: `0x${string}`) {
+  const { chainId } = useAccount();
+
   const { data, isLoading, error } = useReadContracts({
     contracts: [
       {
         address: vaultAddress,
         abi: ERC4626_ABI,
         functionName: "decimals",
+        chainId, // Use connected chain
       },
       {
         address: vaultAddress,
         abi: ERC4626_ABI,
         functionName: "convertToAssets",
         args: [BigInt(10 ** 18)], // 1 share with 18 decimals
+        chainId, // Use connected chain
       },
     ],
     query: {
@@ -62,18 +66,22 @@ export function usePricePerShare(vaultAddress: `0x${string}`) {
 
 // Hook to fetch price per share for multiple vaults at once
 export function useMultiplePricePerShare(vaultAddresses: `0x${string}`[]) {
+  const { chainId } = useAccount();
+
   // Build contracts array: for each vault, we need decimals and convertToAssets
   const contracts = vaultAddresses.flatMap((address) => [
     {
       address,
       abi: ERC4626_ABI,
       functionName: "decimals" as const,
+      chainId, // Use connected chain
     },
     {
       address,
       abi: ERC4626_ABI,
       functionName: "convertToAssets" as const,
       args: [BigInt(10 ** 18)] as const,
+      chainId, // Use connected chain
     },
   ]);
 

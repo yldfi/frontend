@@ -2,6 +2,9 @@
 @import "tailwindcss";
 
 :root {
+  /* Test network banner offset (set dynamically via JS) */
+  --test-banner-height: 0px;
+
   /* Minimal dark palette */
   --background: #09090b;
   --foreground: #fafafa;

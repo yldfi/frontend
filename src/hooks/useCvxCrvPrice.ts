@@ -1,6 +1,6 @@
 "use client";
 
-import { useReadContracts } from "wagmi";
+import { useReadContracts, useAccount } from "wagmi";
 import { formatUnits } from "viem";
 
 // LlamaLend price oracle for cvxCRV/crvUSD
@@ -32,17 +32,21 @@ const CHAINLINK_ABI = [
 ] as const;
 
 export function useCvxCrvPrice() {
+  const { chainId } = useAccount();
+
   const { data, isLoading, error } = useReadContracts({
     contracts: [
       {
         address: CVXCRV_CRVUSD_ORACLE,
         abi: LLAMALEND_ORACLE_ABI,
         functionName: "price",
+        chainId, // Use connected chain
       },
       {
         address: CRVUSD_USD_CHAINLINK,
         abi: CHAINLINK_ABI,
         functionName: "latestAnswer",
+        chainId, // Use connected chain
       },
     ],
     query: {
