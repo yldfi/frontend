@@ -42,7 +42,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251229.0",
-    "@opennextjs/cloudflare": "^1.14.7",
+    "@opennextjs/cloudflare": "https://pkg.pr.new/@opennextjs/cloudflare@main",
     "@playwright/test": "^1.57.0",
     "@tailwindcss/postcss": "^4",
     "@testing-library/dom": "^10.4.1",
