@@ -18,7 +18,7 @@ export function useVaultBalance(
   pricePerShare: number = 1,
   assetPriceUsd: number = 1
 ): VaultBalanceResult & { isLoading: boolean } {
-  const { address: userAddress, isConnected } = useAccount();
+  const { address: userAddress, isConnected, chainId } = useAccount();
 
   const { data, isLoading, refetch } = useReadContracts({
     contracts: [
@@ -27,11 +27,13 @@ export function useVaultBalance(
         abi: ERC20_BALANCE_ABI,
         functionName: "balanceOf",
         args: userAddress ? [userAddress] : undefined,
+        chainId, // Use connected chain
       },
       {
         address: vaultAddress,
         abi: ERC20_BALANCE_ABI,
         functionName: "decimals",
+        chainId, // Use connected chain
       },
     ],
     query: {
@@ -74,7 +76,7 @@ export function useMultipleVaultBalances(
     assetPriceUsd: number;
   }>
 ) {
-  const { address: userAddress, isConnected } = useAccount();
+  const { address: userAddress, isConnected, chainId } = useAccount();
 
   const contracts = vaults.flatMap((vault) => [
     {
@@ -82,11 +84,13 @@ export function useMultipleVaultBalances(
       abi: ERC20_BALANCE_ABI,
       functionName: "balanceOf" as const,
       args: userAddress ? [userAddress] : undefined,
+      chainId, // Use connected chain
     },
     {
       address: vault.address,
       abi: ERC20_BALANCE_ABI,
       functionName: "decimals" as const,
+      chainId, // Use connected chain
     },
   ]);
 

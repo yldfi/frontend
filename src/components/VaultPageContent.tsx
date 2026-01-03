@@ -309,10 +309,21 @@ export function VaultPageContent({ id }: { id: string }) {
     }
   }, [zapIsSuccess, zapIsReverted, zapHash, refetchTokenBalance, refetchVaultBalance, refetchZapInputBalance, resetZapActions]);
 
+  // Auto-dismiss errors after 5 seconds
+  useEffect(() => {
+    if (txError || zapActionError) {
+      const timeout = setTimeout(() => {
+        if (txError) resetVaultActions();
+        if (zapActionError) resetZapActions();
+      }, 5000);
+      return () => clearTimeout(timeout);
+    }
+  }, [txError, zapActionError, resetVaultActions, resetZapActions]);
+
   return (
     <div className="min-h-screen bg-[var(--background)]">
       {/* Header */}
-      <header className="fixed top-0 left-0 right-0 z-50 border-b border-[var(--border)] backdrop-blur-lg bg-[var(--background)]/80">
+      <header className="fixed left-0 right-0 z-50 border-b border-[var(--border)] backdrop-blur-lg bg-[var(--background)]/80" style={{ top: "var(--test-banner-height)" }}>
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <Logo size={28} />
@@ -324,7 +335,7 @@ export function VaultPageContent({ id }: { id: string }) {
         </div>
       </header>
 
-      <main className="pt-16 overflow-x-hidden">
+      <main className="overflow-x-hidden" style={{ paddingTop: "calc(4rem + var(--test-banner-height))" }}>
         {/* Back link */}
         <div className="border-b border-[var(--border)]">
           <div className="max-w-6xl mx-auto px-6 py-4">
@@ -501,7 +512,7 @@ export function VaultPageContent({ id }: { id: string }) {
 
             {/* Right column - Action Card */}
             <div className="lg:col-span-2 min-w-0">
-              <div className="sticky top-24 border border-[var(--border)] rounded-xl overflow-hidden w-full">
+              <div className="sticky border border-[var(--border)] rounded-xl overflow-hidden w-full" style={{ top: "calc(6rem + var(--test-banner-height))" }}>
                 {/* Your Position - Always visible when connected with balance */}
                 {isConnected && vaultBalance > 0 && (
                   <div className="bg-[var(--muted)]/30 p-5 border-b border-[var(--border)]">
@@ -554,6 +565,9 @@ export function VaultPageContent({ id }: { id: string }) {
                           setAmount("");
                           setZapAmount("");
                           setLastTxResult(null);
+                          // Clear any pending error states when switching tabs
+                          resetVaultActions();
+                          resetZapActions();
                         }}
                         className={cn(
                           "flex-1 pb-3 text-sm font-medium transition-all capitalize relative cursor-pointer",
@@ -648,9 +662,9 @@ export function VaultPageContent({ id }: { id: string }) {
                         </div>
                         <p className={cn(
                           "text-xs mt-2 h-4",
-                          (hasInsufficientBalance || txError) ? "text-[var(--destructive)]" : "invisible"
+                          hasInsufficientBalance ? "text-[var(--destructive)]" : "invisible"
                         )}>
-                          {hasInsufficientBalance ? "Insufficient balance" : txError || "\u00A0"}
+                          {hasInsufficientBalance ? "Insufficient balance" : "\u00A0"}
                         </p>
                       </div>
 
@@ -732,6 +746,13 @@ export function VaultPageContent({ id }: { id: string }) {
                         >
                           Connect Wallet
                         </button>
+                      )}
+
+                      {/* Error display */}
+                      {txError && (
+                        <div className="text-xs text-[var(--destructive)] text-center">
+                          <p>{txError}</p>
+                        </div>
                       )}
 
                       {/* Spacer to match Zap tab's Enso footer height */}
@@ -937,14 +958,6 @@ export function VaultPageContent({ id }: { id: string }) {
                         </div>
                       </div>
 
-                      {/* Error display - fixed height to prevent layout shift */}
-                      <p className={cn(
-                        "text-xs h-4",
-                        (zapQuoteError || zapActionError) ? "text-[var(--destructive)]" : "invisible"
-                      )}>
-                        {zapQuoteError?.message || zapActionError || "\u00A0"}
-                      </p>
-
                       {/* Zap Action Button */}
                       {isConnected ? (
                         <button
@@ -993,6 +1006,25 @@ export function VaultPageContent({ id }: { id: string }) {
                         >
                           Connect Wallet
                         </button>
+                      )}
+
+                      {/* Error display */}
+                      {(zapQuoteError || zapActionError) && (
+                        <div className="text-xs text-[var(--destructive)] text-center">
+                          <p>{zapQuoteError?.message || zapActionError}</p>
+                          {/* Show tx hash link if available (for on-chain reverts) */}
+                          {zapHash && (
+                            <a
+                              href={`https://etherscan.io/tx/${zapHash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 mt-1 hover:underline"
+                            >
+                              View transaction
+                              <ExternalLink size={10} />
+                            </a>
+                          )}
+                        </div>
                       )}
 
                       {/* Enso Attribution + Slippage Settings */}

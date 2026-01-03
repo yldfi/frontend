@@ -114,7 +114,7 @@ export function HomePageContent() {
   return (
     <div className="min-h-screen bg-[var(--background)]">
       {/* Header */}
-      <header className="fixed top-0 left-0 right-0 z-50 border-b border-[var(--border)] backdrop-blur-lg bg-[var(--background)]/80">
+      <header className="fixed left-0 right-0 z-50 border-b border-[var(--border)] backdrop-blur-lg bg-[var(--background)]/80" style={{ top: "var(--test-banner-height)" }}>
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <Logo size={28} />
@@ -128,7 +128,7 @@ export function HomePageContent() {
         </div>
       </header>
 
-      <main className="pt-16">
+      <main style={{ paddingTop: "calc(4rem + var(--test-banner-height))" }}>
         {/* Hero */}
         <section className="border-b border-[var(--border)] relative overflow-hidden">
           <div className="absolute inset-0">
