@@ -37,6 +37,7 @@ import {
   trackTransactionCancelled,
   isUserRejection,
 } from "@/lib/analytics";
+import { toast } from "sonner";
 
 export function VaultPageContent({ id }: { id: string }) {
   const vault = getVault(id);
@@ -281,6 +282,25 @@ export function VaultPageContent({ id }: { id: string }) {
         setLastTxResult(txResult);
         setAmount("");
         resetVaultActions();
+
+        // Show toast notification
+        if (isSuccess) {
+          toast.success(`${depositHash ? "Deposit" : "Withdrawal"} successful!`, {
+            description: "View on Etherscan",
+            action: {
+              label: "View",
+              onClick: () => window.open(`https://etherscan.io/tx/${currentHash}`, "_blank"),
+            },
+          });
+        } else if (isReverted) {
+          toast.error(`${depositHash ? "Deposit" : "Withdrawal"} failed`, {
+            description: "Transaction reverted. View on Etherscan",
+            action: {
+              label: "View",
+              onClick: () => window.open(`https://etherscan.io/tx/${currentHash}`, "_blank"),
+            },
+          });
+        }
       }, 0);
     }
   }, [isSuccess, isReverted, depositHash, withdrawHash, refetchTokenBalance, refetchVaultBalance, resetVaultActions]);
@@ -305,20 +325,48 @@ export function VaultPageContent({ id }: { id: string }) {
         setLastTxResult(txResult);
         setZapAmount("");
         resetZapActions();
+
+        // Show toast notification
+        if (zapIsSuccess) {
+          toast.success("Zap successful!", {
+            description: "View on Etherscan",
+            action: {
+              label: "View",
+              onClick: () => window.open(`https://etherscan.io/tx/${zapHash}`, "_blank"),
+            },
+          });
+        } else if (zapIsReverted) {
+          toast.error("Zap failed", {
+            description: "Transaction reverted. View on Etherscan",
+            action: {
+              label: "View",
+              onClick: () => window.open(`https://etherscan.io/tx/${zapHash}`, "_blank"),
+            },
+          });
+        }
       }, 0);
     }
   }, [zapIsSuccess, zapIsReverted, zapHash, refetchTokenBalance, refetchVaultBalance, refetchZapInputBalance, resetZapActions]);
 
-  // Auto-dismiss errors after 5 seconds
+  // Show toast notifications for errors
   useEffect(() => {
-    if (txError || zapActionError) {
-      const timeout = setTimeout(() => {
-        if (txError) resetVaultActions();
-        if (zapActionError) resetZapActions();
-      }, 5000);
-      return () => clearTimeout(timeout);
+    if (txError) {
+      toast.error(txError);
     }
-  }, [txError, zapActionError, resetVaultActions, resetZapActions]);
+  }, [txError]);
+
+  useEffect(() => {
+    if (zapActionError) {
+      toast.error(zapActionError);
+    }
+  }, [zapActionError]);
+
+  // Show toast for quote errors
+  useEffect(() => {
+    if (zapQuoteError) {
+      toast.error(zapQuoteError.message || "Failed to get quote");
+    }
+  }, [zapQuoteError]);
 
   return (
     <div className="min-h-screen bg-[var(--background)]">
@@ -748,13 +796,6 @@ export function VaultPageContent({ id }: { id: string }) {
                         </button>
                       )}
 
-                      {/* Error display */}
-                      {txError && (
-                        <div className="text-xs text-[var(--destructive)] text-center">
-                          <p>{txError}</p>
-                        </div>
-                      )}
-
                       {/* Spacer to match Zap tab's Enso footer height */}
                       <div className="h-[28px]" />
                     </>
@@ -1006,25 +1047,6 @@ export function VaultPageContent({ id }: { id: string }) {
                         >
                           Connect Wallet
                         </button>
-                      )}
-
-                      {/* Error display */}
-                      {(zapQuoteError || zapActionError) && (
-                        <div className="text-xs text-[var(--destructive)] text-center">
-                          <p>{zapQuoteError?.message || zapActionError}</p>
-                          {/* Show tx hash link if available (for on-chain reverts) */}
-                          {zapHash && (
-                            <a
-                              href={`https://etherscan.io/tx/${zapHash}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 mt-1 hover:underline"
-                            >
-                              View transaction
-                              <ExternalLink size={10} />
-                            </a>
-                          )}
-                        </div>
                       )}
 
                       {/* Enso Attribution + Slippage Settings */}

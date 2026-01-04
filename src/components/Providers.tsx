@@ -7,6 +7,7 @@ import { useEnsName } from "wagmi";
 import { config } from "@/config/wagmi";
 import { useState } from "react";
 import { AnalyticsProvider } from "@/components/AnalyticsProvider";
+import { Toaster } from "sonner";
 
 import "@rainbow-me/rainbowkit/styles.css";
 
@@ -76,6 +77,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
           modalSize="compact"
           avatar={CustomAvatar}
         >
+          <Toaster position="top-right" richColors closeButton />
           <AnalyticsProvider>{children}</AnalyticsProvider>
         </RainbowKitProvider>
       </QueryClientProvider>
