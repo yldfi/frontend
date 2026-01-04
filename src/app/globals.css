@@ -231,3 +231,61 @@ input[type="number"] {
   animation: rainbowSlide 3s linear infinite;
   z-index: -1;
 }
+
+/* Sonner Toast Customization */
+[data-sonner-toaster] {
+  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+}
+
+[data-sonner-toast] {
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--foreground) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+}
+
+[data-sonner-toast][data-type="success"] {
+  border-color: var(--success) !important;
+}
+
+[data-sonner-toast][data-type="error"] {
+  border-color: var(--destructive) !important;
+}
+
+[data-sonner-toast][data-type="warning"] {
+  border-color: var(--warning) !important;
+}
+
+[data-sonner-toast] [data-title] {
+  color: var(--foreground) !important;
+  font-weight: 500 !important;
+  font-size: 14px !important;
+}
+
+[data-sonner-toast] [data-description] {
+  color: var(--muted-foreground) !important;
+  font-size: 13px !important;
+}
+
+[data-sonner-toast] [data-button] {
+  background: var(--accent) !important;
+  color: var(--accent-foreground) !important;
+  border-radius: 6px !important;
+  font-weight: 500 !important;
+  transition: opacity 0.2s ease !important;
+}
+
+[data-sonner-toast] [data-button]:hover {
+  opacity: 0.9 !important;
+}
+
+[data-sonner-toast] [data-close-button] {
+  background: var(--muted) !important;
+  border-color: var(--border) !important;
+  color: var(--muted-foreground) !important;
+}
+
+[data-sonner-toast] [data-close-button]:hover {
+  background: var(--border) !important;
+}

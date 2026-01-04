@@ -77,7 +77,15 @@ export function Providers({ children }: { children: React.ReactNode }) {
           modalSize="compact"
           avatar={CustomAvatar}
         >
-          <Toaster position="top-right" richColors closeButton />
+          <Toaster
+            position="top-right"
+            closeButton
+            toastOptions={{
+              style: {
+                fontFamily: 'var(--font-inter)',
+              },
+            }}
+          />
           <AnalyticsProvider>{children}</AnalyticsProvider>
         </RainbowKitProvider>
       </QueryClientProvider>
