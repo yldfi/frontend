@@ -635,47 +635,6 @@ export function VaultPageContent({ id }: { id: string }) {
 
                 {/* Form - min-height prevents layout shift when switching tabs */}
                 <div className="p-5 space-y-5 min-h-[622px]">
-                  {/* Transaction Status Banner */}
-                  {(lastTxResult || (activeTab !== "zap" && (depositHash || withdrawHash) && isLoading) || (activeTab === "zap" && zapHash && zapIsLoading)) && (
-                    <div className={cn(
-                      "flex items-center justify-between p-3 rounded-lg text-sm",
-                      lastTxResult?.status === "success"
-                        ? "bg-[var(--success)]/10 text-[var(--success)]"
-                        : lastTxResult?.status === "reverted"
-                        ? "bg-[var(--destructive)]/10 text-[var(--destructive)]"
-                        : "bg-[var(--muted)] text-[var(--muted-foreground)]"
-                    )}>
-                      <span>
-                        {lastTxResult?.status === "success"
-                          ? `${lastTxResult.type.charAt(0).toUpperCase() + lastTxResult.type.slice(1)} successful!`
-                          : lastTxResult?.status === "reverted"
-                          ? `${lastTxResult.type.charAt(0).toUpperCase() + lastTxResult.type.slice(1)} failed`
-                          : "Transaction pending..."}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <a
-                          href={`https://etherscan.io/tx/${lastTxResult?.hash || (activeTab === "zap" ? zapHash : (depositHash || withdrawHash))}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1 hover:underline"
-                        >
-                          View
-                          <ExternalLink size={12} />
-                        </a>
-                        {lastTxResult && (
-                          <button
-                            onClick={() => setLastTxResult(null)}
-                            className="p-0.5 hover:bg-[var(--background)]/50 rounded"
-                          >
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
                   {/* Deposit/Withdraw Form */}
                   {activeTab !== "zap" && (
                     <>
