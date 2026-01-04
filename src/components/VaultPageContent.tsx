@@ -286,17 +286,15 @@ export function VaultPageContent({ id }: { id: string }) {
         // Show toast notification
         if (isSuccess) {
           toast.success(`${depositHash ? "Deposit" : "Withdrawal"} successful!`, {
-            description: "View on Etherscan",
             action: {
-              label: "View",
+              label: "View Tx",
               onClick: () => window.open(`https://etherscan.io/tx/${currentHash}`, "_blank"),
             },
           });
         } else if (isReverted) {
-          toast.error(`${depositHash ? "Deposit" : "Withdrawal"} failed`, {
-            description: "Transaction reverted. View on Etherscan",
+          toast.error(`${depositHash ? "Deposit" : "Withdrawal"} failed - transaction reverted`, {
             action: {
-              label: "View",
+              label: "View Tx",
               onClick: () => window.open(`https://etherscan.io/tx/${currentHash}`, "_blank"),
             },
           });
@@ -329,17 +327,15 @@ export function VaultPageContent({ id }: { id: string }) {
         // Show toast notification
         if (zapIsSuccess) {
           toast.success("Zap successful!", {
-            description: "View on Etherscan",
             action: {
-              label: "View",
+              label: "View Tx",
               onClick: () => window.open(`https://etherscan.io/tx/${zapHash}`, "_blank"),
             },
           });
         } else if (zapIsReverted) {
-          toast.error("Zap failed", {
-            description: "Transaction reverted. View on Etherscan",
+          toast.error("Zap failed - transaction reverted", {
             action: {
-              label: "View",
+              label: "View Tx",
               onClick: () => window.open(`https://etherscan.io/tx/${zapHash}`, "_blank"),
             },
           });

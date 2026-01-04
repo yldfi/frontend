@@ -78,8 +78,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
           avatar={CustomAvatar}
         >
           <Toaster
-            position="top-right"
-            closeButton
+            position="bottom-right"
+            duration={5000}
             toastOptions={{
               style: {
                 fontFamily: 'var(--font-inter)',
