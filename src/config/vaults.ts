@@ -318,6 +318,10 @@ export function getAllVaultIds(): string[] {
 
 // Check if address is a yld_fi vault
 export function isYldfiVault(address: string): boolean {
+  // Exclude zero address (used for undeployed vaults)
+  if (address.toLowerCase() === "0x0000000000000000000000000000000000000000") {
+    return false;
+  }
   return getVaultByAddress(address) !== undefined;
 }
 

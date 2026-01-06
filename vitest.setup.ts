@@ -27,7 +27,7 @@ Object.defineProperty(globalThis, "fetch", {
   writable: true,
 });
 
-// Mock wagmi hooks
+// Mock wagmi hooks and utilities
 vi.mock("wagmi", () => ({
   useReadContracts: vi.fn(() => ({
     data: undefined,
@@ -67,6 +67,15 @@ vi.mock("wagmi", () => ({
   })),
   useChainId: vi.fn(() => 1),
   useConfig: vi.fn(() => ({})),
+  useBalance: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+    error: null,
+  })),
+  // Transport utilities used by wagmi config
+  http: vi.fn(() => ({})),
+  fallback: vi.fn((...transports: unknown[]) => transports),
+  unstable_connector: vi.fn(() => ({})),
 }));
 
 // Mock @tanstack/react-query
