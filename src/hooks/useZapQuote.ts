@@ -23,7 +23,9 @@ interface UseZapQuoteParams {
   inputAmount: string;
   direction: ZapDirection;
   vaultAddress: string;
+  underlyingToken?: string; // Vault's underlying token address
   slippage?: string; // basis points, default "100" = 1%
+  underlyingTokenPrice?: number; // For illiquid tokens like cvgCVX
 }
 
 /**

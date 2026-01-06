@@ -706,12 +706,16 @@ export async function fetchVaultToVaultRoute(params: {
   sourceVault: string;
   targetVault: string;
   amountIn: string;
-  sourceUnderlyingToken: string; // Source vault's underlying (e.g., cvxCRV)
-  targetUnderlyingToken: string; // Target vault's underlying (e.g., cvgCVX)
+  sourceUnderlyingToken?: string; // Source vault's underlying - looked up from VAULTS if not provided
+  targetUnderlyingToken?: string; // Target vault's underlying - looked up from VAULTS if not provided
   slippage?: string; // basis points, default "100" = 1%
 }): Promise<EnsoBundleResponse> {
-  const sourceUnderlying = params.sourceUnderlyingToken;
-  const targetUnderlying = params.targetUnderlyingToken;
+  // Look up underlying tokens from VAULTS config if not provided
+  const sourceVaultConfig = Object.values(VAULTS).find(v => v.address.toLowerCase() === params.sourceVault.toLowerCase());
+  const targetVaultConfig = Object.values(VAULTS).find(v => v.address.toLowerCase() === params.targetVault.toLowerCase());
+
+  const sourceUnderlying = params.sourceUnderlyingToken ?? sourceVaultConfig?.assetAddress ?? TOKENS.CVXCRV;
+  const targetUnderlying = params.targetUnderlyingToken ?? targetVaultConfig?.assetAddress ?? TOKENS.CVXCRV;
   const slippage = params.slippage ?? "100";
 
   // Check if underlyings are the same (simple case)
