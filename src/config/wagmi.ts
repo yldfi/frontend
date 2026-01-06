@@ -54,3 +54,10 @@ export const config = getDefaultConfig({
 });
 
 export const supportedChains = chains;
+
+// Public RPC URLs for direct fetch calls (e.g., eth_call for price queries)
+export const PUBLIC_RPC_URLS = {
+  llamarpc: "https://eth.llamarpc.com",
+  drpc: "https://eth.drpc.org",
+  cloudflare: "https://cloudflare-eth.com",
+} as const;

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
-const CACHE_API_URL = "https://yldfi-cache.yldfi.workers.dev/api/vaults";
+const CACHE_API_URL = "/api/vaults";
 
 interface VaultCacheData {
   address: string;
@@ -14,7 +14,11 @@ interface VaultCacheData {
 interface CacheResponse {
   ycvxcrv: VaultCacheData;
   yscvxcrv: VaultCacheData;
+  yscvgcvx: VaultCacheData;
+  yspxcvx: VaultCacheData;
   cvxCrvPrice: number;
+  cvgCvxPrice: number;
+  pxCvxPrice: number;
   lastUpdated: string;
 }
 

@@ -104,9 +104,8 @@ export function VaultPageContent({ id }: { id: string }) {
   );
   const curveData = formatCurveVaultData(curveVault);
 
-  // Fetch cvxCRV price from on-chain oracles (only for cvxCRV vaults)
-  const isCvxCrvVault = vault?.assetSymbol === "cvxCRV";
-  const { price: cvxCrvPrice } = useCvxCrvPrice(isCvxCrvVault);
+  // Fetch cvxCRV price from on-chain oracles
+  const { price: cvxCrvPrice } = useCvxCrvPrice();
 
   // Fetch vault cache for all underlying prices
   const { data: vaultCache } = useVaultCache();
