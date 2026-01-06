@@ -17,13 +17,14 @@ import { useVaultBalance } from "@/hooks/useVaultBalance";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { useCvxCrvPrice } from "@/hooks/useCvxCrvPrice";
 import { usePricePerShare } from "@/hooks/usePricePerShare";
+import { useVaultCache } from "@/hooks/useVaultCache";
 import { useVaultActions } from "@/hooks/useVaultActions";
 import { useZapQuote } from "@/hooks/useZapQuote";
 import { useZapActions } from "@/hooks/useZapActions";
 import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS } from "@/lib/enso";
-import { getVault, getParentVault, TOKENS } from "@/config/vaults";
+import { getVault, getParentVault, TOKENS, VAULT_UNDERLYING_TOKENS } from "@/config/vaults";
 import type { EnsoToken, ZapDirection } from "@/types/enso";
 import {
   trackVaultView,
@@ -103,8 +104,27 @@ export function VaultPageContent({ id }: { id: string }) {
   );
   const curveData = formatCurveVaultData(curveVault);
 
-  // Fetch cvxCRV price from on-chain oracles
-  const { price: cvxCrvPrice } = useCvxCrvPrice();
+  // Fetch cvxCRV price from on-chain oracles (only for cvxCRV vaults)
+  const isCvxCrvVault = vault?.assetSymbol === "cvxCRV";
+  const { price: cvxCrvPrice } = useCvxCrvPrice(isCvxCrvVault);
+
+  // Fetch vault cache for all underlying prices
+  const { data: vaultCache } = useVaultCache();
+
+  // Get the correct underlying price based on vault's asset
+  const getUnderlyingPrice = (): number => {
+    if (!vault) return cvxCrvPrice;
+    switch (vault.assetSymbol) {
+      case "cvgCVX":
+        return vaultCache?.cvgCvxPrice ?? 0;
+      case "pxCVX":
+        return vaultCache?.pxCvxPrice ?? 0;
+      case "cvxCRV":
+      default:
+        return cvxCrvPrice;
+    }
+  };
+  const underlyingPrice = getUnderlyingPrice();
 
   // Fetch price per share from on-chain
   const vaultAddressTyped = (vault?.address ?? "0x0000000000000000000000000000000000000000") as `0x${string}`;
@@ -119,7 +139,7 @@ export function VaultPageContent({ id }: { id: string }) {
   } = useVaultBalance(
     vaultAddressTyped,
     pricePerShare,
-    cvxCrvPrice
+    underlyingPrice
   );
 
   const tokenBalance = parseFloat(tokenBalanceFormatted) || 0;
@@ -155,7 +175,7 @@ export function VaultPageContent({ id }: { id: string }) {
     isReverted,
     depositHash,
     withdrawHash,
-  } = useVaultActions(vaultAddressTyped, TOKENS.CVXCRV, 18);
+  } = useVaultActions(vaultAddressTyped, vault?.assetAddress ?? TOKENS.CVXCRV, vault?.assetDecimals ?? 18);
 
   // Zap quote - fetch route from Enso
   const { quote: zapQuote, isLoading: zapQuoteLoading, error: zapQuoteError } = useZapQuote({
@@ -164,7 +184,9 @@ export function VaultPageContent({ id }: { id: string }) {
     inputAmount: zapAmount,
     direction: zapDirection,
     vaultAddress: vault?.address ?? "",
+    underlyingToken: vault?.assetAddress ?? "",
     slippage: zapSlippage,
+    underlyingTokenPrice: underlyingPrice, // For illiquid tokens like cvgCVX
   });
 
   // Zap actions (approve + execute)
@@ -545,7 +567,7 @@ export function VaultPageContent({ id }: { id: string }) {
                       <span className="mono text-sm">
                         {curveData.collateralInAmm.toFixed(2)} ycvxCRV
                         <span className="text-[var(--muted-foreground)]">
-                          {" "}(${(curveData.collateralInAmm * pricePerShare * cvxCrvPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })})
+                          {" "}(${(curveData.collateralInAmm * pricePerShare * underlyingPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })})
                         </span>
                       </span>
                     </div>
@@ -706,8 +728,8 @@ export function VaultPageContent({ id }: { id: string }) {
                           inputAmount > 0 ? "" : "invisible"
                         )}>
                           <span className="text-[var(--muted-foreground)]">Value</span>
-                          {/* For deposit: input is cvxCRV, for withdraw: output is cvxCRV */}
-                          <span className="mono">~${((activeTab === "deposit" ? inputAmount : outputAmount) * cvxCrvPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          {/* For deposit: input is underlying, for withdraw: output is underlying */}
+                          <span className="mono">~${((activeTab === "deposit" ? inputAmount : outputAmount) * underlyingPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       </div>
 
@@ -811,7 +833,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               <TokenSelector
                                 selectedToken={zapInputToken}
                                 onSelect={setZapInputToken}
-                                excludeTokens={[vault.address, TOKENS.CVXCRV]} // Exclude vault token & cvxCRV (use Deposit tab)
+                                excludeTokens={[...VAULT_UNDERLYING_TOKENS]} // Exclude underlying tokens (use Deposit tab)
                               />
                               <button
                                 onClick={() => setZapAmount(zapInputBalanceFormatted)}
@@ -906,7 +928,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               <TokenSelector
                                 selectedToken={zapOutputToken}
                                 onSelect={setZapOutputToken}
-                                excludeTokens={[vault.address, TOKENS.CVXCRV]} // Exclude vault token & cvxCRV (use Withdraw tab)
+                                excludeTokens={[...VAULT_UNDERLYING_TOKENS]} // Exclude underlying tokens (use Withdraw tab)
                               />
                             </div>
                           </div>
@@ -937,15 +959,15 @@ export function VaultPageContent({ id }: { id: string }) {
                             {zapQuote?.priceImpact != null ? `${zapQuote.priceImpact.toFixed(2)}%` : "—"}
                           </span>
                         </div>
-                        {/* Show value - for zap in, use output (vault shares) × cvxCRV price */}
+                        {/* Show value - for zap in, use output (vault shares) × underlying price */}
                         <div className="flex items-center justify-between py-1">
                           <span className="text-[var(--muted-foreground)]">Value</span>
                           <span className="mono">
                             {zapQuote ? (
                               <>~${(
                                 zapDirection === "in"
-                                  ? Number(zapQuote.outputAmountFormatted) * pricePerShare * cvxCrvPrice
-                                  : Number(zapAmount) * pricePerShare * cvxCrvPrice
+                                  ? Number(zapQuote.outputAmountFormatted) * pricePerShare * underlyingPrice
+                                  : Number(zapAmount) * pricePerShare * underlyingPrice
                               ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</>
                             ) : (
                               "—"
