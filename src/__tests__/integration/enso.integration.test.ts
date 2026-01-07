@@ -11,6 +11,11 @@ import {
   sortTokensByPopularity,
   filterTokens,
   isYldfiVault,
+  requiresCustomZapRoute,
+  getCvgCvxSwapRate,
+  getCvgCvxPoolBalances,
+  getOptimalCvgCvxRoute,
+  getOptimalSwapAmount,
   ETH_ADDRESS,
   CVXCRV_ADDRESS,
   ENSO_ROUTER,
@@ -545,4 +550,178 @@ describe("enso.ts integration", () => {
       expect(isYldfiVault(ETH_ADDRESS)).toBe(false);
     });
   });
+
+  describe("requiresCustomZapRoute", () => {
+    it("returns true for cvgCVX token", () => {
+      expect(requiresCustomZapRoute("0x2191DF768ad71140F9F3E96c1e4407A4aA31d082")).toBe(true);
+    });
+
+    it("returns true for cvgCVX token (lowercase)", () => {
+      expect(requiresCustomZapRoute("0x2191df768ad71140f9f3e96c1e4407a4aa31d082")).toBe(true);
+    });
+
+    it("returns false for other tokens", () => {
+      expect(requiresCustomZapRoute(CVXCRV_ADDRESS)).toBe(false);
+      expect(requiresCustomZapRoute(ETH_ADDRESS)).toBe(false);
+      expect(requiresCustomZapRoute("0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B")).toBe(false); // CVX
+    });
+  });
+
+  describe("getCvgCvxSwapRate", () => {
+    it("queries Curve pool for swap rate", async () => {
+      // Mock RPC response for get_dy call
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          jsonrpc: "2.0",
+          id: 1,
+          result: "0x" + (BigInt("980000000000000000")).toString(16).padStart(64, "0"),
+        }),
+      } as Response);
+
+      const rate = await getCvgCvxSwapRate("1000000000000000000");
+      expect(rate).toBe(BigInt("980000000000000000"));
+    });
+
+    it("returns 0n on RPC error", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ error: { message: "RPC error" } }),
+      } as Response);
+
+      const rate = await getCvgCvxSwapRate("1000000000000000000");
+      expect(rate).toBe(0n);
+    });
+  });
+
+  describe("getCvgCvxPoolBalances", () => {
+    it("queries pool balances via batch RPC", async () => {
+      // Mock batch RPC response for balances(0) and balances(1)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([
+          { jsonrpc: "2.0", id: 1, result: "0x" + (BigInt("50000000000000000000000")).toString(16).padStart(64, "0") },
+          { jsonrpc: "2.0", id: 2, result: "0x" + (BigInt("60000000000000000000000")).toString(16).padStart(64, "0") },
+        ]),
+      } as Response);
+
+      const balances = await getCvgCvxPoolBalances();
+      expect(balances.cvx1Balance).toBe(BigInt("50000000000000000000000"));
+      expect(balances.cvgCvxBalance).toBe(BigInt("60000000000000000000000"));
+    });
+
+    it("throws on network error", async () => {
+      mockFetch.mockRejectedValueOnce(new Error("Network error"));
+
+      await expect(getCvgCvxPoolBalances()).rejects.toThrow("Network error");
+    });
+  });
+
+  describe("getOptimalCvgCvxRoute", () => {
+    it("returns 'swap' when pool gives more than 1:1", async () => {
+      // Mock getCvgCvxSwapRate returning more than input (swap is better)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          jsonrpc: "2.0",
+          id: 1,
+          // 1.05e18 output for 1e18 input = 5% bonus
+          result: "0x" + (BigInt("1050000000000000000")).toString(16).padStart(64, "0"),
+        }),
+      } as Response);
+
+      const route = await getOptimalCvgCvxRoute("1000000000000000000");
+      expect(route).toBe("swap");
+    });
+
+    it("returns 'mint' when pool gives less than 1:1", async () => {
+      // Mock getCvgCvxSwapRate returning less than input (mint is better)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          jsonrpc: "2.0",
+          id: 1,
+          // 0.95e18 output for 1e18 input = 5% loss
+          result: "0x" + (BigInt("950000000000000000")).toString(16).padStart(64, "0"),
+        }),
+      } as Response);
+
+      const route = await getOptimalCvgCvxRoute("1000000000000000000");
+      expect(route).toBe("mint");
+    });
+
+    it("returns 'mint' when pool gives exactly 1:1", async () => {
+      // Mock getCvgCvxSwapRate returning exactly input (prefer mint to save gas)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          jsonrpc: "2.0",
+          id: 1,
+          result: "0x" + (BigInt("1000000000000000000")).toString(16).padStart(64, "0"),
+        }),
+      } as Response);
+
+      const route = await getOptimalCvgCvxRoute("1000000000000000000");
+      expect(route).toBe("mint");
+    });
+
+    it("returns 'mint' on RPC error", async () => {
+      mockFetch.mockRejectedValueOnce(new Error("RPC error"));
+
+      const route = await getOptimalCvgCvxRoute("1000000000000000000");
+      expect(route).toBe("mint");
+    });
+
+    it("returns 'mint' on invalid RPC response", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ error: { message: "Invalid call" } }),
+      } as Response);
+
+      const route = await getOptimalCvgCvxRoute("1000000000000000000");
+      expect(route).toBe("mint");
+    });
+  });
+
+  describe("getOptimalSwapAmount", () => {
+    it("returns zero amounts for zero input", async () => {
+      const result = await getOptimalSwapAmount("0");
+      expect(result.swapAmount).toBe(0n);
+      expect(result.mintAmount).toBe(0n);
+    });
+
+    it("returns mint-only when no swap bonus available", async () => {
+      // Mock pool params for findMaxSwapBeforePeg
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([
+          // balances(0) - CVX1 higher than cvgCVX (no bonus)
+          { jsonrpc: "2.0", id: 0, result: "0x" + (BigInt("100000000000000000000000")).toString(16).padStart(64, "0") },
+          // balances(1)
+          { jsonrpc: "2.0", id: 1, result: "0x" + (BigInt("50000000000000000000000")).toString(16).padStart(64, "0") },
+          // A (amplification)
+          { jsonrpc: "2.0", id: 2, result: "0x" + (BigInt("50")).toString(16).padStart(64, "0") },
+          // fee
+          { jsonrpc: "2.0", id: 3, result: "0x" + (BigInt("4000000")).toString(16).padStart(64, "0") },
+        ]),
+      } as Response);
+
+      const result = await getOptimalSwapAmount("1000000000000000000");
+      // When there's no swap bonus, should return mint-only
+      expect(result.mintAmount).toBe(BigInt("1000000000000000000"));
+    });
+
+    it("returns mint-only on RPC error", async () => {
+      mockFetch.mockRejectedValueOnce(new Error("Network error"));
+
+      const result = await getOptimalSwapAmount("1000000000000000000");
+      expect(result.swapAmount).toBe(0n);
+      expect(result.mintAmount).toBe(BigInt("1000000000000000000"));
+    });
+  });
+
+  // Note: fetchCvgCvxZapInRoute and fetchCvgCvxZapOutRoute are complex functions
+  // that require multiple coordinated RPC calls and internal function calls.
+  // They are tested via integration tests against real APIs in development.
+  // The helper functions (getCvgCvxSwapRate, getCvgCvxPoolBalances) are tested above.
 });
