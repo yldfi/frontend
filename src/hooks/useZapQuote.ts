@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAccount, usePublicClient } from "wagmi";
 import { parseUnits, formatUnits } from "viem";
 import { fetchZapInRoute, fetchZapOutRoute, fetchVaultToVaultRoute, fetchCvgCvxZapInRoute, fetchCvgCvxZapOutRoute, fetchTokenPrices, CVXCRV_ADDRESS, isYldfiVault } from "@/lib/enso";
-import { TOKENS } from "@/config/vaults";
+import { TOKENS, getVaultByAddress } from "@/config/vaults";
 import type { EnsoToken, ZapQuote, ZapDirection } from "@/types/enso";
 
 // ERC4626 ABI for convertToAssets
@@ -155,18 +155,22 @@ export function useZapQuote({
         const outputNum = Number(outputAmountFormatted);
         const exchangeRate = inputNum > 0 ? outputNum / inputNum : 0;
 
-        // Get appropriate underlying token for price calculation
+        // Get underlying token prices for BOTH vaults (they may have different underlying tokens)
         const sourceUnderlyingToken = underlyingToken || CVXCRV_ADDRESS;
-        const [underlyingPrice, sourceAssetsPerShare, targetAssetsPerShare] = await Promise.all([
+        const targetVaultConfig = getVaultByAddress(outputToken.address);
+        const targetUnderlyingToken = targetVaultConfig?.assetAddress || CVXCRV_ADDRESS;
+
+        const [sourceUnderlyingPrice, targetUnderlyingPrice, sourceAssetsPerShare, targetAssetsPerShare] = await Promise.all([
           getTokenPrice(sourceUnderlyingToken),
+          getTokenPrice(targetUnderlyingToken),
           getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
           getVaultAssetsPerShare(publicClient, outputToken.address as `0x${string}`),
         ]);
 
         const inputUnderlyingValue = sourceAssetsPerShare !== null ? inputNum * sourceAssetsPerShare : inputNum;
-        const inputUsdValue = underlyingPrice !== null ? inputUnderlyingValue * underlyingPrice : null;
+        const inputUsdValue = sourceUnderlyingPrice !== null ? inputUnderlyingValue * sourceUnderlyingPrice : null;
         const outputUnderlyingValue = targetAssetsPerShare !== null ? outputNum * targetAssetsPerShare : outputNum;
-        const outputUsdValue = underlyingPrice !== null ? outputUnderlyingValue * underlyingPrice : null;
+        const outputUsdValue = targetUnderlyingPrice !== null ? outputUnderlyingValue * targetUnderlyingPrice : null;
         const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
 
         return {
@@ -213,18 +217,22 @@ export function useZapQuote({
         const outputNum = Number(outputAmountFormatted);
         const exchangeRate = inputNum > 0 ? outputNum / inputNum : 0;
 
-        // Get appropriate underlying token for price calculation
+        // Get underlying token prices for BOTH vaults (they may have different underlying tokens)
+        const sourceVaultConfig = getVaultByAddress(inputToken.address);
+        const sourceUnderlyingToken = sourceVaultConfig?.assetAddress || CVXCRV_ADDRESS;
         const targetUnderlyingToken = underlyingToken || CVXCRV_ADDRESS;
-        const [underlyingPrice, sourceAssetsPerShare, targetAssetsPerShare] = await Promise.all([
+
+        const [sourceUnderlyingPrice, targetUnderlyingPrice, sourceAssetsPerShare, targetAssetsPerShare] = await Promise.all([
+          getTokenPrice(sourceUnderlyingToken),
           getTokenPrice(targetUnderlyingToken),
           getVaultAssetsPerShare(publicClient, inputToken.address as `0x${string}`),
           getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
         ]);
 
         const inputUnderlyingValue = sourceAssetsPerShare !== null ? inputNum * sourceAssetsPerShare : inputNum;
-        const inputUsdValue = underlyingPrice !== null ? inputUnderlyingValue * underlyingPrice : null;
+        const inputUsdValue = sourceUnderlyingPrice !== null ? inputUnderlyingValue * sourceUnderlyingPrice : null;
         const outputUnderlyingValue = targetAssetsPerShare !== null ? outputNum * targetAssetsPerShare : outputNum;
-        const outputUsdValue = underlyingPrice !== null ? outputUnderlyingValue * underlyingPrice : null;
+        const outputUsdValue = targetUnderlyingPrice !== null ? outputUnderlyingValue * targetUnderlyingPrice : null;
         const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
 
         return {
