@@ -132,7 +132,122 @@ export function useZapQuote({
     queryFn: async (): Promise<ZapQuote | null> => {
       if (!userAddress || !tokenIn || !tokenOut) return null;
 
+      // Vault-to-vault zap: use bundle endpoint for redeem + deposit
+      // Check this FIRST before cvgCVX check, since fetchVaultToVaultRoute
+      // handles cvgCVX vaults internally via fetchCvgCvxVaultToVaultRoute
+      if (isVaultToVaultOut && outputToken) {
+        // Zap Out to another vault: current vault → target vault
+        const bundle = await fetchVaultToVaultRoute({
+          fromAddress: userAddress,
+          sourceVault: vaultAddress,
+          targetVault: outputToken.address,
+          amountIn: amountInWei,
+        });
+
+        // Get output amount from amountsOut (keyed by token address)
+        const outputAmountRaw = bundle.amountsOut[outputToken.address.toLowerCase()]
+          || bundle.amountsOut[outputToken.address]
+          || "0";
+        const outputDecimals = outputToken.decimals ?? 18;
+        const outputAmountFormatted = formatUnits(BigInt(outputAmountRaw), outputDecimals);
+
+        const inputNum = Number(inputAmount);
+        const outputNum = Number(outputAmountFormatted);
+        const exchangeRate = inputNum > 0 ? outputNum / inputNum : 0;
+
+        // Get appropriate underlying token for price calculation
+        const sourceUnderlyingToken = underlyingToken || CVXCRV_ADDRESS;
+        const [underlyingPrice, sourceAssetsPerShare, targetAssetsPerShare] = await Promise.all([
+          getTokenPrice(sourceUnderlyingToken),
+          getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
+          getVaultAssetsPerShare(publicClient, outputToken.address as `0x${string}`),
+        ]);
+
+        const inputUnderlyingValue = sourceAssetsPerShare !== null ? inputNum * sourceAssetsPerShare : inputNum;
+        const inputUsdValue = underlyingPrice !== null ? inputUnderlyingValue * underlyingPrice : null;
+        const outputUnderlyingValue = targetAssetsPerShare !== null ? outputNum * targetAssetsPerShare : outputNum;
+        const outputUsdValue = underlyingPrice !== null ? outputUnderlyingValue * underlyingPrice : null;
+        const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
+
+        return {
+          inputToken: {
+            address: vaultAddress,
+            symbol: "Vault Shares",
+            name: "Vault Shares",
+            decimals: 18,
+            chainId: 1,
+            type: "defi",
+          } as EnsoToken,
+          inputAmount,
+          outputAmount: outputAmountRaw,
+          outputAmountFormatted,
+          exchangeRate,
+          inputUsdValue,
+          outputUsdValue,
+          priceImpact,
+          gasEstimate: bundle.gas,
+          tx: {
+            to: bundle.tx.to,
+            data: bundle.tx.data,
+            value: bundle.tx.value,
+          },
+          route: [],
+        };
+      }
+
+      if (isVaultToVaultIn && inputToken) {
+        // Zap In from another vault: source vault → current vault
+        const bundle = await fetchVaultToVaultRoute({
+          fromAddress: userAddress,
+          sourceVault: inputToken.address,
+          targetVault: vaultAddress,
+          amountIn: amountInWei,
+        });
+
+        const outputAmountRaw = bundle.amountsOut[vaultAddress.toLowerCase()]
+          || bundle.amountsOut[vaultAddress]
+          || "0";
+        const outputAmountFormatted = formatUnits(BigInt(outputAmountRaw), 18);
+
+        const inputNum = Number(inputAmount);
+        const outputNum = Number(outputAmountFormatted);
+        const exchangeRate = inputNum > 0 ? outputNum / inputNum : 0;
+
+        // Get appropriate underlying token for price calculation
+        const targetUnderlyingToken = underlyingToken || CVXCRV_ADDRESS;
+        const [underlyingPrice, sourceAssetsPerShare, targetAssetsPerShare] = await Promise.all([
+          getTokenPrice(targetUnderlyingToken),
+          getVaultAssetsPerShare(publicClient, inputToken.address as `0x${string}`),
+          getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
+        ]);
+
+        const inputUnderlyingValue = sourceAssetsPerShare !== null ? inputNum * sourceAssetsPerShare : inputNum;
+        const inputUsdValue = underlyingPrice !== null ? inputUnderlyingValue * underlyingPrice : null;
+        const outputUnderlyingValue = targetAssetsPerShare !== null ? outputNum * targetAssetsPerShare : outputNum;
+        const outputUsdValue = underlyingPrice !== null ? outputUnderlyingValue * underlyingPrice : null;
+        const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
+
+        return {
+          inputToken,
+          inputAmount,
+          outputAmount: outputAmountRaw,
+          outputAmountFormatted,
+          exchangeRate,
+          inputUsdValue,
+          outputUsdValue,
+          priceImpact,
+          gasEstimate: bundle.gas,
+          tx: {
+            to: bundle.tx.to,
+            data: bundle.tx.data,
+            value: bundle.tx.value,
+          },
+          route: [],
+        };
+      }
+
       // cvgCVX vault requires custom routing (no DEX liquidity)
+      // Only for non-vault-to-vault zaps (regular token in/out)
       if (isCvgCvxVault) {
         if (direction === "in" && inputToken) {
           const bundle = await fetchCvgCvxZapInRoute({
@@ -239,130 +354,6 @@ export function useZapQuote({
             route: [],
           };
         }
-      }
-
-      // Vault-to-vault zap: use bundle endpoint for redeem + deposit
-      if (isVaultToVaultOut && outputToken) {
-        // Zap Out to another vault: current vault → target vault
-        const bundle = await fetchVaultToVaultRoute({
-          fromAddress: userAddress,
-          sourceVault: vaultAddress,
-          targetVault: outputToken.address,
-          amountIn: amountInWei,
-        });
-
-        // Get output amount from amountsOut (keyed by token address)
-        const outputAmountRaw = bundle.amountsOut[outputToken.address.toLowerCase()]
-          || bundle.amountsOut[outputToken.address]
-          || "0";
-        const outputDecimals = outputToken.decimals ?? 18;
-        const outputAmountFormatted = formatUnits(BigInt(outputAmountRaw), outputDecimals);
-
-        // Calculate exchange rate
-        const inputNum = Number(inputAmount);
-        const outputNum = Number(outputAmountFormatted);
-        const exchangeRate = inputNum > 0 ? outputNum / inputNum : 0;
-
-        // Calculate real price impact from USD values
-        // Both vaults use cvxCRV as underlying, account for each vault's exchange rate
-        const [cvxCrvPrice, sourceAssetsPerShare, targetAssetsPerShare] = await Promise.all([
-          getTokenPrice(CVXCRV_ADDRESS),
-          getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
-          getVaultAssetsPerShare(publicClient, outputToken.address as `0x${string}`),
-        ]);
-
-        // Input vault shares worth (shares × sourceAssetsPerShare) cvxCRV
-        const inputCvxCrvValue = sourceAssetsPerShare !== null ? inputNum * sourceAssetsPerShare : inputNum;
-        const inputUsdValue = cvxCrvPrice !== null ? inputCvxCrvValue * cvxCrvPrice : null;
-        // Output vault shares worth (shares × targetAssetsPerShare) cvxCRV
-        const outputCvxCrvValue = targetAssetsPerShare !== null ? outputNum * targetAssetsPerShare : outputNum;
-        const outputUsdValue = cvxCrvPrice !== null ? outputCvxCrvValue * cvxCrvPrice : null;
-        const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
-
-        const quote: ZapQuote = {
-          inputToken: {
-            address: vaultAddress,
-            symbol: "Vault Shares",
-            name: "Vault Shares",
-            decimals: 18,
-            chainId: 1,
-            type: "defi",
-          } as EnsoToken,
-          inputAmount,
-          outputAmount: outputAmountRaw,
-          outputAmountFormatted,
-          exchangeRate,
-          inputUsdValue,
-          outputUsdValue,
-          priceImpact,
-          gasEstimate: bundle.gas,
-          tx: {
-            to: bundle.tx.to,
-            data: bundle.tx.data,
-            value: bundle.tx.value,
-          },
-          route: [], // Bundle doesn't return route array
-        };
-
-        return quote;
-      }
-
-      if (isVaultToVaultIn && inputToken) {
-        // Zap In from another vault: source vault → current vault
-        const bundle = await fetchVaultToVaultRoute({
-          fromAddress: userAddress,
-          sourceVault: inputToken.address,
-          targetVault: vaultAddress,
-          amountIn: amountInWei,
-        });
-
-        // Get output amount from amountsOut (keyed by token address)
-        const outputAmountRaw = bundle.amountsOut[vaultAddress.toLowerCase()]
-          || bundle.amountsOut[vaultAddress]
-          || "0";
-        const outputDecimals = 18; // Vault shares are 18 decimals
-        const outputAmountFormatted = formatUnits(BigInt(outputAmountRaw), outputDecimals);
-
-        // Calculate exchange rate
-        const inputNum = Number(inputAmount);
-        const outputNum = Number(outputAmountFormatted);
-        const exchangeRate = inputNum > 0 ? outputNum / inputNum : 0;
-
-        // Calculate real price impact from USD values
-        // Both vaults use cvxCRV as underlying, account for each vault's exchange rate
-        const [cvxCrvPrice, sourceAssetsPerShare, targetAssetsPerShare] = await Promise.all([
-          getTokenPrice(CVXCRV_ADDRESS),
-          getVaultAssetsPerShare(publicClient, inputToken.address as `0x${string}`),
-          getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
-        ]);
-
-        // Input vault shares worth (shares × sourceAssetsPerShare) cvxCRV
-        const inputCvxCrvValue = sourceAssetsPerShare !== null ? inputNum * sourceAssetsPerShare : inputNum;
-        const inputUsdValue = cvxCrvPrice !== null ? inputCvxCrvValue * cvxCrvPrice : null;
-        // Output vault shares worth (shares × targetAssetsPerShare) cvxCRV
-        const outputCvxCrvValue = targetAssetsPerShare !== null ? outputNum * targetAssetsPerShare : outputNum;
-        const outputUsdValue = cvxCrvPrice !== null ? outputCvxCrvValue * cvxCrvPrice : null;
-        const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
-
-        const quote: ZapQuote = {
-          inputToken: inputToken,
-          inputAmount,
-          outputAmount: outputAmountRaw,
-          outputAmountFormatted,
-          exchangeRate,
-          inputUsdValue,
-          outputUsdValue,
-          priceImpact,
-          gasEstimate: bundle.gas,
-          tx: {
-            to: bundle.tx.to,
-            data: bundle.tx.data,
-            value: bundle.tx.value,
-          },
-          route: [], // Bundle doesn't return route array
-        };
-
-        return quote;
       }
 
       // Zap Out to regular token (ETH, USDC, etc.)
