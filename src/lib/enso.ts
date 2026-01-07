@@ -757,6 +757,10 @@ export async function fetchVaultToVaultRoute(params: {
   const targetIsCvgCvx = targetUnderlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase();
   const sourceIsCvgCvx = sourceUnderlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase();
 
+  // Check if pxCVX is involved - requires custom routing via Pirex
+  const targetIsPxCvx = targetUnderlying.toLowerCase() === TOKENS.PXCVX.toLowerCase();
+  const sourceIsPxCvx = sourceUnderlying.toLowerCase() === TOKENS.PXCVX.toLowerCase();
+
   if (targetIsCvgCvx) {
     // Zapping TO cvgCVX vault: redeem → route to CVX → wrap → swap → deposit
     return fetchVaultToCvgCvxVaultRoute({
@@ -779,6 +783,25 @@ export async function fetchVaultToVaultRoute(params: {
       targetUnderlyingToken: targetUnderlying,
       slippage,
     });
+  }
+
+  if (sourceIsPxCvx) {
+    // Zapping FROM pxCVX vault: redeem → swap via lpxCVX → route → deposit
+    return fetchPxCvxVaultToVaultRoute({
+      fromAddress: params.fromAddress,
+      sourceVault: params.sourceVault,
+      targetVault: params.targetVault,
+      amountIn: params.amountIn,
+      targetUnderlyingToken: targetUnderlying,
+      slippage,
+    });
+  }
+
+  if (targetIsPxCvx) {
+    // Zapping TO pxCVX vault: redeem → route to CVX → lock via Pirex → deposit
+    // NOTE: This is complex because getting pxCVX requires locking CVX in Pirex
+    // For now, throw an error - users should acquire pxCVX manually
+    throw new Error("Zapping into pxCVX vault is not yet supported. Please acquire pxCVX manually via Pirex.");
   }
 
   // Different underlyings (non-cvgCVX): redeem → swap → deposit
@@ -1012,11 +1035,121 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
 }
 
 /**
+ * Custom bundle for zapping FROM a pxCVX vault to another vault
+ * Route: pxCVX vault → pxCVX → lpxCVX.swap → CVX → route → target underlying → target vault
+ * Uses lpxCVX contract's swap function which wraps pxCVX and swaps to CVX in one call
+ */
+async function fetchPxCvxVaultToVaultRoute(params: {
+  fromAddress: string;
+  sourceVault: string;
+  targetVault: string;
+  amountIn: string;
+  targetUnderlyingToken: string;
+  slippage: string;
+}): Promise<EnsoBundleResponse> {
+  const { PIREX } = await import("@/config/vaults");
+
+  // Check if target is CVX - can skip the route step
+  const targetIsCvx = params.targetUnderlyingToken.toLowerCase() === TOKENS.CVX.toLowerCase();
+
+  const actions: EnsoBundleAction[] = [
+    // Action 0: Redeem from source vault to get pxCVX
+    {
+      protocol: "erc4626",
+      action: "redeem",
+      args: {
+        tokenIn: params.sourceVault,
+        tokenOut: TOKENS.PXCVX,
+        amountIn: params.amountIn,
+        primaryAddress: params.sourceVault,
+      },
+    },
+    // Action 1: Approve pxCVX to lpxCVX contract
+    {
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: TOKENS.PXCVX,
+        spender: PIREX.LPXCVX,
+        amount: { useOutputOfCallAt: 0 },
+      },
+    },
+    // Action 2: Swap pxCVX → CVX via lpxCVX.swap()
+    // swap(Token.pxCVX, amount, minReceived, fromIndex=1, toIndex=0)
+    // The lpxCVX contract wraps pxCVX internally and swaps lpxCVX → CVX via Curve
+    {
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: PIREX.LPXCVX,
+        method: "swap",
+        abi: "function swap(uint8 source, uint256 amount, uint256 minReceived, uint256 fromIndex, uint256 toIndex)",
+        args: [
+          PIREX.TOKEN_ENUM.pxCVX, // source = pxCVX (1)
+          { useOutputOfCallAt: 0 }, // amount
+          "0", // minReceived - rely on final slippage protection
+          PIREX.POOL_INDEX.LPXCVX, // fromIndex = 1 (lpxCVX)
+          PIREX.POOL_INDEX.CVX, // toIndex = 0 (CVX)
+        ],
+      },
+    },
+  ];
+
+  if (targetIsCvx) {
+    // Target is CVX - deposit directly into vault
+    actions.push({
+      protocol: "erc4626",
+      action: "deposit",
+      args: {
+        tokenIn: TOKENS.CVX,
+        tokenOut: params.targetVault,
+        amountIn: { useOutputOfCallAt: 2 },
+        primaryAddress: params.targetVault,
+      },
+    });
+  } else {
+    // Need to route CVX → target underlying
+    actions.push(
+      // Action 3: Route CVX → target underlying via Enso
+      {
+        protocol: "enso",
+        action: "route",
+        args: {
+          tokenIn: TOKENS.CVX,
+          tokenOut: params.targetUnderlyingToken,
+          amountIn: { useOutputOfCallAt: 2 },
+          slippage: params.slippage,
+        },
+      },
+      // Action 4: Deposit target underlying into target vault
+      {
+        protocol: "erc4626",
+        action: "deposit",
+        args: {
+          tokenIn: params.targetUnderlyingToken,
+          tokenOut: params.targetVault,
+          amountIn: { useOutputOfCallAt: 3 },
+          primaryAddress: params.targetVault,
+        },
+      }
+    );
+  }
+
+  return fetchBundle({
+    fromAddress: params.fromAddress,
+    actions,
+    routingStrategy: "delegate",
+  });
+}
+
+/**
  * Check if a token requires custom zap routing (not supported by standard Enso routes)
  */
 export function requiresCustomZapRoute(tokenAddress: string): boolean {
+  const addr = tokenAddress.toLowerCase();
   // cvgCVX requires custom routing through Tangent/CVX1/Curve
-  return tokenAddress.toLowerCase() === TOKENS.CVGCVX.toLowerCase();
+  // pxCVX requires custom routing through Pirex/lpxCVX/Curve
+  return addr === TOKENS.CVGCVX.toLowerCase() || addr === TOKENS.PXCVX.toLowerCase();
 }
 
 /**
@@ -1931,5 +2064,177 @@ export async function fetchCvgCvxZapOutRoute(params: {
     fromAddress: params.fromAddress,
     actions,
     routingStrategy: "delegate", // Required for custom call actions
+  });
+}
+
+/**
+ * Create a custom Zap Out route for pxCVX via Pirex infrastructure
+ * Route: vault (redeem) → pxCVX → lpxCVX.swap → CVX → output token
+ * When outputToken=CVX: vault → pxCVX → CVX (skips final route)
+ *
+ * Uses lpxCVX.swap() which internally:
+ * 1. Wraps pxCVX to lpxCVX
+ * 2. Swaps lpxCVX → CVX via Curve pool
+ * 3. Sends CVX directly to caller
+ */
+export async function fetchPxCvxZapOutRoute(params: {
+  fromAddress: string;
+  vaultAddress: string;
+  outputToken: string;
+  amountIn: string;
+  slippage?: string;
+}): Promise<EnsoBundleResponse> {
+  const { PIREX } = await import("@/config/vaults");
+
+  // Check if output is already CVX - skip final route step
+  const outputIsCvx = params.outputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
+
+  // Estimate pxCVX output from vault redeem via convertToAssets
+  const convertToAssetsSelector = "0x07a2d13a"; // convertToAssets(uint256)
+  const convertData = convertToAssetsSelector +
+    BigInt(params.amountIn).toString(16).padStart(64, "0");
+
+  let expectedPxCvxOutput: string;
+  try {
+    const rpcResponse = await fetch(PUBLIC_RPC_URLS.llamarpc, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "eth_call",
+        params: [{ to: params.vaultAddress, data: convertData }, "latest"],
+        id: 1,
+      }),
+    });
+    const result = await rpcResponse.json() as { result?: string };
+    expectedPxCvxOutput = result.result && result.result !== "0x"
+      ? BigInt(result.result).toString()
+      : params.amountIn;
+  } catch {
+    expectedPxCvxOutput = params.amountIn;
+  }
+
+  // Query Curve pool get_dy to estimate CVX output from lpxCVX swap
+  // get_dy(1, 0, lpxcvx_amount) - lpxCVX (index 1) to CVX (index 0)
+  const expectedCvxOutput = await getCurveGetDy(
+    PIREX.LPXCVX_CVX_POOL,
+    1, // lpxCVX index
+    0, // CVX index
+    expectedPxCvxOutput // pxCVX wraps 1:1 to lpxCVX
+  );
+
+  // Calculate min_dy with slippage
+  const slippageBps = parseInt(params.slippage ?? "100", 10);
+  const minDy = expectedCvxOutput
+    ? calculateMinDy(expectedCvxOutput, slippageBps)
+    : "0";
+
+  if (outputIsCvx) {
+    // Output is CVX - skip the final route step
+    const actions: EnsoBundleAction[] = [
+      // Action 0: Redeem from vault to get pxCVX
+      {
+        protocol: "erc4626",
+        action: "redeem",
+        args: {
+          tokenIn: params.vaultAddress,
+          tokenOut: TOKENS.PXCVX,
+          amountIn: params.amountIn,
+          primaryAddress: params.vaultAddress,
+        },
+      },
+      // Action 1: Approve pxCVX to lpxCVX contract
+      {
+        protocol: "erc20",
+        action: "approve",
+        args: {
+          token: TOKENS.PXCVX,
+          spender: PIREX.LPXCVX,
+          amount: { useOutputOfCallAt: 0 },
+        },
+      },
+      // Action 2: Swap pxCVX → CVX via lpxCVX.swap()
+      {
+        protocol: "enso",
+        action: "call",
+        args: {
+          address: PIREX.LPXCVX,
+          method: "swap",
+          abi: "function swap(uint8 source, uint256 amount, uint256 minReceived, uint256 fromIndex, uint256 toIndex)",
+          args: [
+            PIREX.TOKEN_ENUM.pxCVX, // source = pxCVX (1)
+            { useOutputOfCallAt: 0 }, // amount
+            minDy, // minReceived with slippage
+            PIREX.POOL_INDEX.LPXCVX, // fromIndex = 1 (lpxCVX)
+            PIREX.POOL_INDEX.CVX, // toIndex = 0 (CVX)
+          ],
+        },
+      },
+    ];
+
+    return fetchBundle({
+      fromAddress: params.fromAddress,
+      actions,
+      routingStrategy: "delegate",
+    });
+  }
+
+  // Output is not CVX - need final route step
+  const actions: EnsoBundleAction[] = [
+    // Action 0: Redeem from vault to get pxCVX
+    {
+      protocol: "erc4626",
+      action: "redeem",
+      args: {
+        tokenIn: params.vaultAddress,
+        tokenOut: TOKENS.PXCVX,
+        amountIn: params.amountIn,
+        primaryAddress: params.vaultAddress,
+      },
+    },
+    // Action 1: Approve pxCVX to lpxCVX contract
+    {
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: TOKENS.PXCVX,
+        spender: PIREX.LPXCVX,
+        amount: { useOutputOfCallAt: 0 },
+      },
+    },
+    // Action 2: Swap pxCVX → CVX via lpxCVX.swap()
+    {
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: PIREX.LPXCVX,
+        method: "swap",
+        abi: "function swap(uint8 source, uint256 amount, uint256 minReceived, uint256 fromIndex, uint256 toIndex)",
+        args: [
+          PIREX.TOKEN_ENUM.pxCVX, // source = pxCVX (1)
+          { useOutputOfCallAt: 0 }, // amount
+          minDy, // minReceived with slippage
+          PIREX.POOL_INDEX.LPXCVX, // fromIndex = 1 (lpxCVX)
+          PIREX.POOL_INDEX.CVX, // toIndex = 0 (CVX)
+        ],
+      },
+    },
+    // Action 3: Route CVX → output token
+    {
+      protocol: "enso",
+      action: "route",
+      args: {
+        tokenIn: TOKENS.CVX,
+        tokenOut: params.outputToken,
+        amountIn: { useOutputOfCallAt: 2 },
+        slippage: params.slippage ?? "100",
+      },
+    },
+  ];
+
+  return fetchBundle({
+    fromAddress: params.fromAddress,
+    actions,
+    routingStrategy: "delegate",
   });
 }
