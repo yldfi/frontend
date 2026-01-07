@@ -2238,3 +2238,407 @@ export async function fetchPxCvxZapOutRoute(params: {
     routingStrategy: "delegate",
   });
 }
+
+// ============================================================================
+// pxCVX Pool Helper Functions (CryptoSwap pool - uses uint256 indices)
+// ============================================================================
+
+/**
+ * Get the Curve CryptoSwap pool swap rate for CVX → lpxCVX
+ * Returns the amount of lpxCVX you'd get for a given amount of CVX
+ *
+ * Note: This pool uses uint256 indices (not int128 like StableSwap pools)
+ * get_dy(uint256,uint256,uint256) selector: 0x556d6e9f
+ */
+export async function getPxCvxSwapRate(amountIn: string): Promise<bigint> {
+  const { PIREX } = await import("@/config/vaults");
+
+  // get_dy(uint256 i, uint256 j, uint256 dx) - CVX (0) → lpxCVX (1)
+  const selector = "0x556d6e9f";
+  const i = "0".padStart(64, "0"); // CVX index
+  const j = "1".padStart(64, "0"); // lpxCVX index
+  const dx = BigInt(amountIn).toString(16).padStart(64, "0");
+
+  const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      method: "eth_call",
+      params: [{ to: PIREX.LPXCVX_CVX_POOL, data: selector + i + j + dx }, "latest"],
+      id: 1,
+    }),
+  });
+
+  const result = (await response.json()) as { result?: string };
+  return BigInt(result.result || "0");
+}
+
+/**
+ * Get Curve pool balances for lpxCVX/CVX
+ * coin[0] = CVX, coin[1] = lpxCVX
+ */
+export async function getPxCvxPoolBalances(): Promise<{ cvxBalance: bigint; lpxCvxBalance: bigint }> {
+  const { PIREX } = await import("@/config/vaults");
+
+  // balances(uint256) selector: 0x4903b0d1
+  const batch = [
+    { jsonrpc: "2.0", id: 0, method: "eth_call", params: [{ to: PIREX.LPXCVX_CVX_POOL, data: "0x4903b0d10000000000000000000000000000000000000000000000000000000000000000" }, "latest"] },
+    { jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: PIREX.LPXCVX_CVX_POOL, data: "0x4903b0d10000000000000000000000000000000000000000000000000000000000000001" }, "latest"] },
+  ];
+
+  const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(batch),
+  });
+
+  const results = (await response.json()) as Array<{ id: number; result?: string }>;
+  results.sort((a, b) => a.id - b.id);
+
+  return {
+    cvxBalance: BigInt(results[0].result || "0"),
+    lpxCvxBalance: BigInt(results[1].result || "0"),
+  };
+}
+
+/**
+ * Calculate optimal swap amount for pxCVX hybrid swap/mint strategy
+ *
+ * If swap rate (CVX → lpxCVX) > 1:1, swap gives bonus pxCVX
+ * If swap rate < 1:1, mint directly via Pirex at 1:1
+ *
+ * For CryptoSwap pools, we use a simpler heuristic:
+ * - Check swap rate at total amount
+ * - If rate > 1, swap everything (bonus)
+ * - If rate < 1, binary search for optimal split point
+ */
+export async function getOptimalPxCvxSwapAmount(totalCvxAmount: string): Promise<{ swapAmount: bigint; mintAmount: bigint }> {
+  const totalAmount = BigInt(totalCvxAmount);
+
+  if (totalAmount === 0n) {
+    return { swapAmount: 0n, mintAmount: 0n };
+  }
+
+  try {
+    // Check swap rate for total amount
+    const dyForTotal = await getPxCvxSwapRate(totalCvxAmount);
+
+    // If swapping everything gives >= 1:1, swap it all
+    if (dyForTotal >= totalAmount) {
+      return { swapAmount: totalAmount, mintAmount: 0n };
+    }
+
+    // Rate is < 1:1, binary search for peg point
+    // Find max amount where swap rate >= 1:1
+    let lo = 0n;
+    let hi = totalAmount;
+    let maxSwap = 0n;
+
+    // 10 iterations for ~0.1% precision
+    for (let i = 0; i < 10; i++) {
+      const mid = (lo + hi) / 2n;
+      if (mid === 0n) break;
+
+      const dy = await getPxCvxSwapRate(mid.toString());
+      if (dy >= mid) {
+        // Rate >= 1:1, can swap more
+        maxSwap = mid;
+        lo = mid + 1n;
+      } else {
+        // Rate < 1:1, need to swap less
+        hi = mid - 1n;
+      }
+    }
+
+    // Apply 2% safety margin
+    const safeSwapAmount = (maxSwap * 98n) / 100n;
+
+    return {
+      swapAmount: safeSwapAmount,
+      mintAmount: totalAmount - safeSwapAmount,
+    };
+  } catch (error) {
+    console.error("Error calculating optimal pxCVX swap amount:", error);
+    // On error, mint everything (safe fallback)
+    return { swapAmount: 0n, mintAmount: totalAmount };
+  }
+}
+
+/**
+ * Create a custom Zap In route for pxCVX via Pirex infrastructure
+ * Route: input token → CVX → (hybrid swap/mint) → pxCVX → vault
+ *
+ * Hybrid strategy:
+ * - If Curve pool rate > 1:1: swap CVX → lpxCVX → unwrap → pxCVX
+ * - If rate < 1:1: deposit CVX to Pirex for 1:1 pxCVX
+ * - Optimal: split between swap and mint at peg point
+ */
+export async function fetchPxCvxZapInRoute(params: {
+  fromAddress: string;
+  vaultAddress: string;
+  inputToken: string;
+  amountIn: string;
+  slippage?: string;
+}): Promise<EnsoBundleResponse> {
+  const { PIREX } = await import("@/config/vaults");
+
+  // Check if input is already CVX
+  const inputIsCvx = params.inputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
+
+  // Step 1: If not CVX, route input → CVX first
+  // We need to estimate the CVX amount we'll get
+  let estimatedCvxAmount = params.amountIn;
+
+  if (!inputIsCvx) {
+    // Get estimated CVX output from Enso route
+    try {
+      const routeEstimate = await fetchRoute({
+        fromAddress: params.fromAddress,
+        tokenIn: params.inputToken,
+        tokenOut: TOKENS.CVX,
+        amountIn: params.amountIn,
+        slippage: params.slippage ?? "100",
+      });
+      estimatedCvxAmount = routeEstimate.amountOut || params.amountIn;
+    } catch {
+      // Fallback: assume 1:1 for estimation
+      estimatedCvxAmount = params.amountIn;
+    }
+  }
+
+  // Step 2: Calculate optimal swap vs mint split
+  const { swapAmount, mintAmount } = await getOptimalPxCvxSwapAmount(estimatedCvxAmount);
+
+  // Build actions based on strategy
+  const actions: EnsoBundleAction[] = [];
+  let actionIndex = 0;
+
+  // Action 0 (if needed): Route input → CVX
+  if (!inputIsCvx) {
+    actions.push({
+      protocol: "enso",
+      action: "route",
+      args: {
+        tokenIn: params.inputToken,
+        tokenOut: TOKENS.CVX,
+        amountIn: params.amountIn,
+        slippage: params.slippage ?? "100",
+      },
+    });
+    actionIndex++;
+  }
+
+  if (swapAmount > 0n && mintAmount > 0n) {
+    // Hybrid strategy: split CVX between swap and mint
+
+    // Action: Approve CVX to Curve pool for swap portion
+    actions.push({
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: TOKENS.CVX,
+        spender: PIREX.LPXCVX_CVX_POOL,
+        amount: swapAmount.toString(),
+      },
+    });
+    actionIndex++;
+
+    // Action: Swap CVX → lpxCVX via Curve pool
+    // exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy)
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: PIREX.LPXCVX_CVX_POOL,
+        method: "exchange",
+        abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)",
+        args: [
+          PIREX.POOL_INDEX.CVX, // i = 0 (CVX)
+          PIREX.POOL_INDEX.LPXCVX, // j = 1 (lpxCVX)
+          swapAmount.toString(), // dx
+          "0", // min_dy (handled by Enso slippage)
+        ],
+      },
+    });
+    const swapIdx = actionIndex++;
+
+    // Action: Approve lpxCVX to itself for unwrap
+    actions.push({
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: PIREX.LPXCVX,
+        spender: PIREX.LPXCVX,
+        amount: { useOutputOfCallAt: swapIdx },
+      },
+    });
+    actionIndex++;
+
+    // Action: Unwrap lpxCVX → pxCVX
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: PIREX.LPXCVX,
+        method: "unwrap",
+        abi: "function unwrap(uint256 amount)",
+        args: [{ useOutputOfCallAt: swapIdx }],
+      },
+    });
+    actionIndex++;
+
+    // Action: Approve CVX to Pirex for mint portion
+    actions.push({
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: TOKENS.CVX,
+        spender: PIREX.PIREX_CVX,
+        amount: mintAmount.toString(),
+      },
+    });
+    actionIndex++;
+
+    // Action: Deposit CVX to Pirex → pxCVX
+    // deposit(uint256 assets, address receiver, bool shouldCompound, address developer)
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: PIREX.PIREX_CVX,
+        method: "deposit",
+        abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
+        args: [
+          mintAmount.toString(),
+          params.fromAddress, // receiver
+          false, // shouldCompound
+          "0x0000000000000000000000000000000000000000", // developer
+        ],
+      },
+    });
+    actionIndex++;
+
+  } else if (swapAmount > 0n) {
+    // Swap-only strategy: rate > 1:1 for full amount
+
+    // Action: Approve CVX to Curve pool
+    actions.push({
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: TOKENS.CVX,
+        spender: PIREX.LPXCVX_CVX_POOL,
+        amount: inputIsCvx ? params.amountIn : { useOutputOfCallAt: actionIndex - 1 },
+      },
+    });
+    actionIndex++;
+
+    // Action: Swap CVX → lpxCVX via Curve pool
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: PIREX.LPXCVX_CVX_POOL,
+        method: "exchange",
+        abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)",
+        args: [
+          PIREX.POOL_INDEX.CVX,
+          PIREX.POOL_INDEX.LPXCVX,
+          inputIsCvx ? params.amountIn : { useOutputOfCallAt: actionIndex - 2 },
+          "0",
+        ],
+      },
+    });
+    const swapIdx = actionIndex++;
+
+    // Action: Approve lpxCVX for unwrap
+    actions.push({
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: PIREX.LPXCVX,
+        spender: PIREX.LPXCVX,
+        amount: { useOutputOfCallAt: swapIdx },
+      },
+    });
+    actionIndex++;
+
+    // Action: Unwrap lpxCVX → pxCVX
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: PIREX.LPXCVX,
+        method: "unwrap",
+        abi: "function unwrap(uint256 amount)",
+        args: [{ useOutputOfCallAt: swapIdx }],
+      },
+    });
+    actionIndex++;
+
+  } else {
+    // Mint-only strategy: rate < 1:1, deposit to Pirex for 1:1
+
+    // Action: Approve CVX to Pirex
+    actions.push({
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: TOKENS.CVX,
+        spender: PIREX.PIREX_CVX,
+        amount: inputIsCvx ? params.amountIn : { useOutputOfCallAt: actionIndex - 1 },
+      },
+    });
+    actionIndex++;
+
+    // Action: Deposit CVX to Pirex → pxCVX
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: PIREX.PIREX_CVX,
+        method: "deposit",
+        abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
+        args: [
+          inputIsCvx ? params.amountIn : { useOutputOfCallAt: actionIndex - 2 },
+          params.fromAddress,
+          false,
+          "0x0000000000000000000000000000000000000000",
+        ],
+      },
+    });
+    actionIndex++;
+  }
+
+  // Final action: Approve pxCVX to vault and deposit
+  actions.push({
+    protocol: "erc20",
+    action: "approve",
+    args: {
+      token: PIREX.PXCVX,
+      spender: params.vaultAddress,
+      amount: "type(uint256).max", // Max approval for convenience
+    },
+  });
+  actionIndex++;
+
+  // Action: Deposit pxCVX into vault
+  actions.push({
+    protocol: "erc4626",
+    action: "deposit",
+    args: {
+      vault: params.vaultAddress,
+      tokenIn: PIREX.PXCVX,
+      amountIn: "useBalance", // Use all pxCVX balance
+      receiver: params.fromAddress,
+      slippage: params.slippage ?? "100",
+    },
+  });
+
+  return fetchBundle({
+    fromAddress: params.fromAddress,
+    actions,
+    routingStrategy: "delegate",
+  });
+}
