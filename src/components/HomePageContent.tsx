@@ -44,17 +44,20 @@ export function HomePageContent() {
   const ycvxcrvVault = formatYearnVaultData(ycvxcrvData?.vault, ycvxcrvData?.vaultStrategies);
   const yscvxcrvVault = formatYearnVaultData(yscvxcrvData?.vault, yscvxcrvData?.vaultStrategies);
 
-  // Use cached cvxCRV price (falls back to 0 if cache not ready)
+  // Use cached token prices (falls back to 0 if cache not ready)
   const cvxCrvPrice = cacheData?.cvxCrvPrice ?? 0;
+  const cvgCvxPrice = cacheData?.cvgCvxPrice ?? 0;
 
   // Fetch price per share from on-chain
   const { prices: pricePerShareData } = useMultiplePricePerShare([
     VAULT_ADDRESSES.YCVXCRV,
     VAULT_ADDRESSES.YSCVXCRV,
+    VAULT_ADDRESSES.YSCVGCVX,
   ]);
 
   const ycvxcrvPricePerShare = pricePerShareData[0]?.pricePerShare ?? 1;
   const yscvxcrvPricePerShare = pricePerShareData[1]?.pricePerShare ?? 1;
+  const yscvgcvxPricePerShare = pricePerShareData[2]?.pricePerShare ?? 1;
 
   // Fetch user vault balances
   const { balances } = useMultipleVaultBalances([
@@ -67,6 +70,11 @@ export function HomePageContent() {
       address: VAULT_ADDRESSES.YSCVXCRV,
       pricePerShare: yscvxcrvPricePerShare,
       assetPriceUsd: cvxCrvPrice,
+    },
+    {
+      address: VAULT_ADDRESSES.YSCVGCVX,
+      pricePerShare: yscvgcvxPricePerShare,
+      assetPriceUsd: cvgCvxPrice,
     },
   ]);
 
@@ -82,19 +90,38 @@ export function HomePageContent() {
   // Use cached TVL (fast) or fall back to Yearn API TVL
   const ycvxcrvTvl = cacheData?.ycvxcrv?.tvlUsd ?? ycvxcrvVault?.tvl ?? 0;
   const yscvxcrvTvl = cacheData?.yscvxcrv?.tvlUsd ?? yscvxcrvVault?.tvl ?? 0;
+  const yscvgcvxTvl = cacheData?.yscvgcvx?.tvlUsd ?? 0;
+
+  // Get TVL for each vault by ID
+  const getTvlForVault = (id: string): number => {
+    switch (id) {
+      case "ycvxcrv": return ycvxcrvTvl;
+      case "yscvxcrv": return yscvxcrvTvl;
+      case "yscvgcvx": return yscvgcvxTvl;
+      default: return 0;
+    }
+  };
+
+  // Get APY for each vault by ID
+  const getApyForVault = (id: string): number => {
+    switch (id) {
+      case "ycvxcrv": return vaultNetApy;     // Vault: net APY after 15% vault fee
+      case "yscvxcrv": return strategyNetApy; // Strategy: net APY without vault fee (only 5% strategy fee)
+      case "yscvgcvx": return 0;              // TODO: Fetch cvgCVX APY from Tangent/Convergence
+      default: return 0;
+    }
+  };
 
   const vaults = vaultConfigs.map((config, index) => ({
     ...config,
-    tvl: config.id === "ycvxcrv" ? ycvxcrvTvl : yscvxcrvTvl,
-    apy: config.id === "ycvxcrv"
-      ? vaultNetApy                // Vault: net APY after 15% vault fee
-      : strategyNetApy,            // Strategy: net APY without vault fee (only 5% strategy fee)
+    tvl: getTvlForVault(config.id),
+    apy: getApyForVault(config.id),
     holdings: balances[index]?.formattedUsd ?? "$0",
     hasHoldings: (balances[index]?.usdValue ?? 0) > 0,
   }));
 
-  // Total TVL - use strategy TVL since vault deposits flow into strategy
-  const totalTvl = yscvxcrvTvl;
+  // Total TVL across all vaults
+  const totalTvl = yscvxcrvTvl + yscvgcvxTvl;
   const totalTvlFormatted = totalTvl >= 1_000_000
     ? `$${(totalTvl / 1_000_000).toFixed(2)}M`
     : totalTvl >= 1_000
