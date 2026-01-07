@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAccount, usePublicClient } from "wagmi";
 import { parseUnits, formatUnits } from "viem";
-import { fetchZapInRoute, fetchZapOutRoute, fetchVaultToVaultRoute, fetchCvgCvxZapInRoute, fetchCvgCvxZapOutRoute, fetchPxCvxZapOutRoute, fetchTokenPrices, CVXCRV_ADDRESS, isYldfiVault } from "@/lib/enso";
+import { fetchZapInRoute, fetchZapOutRoute, fetchVaultToVaultRoute, fetchCvgCvxZapInRoute, fetchCvgCvxZapOutRoute, fetchPxCvxZapInRoute, fetchPxCvxZapOutRoute, fetchTokenPrices, CVXCRV_ADDRESS, isYldfiVault } from "@/lib/enso";
 import { TOKENS, getVaultByAddress } from "@/config/vaults";
 import type { EnsoToken, ZapQuote, ZapDirection } from "@/types/enso";
 
@@ -368,10 +368,53 @@ export function useZapQuote({
       // pxCVX vault requires custom routing (no DEX liquidity)
       // Only for non-vault-to-vault zaps (regular token in/out)
       if (isPxCvxVault) {
-        if (direction === "in") {
-          // Zapping INTO pxCVX vault is not supported
-          // Users must acquire pxCVX via Pirex and deposit directly
-          throw new Error("Zapping into pxCVX vault is not supported. Please acquire pxCVX via Pirex and use the Deposit tab.");
+        if (direction === "in" && inputToken) {
+          const bundle = await fetchPxCvxZapInRoute({
+            fromAddress: userAddress,
+            vaultAddress,
+            inputToken: inputToken.address,
+            amountIn: amountInWei,
+            slippage,
+          });
+
+          const outputAmountRaw = bundle.amountsOut[vaultAddress.toLowerCase()]
+            || bundle.amountsOut[vaultAddress]
+            || "0";
+          const outputAmountFormatted = formatUnits(BigInt(outputAmountRaw), 18);
+
+          const inputNum = Number(inputAmount);
+          const outputNum = Number(outputAmountFormatted);
+          const exchangeRate = inputNum > 0 ? outputNum / inputNum : 0;
+
+          // Price impact calculation for pxCVX
+          const [inputTokenPrice, pxCvxPrice, assetsPerShare] = await Promise.all([
+            getTokenPrice(inputToken.address),
+            getTokenPrice(TOKENS.PXCVX),
+            getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
+          ]);
+
+          const inputUsdValue = inputTokenPrice !== null ? inputNum * inputTokenPrice : null;
+          const outputPxCvxValue = assetsPerShare !== null ? outputNum * assetsPerShare : outputNum;
+          const outputUsdValue = pxCvxPrice !== null ? outputPxCvxValue * pxCvxPrice : null;
+          const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
+
+          return {
+            inputToken,
+            inputAmount,
+            outputAmount: outputAmountRaw,
+            outputAmountFormatted,
+            exchangeRate,
+            inputUsdValue,
+            outputUsdValue,
+            priceImpact,
+            gasEstimate: bundle.gas,
+            tx: {
+              to: bundle.tx.to,
+              data: bundle.tx.data,
+              value: bundle.tx.value,
+            },
+            route: [],
+          };
         }
 
         if (direction === "out" && outputToken) {
