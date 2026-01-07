@@ -48,6 +48,26 @@ export const TANGENT = {
   } as const,
 } as const;
 
+// Pirex infrastructure for pxCVX zaps
+export const PIREX = {
+  // lpxCVX contract - wraps pxCVX and provides swap to CVX via Curve
+  LPXCVX: "0x389fB29230D02e67eB963C1F5A00f2b16f95BEb7" as const,
+  // Curve pool for lpxCVX <-> CVX swaps
+  LPXCVX_CVX_POOL: "0x72725c0c879489986d213a9a6d2116de45624c1c" as const,
+  // pxCVX token
+  PXCVX: "0xBCe0Cf87F513102F22232436CCa2ca49e815C3aC" as const,
+  // Token enum for lpxCVX.swap() function
+  TOKEN_ENUM: {
+    CVX: 0,
+    pxCVX: 1,
+  } as const,
+  // Curve pool indices: coin[0]=CVX, coin[1]=lpxCVX
+  POOL_INDEX: {
+    CVX: 0,
+    LPXCVX: 1,
+  } as const,
+} as const;
+
 // Vault addresses
 export const VAULT_ADDRESSES = {
   // CVX vaults (not yet deployed - update when deployed)

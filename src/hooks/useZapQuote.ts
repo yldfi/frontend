@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAccount, usePublicClient } from "wagmi";
 import { parseUnits, formatUnits } from "viem";
-import { fetchZapInRoute, fetchZapOutRoute, fetchVaultToVaultRoute, fetchCvgCvxZapInRoute, fetchCvgCvxZapOutRoute, fetchTokenPrices, CVXCRV_ADDRESS, isYldfiVault } from "@/lib/enso";
+import { fetchZapInRoute, fetchZapOutRoute, fetchVaultToVaultRoute, fetchCvgCvxZapInRoute, fetchCvgCvxZapOutRoute, fetchPxCvxZapOutRoute, fetchTokenPrices, CVXCRV_ADDRESS, isYldfiVault } from "@/lib/enso";
 import { TOKENS, getVaultByAddress } from "@/config/vaults";
 import type { EnsoToken, ZapQuote, ZapDirection } from "@/types/enso";
 
@@ -92,8 +92,9 @@ export function useZapQuote({
   const { address: userAddress } = useAccount();
   const publicClient = usePublicClient();
 
-  // Check if vault uses cvgCVX as underlying (requires custom routing)
+  // Check if vault uses cvgCVX or pxCVX as underlying (requires custom routing)
   const isCvgCvxVault = underlyingToken?.toLowerCase() === TOKENS.CVGCVX.toLowerCase();
+  const isPxCvxVault = underlyingToken?.toLowerCase() === TOKENS.PXCVX.toLowerCase();
 
   // Determine token addresses based on direction
   // Zap In: inputToken → underlying (then vault deposits)
@@ -128,7 +129,7 @@ export function useZapQuote({
   const isVaultToVault = isVaultToVaultOut || isVaultToVaultIn;
 
   const { data, isLoading, error, refetch, isFetching } = useQuery({
-    queryKey: ["zap-quote", tokenIn, tokenOut, amountInWei, slippage, userAddress, isVaultToVault, vaultAddress, inputToken?.address, isCvgCvxVault],
+    queryKey: ["zap-quote", tokenIn, tokenOut, amountInWei, slippage, userAddress, isVaultToVault, vaultAddress, inputToken?.address, isCvgCvxVault, isPxCvxVault],
     queryFn: async (): Promise<ZapQuote | null> => {
       if (!userAddress || !tokenIn || !tokenOut) return null;
 
@@ -334,6 +335,73 @@ export function useZapQuote({
 
           const inputCvgCvxValue = assetsPerShare !== null ? inputNum * assetsPerShare : inputNum;
           const inputUsdValue = cvgCvxPrice !== null ? inputCvgCvxValue * cvgCvxPrice : null;
+          const outputUsdValue = outputTokenPrice !== null ? outputNum * outputTokenPrice : null;
+          const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
+
+          return {
+            inputToken: {
+              address: vaultAddress,
+              symbol: "Vault Shares",
+              name: "Vault Shares",
+              decimals: 18,
+              chainId: 1,
+              type: "defi",
+            } as EnsoToken,
+            inputAmount,
+            outputAmount: outputAmountRaw,
+            outputAmountFormatted,
+            exchangeRate,
+            inputUsdValue,
+            outputUsdValue,
+            priceImpact,
+            gasEstimate: bundle.gas,
+            tx: {
+              to: bundle.tx.to,
+              data: bundle.tx.data,
+              value: bundle.tx.value,
+            },
+            route: [],
+          };
+        }
+      }
+
+      // pxCVX vault requires custom routing (no DEX liquidity)
+      // Only for non-vault-to-vault zaps (regular token in/out)
+      if (isPxCvxVault) {
+        if (direction === "in") {
+          // Zapping INTO pxCVX vault is not supported
+          // Users must acquire pxCVX via Pirex and deposit directly
+          throw new Error("Zapping into pxCVX vault is not supported. Please acquire pxCVX via Pirex and use the Deposit tab.");
+        }
+
+        if (direction === "out" && outputToken) {
+          const bundle = await fetchPxCvxZapOutRoute({
+            fromAddress: userAddress,
+            vaultAddress,
+            outputToken: outputToken.address,
+            amountIn: amountInWei,
+            slippage,
+          });
+
+          const outputAmountRaw = bundle.amountsOut[outputToken.address.toLowerCase()]
+            || bundle.amountsOut[outputToken.address]
+            || "0";
+          const outputDecimals = outputToken.decimals ?? 18;
+          const outputAmountFormatted = formatUnits(BigInt(outputAmountRaw), outputDecimals);
+
+          const inputNum = Number(inputAmount);
+          const outputNum = Number(outputAmountFormatted);
+          const exchangeRate = inputNum > 0 ? outputNum / inputNum : 0;
+
+          // Price impact calculation for pxCVX
+          const [outputTokenPrice, pxCvxPrice, assetsPerShare] = await Promise.all([
+            getTokenPrice(outputToken.address),
+            getTokenPrice(TOKENS.PXCVX),
+            getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
+          ]);
+
+          const inputPxCvxValue = assetsPerShare !== null ? inputNum * assetsPerShare : inputNum;
+          const inputUsdValue = pxCvxPrice !== null ? inputPxCvxValue * pxCvxPrice : null;
           const outputUsdValue = outputTokenPrice !== null ? outputNum * outputTokenPrice : null;
           const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
 
