@@ -84,10 +84,18 @@ export function HomePageContent() {
   const isLoading = cacheLoading && ycvxcrvLoading;
 
   // Build vault list with live data
-  // All APYs come directly from Kong (net APY after fees)
-  const ycvxcrvNetApy = ycvxcrvVault?.apy ?? 0;
-  const yscvxcrvNetApy = yscvxcrvVault?.apy ?? 0;
-  const yscvgcvxNetApy = yscvgcvxVault?.apy ?? 0;
+  // Kong returns net APY for vaults (after fees) but gross for strategies
+  // We need to apply strategy performance fees manually using config values
+  const ycvxcrvNetApy = ycvxcrvVault?.apy ?? 0; // Kong already applies vault fee
+
+  // Apply strategy fees from config (Kong doesn't know about strategy fees)
+  const yscvxcrvGrossApy = yscvxcrvVault?.apy ?? 0;
+  const yscvxcrvFeeRate = VAULTS.yscvxcrv.fees.performance / 100; // e.g., 5 -> 0.05
+  const yscvxcrvNetApy = yscvxcrvGrossApy * (1 - yscvxcrvFeeRate);
+
+  const yscvgcvxGrossApy = yscvgcvxVault?.apy ?? 0;
+  const yscvgcvxFeeRate = VAULTS.yscvgcvx.fees.performance / 100; // e.g., 0 -> 0
+  const yscvgcvxNetApy = yscvgcvxGrossApy * (1 - yscvgcvxFeeRate);
 
   // Use cached TVL (fast) or fall back to Yearn API TVL
   const ycvxcrvTvl = cacheData?.ycvxcrv?.tvlUsd ?? ycvxcrvVault?.tvl ?? 0;
