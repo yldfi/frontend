@@ -14,20 +14,22 @@ import { useMultiplePricePerShare } from "@/hooks/usePricePerShare";
 import { useVaultCache } from "@/hooks/useVaultCache";
 import { VAULTS, VAULT_ADDRESSES } from "@/config/vaults";
 
-// Build vault configs from centralized config
-const vaultConfigs = Object.values(VAULTS).map((vault) => ({
-  id: vault.id,
-  name: vault.name,
-  description: vault.description,
-  token: vault.assetSymbol,
-  chain: vault.chain,
-  contractAddress: vault.address,
-  badges: vault.badges,
-  type: vault.type,
-  fee: vault.fees.performance,
-  feeBreakdown: vault.feeBreakdown,
-  logo: vault.logoSmall,
-}));
+// Build vault configs from centralized config (excluding hidden vaults)
+const vaultConfigs = Object.values(VAULTS)
+  .filter((vault) => !vault.hidden)
+  .map((vault) => ({
+    id: vault.id,
+    name: vault.name,
+    description: vault.description,
+    token: vault.assetSymbol,
+    chain: vault.chain,
+    contractAddress: vault.address,
+    badges: vault.badges,
+    type: vault.type,
+    fee: vault.fees.performance,
+    feeBreakdown: vault.feeBreakdown,
+    logo: vault.logoSmall,
+  }));
 
 export function HomePageContent() {
   const { isConnected } = useAccount();
