@@ -8,7 +8,7 @@ import Image from "next/image";
 import { cn, formatUsd } from "@/lib/utils";
 import { PixelAnimation } from "@/components/PixelAnimation";
 import { Logo } from "@/components/Logo";
-import { useYearnVault, formatYearnVaultData, calculateStrategyNetApy } from "@/hooks/useYearnVault";
+import { useYearnVault, formatYearnVaultData } from "@/hooks/useYearnVault";
 import { useMultipleVaultBalances } from "@/hooks/useVaultBalance";
 import { useMultiplePricePerShare } from "@/hooks/usePricePerShare";
 import { useVaultCache } from "@/hooks/useVaultCache";
@@ -40,9 +40,11 @@ export function HomePageContent() {
   // Fetch Yearn vault data (for APY from Kong API)
   const { data: ycvxcrvData, isLoading: ycvxcrvLoading } = useYearnVault(VAULT_ADDRESSES.YCVXCRV);
   const { data: yscvxcrvData } = useYearnVault(VAULT_ADDRESSES.YSCVXCRV);
+  const { data: yscvgcvxData } = useYearnVault(VAULT_ADDRESSES.YSCVGCVX);
 
   const ycvxcrvVault = formatYearnVaultData(ycvxcrvData?.vault, ycvxcrvData?.vaultStrategies);
   const yscvxcrvVault = formatYearnVaultData(yscvxcrvData?.vault, yscvxcrvData?.vaultStrategies);
+  const yscvgcvxVault = formatYearnVaultData(yscvgcvxData?.vault, yscvgcvxData?.vaultStrategies);
 
   // Use cached token prices (falls back to 0 if cache not ready)
   const cvxCrvPrice = cacheData?.cvxCrvPrice ?? 0;
@@ -82,10 +84,10 @@ export function HomePageContent() {
   const isLoading = cacheLoading && ycvxcrvLoading;
 
   // Build vault list with live data
-  // yCVXCRV vault: uses net APY from Kong (after 15% vault fee)
-  // yscvxCRV strategy: calculate net APY by removing the 15% vault fee (strategy only has 5% fee already included)
-  const vaultNetApy = ycvxcrvVault?.apy ?? 0;
-  const strategyNetApy = calculateStrategyNetApy(vaultNetApy); // Remove vault's 15% fee
+  // All APYs come directly from Kong (net APY after fees)
+  const ycvxcrvNetApy = ycvxcrvVault?.apy ?? 0;
+  const yscvxcrvNetApy = yscvxcrvVault?.apy ?? 0;
+  const yscvgcvxNetApy = yscvgcvxVault?.apy ?? 0;
 
   // Use cached TVL (fast) or fall back to Yearn API TVL
   const ycvxcrvTvl = cacheData?.ycvxcrv?.tvlUsd ?? ycvxcrvVault?.tvl ?? 0;
@@ -102,12 +104,12 @@ export function HomePageContent() {
     }
   };
 
-  // Get APY for each vault by ID
+  // Get APY for each vault by ID (all from Kong)
   const getApyForVault = (id: string): number => {
     switch (id) {
-      case "ycvxcrv": return vaultNetApy;     // Vault: net APY after 15% vault fee
-      case "yscvxcrv": return strategyNetApy; // Strategy: net APY without vault fee (only 5% strategy fee)
-      case "yscvgcvx": return 0;              // TODO: Fetch cvgCVX APY from Tangent/Convergence
+      case "ycvxcrv": return ycvxcrvNetApy;
+      case "yscvxcrv": return yscvxcrvNetApy;
+      case "yscvgcvx": return yscvgcvxNetApy;
       default: return 0;
     }
   };
