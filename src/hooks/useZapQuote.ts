@@ -3,7 +3,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAccount, usePublicClient } from "wagmi";
 import { parseUnits, formatUnits } from "viem";
-import { fetchZapInRoute, fetchZapOutRoute, fetchVaultToVaultRoute, fetchTokenPrices, CVXCRV_ADDRESS, isYldfiVault } from "@/lib/enso";
+import { fetchZapInRoute, fetchZapOutRoute, fetchVaultToVaultRoute, fetchCvgCvxZapInRoute, fetchCvgCvxZapOutRoute, fetchTokenPrices, CVXCRV_ADDRESS, isYldfiVault } from "@/lib/enso";
+import { TOKENS } from "@/config/vaults";
 import type { EnsoToken, ZapQuote, ZapDirection } from "@/types/enso";
 
 // ERC4626 ABI for convertToAssets
@@ -85,17 +86,22 @@ export function useZapQuote({
   inputAmount,
   direction,
   vaultAddress,
+  underlyingToken,
   slippage = "100",
 }: UseZapQuoteParams) {
   const { address: userAddress } = useAccount();
   const publicClient = usePublicClient();
 
+  // Check if vault uses cvgCVX as underlying (requires custom routing)
+  const isCvgCvxVault = underlyingToken?.toLowerCase() === TOKENS.CVGCVX.toLowerCase();
+
   // Determine token addresses based on direction
-  // Zap In: inputToken → cvxCRV (then vault deposits)
-  // Zap Out: vault shares → cvxCRV → outputToken
-  const tokenIn = direction === "in" ? inputToken?.address : CVXCRV_ADDRESS;
-  const tokenOut = direction === "in" ? CVXCRV_ADDRESS : outputToken?.address;
-  const decimals = direction === "in" ? inputToken?.decimals : 18; // cvxCRV is 18 decimals
+  // Zap In: inputToken → underlying (then vault deposits)
+  // Zap Out: vault shares → underlying → outputToken
+  const underlying = underlyingToken || CVXCRV_ADDRESS;
+  const tokenIn = direction === "in" ? inputToken?.address : underlying;
+  const tokenOut = direction === "in" ? underlying : outputToken?.address;
+  const decimals = direction === "in" ? inputToken?.decimals : 18;
 
   // Parse input amount to wei
   let amountInWei = "0";
@@ -122,9 +128,118 @@ export function useZapQuote({
   const isVaultToVault = isVaultToVaultOut || isVaultToVaultIn;
 
   const { data, isLoading, error, refetch, isFetching } = useQuery({
-    queryKey: ["zap-quote", tokenIn, tokenOut, amountInWei, slippage, userAddress, isVaultToVault, vaultAddress, inputToken?.address],
+    queryKey: ["zap-quote", tokenIn, tokenOut, amountInWei, slippage, userAddress, isVaultToVault, vaultAddress, inputToken?.address, isCvgCvxVault],
     queryFn: async (): Promise<ZapQuote | null> => {
       if (!userAddress || !tokenIn || !tokenOut) return null;
+
+      // cvgCVX vault requires custom routing (no DEX liquidity)
+      if (isCvgCvxVault) {
+        if (direction === "in" && inputToken) {
+          const bundle = await fetchCvgCvxZapInRoute({
+            fromAddress: userAddress,
+            vaultAddress,
+            inputToken: inputToken.address,
+            amountIn: amountInWei,
+            slippage,
+          });
+
+          const outputAmountRaw = bundle.amountsOut[vaultAddress.toLowerCase()]
+            || bundle.amountsOut[vaultAddress]
+            || "0";
+          const outputAmountFormatted = formatUnits(BigInt(outputAmountRaw), 18);
+
+          const inputNum = Number(inputAmount);
+          const outputNum = Number(outputAmountFormatted);
+          const exchangeRate = inputNum > 0 ? outputNum / inputNum : 0;
+
+          // Price impact calculation for cvgCVX
+          const [inputTokenPrice, cvgCvxPrice, assetsPerShare] = await Promise.all([
+            getTokenPrice(inputToken.address),
+            getTokenPrice(TOKENS.CVGCVX),
+            getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
+          ]);
+
+          const inputUsdValue = inputTokenPrice !== null ? inputNum * inputTokenPrice : null;
+          const outputCvgCvxValue = assetsPerShare !== null ? outputNum * assetsPerShare : outputNum;
+          const outputUsdValue = cvgCvxPrice !== null ? outputCvgCvxValue * cvgCvxPrice : null;
+          const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
+
+          return {
+            inputToken,
+            inputAmount,
+            outputAmount: outputAmountRaw,
+            outputAmountFormatted,
+            exchangeRate,
+            inputUsdValue,
+            outputUsdValue,
+            priceImpact,
+            gasEstimate: bundle.gas,
+            tx: {
+              to: bundle.tx.to,
+              data: bundle.tx.data,
+              value: bundle.tx.value,
+            },
+            route: [],
+          };
+        }
+
+        if (direction === "out" && outputToken) {
+          const bundle = await fetchCvgCvxZapOutRoute({
+            fromAddress: userAddress,
+            vaultAddress,
+            outputToken: outputToken.address,
+            amountIn: amountInWei,
+            slippage,
+          });
+
+          const outputAmountRaw = bundle.amountsOut[outputToken.address.toLowerCase()]
+            || bundle.amountsOut[outputToken.address]
+            || "0";
+          const outputDecimals = outputToken.decimals ?? 18;
+          const outputAmountFormatted = formatUnits(BigInt(outputAmountRaw), outputDecimals);
+
+          const inputNum = Number(inputAmount);
+          const outputNum = Number(outputAmountFormatted);
+          const exchangeRate = inputNum > 0 ? outputNum / inputNum : 0;
+
+          // Price impact calculation for cvgCVX
+          const [outputTokenPrice, cvgCvxPrice, assetsPerShare] = await Promise.all([
+            getTokenPrice(outputToken.address),
+            getTokenPrice(TOKENS.CVGCVX),
+            getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
+          ]);
+
+          const inputCvgCvxValue = assetsPerShare !== null ? inputNum * assetsPerShare : inputNum;
+          const inputUsdValue = cvgCvxPrice !== null ? inputCvgCvxValue * cvgCvxPrice : null;
+          const outputUsdValue = outputTokenPrice !== null ? outputNum * outputTokenPrice : null;
+          const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
+
+          return {
+            inputToken: {
+              address: vaultAddress,
+              symbol: "Vault Shares",
+              name: "Vault Shares",
+              decimals: 18,
+              chainId: 1,
+              type: "defi",
+            } as EnsoToken,
+            inputAmount,
+            outputAmount: outputAmountRaw,
+            outputAmountFormatted,
+            exchangeRate,
+            inputUsdValue,
+            outputUsdValue,
+            priceImpact,
+            gasEstimate: bundle.gas,
+            tx: {
+              to: bundle.tx.to,
+              data: bundle.tx.data,
+              value: bundle.tx.value,
+            },
+            route: [],
+          };
+        }
+      }
 
       // Vault-to-vault zap: use bundle endpoint for redeem + deposit
       if (isVaultToVaultOut && outputToken) {
