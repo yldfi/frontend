@@ -143,6 +143,7 @@ export function useZapQuote({
           sourceVault: vaultAddress,
           targetVault: outputToken.address,
           amountIn: amountInWei,
+          slippage,
         });
 
         // Get output amount from amountsOut (keyed by token address)
@@ -207,6 +208,7 @@ export function useZapQuote({
           sourceVault: inputToken.address,
           targetVault: vaultAddress,
           amountIn: amountInWei,
+          slippage,
         });
 
         const outputAmountRaw = bundle.amountsOut[vaultAddress.toLowerCase()]

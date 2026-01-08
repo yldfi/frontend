@@ -321,10 +321,16 @@ describe("enso.ts integration", () => {
     });
 
     it("handles route API failure", async () => {
-      mockFetch.mockResolvedValueOnce({
+      // Mock all retry attempts (initial + 3 retries = 4 total)
+      const failedResponse = {
         ok: false,
         status: 500,
-      } as Response);
+      } as Response;
+      mockFetch
+        .mockResolvedValueOnce(failedResponse)
+        .mockResolvedValueOnce(failedResponse)
+        .mockResolvedValueOnce(failedResponse)
+        .mockResolvedValueOnce(failedResponse);
 
       await expect(
         fetchRoute({
@@ -334,7 +340,7 @@ describe("enso.ts integration", () => {
           amountIn: "1000000000000000000",
         })
       ).rejects.toThrow();
-    });
+    }, 30000); // Increase timeout to account for retry delays
 
     it("handles no route found (400 error)", async () => {
       mockFetch.mockResolvedValueOnce({

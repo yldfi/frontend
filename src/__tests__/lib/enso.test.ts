@@ -513,13 +513,14 @@ describe("lib/enso", () => {
       expect(url).toContain("includeMetadata=true");
     });
 
-    it("constructs route URL correctly", () => {
+    it("constructs route URL correctly with array params", () => {
+      // Enso API requires array-format parameters: tokenIn[0], tokenOut[0], amountIn[0]
       const params = new URLSearchParams({
         chainId: String(CHAIN_ID),
         fromAddress: "0x1234",
-        tokenIn: ETH_ADDRESS,
-        tokenOut: CVXCRV_ADDRESS,
-        amountIn: "1000000000000000000",
+        "tokenIn[0]": ETH_ADDRESS,
+        "tokenOut[0]": CVXCRV_ADDRESS,
+        "amountIn[0]": "1000000000000000000",
         slippage: "100",
         routingStrategy: "router",
       });
@@ -527,6 +528,10 @@ describe("lib/enso", () => {
       expect(url).toContain("shortcuts/route");
       expect(url).toContain("slippage=100");
       expect(url).toContain("routingStrategy=router");
+      // Verify array format is used (URL encoded brackets)
+      expect(url).toContain("tokenIn%5B0%5D=");
+      expect(url).toContain("tokenOut%5B0%5D=");
+      expect(url).toContain("amountIn%5B0%5D=");
     });
 
     it("constructs price URL correctly", () => {
