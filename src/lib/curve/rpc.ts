@@ -54,7 +54,14 @@ export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]
     body: JSON.stringify(batch),
   });
 
-  const results = (await response.json()) as RpcBatchResult[];
+  const json = await response.json();
+
+  // Handle case where response is not an array (RPC error, invalid response, etc.)
+  if (!Array.isArray(json)) {
+    return calls.map(() => null);
+  }
+
+  const results = json as RpcBatchResult[];
 
   // Sort by id to maintain order
   results.sort((a, b) => a.id - b.id);
@@ -335,4 +342,207 @@ export async function batchPreviewRedeem(
     }
     return r.toString();
   });
+}
+
+// ============================================
+// Optimized Combined Helpers
+// These batch multiple RPC calls and use off-chain math
+// ============================================
+
+// Import math functions for off-chain calculations
+import { getDy, A_PRECISION, N_COINS } from "./math";
+
+// Additional selectors for StableSwapNG pools
+const STABLESWAP_SELECTORS = {
+  OFFPEG_FEE_MULTIPLIER: "0x8edfdd5f", // offpeg_fee_multiplier()
+} as const;
+
+/**
+ * StableSwap pool parameters with cache
+ */
+export interface StableSwapParams {
+  balances: [bigint, bigint];
+  A: bigint;
+  Ann: bigint;
+  fee: bigint;
+  offpegFeeMultiplier: bigint;
+}
+
+// Cache for pool params (12 second TTL matches quote refresh)
+const poolParamsCache = new Map<string, { data: StableSwapParams; timestamp: number }>();
+const POOL_PARAMS_CACHE_TTL = 12_000; // 12 seconds
+
+/**
+ * Get StableSwap pool parameters with caching
+ * Fetches balances, A, fee, and offpeg_fee_multiplier in a single batched call
+ */
+export async function getStableSwapParams(poolAddress: string): Promise<StableSwapParams> {
+  const cacheKey = poolAddress.toLowerCase();
+  const now = Date.now();
+  const cached = poolParamsCache.get(cacheKey);
+
+  if (cached && now - cached.timestamp < POOL_PARAMS_CACHE_TTL) {
+    return cached.data;
+  }
+
+  // Build batch call for all pool parameters
+  const calls: RpcCall[] = [
+    { to: poolAddress, data: buildBalancesCalldata(0) },
+    { to: poolAddress, data: buildBalancesCalldata(1) },
+    { to: poolAddress, data: SELECTORS.A },
+    { to: poolAddress, data: SELECTORS.FEE },
+    { to: poolAddress, data: STABLESWAP_SELECTORS.OFFPEG_FEE_MULTIPLIER },
+  ];
+
+  const results = await batchRpcCalls(calls);
+
+  const balance0 = results[0] ?? 0n;
+  const balance1 = results[1] ?? 0n;
+  const A = results[2] ?? 0n;
+  const fee = results[3] ?? 0n;
+  const offpegFeeMultiplier = results[4] ?? 0n;
+
+  // Compute Ann = A * A_PRECISION * N_COINS
+  const Ann = A * A_PRECISION * N_COINS;
+
+  const data: StableSwapParams = {
+    balances: [balance0, balance1],
+    A,
+    Ann,
+    fee,
+    offpegFeeMultiplier,
+  };
+
+  // Update cache
+  poolParamsCache.set(cacheKey, { data, timestamp: now });
+
+  return data;
+}
+
+/**
+ * Clear pool params cache (useful for testing)
+ */
+export function clearPoolParamsCache(): void {
+  poolParamsCache.clear();
+}
+
+/**
+ * OPTIMIZED: Batch previewRedeem + pool params, calculate getDy locally
+ *
+ * This reduces 2 sequential RPC calls to 1 batched call + local computation.
+ * ~50% latency reduction for vault-to-vault routes.
+ *
+ * @param vaultAddress - ERC4626 vault to redeem from
+ * @param shares - Amount of vault shares
+ * @param poolAddress - Curve pool for swap estimation
+ * @param i - Input token index in pool
+ * @param j - Output token index in pool
+ * @param conservativeBuffer - Reduce input by this factor (default 0.99 = 1% buffer)
+ * @returns Redeem amount and estimated swap output
+ */
+export async function batchRedeemAndEstimateSwap(
+  vaultAddress: string,
+  shares: string,
+  poolAddress: string,
+  i: number,
+  j: number,
+  conservativeBuffer: number = 0.99
+): Promise<{ redeemAmount: bigint; swapOutput: bigint }> {
+  // Check pool params cache first
+  const cacheKey = poolAddress.toLowerCase();
+  const now = Date.now();
+  const cachedParams = poolParamsCache.get(cacheKey);
+  const needsPoolParams = !cachedParams || now - cachedParams.timestamp >= POOL_PARAMS_CACHE_TTL;
+
+  // Build batch call - always include previewRedeem, optionally include pool params
+  const calls: RpcCall[] = [
+    { to: vaultAddress, data: buildPreviewRedeemCalldata(shares) },
+  ];
+
+  if (needsPoolParams) {
+    calls.push(
+      { to: poolAddress, data: buildBalancesCalldata(0) },
+      { to: poolAddress, data: buildBalancesCalldata(1) },
+      { to: poolAddress, data: SELECTORS.A },
+      { to: poolAddress, data: SELECTORS.FEE },
+      { to: poolAddress, data: STABLESWAP_SELECTORS.OFFPEG_FEE_MULTIPLIER }
+    );
+  }
+
+  const results = await batchRpcCalls(calls);
+
+  // Extract redeem amount
+  const redeemAmount = results[0];
+  if (redeemAmount === null) {
+    throw new Error(`Failed to preview redeem for vault ${vaultAddress}`);
+  }
+
+  // Get pool params (from batch or cache)
+  let poolParams: StableSwapParams;
+  if (needsPoolParams) {
+    const balance0 = results[1] ?? 0n;
+    const balance1 = results[2] ?? 0n;
+    const A = results[3] ?? 0n;
+    const fee = results[4] ?? 0n;
+    const offpegFeeMultiplier = results[5] ?? 0n;
+    const Ann = A * A_PRECISION * N_COINS;
+
+    poolParams = {
+      balances: [balance0, balance1],
+      A,
+      Ann,
+      fee,
+      offpegFeeMultiplier,
+    };
+
+    // Update cache
+    poolParamsCache.set(cacheKey, { data: poolParams, timestamp: now });
+  } else {
+    poolParams = cachedParams!.data;
+  }
+
+  // Apply conservative buffer to redeem amount
+  const conservativeInput = BigInt(Math.floor(Number(redeemAmount) * conservativeBuffer));
+
+  // Calculate swap output using off-chain math
+  const swapOutput = getDy(
+    i,
+    j,
+    conservativeInput,
+    poolParams.balances,
+    poolParams.Ann,
+    poolParams.fee,
+    poolParams.offpegFeeMultiplier
+  );
+
+  return {
+    redeemAmount,
+    swapOutput,
+  };
+}
+
+/**
+ * OPTIMIZED: Get swap estimate using cached pool params + off-chain math
+ *
+ * Uses cached pool parameters when available, otherwise fetches and caches.
+ * Calculates output using off-chain StableSwap math instead of RPC call.
+ */
+export async function estimateSwapOffchain(
+  poolAddress: string,
+  i: number,
+  j: number,
+  dx: string | bigint
+): Promise<bigint> {
+  const poolParams = await getStableSwapParams(poolAddress);
+  const inputAmount = typeof dx === "string" ? BigInt(dx) : dx;
+
+  return getDy(
+    i,
+    j,
+    inputAmount,
+    poolParams.balances,
+    poolParams.Ann,
+    poolParams.fee,
+    poolParams.offpegFeeMultiplier
+  );
 }

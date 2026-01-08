@@ -20,7 +20,13 @@ export {
   previewRedeemAndGetDy,
   previewRedeem,
   batchPreviewRedeem,
+  // Optimized helpers with caching + off-chain math
+  getStableSwapParams,
+  clearPoolParamsCache,
+  batchRedeemAndEstimateSwap,
+  estimateSwapOffchain,
   type CurvePoolParams,
+  type StableSwapParams,
 } from "./rpc";
 
 // StableSwap math
