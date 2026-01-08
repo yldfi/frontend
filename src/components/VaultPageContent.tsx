@@ -952,7 +952,13 @@ export function VaultPageContent({ id }: { id: string }) {
                           <span className="text-[var(--muted-foreground)]">Price Impact</span>
                           <span className={cn(
                             "mono",
-                            zapQuote && (zapQuote.priceImpact ?? 0) > 2 ? "text-[var(--destructive)]" : zapQuote && (zapQuote.priceImpact ?? 0) > 1 ? "text-[var(--warning)]" : ""
+                            zapQuote && (zapQuote.priceImpact ?? 0) < 0
+                              ? "text-green-500"
+                              : zapQuote && (zapQuote.priceImpact ?? 0) > 2
+                                ? "text-[var(--destructive)]"
+                                : zapQuote && (zapQuote.priceImpact ?? 0) > 1
+                                  ? "text-[var(--warning)]"
+                                  : ""
                           )}>
                             {zapQuote?.priceImpact != null ? `${zapQuote.priceImpact.toFixed(2)}%` : "—"}
                           </span>
