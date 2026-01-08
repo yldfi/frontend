@@ -7,6 +7,26 @@ import type { EnsoToken, EnsoTokensResponse, EnsoRouteResponse, EnsoBundleAction
 import { TOKENS, VAULTS, VAULT_ADDRESSES, isYldfiVault as checkIsYldfiVault } from "@/config/vaults";
 import { PUBLIC_RPC_URLS } from "@/config/rpc";
 
+// Import Curve helpers from dedicated module
+import {
+  getCurveGetDy,
+  getCurveGetDyFactory,
+  previewRedeem,
+  batchRpcCalls,
+  getPoolParams,
+  // StableSwap math
+  getD as stableswapGetD,
+  getY as stableswapGetY,
+  getDy as stableswapGetDyOffchain,
+  dynamicFee as stableswapDynamicFee,
+  findPegPoint as findPegPointOffchain,
+  calculateMinDy,
+  validateSlippage,
+  N_COINS as STABLESWAP_N_COINS,
+  A_PRECISION as STABLESWAP_A_PRECISION,
+  FEE_DENOMINATOR as STABLESWAP_FEE_DENOMINATOR,
+} from "@/lib/curve";
+
 const CHAIN_ID = 1; // Ethereum mainnet
 
 // Initialize Enso SDK client
@@ -29,98 +49,9 @@ export const ENSO_ROUTER_EXECUTOR = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf"
 // yld_fi referral code for Enso attribution
 export const ENSO_REFERRAL_CODE = "yldfi";
 
-/**
- * Query Curve pool's get_dy to estimate output amount
- * @param poolAddress - Curve pool address
- * @param i - Input token index (0 = CVX1, 1 = cvgCVX)
- * @param j - Output token index
- * @param dx - Input amount (wei string)
- * @returns Expected output amount as bigint, or null on error
- */
-async function getCurveGetDy(
-  poolAddress: string,
-  i: number,
-  j: number,
-  dx: string
-): Promise<bigint | null> {
-  try {
-    // get_dy(int128,int128,uint256) selector = 0x5e0d443f (correct for CVX1/cvgCVX pool)
-    const selector = "0x5e0d443f";
-    const data = selector +
-      BigInt(i).toString(16).padStart(64, "0") +
-      BigInt(j).toString(16).padStart(64, "0") +
-      BigInt(dx).toString(16).padStart(64, "0");
-
-    const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "eth_call",
-        params: [{ to: poolAddress, data }, "latest"],
-        id: 1,
-      }),
-    });
-
-    const result = await response.json() as { result?: string };
-    if (result.result && result.result !== "0x") {
-      return BigInt(result.result);
-    }
-    return null;
-  } catch (error) {
-    console.error("Error fetching get_dy:", error);
-    return null;
-  }
-}
-
-/**
- * Get expected output from a Curve factory-style pool (uses uint256 indices)
- * This is for newer Curve pools like lpxCVX/CVX which use get_dy(uint256,uint256,uint256)
- */
-async function getCurveGetDyFactory(
-  poolAddress: string,
-  i: number,
-  j: number,
-  dx: string
-): Promise<bigint | null> {
-  try {
-    // get_dy(uint256,uint256,uint256) selector = 0x556d6e9f (factory-style pools)
-    const selector = "0x556d6e9f";
-    const data = selector +
-      BigInt(i).toString(16).padStart(64, "0") +
-      BigInt(j).toString(16).padStart(64, "0") +
-      BigInt(dx).toString(16).padStart(64, "0");
-
-    const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "eth_call",
-        params: [{ to: poolAddress, data }, "latest"],
-        id: 1,
-      }),
-    });
-
-    const result = await response.json() as { result?: string };
-    if (result.result && result.result !== "0x") {
-      return BigInt(result.result);
-    }
-    return null;
-  } catch (error) {
-    console.error("Error fetching get_dy (factory):", error);
-    return null;
-  }
-}
-
 // ============================================
-// Off-chain StableSwap Math (Curve formulas)
-// Exact replication of CurveStableSwapNGViews
+// Pool Params Cache (for optimal route calculation)
 // ============================================
-
-const STABLESWAP_N_COINS = 2n;
-const STABLESWAP_A_PRECISION = 100n;
-const STABLESWAP_FEE_DENOMINATOR = 10n ** 10n;
 
 // Cache for pool params (valid for 12 seconds to avoid redundant calls)
 let poolParamsCache: {
@@ -196,205 +127,6 @@ async function getCurvePoolParams(poolAddress: string): Promise<{
   poolParamsCache = { poolAddress, data, timestamp: now };
 
   return data;
-}
-
-/**
- * Calculate D (StableSwap invariant) using Newton's method
- * D satisfies: A*n^n*sum(x) + D = A*D*n^n + D^(n+1)/(n^n*prod(x))
- * Matches Vyper's exact calculation order for precision
- */
-function stableswapGetD(xp: [bigint, bigint], Ann: bigint): bigint {
-  const S = xp[0] + xp[1];
-  if (S === 0n) return 0n;
-
-  let D = S;
-  const N_COINS_POW = STABLESWAP_N_COINS ** STABLESWAP_N_COINS; // 2^2 = 4
-
-  for (let i = 0; i < 255; i++) {
-    // Match Vyper: D_P = D; for x in xp: D_P = D_P * D / x; D_P /= N_COINS^N_COINS
-    let D_P = D;
-    for (const x of xp) {
-      D_P = (D_P * D) / x;
-    }
-    D_P = D_P / N_COINS_POW;
-
-    const Dprev = D;
-    // (Ann * S / A_PRECISION + D_P * N_COINS) * D / ((Ann - A_PRECISION) * D / A_PRECISION + (N_COINS + 1) * D_P)
-    const numerator = ((Ann * S) / STABLESWAP_A_PRECISION + D_P * STABLESWAP_N_COINS) * D;
-    const denominator = ((Ann - STABLESWAP_A_PRECISION) * D) / STABLESWAP_A_PRECISION + (STABLESWAP_N_COINS + 1n) * D_P;
-    D = numerator / denominator;
-
-    if (D > Dprev ? D - Dprev <= 1n : Dprev - D <= 1n) break;
-  }
-  return D;
-}
-
-/**
- * Calculate y given x and D using Newton's method
- * Solves: A*n^n*(x+y) + D = A*D*n^n + D^3/(4*x*y)
- */
-function stableswapGetY(i: number, j: number, x: bigint, xp: [bigint, bigint], Ann: bigint, D: bigint): bigint {
-  let c = D;
-  let S = 0n;
-
-  for (let k = 0; k < Number(STABLESWAP_N_COINS); k++) {
-    let _x: bigint;
-    if (k === i) {
-      _x = x;
-    } else if (k !== j) {
-      _x = xp[k];
-    } else {
-      continue;
-    }
-    S += _x;
-    c = (c * D) / (_x * STABLESWAP_N_COINS);
-  }
-
-  c = (c * D * STABLESWAP_A_PRECISION) / (Ann * STABLESWAP_N_COINS);
-  const b = S + (D * STABLESWAP_A_PRECISION) / Ann;
-
-  let y = D;
-  for (let i = 0; i < 255; i++) {
-    const prevY = y;
-    y = (y * y + c) / (2n * y + b - D);
-    if (y > prevY ? y - prevY <= 1n : prevY - y <= 1n) break;
-  }
-  return y;
-}
-
-/**
- * Calculate dynamic fee based on pool balance
- * Matches CurveStableSwapNGViews._dynamic_fee exactly
- * Fee increases when pool is imbalanced (far from 1:1)
- */
-function stableswapDynamicFee(
-  xpi: bigint,
-  xpj: bigint,
-  baseFee: bigint,
-  feeMultiplier: bigint
-): bigint {
-  if (feeMultiplier <= STABLESWAP_FEE_DENOMINATOR) return baseFee;
-
-  const xps2 = (xpi + xpj) ** 2n;
-  return (feeMultiplier * baseFee) /
-    ((feeMultiplier - STABLESWAP_FEE_DENOMINATOR) * 4n * xpi * xpj / xps2 + STABLESWAP_FEE_DENOMINATOR);
-}
-
-/**
- * Calculate get_dy off-chain (output amount for input dx)
- * Exact match of CurveStableSwapNGViews.get_dy with 0.00000000% error
- */
-function stableswapGetDyOffchain(
-  dx: bigint,
-  xp: [bigint, bigint],
-  Ann: bigint,
-  baseFee: bigint,
-  feeMultiplier: bigint
-): bigint {
-  const x = xp[0] + dx;
-  const D = stableswapGetD(xp, Ann);
-  const y = stableswapGetY(0, 1, x, xp, Ann, D);
-  const dy = xp[1] - y - 1n; // -1 for rounding
-
-  // KEY: Fee uses AVERAGE of pre and post xp values (matches Views contract exactly)
-  const fee = stableswapDynamicFee(
-    (xp[0] + x) / 2n,   // average of pre and post xp[i]
-    (xp[1] + y) / 2n,   // average of pre and post xp[j]
-    baseFee,
-    feeMultiplier
-  );
-  const feeAmount = (dy * fee) / STABLESWAP_FEE_DENOMINATOR;
-  return dy - feeAmount;
-}
-
-/**
- * Find peg point off-chain using binary search on local math
- * Returns max amount where swap output >= input (rate >= 1:1)
- *
- * This is ~330ms with 1 RPC call (vs ~14s with 16 RPC calls for on-chain binary search)
- */
-function findPegPointOffchain(
-  xp: [bigint, bigint],
-  Ann: bigint,
-  fee: bigint,
-  feeMultiplier: bigint
-): bigint {
-  // If pool has more CVX1 than cvgCVX, no swap gives bonus
-  if (xp[0] >= xp[1]) {
-    return 0n;
-  }
-
-  let low = 0n;
-  let high = xp[1] - xp[0]; // imbalance as upper bound
-
-  while (high - low > 10n * 10n ** 18n) {
-    // 10 token precision
-    const mid = (low + high) / 2n;
-    const dy = stableswapGetDyOffchain(mid, xp, Ann, fee, feeMultiplier);
-    if (dy >= mid) {
-      low = mid;
-    } else {
-      high = mid;
-    }
-  }
-  return low;
-}
-
-/**
- * Calculate min_dy with slippage tolerance
- * @param expectedOutput - Expected output from get_dy
- * @param slippageBps - Slippage in basis points (100 = 1%)
- * @returns min_dy value accounting for slippage
- */
-function calculateMinDy(expectedOutput: bigint, slippageBps: number): string {
-  // min_dy = expected * (10000 - slippage) / 10000
-  const minDy = (expectedOutput * BigInt(10000 - slippageBps)) / BigInt(10000);
-  return minDy.toString();
-}
-
-/**
- * Validate slippage parameter to prevent NaN/invalid values
- * @param slippage - Slippage in basis points as string (100 = 1%)
- * @returns Validated slippage in basis points as number
- * @throws Error if slippage is invalid or out of range
- */
-function validateSlippage(slippage: string | undefined): number {
-  const bps = parseInt(slippage ?? "100", 10); // Default 1%
-  if (isNaN(bps) || bps < 10 || bps > 5000) {
-    throw new Error(`Invalid slippage: ${slippage}. Must be 10-5000 bps (0.1%-50%)`);
-  }
-  return bps;
-}
-
-/**
- * Estimate vault share redemption output using previewRedeem
- * Uses ERC4626 previewRedeem(uint256) which includes fees
- * @param vaultAddress - The vault contract address
- * @param shares - Amount of shares to redeem (wei string)
- * @returns Expected underlying token amount as string
- * @throws Error if estimation fails
- */
-async function previewRedeem(vaultAddress: string, shares: string): Promise<string> {
-  const previewRedeemSelector = "0x4cdad506"; // previewRedeem(uint256)
-  const data = previewRedeemSelector + BigInt(shares).toString(16).padStart(64, "0");
-
-  const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      method: "eth_call",
-      params: [{ to: vaultAddress, data }, "latest"],
-      id: 1,
-    }),
-  });
-
-  const result = await response.json() as { result?: string; error?: { message: string } };
-  if (result.error || !result.result || result.result === "0x") {
-    throw new Error(`Failed to preview redeem for vault ${vaultAddress}`);
-  }
-
-  return BigInt(result.result).toString();
 }
 
 // Custom tokens not in Uniswap list (Convex ecosystem + yld_fi vaults)
