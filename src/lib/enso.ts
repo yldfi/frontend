@@ -1,13 +1,18 @@
 // Enso API Service
 // Docs: https://docs.enso.build
+// Using official Enso SDK: https://github.com/EnsoBuild/sdk-ts
 
+import { EnsoClient } from "@ensofinance/sdk";
 import type { EnsoToken, EnsoTokensResponse, EnsoRouteResponse, EnsoBundleAction, EnsoBundleResponse } from "@/types/enso";
 import { TOKENS, VAULTS, VAULT_ADDRESSES, isYldfiVault as checkIsYldfiVault } from "@/config/vaults";
 import { PUBLIC_RPC_URLS } from "@/config/rpc";
-import { fetchWithRetry } from "@/lib/fetchWithRetry";
 
-const ENSO_API_BASE = "https://api.enso.finance/api/v1";
 const CHAIN_ID = 1; // Ethereum mainnet
+
+// Initialize Enso SDK client
+const ensoClient = new EnsoClient({
+  apiKey: process.env.NEXT_PUBLIC_ENSO_API_KEY || "",
+});
 
 // ETH placeholder address used by Enso
 export const ETH_ADDRESS = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
@@ -64,6 +69,46 @@ async function getCurveGetDy(
     return null;
   } catch (error) {
     console.error("Error fetching get_dy:", error);
+    return null;
+  }
+}
+
+/**
+ * Get expected output from a Curve factory-style pool (uses uint256 indices)
+ * This is for newer Curve pools like lpxCVX/CVX which use get_dy(uint256,uint256,uint256)
+ */
+async function getCurveGetDyFactory(
+  poolAddress: string,
+  i: number,
+  j: number,
+  dx: string
+): Promise<bigint | null> {
+  try {
+    // get_dy(uint256,uint256,uint256) selector = 0x556d6e9f (factory-style pools)
+    const selector = "0x556d6e9f";
+    const data = selector +
+      BigInt(i).toString(16).padStart(64, "0") +
+      BigInt(j).toString(16).padStart(64, "0") +
+      BigInt(dx).toString(16).padStart(64, "0");
+
+    const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "eth_call",
+        params: [{ to: poolAddress, data }, "latest"],
+        id: 1,
+      }),
+    });
+
+    const result = await response.json() as { result?: string };
+    if (result.result && result.result !== "0x") {
+      return BigInt(result.result);
+    }
+    return null;
+  } catch (error) {
+    console.error("Error fetching get_dy (factory):", error);
     return null;
   }
 }
@@ -409,70 +454,28 @@ export const POPULAR_TOKENS = [
 ];
 
 /**
- * Fetch token list from Enso API with metadata
+ * Fetch token list from Enso API with metadata using SDK
  */
 export async function fetchEnsoTokenList(): Promise<EnsoToken[]> {
-  const searchParams = new URLSearchParams({
-    chainId: String(CHAIN_ID),
+  // SDK pages are fixed at 1000 tokens per page
+  const tokenData = await ensoClient.getTokenData({
+    chainId: CHAIN_ID,
     type: "base",
-    includeMetadata: "true",
-    pageSize: "1000",
+    includeMetadata: true,
   });
 
-  const response = await fetchWithRetry(
-    `${ENSO_API_BASE}/tokens?${searchParams}`,
-    { headers: getHeaders() },
-    { maxRetries: 2 }
-  );
-
-  if (!response.ok) {
-    throw new Error("Failed to fetch token list");
-  }
-
-  interface RawToken {
-    address?: string;
-    chainId?: number;
-    name?: string;
-    symbol?: string;
-    decimals?: number;
-    logosUri?: string[];
-    type?: string;
-  }
-
-  const data = (await response.json()) as { data?: RawToken[] } | RawToken[];
-  const rawTokens: RawToken[] = (Array.isArray(data) ? data : data.data) || [];
-
   // Map to our type
-  const tokens: EnsoToken[] = rawTokens
+  return tokenData.data
     .filter((t) => t.address && t.symbol)
     .map((t) => ({
-      address: t.address!,
-      chainId: t.chainId || CHAIN_ID,
+      address: t.address,
+      chainId: t.chainId,
       name: t.name || t.symbol || "Unknown",
       symbol: t.symbol || "???",
-      decimals: t.decimals || 18,
+      decimals: t.decimals,
       logoURI: t.logosUri?.[0], // Take first logo
-      type: (t.type as "base" | "defi") || "base",
+      type: t.type,
     }));
-
-  return tokens;
-}
-
-/**
- * Get headers for Enso API requests
- */
-function getHeaders(): HeadersInit {
-  const headers: HeadersInit = {
-    "Content-Type": "application/json",
-  };
-
-  // Add API key if available
-  const apiKey = process.env.NEXT_PUBLIC_ENSO_API_KEY;
-  if (apiKey) {
-    headers["Authorization"] = `Bearer ${apiKey}`;
-  }
-
-  return headers;
 }
 
 /**
@@ -491,20 +494,23 @@ export interface EnsoWalletBalance {
 }
 
 export async function fetchWalletBalances(walletAddress: string): Promise<EnsoWalletBalance[]> {
-  const searchParams = new URLSearchParams({
-    chainId: String(CHAIN_ID),
-    eoaAddress: walletAddress,
+  const balances = await ensoClient.getBalances({
+    chainId: CHAIN_ID,
+    eoaAddress: walletAddress as `0x${string}`,
+    useEoa: true,
   });
 
-  const response = await fetch(`${ENSO_API_BASE}/wallet/balances?${searchParams}`, {
-    headers: getHeaders(),
-  });
-
-  if (!response.ok) {
-    throw new Error("Failed to fetch wallet balances");
-  }
-
-  return response.json();
+  // Transform SDK response to match our expected type
+  return balances.map((b) => ({
+    token: b.token,
+    amount: String(b.amount),
+    chainId: CHAIN_ID,
+    decimals: b.decimals,
+    price: Number(b.price),
+    name: b.name,
+    symbol: b.symbol,
+    logoUri: b.logoUri,
+  }));
 }
 
 /**
@@ -522,55 +528,58 @@ export interface EnsoTokenPrice {
 export async function fetchTokenPrices(addresses: string[]): Promise<EnsoTokenPrice[]> {
   if (addresses.length === 0) return [];
 
-  const searchParams = new URLSearchParams({
-    addresses: addresses.join(","),
+  const priceData = await ensoClient.getMultiplePriceData({
+    chainId: CHAIN_ID,
+    addresses: addresses as `0x${string}`[],
   });
 
-  const response = await fetch(
-    `${ENSO_API_BASE}/prices/${CHAIN_ID}?${searchParams}`,
-    { headers: getHeaders() }
-  );
-
-  if (!response.ok) {
-    throw new Error("Failed to fetch token prices");
-  }
-
-  return response.json();
+  // Transform SDK response to match our expected type
+  return priceData.map((p) => ({
+    chainId: p.chainId,
+    address: p.address,
+    price: Number(p.price),
+    decimals: p.decimals,
+    symbol: p.symbol,
+    name: undefined, // SDK doesn't return name
+  }));
 }
 
 /**
- * Fetch available tokens from Enso API
+ * Fetch available tokens from Enso API using SDK
  */
 export async function fetchTokens(params?: {
   chainId?: number;
   type?: "base" | "defi";
   page?: number;
 }): Promise<EnsoTokensResponse> {
-  const searchParams = new URLSearchParams({
-    chainId: String(params?.chainId ?? CHAIN_ID),
+  const tokenData = await ensoClient.getTokenData({
+    chainId: params?.chainId ?? CHAIN_ID,
+    type: params?.type,
+    page: params?.page,
   });
 
-  if (params?.type) {
-    searchParams.set("type", params.type);
-  }
-  if (params?.page) {
-    searchParams.set("page", String(params.page));
-  }
-
-  const response = await fetch(`${ENSO_API_BASE}/tokens?${searchParams}`, {
-    headers: getHeaders(),
-  });
-
-  if (!response.ok) {
-    const error = (await response.json().catch(() => ({}))) as { message?: string };
-    throw new Error(error.message || "Failed to fetch tokens");
-  }
-
-  return response.json() as Promise<EnsoTokensResponse>;
+  // Transform SDK response to match our expected type
+  return {
+    data: tokenData.data.map((t) => ({
+      address: t.address,
+      chainId: t.chainId,
+      name: t.name ?? "",
+      symbol: t.symbol ?? "",
+      decimals: t.decimals,
+      logoURI: t.logosUri?.[0],
+      type: t.type,
+    })),
+    meta: {
+      total: tokenData.meta.total,
+      lastPage: tokenData.meta.lastPage,
+      currentPage: tokenData.meta.currentPage,
+      perPage: tokenData.meta.perPage,
+    },
+  };
 }
 
 /**
- * Fetch optimal route/quote from Enso API
+ * Fetch optimal route/quote from Enso API using SDK
  */
 export async function fetchRoute(params: {
   fromAddress: string;
@@ -580,34 +589,37 @@ export async function fetchRoute(params: {
   slippage?: string; // basis points, e.g., "100" = 1%
   receiver?: string;
 }): Promise<EnsoRouteResponse> {
-  // Enso API requires array-format parameters: tokenIn[0], tokenOut[0], amountIn[0]
-  const searchParams = new URLSearchParams({
-    chainId: String(CHAIN_ID),
-    fromAddress: params.fromAddress,
-    "tokenIn[0]": params.tokenIn,
-    "tokenOut[0]": params.tokenOut,
-    "amountIn[0]": params.amountIn,
+  const routeData = await ensoClient.getRouteData({
+    chainId: CHAIN_ID,
+    fromAddress: params.fromAddress as `0x${string}`,
+    tokenIn: [params.tokenIn as `0x${string}`],
+    tokenOut: [params.tokenOut as `0x${string}`],
+    amountIn: [params.amountIn],
     slippage: params.slippage ?? "100", // Default 1% slippage
     routingStrategy: "router",
     referralCode: ENSO_REFERRAL_CODE,
+    receiver: params.receiver as `0x${string}` | undefined,
   });
 
-  if (params.receiver) {
-    searchParams.set("receiver", params.receiver);
-  }
-
-  const response = await fetchWithRetry(
-    `${ENSO_API_BASE}/shortcuts/route?${searchParams}`,
-    { headers: getHeaders() },
-    { maxRetries: 3, baseDelay: 1500 }
-  );
-
-  if (!response.ok) {
-    const error = (await response.json().catch(() => ({}))) as { message?: string };
-    throw new Error(error.message || "Failed to fetch route");
-  }
-
-  return response.json() as Promise<EnsoRouteResponse>;
+  // Transform SDK response to match our expected type
+  return {
+    tx: {
+      to: routeData.tx.to,
+      data: routeData.tx.data,
+      value: String(routeData.tx.value),
+    },
+    gas: String(routeData.gas),
+    amountOut: String(routeData.amountOut),
+    priceImpact: routeData.priceImpact != null ? Number(routeData.priceImpact) : undefined,
+    route: routeData.route.map((hop) => ({
+      action: hop.action,
+      protocol: hop.protocol,
+      tokenIn: hop.tokenIn as string[],
+      tokenOut: hop.tokenOut as string[],
+      amountIn: [], // SDK Hop type doesn't include amounts
+      amountOut: [],
+    })),
+  };
 }
 
 /**
@@ -709,33 +721,34 @@ export async function fetchBundle(params: {
   receiver?: string;
   routingStrategy?: "router" | "delegate";
 }): Promise<EnsoBundleResponse> {
-  const searchParams = new URLSearchParams({
-    chainId: String(CHAIN_ID),
-    fromAddress: params.fromAddress,
-    routingStrategy: params.routingStrategy ?? "router",
-    referralCode: ENSO_REFERRAL_CODE,
-  });
-
-  if (params.receiver) {
-    searchParams.set("receiver", params.receiver);
-  }
-
-  const response = await fetchWithRetry(
-    `${ENSO_API_BASE}/shortcuts/bundle?${searchParams}`,
+  // Use SDK to call bundle API
+  // Note: SDK BundleAction type is a complex union, we cast our actions
+  const bundleData = await ensoClient.getBundleData(
     {
-      method: "POST",
-      headers: getHeaders(),
-      body: JSON.stringify(params.actions),
+      chainId: CHAIN_ID,
+      fromAddress: params.fromAddress as `0x${string}`,
+      routingStrategy: params.routingStrategy ?? "router",
+      referralCode: ENSO_REFERRAL_CODE,
+      receiver: params.receiver as `0x${string}` | undefined,
     },
-    { maxRetries: 3, baseDelay: 1500 }
+    // Cast our generic actions to SDK's union type
+    params.actions as unknown as Parameters<typeof ensoClient.getBundleData>[1]
   );
 
-  if (!response.ok) {
-    const error = (await response.json().catch(() => ({}))) as { message?: string };
-    throw new Error(error.message || "Failed to bundle actions");
-  }
-
-  return response.json() as Promise<EnsoBundleResponse>;
+  // Transform SDK response to match our expected type
+  return {
+    tx: {
+      to: bundleData.tx.to,
+      data: bundleData.tx.data,
+      value: String(bundleData.tx.value),
+      from: bundleData.tx.from ?? params.fromAddress,
+    },
+    gas: String(bundleData.gas),
+    amountsOut: Object.fromEntries(
+      Object.entries(bundleData.amountsOut).map(([k, v]) => [k, String(v)])
+    ),
+    priceImpact: bundleData.priceImpact,
+  };
 }
 
 /**
@@ -1045,6 +1058,7 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
   // Calculate min_dy with slippage tolerance
   const minDyCvgCvx = calculateMinDy(expectedCvgCvx, slippageBps);
 
+  // Note: Using concrete estimates for amounts to help Enso simulate the bundle correctly
   const actions: EnsoBundleAction[] = [
     // Action 0: Redeem from source vault to get source underlying
     {
@@ -1057,24 +1071,24 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
         primaryAddress: params.sourceVault,
       },
     },
-    // Action 1: Route source underlying → CVX via Enso
+    // Action 1: Route source underlying → CVX via Enso (use estimated underlying)
     {
       protocol: "enso",
       action: "route",
       args: {
         tokenIn: params.sourceUnderlyingToken,
         tokenOut: TOKENS.CVX,
-        amountIn: { useOutputOfCallAt: 0 },
+        amountIn: estimatedUnderlying,
         slippage: params.slippage,
       },
     },
-    // Action 2: Approve CVX → CVX1 wrapper
+    // Action 2: Approve CVX → CVX1 wrapper (use estimated CVX)
     {
       protocol: "erc20",
       action: "approve",
-      args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: { useOutputOfCallAt: 1 } },
+      args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: estimatedCvx },
     },
-    // Action 3: Wrap CVX → CVX1
+    // Action 3: Wrap CVX → CVX1 (mint to router so subsequent actions can use it)
     {
       protocol: "enso",
       action: "call",
@@ -1082,14 +1096,14 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
         address: TOKENS.CVX1,
         method: "mint",
         abi: "function mint(address to, uint256 amount)",
-        args: [params.fromAddress, { useOutputOfCallAt: 1 }],
+        args: [ENSO_ROUTER_EXECUTOR, estimatedCvx],
       },
     },
     // Action 4: Approve CVX1 → Curve pool
     {
       protocol: "erc20",
       action: "approve",
-      args: { token: TOKENS.CVX1, spender: TANGENT.CVX1_CVGCVX_POOL, amount: { useOutputOfCallAt: 1 } },
+      args: { token: TOKENS.CVX1, spender: TANGENT.CVX1_CVGCVX_POOL, amount: estimatedCvx },
     },
     // Action 5: Swap CVX1 → cvgCVX via Curve pool
     {
@@ -1099,7 +1113,7 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
         address: TANGENT.CVX1_CVGCVX_POOL,
         method: "exchange",
         abi: "function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) returns (uint256)",
-        args: [0, 1, { useOutputOfCallAt: 1 }, minDyCvgCvx], // min_dy with slippage protection
+        args: [0, 1, estimatedCvx, minDyCvgCvx], // min_dy with slippage protection
       },
     },
     // Action 6: Approve cvgCVX → vault
@@ -1213,8 +1227,28 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
     // Target is pxCVX - needs custom routing: CVX1 → CVX → lpxCVX → pxCVX
     // CVX1 unwraps 1:1 to CVX, so use CVX1 amount for subsequent operations
 
+    // Use concrete estimates for better Enso simulation
+    const estimatedCvxStr = estimatedCvx1.toString(); // CVX1 unwraps 1:1 to CVX
+
+    // Estimate lpxCVX output from CVX → lpxCVX Curve swap
+    // Use factory-style helper since lpxCVX/CVX pool uses uint256 indices
+    const estimatedLpxCvx = await getCurveGetDyFactory(
+      PIREX.LPXCVX_CVX_POOL,
+      0, // CVX index
+      1, // lpxCVX index
+      estimatedCvxStr
+    );
+
+    if (estimatedLpxCvx === null || estimatedLpxCvx === 0n) {
+      throw new Error("Failed to estimate Curve CVX→lpxCVX swap output for slippage protection");
+    }
+
+    const estimatedLpxCvxStr = estimatedLpxCvx.toString();
+    // pxCVX wraps 1:1 from lpxCVX
+    const estimatedPxCvxStr = estimatedLpxCvxStr;
+
     actions.push(
-      // Action 3: Unwrap CVX1 → CVX (to user so delegate can use it)
+      // Action 3: Unwrap CVX1 → CVX (send to router so it can be used in next action)
       {
         protocol: "enso",
         action: "call",
@@ -1222,7 +1256,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
           address: TOKENS.CVX1,
           method: "withdraw",
           abi: "function withdraw(uint256 amount, address to)",
-          args: [{ useOutputOfCallAt: 2 }, params.fromAddress],
+          args: [estimatedCvxStr, ENSO_ROUTER_EXECUTOR],
         },
       },
       // Action 4: Approve CVX → Curve lpxCVX pool
@@ -1232,7 +1266,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
         args: {
           token: TOKENS.CVX,
           spender: PIREX.LPXCVX_CVX_POOL,
-          amount: { useOutputOfCallAt: 2 }, // Same as CVX1 (1:1 unwrap)
+          amount: estimatedCvxStr, // Same as CVX1 (1:1 unwrap)
         },
       },
       // Action 5: Swap CVX → lpxCVX via Curve (RETURNS uint256)
@@ -1246,7 +1280,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
           args: [
             String(PIREX.POOL_INDEX.CVX), // i = 0 (CVX)
             String(PIREX.POOL_INDEX.LPXCVX), // j = 1 (lpxCVX)
-            { useOutputOfCallAt: 2 }, // dx = CVX amount (same as CVX1)
+            estimatedCvxStr, // dx = CVX amount (same as CVX1)
             "0", // min_dy - bundle slippage handles this
           ],
         },
@@ -1258,7 +1292,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
         args: {
           token: PIREX.LPXCVX,
           spender: PIREX.LPXCVX,
-          amount: { useOutputOfCallAt: 5 }, // lpxCVX from Curve swap
+          amount: estimatedLpxCvxStr, // lpxCVX from Curve swap
         },
       },
       // Action 7: Unwrap lpxCVX → pxCVX
@@ -1269,7 +1303,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
           address: PIREX.LPXCVX,
           method: "unwrap",
           abi: "function unwrap(uint256 amount)",
-          args: [{ useOutputOfCallAt: 5 }],
+          args: [estimatedLpxCvxStr],
         },
       },
       // Action 8: Deposit pxCVX into target vault
@@ -1280,7 +1314,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
         args: {
           tokenIn: TOKENS.PXCVX,
           tokenOut: params.targetVault,
-          amountIn: { useOutputOfCallAt: 5 }, // Same as lpxCVX (1:1 unwrap)
+          amountIn: estimatedPxCvxStr, // Same as lpxCVX (1:1 unwrap)
           primaryAddress: params.targetVault,
         },
       }
@@ -1656,8 +1690,18 @@ async function fetchPxCvxVaultToVaultRoute(params: {
   // Check if target is CVX - can skip the route step
   const targetIsCvx = params.targetUnderlyingToken.toLowerCase() === TOKENS.CVX.toLowerCase();
 
-  // Note: For routes with dynamic amounts (useOutputOfCallAt), we use min_dy=0
-  // and rely on the bundle's overall slippage protection for the final output
+  // Check if target is cvgCVX - needs custom routing via CVX1/Curve
+  const targetIsCvgCvx = params.targetUnderlyingToken.toLowerCase() === TOKENS.CVGCVX.toLowerCase();
+
+  // Calculate estimates upfront for concrete amounts
+  // This helps Enso simulate the bundle correctly
+  const estimatedPxCvx = await previewRedeem(params.sourceVault, params.amountIn);
+  // lpxCVX wraps 1:1 from pxCVX
+  const estimatedLpxCvx = estimatedPxCvx;
+  // Estimate CVX output from Curve exchange (lpxCVX → CVX)
+  const estimatedCvx = await getLpxCvxToCvxSwapRate(estimatedLpxCvx);
+
+  // Note: Using concrete estimates to help Enso simulate the bundle correctly
   const actions: EnsoBundleAction[] = [
     // Action 0: Redeem from source vault to get pxCVX
     {
@@ -1721,9 +1765,6 @@ async function fetchPxCvxVaultToVaultRoute(params: {
     },
   ];
 
-  // Check if target is cvgCVX - needs special routing via CVX1/Curve
-  const targetIsCvgCvx = params.targetUnderlyingToken.toLowerCase() === TOKENS.CVGCVX.toLowerCase();
-
   if (targetIsCvx) {
     // Target is CVX - deposit directly into vault
     actions.push({
@@ -1740,6 +1781,13 @@ async function fetchPxCvxVaultToVaultRoute(params: {
     // Target is cvgCVX - needs custom routing via CVX1 wrap + Curve swap
     const { TANGENT } = await import("@/config/vaults");
 
+    // Use concrete estimated CVX amount for better Enso simulation
+    const estimatedCvxStr = estimatedCvx.toString();
+
+    // Estimate cvgCVX output for the deposit action
+    const estimatedCvgCvx = await getCvgCvxSwapRate(estimatedCvxStr);
+    const estimatedCvgCvxStr = estimatedCvgCvx.toString();
+
     actions.push(
       // Action 5: Approve CVX → CVX1 wrapper
       {
@@ -1748,10 +1796,10 @@ async function fetchPxCvxVaultToVaultRoute(params: {
         args: {
           token: TOKENS.CVX,
           spender: TOKENS.CVX1,
-          amount: { useOutputOfCallAt: 4 }, // CVX from Curve exchange
+          amount: estimatedCvxStr, // CVX from Curve exchange
         },
       },
-      // Action 6: Mint CVX → CVX1 (1:1)
+      // Action 6: Mint CVX → CVX1 (1:1, mint to router so subsequent actions can use it)
       {
         protocol: "enso",
         action: "call",
@@ -1759,7 +1807,7 @@ async function fetchPxCvxVaultToVaultRoute(params: {
           address: TOKENS.CVX1,
           method: "mint",
           abi: "function mint(address to, uint256 amount)",
-          args: [params.fromAddress, { useOutputOfCallAt: 4 }],
+          args: [ENSO_ROUTER_EXECUTOR, estimatedCvxStr],
         },
       },
       // Action 7: Approve CVX1 → Curve pool (use CVX amount since mint is 1:1)
@@ -1769,7 +1817,7 @@ async function fetchPxCvxVaultToVaultRoute(params: {
         args: {
           token: TOKENS.CVX1,
           spender: TANGENT.CVX1_CVGCVX_POOL,
-          amount: { useOutputOfCallAt: 4 }, // Use CVX amount (1:1 with CVX1)
+          amount: estimatedCvxStr, // Use CVX amount (1:1 with CVX1)
         },
       },
       // Action 8: Swap CVX1 → cvgCVX on Curve pool
@@ -1784,7 +1832,7 @@ async function fetchPxCvxVaultToVaultRoute(params: {
           args: [
             "0", // i = 0 (CVX1)
             "1", // j = 1 (cvgCVX)
-            { useOutputOfCallAt: 4 }, // dx = CVX1 amount (same as CVX, 1:1 mint)
+            estimatedCvxStr, // dx = CVX1 amount (same as CVX, 1:1 mint)
             "0", // min_dy - bundle slippage handles this
           ],
         },
@@ -1796,7 +1844,7 @@ async function fetchPxCvxVaultToVaultRoute(params: {
         args: {
           tokenIn: TOKENS.CVGCVX,
           tokenOut: params.targetVault,
-          amountIn: { useOutputOfCallAt: 8 }, // Use Curve exchange output
+          amountIn: estimatedCvgCvxStr, // Use estimated Curve exchange output
           primaryAddress: params.targetVault,
         },
       }
@@ -2103,7 +2151,7 @@ async function buildSwapOnlyBundle(
         action: "approve",
         args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: params.amountIn },
       },
-      // Action 1: Wrap CVX → CVX1
+      // Action 1: Wrap CVX → CVX1 (mint to router so subsequent actions can use it)
       {
         protocol: "enso",
         action: "call",
@@ -2111,7 +2159,7 @@ async function buildSwapOnlyBundle(
           address: TOKENS.CVX1,
           method: "mint",
           abi: "function mint(address to, uint256 amount)",
-          args: [params.fromAddress, params.amountIn],
+          args: [ENSO_ROUTER_EXECUTOR, params.amountIn],
         },
       },
       // Action 2: Approve CVX1 → Curve pool
@@ -2158,6 +2206,8 @@ async function buildSwapOnlyBundle(
   }
 
   // Standard path: route input → CVX first
+  // Note: Using concrete estimates for amounts to help Enso simulate the bundle correctly
+  // The route action uses dynamic output, but subsequent actions use the estimated CVX amount
   const actions: EnsoBundleAction[] = [
     // Action 0: Swap input → CVX
     {
@@ -2170,13 +2220,13 @@ async function buildSwapOnlyBundle(
         slippage: params.slippage ?? "100",
       },
     },
-    // Action 1: Approve CVX → CVX1
+    // Action 1: Approve CVX → CVX1 (use estimated CVX amount)
     {
       protocol: "erc20",
       action: "approve",
-      args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: { useOutputOfCallAt: 0 } },
+      args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: expectedCvxOutput },
     },
-    // Action 2: Wrap CVX → CVX1
+    // Action 2: Wrap CVX → CVX1 (mint to router so subsequent actions can use it)
     {
       protocol: "enso",
       action: "call",
@@ -2184,14 +2234,14 @@ async function buildSwapOnlyBundle(
         address: TOKENS.CVX1,
         method: "mint",
         abi: "function mint(address to, uint256 amount)",
-        args: [params.fromAddress, { useOutputOfCallAt: 0 }],
+        args: [ENSO_ROUTER_EXECUTOR, expectedCvxOutput],
       },
     },
     // Action 3: Approve CVX1 → Curve pool
     {
       protocol: "erc20",
       action: "approve",
-      args: { token: TOKENS.CVX1, spender: TANGENT.CVX1_CVGCVX_POOL, amount: { useOutputOfCallAt: 0 } },
+      args: { token: TOKENS.CVX1, spender: TANGENT.CVX1_CVGCVX_POOL, amount: expectedCvxOutput },
     },
     // Action 4: Swap CVX1 → cvgCVX via Curve
     {
@@ -2201,7 +2251,7 @@ async function buildSwapOnlyBundle(
         address: TANGENT.CVX1_CVGCVX_POOL,
         method: "exchange",
         abi: "function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) returns (uint256)",
-        args: [0, 1, { useOutputOfCallAt: 0 }, minDy],
+        args: [0, 1, expectedCvxOutput, minDy],
       },
     },
     // Action 5: Approve cvgCVX → vault
@@ -2238,7 +2288,7 @@ async function buildSwapOnlyBundle(
 async function buildMintOnlyBundle(
   params: { fromAddress: string; vaultAddress: string; inputToken: string; amountIn: string; slippage?: string },
   TANGENT: { CVX1_CVGCVX_POOL: string; CVGCVX_CONTRACT: string },
-  _expectedCvxOutput: string,
+  expectedCvxOutput: string,
   _slippageBps: number,
   inputIsCvx: boolean
 ): Promise<EnsoBundleResponse> {
@@ -2255,7 +2305,7 @@ async function buildMintOnlyBundle(
         action: "approve",
         args: { token: TOKENS.CVX, spender: TANGENT.CVGCVX_CONTRACT, amount: params.amountIn },
       },
-      // Action 1: Mint cvgCVX from CVX (1:1, isLock=true for no fees)
+      // Action 1: Mint cvgCVX from CVX (1:1, isLock=true for no fees, mint to router)
       {
         protocol: "enso",
         action: "call",
@@ -2263,7 +2313,7 @@ async function buildMintOnlyBundle(
           address: TANGENT.CVGCVX_CONTRACT,
           method: "mint",
           abi: "function mint(address to, uint256 amount, bool isLock) returns (uint256)",
-          args: [params.fromAddress, params.amountIn, true],
+          args: [ENSO_ROUTER_EXECUTOR, params.amountIn, true],
         },
       },
       // Action 2: Approve cvgCVX → vault
@@ -2293,6 +2343,7 @@ async function buildMintOnlyBundle(
   }
 
   // Standard path: route input → CVX first
+  // Note: Using concrete estimates for amounts to help Enso simulate the bundle correctly
   const actions: EnsoBundleAction[] = [
     // Action 0: Swap input → CVX
     {
@@ -2305,13 +2356,13 @@ async function buildMintOnlyBundle(
         slippage: params.slippage ?? "100",
       },
     },
-    // Action 1: Approve CVX → cvgCVX contract
+    // Action 1: Approve CVX → cvgCVX contract (use estimated CVX amount)
     {
       protocol: "erc20",
       action: "approve",
-      args: { token: TOKENS.CVX, spender: TANGENT.CVGCVX_CONTRACT, amount: { useOutputOfCallAt: 0 } },
+      args: { token: TOKENS.CVX, spender: TANGENT.CVGCVX_CONTRACT, amount: expectedCvxOutput },
     },
-    // Action 2: Mint cvgCVX from CVX (1:1, isLock=true for no fees)
+    // Action 2: Mint cvgCVX from CVX (1:1, isLock=true for no fees, mint to router)
     // mint(address to, uint256 amount, bool isLock) returns (uint256)
     {
       protocol: "enso",
@@ -2320,7 +2371,7 @@ async function buildMintOnlyBundle(
         address: TANGENT.CVGCVX_CONTRACT,
         method: "mint",
         abi: "function mint(address to, uint256 amount, bool isLock) returns (uint256)",
-        args: [params.fromAddress, { useOutputOfCallAt: 0 }, true],
+        args: [ENSO_ROUTER_EXECUTOR, expectedCvxOutput, true],
       },
     },
     // Action 3: Approve cvgCVX → vault
@@ -2388,7 +2439,7 @@ async function buildHybridBundle(
         action: "approve",
         args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: swapAmount.toString() },
       },
-      // Action 1: Wrap swapAmount CVX → CVX1
+      // Action 1: Wrap swapAmount CVX → CVX1 (mint to router)
       {
         protocol: "enso",
         action: "call",
@@ -2396,7 +2447,7 @@ async function buildHybridBundle(
           address: TOKENS.CVX1,
           method: "mint",
           abi: "function mint(address to, uint256 amount)",
-          args: [params.fromAddress, swapAmount.toString()],
+          args: [ENSO_ROUTER_EXECUTOR, swapAmount.toString()],
         },
       },
       // Action 2: Approve CVX1 → Curve pool
@@ -2425,7 +2476,7 @@ async function buildHybridBundle(
         action: "approve",
         args: { token: TOKENS.CVX, spender: TANGENT.CVGCVX_CONTRACT, amount: mintAmount.toString() },
       },
-      // Action 5: Mint cvgCVX from CVX (1:1, isLock=true)
+      // Action 5: Mint cvgCVX from CVX (1:1, isLock=true, mint to router)
       {
         protocol: "enso",
         action: "call",
@@ -2433,7 +2484,7 @@ async function buildHybridBundle(
           address: TANGENT.CVGCVX_CONTRACT,
           method: "mint",
           abi: "function mint(address to, uint256 amount, bool isLock) returns (uint256)",
-          args: [params.fromAddress, mintAmount.toString(), true],
+          args: [ENSO_ROUTER_EXECUTOR, mintAmount.toString(), true],
         },
       },
 
@@ -2487,7 +2538,7 @@ async function buildHybridBundle(
       action: "approve",
       args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: swapAmount.toString() },
     },
-    // Action 2: Wrap swapAmount CVX → CVX1
+    // Action 2: Wrap swapAmount CVX → CVX1 (mint to router)
     {
       protocol: "enso",
       action: "call",
@@ -2495,7 +2546,7 @@ async function buildHybridBundle(
         address: TOKENS.CVX1,
         method: "mint",
         abi: "function mint(address to, uint256 amount)",
-        args: [params.fromAddress, swapAmount.toString()],
+        args: [ENSO_ROUTER_EXECUTOR, swapAmount.toString()],
       },
     },
     // Action 3: Approve CVX1 → Curve pool
@@ -2524,7 +2575,7 @@ async function buildHybridBundle(
       action: "approve",
       args: { token: TOKENS.CVX, spender: TANGENT.CVGCVX_CONTRACT, amount: mintAmount.toString() },
     },
-    // Action 6: Mint cvgCVX from CVX (1:1, isLock=true)
+    // Action 6: Mint cvgCVX from CVX (1:1, isLock=true, mint to router)
     {
       protocol: "enso",
       action: "call",
@@ -2532,7 +2583,7 @@ async function buildHybridBundle(
         address: TANGENT.CVGCVX_CONTRACT,
         method: "mint",
         abi: "function mint(address to, uint256 amount, bool isLock) returns (uint256)",
-        args: [params.fromAddress, mintAmount.toString(), true],
+        args: [ENSO_ROUTER_EXECUTOR, mintAmount.toString(), true],
       },
     },
 
@@ -2728,8 +2779,8 @@ export async function fetchCvgCvxZapOutRoute(params: {
         args: [1, 0, { useOutputOfCallAt: 0 }, minDy],
       },
     },
-    // Action 3: Unwrap CVX1 → CVX
-    // withdraw(uint256 amount, address to) - burns CVX1, sends CVX to user
+    // Action 3: Unwrap CVX1 → CVX (send to router so it can be used in route action)
+    // withdraw(uint256 amount, address to) - burns CVX1, sends CVX to router
     {
       protocol: "enso",
       action: "call",
@@ -2737,18 +2788,20 @@ export async function fetchCvgCvxZapOutRoute(params: {
         address: TOKENS.CVX1,
         method: "withdraw",
         abi: "function withdraw(uint256 amount, address to)",
-        args: [{ useOutputOfCallAt: 2 }, params.fromAddress],
+        args: [{ useOutputOfCallAt: 2 }, ENSO_ROUTER_EXECUTOR],
       },
     },
     // Action 4: Swap CVX to output token (ETH, USDC, etc.)
-    // Use Curve exchange output (CVX1 ≈ CVX 1:1)
+    // Use estimated CVX amount (CVX1 ≈ CVX 1:1, withdraw doesn't return value)
+    // Note: Using concrete estimate because dynamic reference to CVX1 output
+    // causes Enso quoting issues when route tokenIn is CVX
     {
       protocol: "enso",
       action: "route",
       args: {
         tokenIn: TOKENS.CVX,
         tokenOut: params.outputToken,
-        amountIn: { useOutputOfCallAt: 2 }, // CVX1 amount from Curve = CVX amount
+        amountIn: (expectedCvx1Output ?? BigInt(expectedCvgCvxOutput)).toString(),
         slippage: params.slippage ?? "100",
       },
     },

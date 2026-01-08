@@ -1,4 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Mock the Enso SDK module - must be hoisted before imports
+const { mockGetTokenData, mockGetBalances, mockGetMultiplePriceData, mockGetRouteData, mockGetBundleData } = vi.hoisted(() => ({
+  mockGetTokenData: vi.fn(),
+  mockGetBalances: vi.fn(),
+  mockGetMultiplePriceData: vi.fn(),
+  mockGetRouteData: vi.fn(),
+  mockGetBundleData: vi.fn(),
+}));
+
+vi.mock("@ensofinance/sdk", () => {
+  return {
+    EnsoClient: class MockEnsoClient {
+      getTokenData = mockGetTokenData;
+      getBalances = mockGetBalances;
+      getMultiplePriceData = mockGetMultiplePriceData;
+      getRouteData = mockGetRouteData;
+      getBundleData = mockGetBundleData;
+    },
+  };
+});
+
 import {
   fetchEnsoTokenList,
   fetchWalletBalances,
@@ -24,7 +46,7 @@ import {
   YLDFI_VAULT_ADDRESSES,
 } from "@/lib/enso";
 
-// Get mocked fetch
+// Get mocked fetch (used for RPC calls like getCurveGetDy)
 const mockFetch = vi.mocked(globalThis.fetch);
 
 describe("enso.ts integration", () => {
@@ -65,7 +87,8 @@ describe("enso.ts integration", () => {
 
   describe("fetchEnsoTokenList", () => {
     it("fetches and maps token list", async () => {
-      const mockResponse = {
+      // SDK returns { data: [...] }
+      mockGetTokenData.mockResolvedValueOnce({
         data: [
           {
             address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
@@ -77,12 +100,7 @@ describe("enso.ts integration", () => {
             type: "base",
           },
         ],
-      };
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockResponse),
-      } as Response);
+      });
 
       const tokens = await fetchEnsoTokenList();
 
@@ -92,21 +110,15 @@ describe("enso.ts integration", () => {
       expect(tokens[0].logoURI).toBe("https://example.com/usdc.png");
     });
 
-    it("throws error on failed fetch", async () => {
-      // Mock failure for all retry attempts (initial + 2 retries)
-      const failedResponse = { ok: false, status: 500 } as Response;
-      mockFetch
-        .mockResolvedValueOnce(failedResponse)
-        .mockResolvedValueOnce(failedResponse)
-        .mockResolvedValueOnce(failedResponse);
+    it("throws error on SDK error", async () => {
+      mockGetTokenData.mockRejectedValueOnce(new Error("SDK error"));
 
-      await expect(fetchEnsoTokenList()).rejects.toThrow(
-        "Failed to fetch token list"
-      );
+      // SDK errors bubble up directly
+      await expect(fetchEnsoTokenList()).rejects.toThrow("SDK error");
     });
 
     it("handles tokens without logoUri", async () => {
-      const mockResponse = {
+      mockGetTokenData.mockResolvedValueOnce({
         data: [
           {
             address: "0x123",
@@ -116,65 +128,15 @@ describe("enso.ts integration", () => {
             decimals: 18,
           },
         ],
-      };
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockResponse),
-      } as Response);
+      });
 
       const tokens = await fetchEnsoTokenList();
 
       expect(tokens[0].logoURI).toBeUndefined();
     });
 
-    it("handles 400 bad request error", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 400,
-      } as Response);
-
-      await expect(fetchEnsoTokenList()).rejects.toThrow("Failed to fetch token list");
-    });
-
-    it("handles 429 rate limit error", async () => {
-      // Mock failure for all retry attempts (429 triggers retry)
-      const rateLimitResponse = { ok: false, status: 429 } as Response;
-      mockFetch
-        .mockResolvedValueOnce(rateLimitResponse)
-        .mockResolvedValueOnce(rateLimitResponse)
-        .mockResolvedValueOnce(rateLimitResponse);
-
-      await expect(fetchEnsoTokenList()).rejects.toThrow("Failed to fetch token list");
-    });
-
-    it("handles network timeout", async () => {
-      // Mock network error for all retry attempts
-      const networkError = new Error("Network timeout");
-      mockFetch
-        .mockRejectedValueOnce(networkError)
-        .mockRejectedValueOnce(networkError)
-        .mockRejectedValueOnce(networkError);
-
-      await expect(fetchEnsoTokenList()).rejects.toThrow("Network timeout");
-    });
-
-    it("handles malformed API response (missing data)", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({}),
-      } as Response);
-
-      // Returns empty array for malformed responses (graceful degradation)
-      const tokens = await fetchEnsoTokenList();
-      expect(tokens).toEqual([]);
-    });
-
     it("handles empty token list", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ data: [] }),
-      } as Response);
+      mockGetTokenData.mockResolvedValueOnce({ data: [] });
 
       const tokens = await fetchEnsoTokenList();
       expect(tokens).toHaveLength(0);
@@ -183,7 +145,8 @@ describe("enso.ts integration", () => {
 
   describe("fetchWalletBalances", () => {
     it("fetches wallet balances", async () => {
-      const mockBalances = [
+      // SDK returns balances directly
+      mockGetBalances.mockResolvedValueOnce([
         {
           token: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
           amount: "1000000000",
@@ -191,12 +154,7 @@ describe("enso.ts integration", () => {
           decimals: 6,
           price: 1.0,
         },
-      ];
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockBalances),
-      } as Response);
+      ]);
 
       const balances = await fetchWalletBalances("0x1234567890123456789012345678901234567890");
 
@@ -204,32 +162,27 @@ describe("enso.ts integration", () => {
       expect(balances[0].token).toBe("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
     });
 
-    it("throws on failed fetch", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-      } as Response);
+    it("throws on SDK error", async () => {
+      mockGetBalances.mockRejectedValueOnce(new Error("SDK error"));
 
+      // SDK errors bubble up directly
       await expect(
         fetchWalletBalances("0x1234567890123456789012345678901234567890")
-      ).rejects.toThrow("Failed to fetch wallet balances");
+      ).rejects.toThrow("SDK error");
     });
   });
 
   describe("fetchTokenPrices", () => {
     it("fetches token prices", async () => {
-      const mockPrices = [
+      // SDK returns prices directly
+      mockGetMultiplePriceData.mockResolvedValueOnce([
         {
           chainId: 1,
           address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
           price: 1.0,
           decimals: 6,
         },
-      ];
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockPrices),
-      } as Response);
+      ]);
 
       const prices = await fetchTokenPrices([
         "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
@@ -242,14 +195,12 @@ describe("enso.ts integration", () => {
     it("returns empty array for empty addresses", async () => {
       const prices = await fetchTokenPrices([]);
       expect(prices).toEqual([]);
-      expect(mockFetch).not.toHaveBeenCalled();
+      // SDK should not be called for empty addresses
+      expect(mockGetMultiplePriceData).not.toHaveBeenCalled();
     });
 
-    it("handles API error for token prices", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-      } as Response);
+    it("handles SDK error for token prices", async () => {
+      mockGetMultiplePriceData.mockRejectedValueOnce(new Error("SDK error"));
 
       await expect(
         fetchTokenPrices(["0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"])
@@ -259,7 +210,8 @@ describe("enso.ts integration", () => {
 
   describe("fetchRoute", () => {
     it("fetches optimal route", async () => {
-      const mockRoute = {
+      // SDK returns route data with different structure
+      mockGetRouteData.mockResolvedValueOnce({
         amountOut: "1000000",
         gas: "100000",
         tx: {
@@ -267,12 +219,8 @@ describe("enso.ts integration", () => {
           data: "0x...",
           value: "0",
         },
-      };
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockRoute),
-      } as Response);
+        route: [],
+      });
 
       const route = await fetchRoute({
         fromAddress: "0x1234567890123456789012345678901234567890",
@@ -285,11 +233,12 @@ describe("enso.ts integration", () => {
       expect(route.tx.to).toBe(ENSO_ROUTER);
     });
 
-    it("uses default slippage", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({}),
-      } as Response);
+    it("uses default slippage when not provided", async () => {
+      mockGetRouteData.mockResolvedValueOnce({
+        amountOut: "1000000",
+        tx: { to: ENSO_ROUTER, data: "0x", value: "0" },
+        route: [],
+      });
 
       await fetchRoute({
         fromAddress: "0x1234567890123456789012345678901234567890",
@@ -298,15 +247,20 @@ describe("enso.ts integration", () => {
         amountIn: "1000000000000000000",
       });
 
-      const callUrl = mockFetch.mock.calls[0][0] as string;
-      expect(callUrl).toContain("slippage=100"); // 1% default
+      // SDK is called with slippage parameter
+      expect(mockGetRouteData).toHaveBeenCalledWith(
+        expect.objectContaining({
+          slippage: "100", // 1% default
+        })
+      );
     });
 
     it("uses custom slippage", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({}),
-      } as Response);
+      mockGetRouteData.mockResolvedValueOnce({
+        amountOut: "1000000",
+        tx: { to: ENSO_ROUTER, data: "0x", value: "0" },
+        route: [],
+      });
 
       await fetchRoute({
         fromAddress: "0x1234567890123456789012345678901234567890",
@@ -316,37 +270,15 @@ describe("enso.ts integration", () => {
         slippage: "50", // 0.5%
       });
 
-      const callUrl = mockFetch.mock.calls[0][0] as string;
-      expect(callUrl).toContain("slippage=50");
+      expect(mockGetRouteData).toHaveBeenCalledWith(
+        expect.objectContaining({
+          slippage: "50",
+        })
+      );
     });
 
-    it("handles route API failure", async () => {
-      // Mock all retry attempts (initial + 3 retries = 4 total)
-      const failedResponse = {
-        ok: false,
-        status: 500,
-      } as Response;
-      mockFetch
-        .mockResolvedValueOnce(failedResponse)
-        .mockResolvedValueOnce(failedResponse)
-        .mockResolvedValueOnce(failedResponse)
-        .mockResolvedValueOnce(failedResponse);
-
-      await expect(
-        fetchRoute({
-          fromAddress: "0x1234567890123456789012345678901234567890",
-          tokenIn: ETH_ADDRESS,
-          tokenOut: CVXCRV_ADDRESS,
-          amountIn: "1000000000000000000",
-        })
-      ).rejects.toThrow();
-    }, 30000); // Increase timeout to account for retry delays
-
-    it("handles no route found (400 error)", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: false,
-        status: 400,
-      } as Response);
+    it("handles SDK error", async () => {
+      mockGetRouteData.mockRejectedValueOnce(new Error("No route found"));
 
       await expect(
         fetchRoute({
@@ -360,20 +292,22 @@ describe("enso.ts integration", () => {
   });
 
   describe("fetchBundle", () => {
-    it("bundles multiple actions", async () => {
-      const mockBundle = {
-        amountOut: "1000000",
-        tx: {
-          to: ENSO_ROUTER,
-          data: "0x...",
-          value: "0",
-        },
-      };
+    // Helper to create valid SDK bundle response
+    const createBundleResponse = (overrides = {}) => ({
+      tx: {
+        to: ENSO_ROUTER,
+        data: "0x...",
+        value: 0,
+        from: "0x1234567890123456789012345678901234567890",
+      },
+      gas: 100000,
+      amountsOut: { "0xtoken": 1000000 },
+      priceImpact: 0.01,
+      ...overrides,
+    });
 
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockBundle),
-      } as Response);
+    it("bundles multiple actions", async () => {
+      mockGetBundleData.mockResolvedValueOnce(createBundleResponse());
 
       const result = await fetchBundle({
         fromAddress: "0x1234567890123456789012345678901234567890",
@@ -392,21 +326,31 @@ describe("enso.ts integration", () => {
       });
 
       expect(result.tx.to).toBe(ENSO_ROUTER);
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("bundle"),
-        expect.objectContaining({
-          method: "POST",
+      expect(mockGetBundleData).toHaveBeenCalled();
+    });
+
+    it("handles SDK error", async () => {
+      mockGetBundleData.mockRejectedValueOnce(new Error("Bundle error"));
+
+      await expect(
+        fetchBundle({
+          fromAddress: "0x1234567890123456789012345678901234567890",
+          actions: [],
         })
-      );
+      ).rejects.toThrow();
     });
   });
 
   describe("fetchZapInRoute", () => {
+    const createBundleResponse = () => ({
+      tx: { to: ENSO_ROUTER, data: "0x", value: 0, from: "0x1234567890123456789012345678901234567890" },
+      gas: 100000,
+      amountsOut: { "0xtoken": 1000 },
+      priceImpact: 0.01,
+    });
+
     it("creates zap in bundle with swap and deposit", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ amountOut: "1000", tx: {} }),
-      } as Response);
+      mockGetBundleData.mockResolvedValueOnce(createBundleResponse());
 
       await fetchZapInRoute({
         fromAddress: "0x1234567890123456789012345678901234567890",
@@ -415,20 +359,25 @@ describe("enso.ts integration", () => {
         amountIn: "1000000000000000000",
       });
 
-      // Verify the POST body contains swap + deposit actions
-      const callBody = JSON.parse(mockFetch.mock.calls[0][1]?.body as string);
-      expect(callBody).toHaveLength(2);
-      expect(callBody[0].action).toBe("route");
-      expect(callBody[1].action).toBe("deposit");
+      // Verify SDK was called with actions
+      expect(mockGetBundleData).toHaveBeenCalled();
+      const [, actions] = mockGetBundleData.mock.calls[0];
+      expect(actions).toHaveLength(2);
+      expect(actions[0].action).toBe("route");
+      expect(actions[1].action).toBe("deposit");
     });
   });
 
   describe("fetchZapOutRoute", () => {
+    const createBundleResponse = () => ({
+      tx: { to: ENSO_ROUTER, data: "0x", value: 0, from: "0x1234567890123456789012345678901234567890" },
+      gas: 100000,
+      amountsOut: { "0xtoken": 1000 },
+      priceImpact: 0.01,
+    });
+
     it("creates zap out bundle with redeem and swap", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ amountOut: "1000", tx: {} }),
-      } as Response);
+      mockGetBundleData.mockResolvedValueOnce(createBundleResponse());
 
       await fetchZapOutRoute({
         fromAddress: "0x1234567890123456789012345678901234567890",
@@ -437,19 +386,24 @@ describe("enso.ts integration", () => {
         amountIn: "1000000000000000000",
       });
 
-      const callBody = JSON.parse(mockFetch.mock.calls[0][1]?.body as string);
-      expect(callBody).toHaveLength(2);
-      expect(callBody[0].action).toBe("redeem");
-      expect(callBody[1].action).toBe("route");
+      expect(mockGetBundleData).toHaveBeenCalled();
+      const [, actions] = mockGetBundleData.mock.calls[0];
+      expect(actions).toHaveLength(2);
+      expect(actions[0].action).toBe("redeem");
+      expect(actions[1].action).toBe("route");
     });
   });
 
   describe("fetchVaultToVaultRoute", () => {
+    const createBundleResponse = () => ({
+      tx: { to: ENSO_ROUTER, data: "0x", value: 0, from: "0x1234567890123456789012345678901234567890" },
+      gas: 100000,
+      amountsOut: { "0xtoken": 1000 },
+      priceImpact: 0.01,
+    });
+
     it("creates vault-to-vault bundle with redeem and deposit", async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ amountOut: "1000", tx: {} }),
-      } as Response);
+      mockGetBundleData.mockResolvedValueOnce(createBundleResponse());
 
       await fetchVaultToVaultRoute({
         fromAddress: "0x1234567890123456789012345678901234567890",
@@ -458,10 +412,11 @@ describe("enso.ts integration", () => {
         amountIn: "1000000000000000000",
       });
 
-      const callBody = JSON.parse(mockFetch.mock.calls[0][1]?.body as string);
-      expect(callBody).toHaveLength(2);
-      expect(callBody[0].action).toBe("redeem");
-      expect(callBody[1].action).toBe("deposit");
+      expect(mockGetBundleData).toHaveBeenCalled();
+      const [, actions] = mockGetBundleData.mock.calls[0];
+      expect(actions).toHaveLength(2);
+      expect(actions[0].action).toBe("redeem");
+      expect(actions[1].action).toBe("deposit");
     });
   });
 
