@@ -14,6 +14,9 @@ import {
   previewRedeem,
   batchRpcCalls,
   getPoolParams,
+  // Optimized helpers (batch + off-chain math)
+  batchRedeemAndEstimateSwap,
+  estimateSwapOffchain,
   // StableSwap math
   getD as stableswapGetD,
   getY as stableswapGetY,
@@ -898,22 +901,19 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
   // Check if target is pxCVX - needs special routing via Curve swap + unwrap
   const targetIsPxCvx = params.targetUnderlyingToken.toLowerCase() === TOKENS.PXCVX.toLowerCase();
 
-  // Estimate underlying cvgCVX amount from vault redeem (not 1:1 assumption)
-  const cvgCvxAmount = await previewRedeem(params.sourceVault, params.amountIn);
-
-  // Apply conservative buffer: reduce input by 1% for upstream slippage
-  const conservativeCvgCvxAmount = (BigInt(cvgCvxAmount) * 99n) / 100n;
-
-  // Estimate CVX1 output from Curve swap (cvgCVX → CVX1)
-  const estimatedCvx1 = await getCurveGetDy(
+  // OPTIMIZED: Batch previewRedeem + pool params in single RPC call
+  // Uses off-chain StableSwap math for getDy calculation
+  const { redeemAmount: cvgCvxAmount, swapOutput: estimatedCvx1 } = await batchRedeemAndEstimateSwap(
+    params.sourceVault,
+    params.amountIn,
     TANGENT.CVX1_CVGCVX_POOL,
-    1, // cvgCVX index
-    0, // CVX1 index
-    conservativeCvgCvxAmount.toString()
+    1, // cvgCVX index (input)
+    0, // CVX1 index (output)
+    0.99 // Conservative buffer: reduce input by 1% for upstream slippage
   );
 
   // CRITICAL: Throw if estimation fails or returns zero - never use min_dy=0
-  if (estimatedCvx1 === null || estimatedCvx1 === 0n) {
+  if (estimatedCvx1 === 0n) {
     throw new Error("Failed to estimate Curve cvgCVX→CVX1 swap output for slippage protection");
   }
 
@@ -1634,6 +1634,8 @@ export async function getCvgCvxSwapRate(amountIn: string): Promise<bigint> {
   const { TANGENT } = await import("@/config/vaults");
 
   // Use centralized getCurveGetDy to avoid duplicate implementations
+  // Note: Keep using direct RPC call here for backward compatibility with tests
+  // Main optimization is in fetchCvgCvxVaultToVaultRoute which uses batchRedeemAndEstimateSwap
   const result = await getCurveGetDy(TANGENT.CVX1_CVGCVX_POOL, 0, 1, amountIn);
   return result ?? 0n;
 }
