@@ -7,6 +7,17 @@ import { useAccount, useBalance } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
 import { ArrowLeft, ArrowUpRight, ExternalLink, Loader2, Search } from "lucide-react";
+
+// Animated loading dots for quote fetching
+function LoadingDots() {
+  return (
+    <span className="inline-flex items-center gap-0.5 text-[var(--muted-foreground)]">
+      <span className="animate-bounce" style={{ animationDelay: "0ms", animationDuration: "600ms" }}>.</span>
+      <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
+      <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
+    </span>
+  );
+}
 import { ContractExplorer, useContractExplorer } from "@/components/ContractExplorer";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
@@ -832,7 +843,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               <TokenSelector
                                 selectedToken={zapInputToken}
                                 onSelect={setZapInputToken}
-                                excludeTokens={[...VAULT_UNDERLYING_TOKENS]} // Exclude underlying tokens (use Deposit tab)
+                                excludeTokens={[...VAULT_UNDERLYING_TOKENS, vault?.address ?? ""]} // Exclude underlying tokens + current vault
                               />
                               <button
                                 onClick={() => setZapAmount(zapInputBalanceFormatted)}
@@ -859,13 +870,7 @@ export function VaultPageContent({ id }: { id: string }) {
                             </div>
                             <div className="bg-[var(--muted)] rounded-lg p-4 flex items-center gap-2">
                               <span className="mono text-base text-[var(--foreground)] flex-1">
-                                {zapQuoteLoading ? (
-                                  <span className="text-[var(--muted-foreground)]">Loading...</span>
-                                ) : zapQuote ? (
-                                  Number(zapQuote.outputAmountFormatted).toFixed(4)
-                                ) : (
-                                  "0.00"
-                                )}
+                                {zapQuoteLoading ? "—" : zapQuote ? Number(zapQuote.outputAmountFormatted).toFixed(4) : "0.00"}
                               </span>
                               <span className="mono text-sm font-medium shrink-0">{vault.symbol}</span>
                             </div>
@@ -916,18 +921,12 @@ export function VaultPageContent({ id }: { id: string }) {
                             </div>
                             <div className="bg-[var(--muted)] rounded-lg p-4 flex items-center gap-2">
                               <span className="mono text-base text-[var(--foreground)] flex-1">
-                                {zapQuoteLoading ? (
-                                  <span className="text-[var(--muted-foreground)]">Loading...</span>
-                                ) : zapQuote ? (
-                                  Number(zapQuote.outputAmountFormatted).toFixed(4)
-                                ) : (
-                                  "0.00"
-                                )}
+                                {zapQuoteLoading ? "—" : zapQuote ? Number(zapQuote.outputAmountFormatted).toFixed(4) : "0.00"}
                               </span>
                               <TokenSelector
                                 selectedToken={zapOutputToken}
                                 onSelect={setZapOutputToken}
-                                excludeTokens={[...VAULT_UNDERLYING_TOKENS]} // Exclude underlying tokens (use Withdraw tab)
+                                excludeTokens={[...VAULT_UNDERLYING_TOKENS, vault?.address ?? ""]} // Exclude underlying tokens + current vault
                               />
                             </div>
                           </div>
@@ -989,10 +988,10 @@ export function VaultPageContent({ id }: { id: string }) {
                               executeZap();
                             }
                           }}
-                          disabled={!zapQuote || zapIsLoading || zapQuoteLoading}
+                          disabled={!zapQuote || zapIsLoading || zapQuoteLoading || (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance)}
                           className={cn(
                             "w-full py-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-base",
-                            !zapQuote || zapQuoteLoading
+                            !zapQuote || zapQuoteLoading || (zapAmount && (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance))
                               ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
                               : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer"
                           )}
@@ -1005,9 +1004,11 @@ export function VaultPageContent({ id }: { id: string }) {
                                 : "Zapping..."}
                             </>
                           ) : zapQuoteLoading ? (
-                            "Getting quote..."
+                            <>Getting quote<LoadingDots /></>
                           ) : !zapAmount || Number(zapAmount) === 0 ? (
                             "Enter amount"
+                          ) : (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance) ? (
+                            "Insufficient balance"
                           ) : !zapQuote ? (
                             "No route found"
                           ) : zapNeedsApproval() ? (

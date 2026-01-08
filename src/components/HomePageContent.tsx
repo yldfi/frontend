@@ -14,9 +14,11 @@ import { useMultiplePricePerShare } from "@/hooks/usePricePerShare";
 import { useVaultCache } from "@/hooks/useVaultCache";
 import { VAULTS, VAULT_ADDRESSES } from "@/config/vaults";
 
-// Build vault configs from centralized config (excluding hidden vaults)
+// Build vault configs from centralized config
+// In development, show all vaults including hidden ones
+const isDev = process.env.NODE_ENV === "development";
 const vaultConfigs = Object.values(VAULTS)
-  .filter((vault) => !vault.hidden)
+  .filter((vault) => isDev || !vault.hidden)
   .map((vault) => ({
     id: vault.id,
     name: vault.name,
@@ -41,25 +43,30 @@ export function HomePageContent() {
   const { data: ycvxcrvData, isLoading: ycvxcrvLoading } = useYearnVault(VAULT_ADDRESSES.YCVXCRV);
   const { data: yscvxcrvData } = useYearnVault(VAULT_ADDRESSES.YSCVXCRV);
   const { data: yscvgcvxData } = useYearnVault(VAULT_ADDRESSES.YSCVGCVX);
+  const { data: yspxcvxData } = useYearnVault(VAULT_ADDRESSES.YSPXCVX);
 
   const ycvxcrvVault = formatYearnVaultData(ycvxcrvData?.vault, ycvxcrvData?.vaultStrategies);
   const yscvxcrvVault = formatYearnVaultData(yscvxcrvData?.vault, yscvxcrvData?.vaultStrategies);
   const yscvgcvxVault = formatYearnVaultData(yscvgcvxData?.vault, yscvgcvxData?.vaultStrategies);
+  const yspxcvxVault = formatYearnVaultData(yspxcvxData?.vault, yspxcvxData?.vaultStrategies);
 
   // Use cached token prices (falls back to 0 if cache not ready)
   const cvxCrvPrice = cacheData?.cvxCrvPrice ?? 0;
   const cvgCvxPrice = cacheData?.cvgCvxPrice ?? 0;
+  const pxCvxPrice = cacheData?.pxCvxPrice ?? 0;
 
   // Fetch price per share from on-chain
   const { prices: pricePerShareData } = useMultiplePricePerShare([
     VAULT_ADDRESSES.YCVXCRV,
     VAULT_ADDRESSES.YSCVXCRV,
     VAULT_ADDRESSES.YSCVGCVX,
+    VAULT_ADDRESSES.YSPXCVX,
   ]);
 
   const ycvxcrvPricePerShare = pricePerShareData[0]?.pricePerShare ?? 1;
   const yscvxcrvPricePerShare = pricePerShareData[1]?.pricePerShare ?? 1;
   const yscvgcvxPricePerShare = pricePerShareData[2]?.pricePerShare ?? 1;
+  const yspxcvxPricePerShare = pricePerShareData[3]?.pricePerShare ?? 1;
 
   // Fetch user vault balances
   const { balances } = useMultipleVaultBalances([
@@ -77,6 +84,11 @@ export function HomePageContent() {
       address: VAULT_ADDRESSES.YSCVGCVX,
       pricePerShare: yscvgcvxPricePerShare,
       assetPriceUsd: cvgCvxPrice,
+    },
+    {
+      address: VAULT_ADDRESSES.YSPXCVX,
+      pricePerShare: yspxcvxPricePerShare,
+      assetPriceUsd: pxCvxPrice,
     },
   ]);
 
@@ -97,10 +109,15 @@ export function HomePageContent() {
   const yscvgcvxFeeRate = VAULTS.yscvgcvx.fees.performance / 100; // e.g., 0 -> 0
   const yscvgcvxNetApy = yscvgcvxGrossApy * (1 - yscvgcvxFeeRate);
 
+  const yspxcvxGrossApy = yspxcvxVault?.apy ?? 0;
+  const yspxcvxFeeRate = VAULTS.yspxcvx.fees.performance / 100; // e.g., 5 -> 0.05
+  const yspxcvxNetApy = yspxcvxGrossApy * (1 - yspxcvxFeeRate);
+
   // Use cached TVL (fast) or fall back to Yearn API TVL
   const ycvxcrvTvl = cacheData?.ycvxcrv?.tvlUsd ?? ycvxcrvVault?.tvl ?? 0;
   const yscvxcrvTvl = cacheData?.yscvxcrv?.tvlUsd ?? yscvxcrvVault?.tvl ?? 0;
   const yscvgcvxTvl = cacheData?.yscvgcvx?.tvlUsd ?? 0;
+  const yspxcvxTvl = cacheData?.yspxcvx?.tvlUsd ?? yspxcvxVault?.tvl ?? 0;
 
   // Get TVL for each vault by ID
   const getTvlForVault = (id: string): number => {
@@ -108,6 +125,7 @@ export function HomePageContent() {
       case "ycvxcrv": return ycvxcrvTvl;
       case "yscvxcrv": return yscvxcrvTvl;
       case "yscvgcvx": return yscvgcvxTvl;
+      case "yspxcvx": return yspxcvxTvl;
       default: return 0;
     }
   };
@@ -118,20 +136,32 @@ export function HomePageContent() {
       case "ycvxcrv": return ycvxcrvNetApy;
       case "yscvxcrv": return yscvxcrvNetApy;
       case "yscvgcvx": return yscvgcvxNetApy;
+      case "yspxcvx": return yspxcvxNetApy;
       default: return 0;
     }
   };
 
-  const vaults = vaultConfigs.map((config, index) => ({
-    ...config,
-    tvl: getTvlForVault(config.id),
-    apy: getApyForVault(config.id),
-    holdings: balances[index]?.formattedUsd ?? "$0",
-    hasHoldings: (balances[index]?.usdValue ?? 0) > 0,
-  }));
+  // Create balance lookup by address for correct mapping when hidden vaults shown
+  const balanceByAddress = {
+    [VAULT_ADDRESSES.YCVXCRV.toLowerCase()]: balances[0],
+    [VAULT_ADDRESSES.YSCVXCRV.toLowerCase()]: balances[1],
+    [VAULT_ADDRESSES.YSCVGCVX.toLowerCase()]: balances[2],
+    [VAULT_ADDRESSES.YSPXCVX.toLowerCase()]: balances[3],
+  };
+
+  const vaults = vaultConfigs.map((config) => {
+    const balance = balanceByAddress[config.contractAddress.toLowerCase()];
+    return {
+      ...config,
+      tvl: getTvlForVault(config.id),
+      apy: getApyForVault(config.id),
+      holdings: balance?.formattedUsd ?? "$0",
+      hasHoldings: (balance?.usdValue ?? 0) > 0,
+    };
+  });
 
   // Total TVL across all vaults
-  const totalTvl = yscvxcrvTvl + yscvgcvxTvl;
+  const totalTvl = yscvxcrvTvl + yscvgcvxTvl + yspxcvxTvl;
   const totalTvlFormatted = totalTvl >= 1_000_000
     ? `$${(totalTvl / 1_000_000).toFixed(2)}M`
     : totalTvl >= 1_000

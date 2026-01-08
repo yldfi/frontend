@@ -7,7 +7,21 @@ import { useTokenMetadata } from "@/hooks/useTokenMetadata";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
 import { formatUnits, isAddress } from "viem";
 import { cn } from "@/lib/utils";
+import { VAULTS } from "@/config/vaults";
 import type { EnsoToken } from "@/types/enso";
+
+// Our vault tokens to show at top of list
+const FEATURED_VAULT_TOKENS: EnsoToken[] = Object.values(VAULTS)
+  .filter((v) => v.address !== "0x0000000000000000000000000000000000000000" && !v.hidden)
+  .map((v) => ({
+    address: v.address,
+    name: v.name,
+    symbol: v.symbol,
+    decimals: v.decimals,
+    logoURI: v.logoSmall,
+    chainId: 1,
+    type: "defi" as const,
+  }));
 
 interface TokenSelectorProps {
   selectedToken: EnsoToken | null;
@@ -119,6 +133,7 @@ export function TokenSelector({
   excludeDefiTokens,
 }: TokenSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<"tokens" | "vaults">("tokens");
   const buttonRef = useRef<HTMLButtonElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -264,36 +279,90 @@ export function TokenSelector({
                 </button>
               </div>
 
-              {/* Search */}
-              <div className="p-4 border-b border-[var(--border)]">
-                <div className="relative">
-                  <svg
-                    className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--muted-foreground)]"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                    />
-                  </svg>
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search by name or address"
-                    className="w-full bg-[var(--muted)] rounded-lg pl-10 pr-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--border-hover)]"
-                    autoFocus
-                  />
-                </div>
+              {/* Tabs */}
+              <div className="flex border-b border-[var(--border)]">
+                <button
+                  onClick={() => setActiveTab("tokens")}
+                  className={cn(
+                    "flex-1 py-3 text-sm font-medium transition-colors",
+                    activeTab === "tokens"
+                      ? "text-[var(--foreground)] border-b-2 border-[var(--foreground)]"
+                      : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                  )}
+                >
+                  Tokens
+                </button>
+                <button
+                  onClick={() => setActiveTab("vaults")}
+                  className={cn(
+                    "flex-1 py-3 text-sm font-medium transition-colors",
+                    activeTab === "vaults"
+                      ? "text-[var(--foreground)] border-b-2 border-[var(--foreground)]"
+                      : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                  )}
+                >
+                  yld.fi Vaults
+                </button>
               </div>
+
+              {/* Search (only for tokens tab) */}
+              {activeTab === "tokens" && (
+                <div className="p-4 border-b border-[var(--border)]">
+                  <div className="relative">
+                    <svg
+                      className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--muted-foreground)]"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                      />
+                    </svg>
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Search by name or address"
+                      className="w-full bg-[var(--muted)] rounded-lg pl-10 pr-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--border-hover)]"
+                      autoFocus
+                    />
+                  </div>
+                </div>
+              )}
 
               {/* Token list */}
               <div className="flex-1 overflow-y-auto">
-                {isLoading ? (
+                {activeTab === "vaults" ? (
+                  /* Vaults tab */
+                  FEATURED_VAULT_TOKENS.filter(
+                    (t) => !excludeSet.has(t.address.toLowerCase())
+                  ).length === 0 ? (
+                    <div className="text-center py-8 text-[var(--muted-foreground)]">
+                      No vaults available
+                    </div>
+                  ) : (
+                    FEATURED_VAULT_TOKENS
+                      .filter((t) => !excludeSet.has(t.address.toLowerCase()))
+                      .map((token) => (
+                        <TokenRow
+                          key={token.address}
+                          token={token}
+                          onSelect={() => handleSelect(token)}
+                          isSelected={
+                            selectedToken?.address?.toLowerCase() ===
+                            token.address?.toLowerCase()
+                          }
+                          balance={balanceMap.get(token.address.toLowerCase())}
+                          price={priceMap.get(token.address.toLowerCase())}
+                        />
+                      ))
+                  )
+                ) : isLoading ? (
+                  /* Tokens tab - loading */
                   <div className="flex items-center justify-center py-8">
                     <svg
                       className="animate-spin h-5 w-5 text-[var(--muted-foreground)]"
@@ -317,6 +386,7 @@ export function TokenSelector({
                     </svg>
                   </div>
                 ) : (
+                  /* Tokens tab - loaded */
                   <>
                     {/* Show imported token option when user pastes an address */}
                     {isSearchAddress && !isImportedTokenInList && (

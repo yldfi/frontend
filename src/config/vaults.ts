@@ -53,10 +53,10 @@ export const PIREX = {
   // lpxCVX contract - wraps pxCVX and provides swap to CVX via Curve
   LPXCVX: "0x389fB29230D02e67eB963C1F5A00f2b16f95BEb7" as const,
   // Curve CryptoSwap pool for lpxCVX <-> CVX swaps (uses uint256 indices)
-  LPXCVX_CVX_POOL: "0x72725c0c879489986d213a9a6d2116de45624c1c" as const,
+  LPXCVX_CVX_POOL: "0x72725C0C879489986D213A9A6D2116dE45624c1c" as const,
   // Pirex CVX deposit contract - locks CVX to mint pxCVX at 1:1
   // deposit(uint256 assets, address receiver, bool shouldCompound, address developer)
-  PIREX_CVX: "0x35a398425d9f1029021a92bc3d2557d42c8588d7" as const,
+  PIREX_CVX: "0x35A398425d9f1029021A92bc3d2557D42C8588D7" as const,
   // pxCVX token
   PXCVX: "0xBCe0Cf87F513102F22232436CCa2ca49e815C3aC" as const,
   // Token enum for lpxCVX.swap() function
@@ -333,6 +333,7 @@ export function getVaultUnderlyingToken(vaultAddress: string): `0x${string}` | u
   const vault = getVaultByAddress(vaultAddress);
   return vault?.assetAddress;
 }
+
 
 // Get all vault IDs
 export function getAllVaultIds(): string[] {

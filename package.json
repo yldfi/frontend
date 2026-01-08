@@ -17,6 +17,7 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:install": "playwright install chromium",
+    "test:curve": "bun x tsx test-stableswap-exact.ts && bun x tsx test-cryptoswap-exact.ts",
     "prepare": "husky"
   },
   "lint-staged": {
@@ -47,11 +48,14 @@
     "@tailwindcss/postcss": "^4",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.1",
+    "@types/dotenv": "^8.2.3",
     "@types/node": "^25",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^5.1.2",
     "@vitest/coverage-v8": "^4.0.16",
+    "cross-fetch": "^4.1.0",
+    "dotenv": "^17.2.3",
     "eslint": "^9",
     "eslint-config-next": "16.0.10",
     "husky": "^9.1.7",

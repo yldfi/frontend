@@ -1,9 +1,16 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import path from "path";
+import * as dotenv from "dotenv";
+
+// Load env from .env.local for tests
+dotenv.config({ path: ".env.local" });
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    "process.env.NEXT_PUBLIC_ENSO_API_KEY": JSON.stringify(process.env.NEXT_PUBLIC_ENSO_API_KEY),
+  },
   test: {
     environment: "jsdom",
     globals: true,
