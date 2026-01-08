@@ -1124,7 +1124,7 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
   return fetchBundle({
     fromAddress: params.fromAddress,
     actions,
-    routingStrategy: "delegate",
+    routingStrategy: "router",
   });
 }
 
@@ -1289,7 +1289,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
     return fetchBundle({
       fromAddress: params.fromAddress,
       actions,
-      routingStrategy: "delegate",
+      routingStrategy: "router",
     });
   }
 
@@ -1832,7 +1832,7 @@ async function fetchPxCvxVaultToVaultRoute(params: {
   return fetchBundle({
     fromAddress: params.fromAddress,
     actions,
-    routingStrategy: "delegate",
+    routingStrategy: "router",
   });
 }
 
@@ -2033,7 +2033,7 @@ export async function fetchCvgCvxZapInRoute(params: {
     return fetchBundle({
       fromAddress: params.fromAddress,
       actions,
-      routingStrategy: "delegate",
+      routingStrategy: "router",
     });
   }
 
@@ -2153,7 +2153,7 @@ async function buildSwapOnlyBundle(
     return fetchBundle({
       fromAddress: params.fromAddress,
       actions,
-      routingStrategy: "delegate",
+      routingStrategy: "router",
     });
   }
 
@@ -2226,7 +2226,7 @@ async function buildSwapOnlyBundle(
   return fetchBundle({
     fromAddress: params.fromAddress,
     actions,
-    routingStrategy: "delegate",
+    routingStrategy: "router",
   });
 }
 
@@ -2288,7 +2288,7 @@ async function buildMintOnlyBundle(
     return fetchBundle({
       fromAddress: params.fromAddress,
       actions,
-      routingStrategy: "delegate",
+      routingStrategy: "router",
     });
   }
 
@@ -2345,7 +2345,7 @@ async function buildMintOnlyBundle(
   return fetchBundle({
     fromAddress: params.fromAddress,
     actions,
-    routingStrategy: "delegate",
+    routingStrategy: "router",
   });
 }
 
@@ -2461,7 +2461,7 @@ async function buildHybridBundle(
     return fetchBundle({
       fromAddress: params.fromAddress,
       actions,
-      routingStrategy: "delegate",
+      routingStrategy: "router",
     });
   }
 
@@ -2562,7 +2562,7 @@ async function buildHybridBundle(
   return fetchBundle({
     fromAddress: params.fromAddress,
     actions,
-    routingStrategy: "delegate",
+    routingStrategy: "router",
   });
 }
 
@@ -2687,7 +2687,7 @@ export async function fetchCvgCvxZapOutRoute(params: {
     return fetchBundle({
       fromAddress: params.fromAddress,
       actions,
-      routingStrategy: "delegate",
+      routingStrategy: "router",
     });
   }
 
@@ -2757,7 +2757,7 @@ export async function fetchCvgCvxZapOutRoute(params: {
   return fetchBundle({
     fromAddress: params.fromAddress,
     actions,
-    routingStrategy: "delegate", // Required for custom call actions
+    routingStrategy: "router",
   });
 }
 
@@ -2887,7 +2887,7 @@ export async function fetchPxCvxZapOutRoute(params: {
   return fetchBundle({
     fromAddress: params.fromAddress,
     actions,
-    routingStrategy: "delegate",
+    routingStrategy: "router",
   });
 }
 
@@ -3692,7 +3692,7 @@ export async function fetchPxCvxZapInRoute(params: {
   const bundleResult = await fetchBundle({
     fromAddress: params.fromAddress,
     actions,
-    routingStrategy: "delegate",
+    routingStrategy: "router",
   });
 
   // Calculate expected vault shares using previewDeposit
