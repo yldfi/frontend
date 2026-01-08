@@ -39,11 +39,11 @@ describe("useYearnVault integration", () => {
         close: 1500000,
       },
       apy: {
-        close: 12.5,
-        grossApr: 15.0,
-        weeklyNet: 11.2,
-        monthlyNet: 12.1,
-        inceptionNet: 13.5,
+        close: 0.125, // Kong returns as decimal (0.125 = 12.5%)
+        grossApr: 0.15, // Kong returns as decimal (0.15 = 15%)
+        weeklyNet: 0.112,
+        monthlyNet: 0.121,
+        inceptionNet: 0.135,
       },
       debts: [
         {
