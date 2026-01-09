@@ -8,12 +8,18 @@ importers:
 
   .:
     dependencies:
+      '@ensofinance/sdk':
+        specifier: ^2.0.12
+        version: 2.0.12
       '@rainbow-me/rainbowkit':
         specifier: ^2.2.0
         version: 2.2.10(@tanstack/react-query@5.90.16(react@19.2.3))(@types/react@19.2.7)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(typescript@5.9.3)(viem@2.43.5(bufferutil@4.0.9)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.2.1))(wagmi@2.19.5(@tanstack/query-core@5.90.16)(@tanstack/react-query@5.90.16(react@19.2.3))(@types/react@19.2.7)(aws4fetch@1.0.20)(bufferutil@4.0.9)(fastestsmallesttextencoderdecoder@1.0.22)(react@19.2.3)(typescript@5.9.3)(utf-8-validate@5.0.10)(viem@2.43.5(bufferutil@4.0.9)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.2.1))(ws@7.5.10(bufferutil@4.0.9)(utf-8-validate@5.0.10))(zod@4.2.1))
       '@tanstack/react-query':
         specifier: ^5.90.16
         version: 5.90.16(react@19.2.3)
+      '@yldfi/curve-amm-math':
+        specifier: ^1.0.0
+        version: 1.0.0(viem@2.43.5(bufferutil@4.0.9)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.2.1))
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -696,6 +702,9 @@ packages:
 
   '@emotion/hash@0.9.2':
     resolution: {integrity: sha512-MyqliTZGuOm3+5ZRSaaBGP3USLw6+EGykkwZns2EPC5g8jJ4z9OrdZY9apkl3+UP9+sdz76YYkwCKP5gh8iY3g==}
+
+  '@ensofinance/sdk@2.0.12':
+    resolution: {integrity: sha512-+Mohddgxaadn+yN0Z7S84gu0PrlbjK+lKUq0z4qqXv1vgk3I3qv84OXkhqLsxDxNbVK+Xr6uwfo7AnyENeZBlw==}
 
   '@esbuild/aix-ppc64@0.25.4':
     resolution: {integrity: sha512-1VCICWypeQKhVbE9oW/sJaAmjLxhVqacdkvPLEjwlttjfwENRSClS8EjBz0KzRyFSCPDIkuXW34Je/vk7zdB7Q==}
@@ -3114,6 +3123,14 @@ packages:
 
   '@walletconnect/window-metadata@1.0.1':
     resolution: {integrity: sha512-9koTqyGrM2cqFRW517BPY/iEtUDx2r1+Pwwu5m7sJ7ka79wi3EyqhqcICk/yDmv6jAS1rjKgTKXlEhanYjijcA==}
+
+  '@yldfi/curve-amm-math@1.0.0':
+    resolution: {integrity: sha512-CDklD3737bFpDUxXW/IW4dvCL3aSF+KcgAyodWASAguHv4tSaGEXRKcyAxBcE3n7FjRlKgCsS9Ks2mGlf7oYVw==}
+    peerDependencies:
+      viem: ^2.0.0
+    peerDependenciesMeta:
+      viem:
+        optional: true
 
   abitype@1.0.6:
     resolution: {integrity: sha512-MMSqYh4+C/aVqI2RQaWqbvI4Kxo5cQV40WQ4QFtDnNzCkqChm8MuENhElmynZlO0qUy/ObkEUaXtKqYnx1Kp3A==}
@@ -7779,6 +7796,12 @@ snapshots:
 
   '@emotion/hash@0.9.2': {}
 
+  '@ensofinance/sdk@2.0.12':
+    dependencies:
+      axios: 1.13.2
+    transitivePeerDependencies:
+      - debug
+
   '@esbuild/aix-ppc64@0.25.4':
     optional: true
 
@@ -11111,6 +11134,10 @@ snapshots:
     dependencies:
       '@walletconnect/window-getters': 1.0.1
       tslib: 1.14.1
+
+  '@yldfi/curve-amm-math@1.0.0(viem@2.43.5(bufferutil@4.0.9)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.2.1))':
+    optionalDependencies:
+      viem: 2.43.5(bufferutil@4.0.9)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.2.1)
 
   abitype@1.0.6(typescript@5.9.3)(zod@3.25.76):
     optionalDependencies:

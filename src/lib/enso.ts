@@ -18,17 +18,23 @@ import {
   batchRedeemAndEstimateSwap,
   estimateSwapOffchain,
   // StableSwap math
-  getD as stableswapGetD,
-  getY as stableswapGetY,
-  getDy as stableswapGetDyOffchain,
-  dynamicFee as stableswapDynamicFee,
+  stableswap,
   findPegPoint as findPegPointOffchain,
   calculateMinDy,
   validateSlippage,
   N_COINS as STABLESWAP_N_COINS,
   A_PRECISION as STABLESWAP_A_PRECISION,
   FEE_DENOMINATOR as STABLESWAP_FEE_DENOMINATOR,
+  // CryptoSwap math
+  cryptoswap,
 } from "@/lib/curve";
+import type { CryptoSwapParams as TwocryptoParams } from "@yldfi/curve-amm-math";
+
+// Destructure stableswap functions for existing usage
+const stableswapGetD = stableswap.getD;
+const stableswapGetY = stableswap.getY;
+const stableswapGetDyOffchain = stableswap.getDy;
+const stableswapDynamicFee = stableswap.dynamicFee;
 
 const CHAIN_ID = 1; // Ethereum mainnet
 
@@ -2774,18 +2780,12 @@ export async function getPxCvxPoolBalances(): Promise<{ cvxBalance: bigint; lpxC
 
 // ============================================================================
 // CryptoSwap Off-Chain Math (for pxCVX pool)
+// Uses @yldfi/curve-amm-math for calculations
 // ============================================================================
 
-interface CryptoSwapParams {
-  A: bigint; // On-chain A is scaled by A_MULTIPLIER
-  gamma: bigint;
-  D: bigint;
+// Local interface extending TwocryptoParams with backwards-compat fee field
+interface CryptoSwapParams extends TwocryptoParams {
   fee: bigint; // Current dynamic fee (kept for backwards compat)
-  midFee: bigint; // Mid fee parameter
-  outFee: bigint; // Out fee parameter
-  feeGamma: bigint;
-  priceScale: bigint;
-  balances: [bigint, bigint];
 }
 
 /**
@@ -2835,212 +2835,15 @@ export async function getCryptoSwapPoolParams(poolAddress: string): Promise<Cryp
   };
 }
 
-// Precision constants for CryptoSwap math (matches Vyper source)
-const CRYPTO_PRECISION = 10n ** 18n;
-const A_MULTIPLIER = 10000n;
-const N_COINS = 2n;
-
-/**
- * Newton's method to find y in CryptoSwap invariant
- * Direct translation from Curve v2 Vyper source: newton_y()
- *
- * @param A - Raw A parameter from pool (the Vyper code calls this "ANN" but passes A directly)
- * @param gamma - gamma parameter
- * @param x - scaled balances [x0, x1]
- * @param D - invariant D
- * @param i - index of the output token (the one we're solving for)
- */
-function newtonY(
-  A: bigint,
-  gamma: bigint,
-  x: [bigint, bigint],
-  D: bigint,
-  i: number
-): bigint {
-  // x_j is the other token's balance (not the one we're solving for)
-  const x_j = x[1 - i];
-
-  // Initial guess: y = D^2 / (x_j * N^2)
-  let y = (D * D) / (x_j * N_COINS * N_COINS);
-
-  // K0_i = (10^18 * N) * x_j / D
-  const K0_i = (CRYPTO_PRECISION * N_COINS * x_j) / D;
-
-  // Convergence limit
-  const convergence_limit = (() => {
-    const a = x_j / (10n ** 14n);
-    const b = D / (10n ** 14n);
-    let max = a > b ? a : b;
-    if (max < 100n) max = 100n;
-    return max;
-  })();
-
-  for (let j = 0; j < 255; j++) {
-    const y_prev = y;
-
-    // K0 = K0_i * y * N / D
-    const K0 = (K0_i * y * N_COINS) / D;
-
-    // S = x_j + y
-    const S = x_j + y;
-
-    // _g1k0 = gamma + 10^18
-    // if _g1k0 > K0: _g1k0 = _g1k0 - K0 + 1
-    // else: _g1k0 = K0 - _g1k0 + 1
-    let _g1k0 = gamma + CRYPTO_PRECISION;
-    if (_g1k0 > K0) {
-      _g1k0 = _g1k0 - K0 + 1n;
-    } else {
-      _g1k0 = K0 - _g1k0 + 1n;
-    }
-
-    // mul1 = 10^18 * D / gamma * _g1k0 / gamma * _g1k0 * A_MULTIPLIER / A
-    const mul1 =
-      (((((CRYPTO_PRECISION * D) / gamma) * _g1k0) / gamma) * _g1k0 * A_MULTIPLIER) / A;
-
-    // mul2 = 10^18 + (2 * 10^18) * K0 / _g1k0
-    const mul2 = CRYPTO_PRECISION + (2n * CRYPTO_PRECISION * K0) / _g1k0;
-
-    // yfprime = 10^18 * y + S * mul2 + mul1
-    const yfprime_base = CRYPTO_PRECISION * y + S * mul2 + mul1;
-
-    // _dyfprime = D * mul2
-    const _dyfprime = D * mul2;
-
-    let yfprime: bigint;
-    if (yfprime_base < _dyfprime) {
-      // If yfprime < _dyfprime, halve y and continue
-      y = y_prev / 2n;
-      continue;
-    } else {
-      yfprime = yfprime_base - _dyfprime;
-    }
-
-    // fprime = yfprime / y
-    const fprime = yfprime / y;
-
-    // y_minus = mul1 / fprime
-    const y_minus_base = mul1 / fprime;
-
-    // y_plus = (yfprime + 10^18 * D) / fprime + y_minus * 10^18 / K0
-    const y_plus = (yfprime + CRYPTO_PRECISION * D) / fprime + (y_minus_base * CRYPTO_PRECISION) / K0;
-
-    // y_minus += 10^18 * S / fprime
-    const y_minus = y_minus_base + (CRYPTO_PRECISION * S) / fprime;
-
-    if (y_plus < y_minus) {
-      y = y_prev / 2n;
-    } else {
-      y = y_plus - y_minus;
-    }
-
-    // Check convergence
-    const diff = y > y_prev ? y - y_prev : y_prev - y;
-    const threshold = y / (10n ** 14n);
-    if (diff < (convergence_limit > threshold ? convergence_limit : threshold)) {
-      return y;
-    }
-  }
-
-  // Did not converge - return best guess
-  return y;
-}
-
-/**
- * Calculate dynamic fee for CryptoSwap pool
- * Direct translation from Curve v2 Vyper source: _fee()
- *
- * f = fee_gamma / (fee_gamma + (1 - K))
- * where K = prod(x) / (sum(x) / N)^N
- *
- * When K is high (balanced pool), fee is closer to mid_fee
- * When K is low (imbalanced pool), fee is closer to out_fee
- */
-function cryptoSwapFee(
-  xp: [bigint, bigint],
-  fee_gamma: bigint,
-  mid_fee: bigint,
-  out_fee: bigint
-): bigint {
-  // f = xp[0] + xp[1]  (sum)
-  const sum = xp[0] + xp[1];
-  if (sum === 0n) return mid_fee;
-
-  // K = (10^18 * N^N) * xp[0] / f * xp[1] / f
-  // For N=2: K = 4 * 10^18 * xp[0] * xp[1] / sum^2
-  // Note: must use same order of operations as Vyper to match exactly
-  const K = ((CRYPTO_PRECISION * N_COINS * N_COINS) * xp[0]) / sum * xp[1] / sum;
-
-  // f = fee_gamma * 10^18 / (fee_gamma + 10^18 - K)
-  const f = (fee_gamma * CRYPTO_PRECISION) / (fee_gamma + CRYPTO_PRECISION - K);
-
-  // return (mid_fee * f + out_fee * (10^18 - f)) / 10^18
-  return (mid_fee * f + out_fee * (CRYPTO_PRECISION - f)) / CRYPTO_PRECISION;
-}
-
-/**
- * Off-chain implementation of CryptoSwap get_dy
- * Direct translation from Curve v2 Vyper source
- *
- * @param params Pool parameters
- * @param i Input token index (0 = CVX, 1 = lpxCVX)
- * @param j Output token index
- * @param dx Input amount
- * @returns Output amount after fees
- */
+// Use cryptoswap functions from npm package
+// Wrapper that accepts our CryptoSwapParams interface
 export function cryptoSwapGetDy(
   params: CryptoSwapParams,
   i: number,
   j: number,
   dx: bigint
 ): bigint {
-  if (dx === 0n) return 0n;
-
-  const { A, gamma, D, midFee, outFee, feeGamma, priceScale, balances } = params;
-
-  // For this 2-coin pool, precisions are [1, 1] since both are 18 decimals
-  // price_scale_internal = price_scale * precisions[1] = price_scale * 1
-  const price_scale_internal = priceScale;
-
-  // Start with unscaled balances
-  const xp_unscaled: [bigint, bigint] = [balances[0], balances[1]];
-
-  // Add dx to input token BEFORE scaling (this is the key difference!)
-  xp_unscaled[i] = xp_unscaled[i] + dx;
-
-  // Now scale to internal units
-  // xp = [xp[0] * precisions[0], xp[1] * price_scale / PRECISION]
-  const xp: [bigint, bigint] = [
-    xp_unscaled[0], // * precisions[0] which is 1
-    (xp_unscaled[1] * price_scale_internal) / CRYPTO_PRECISION,
-  ];
-
-  // Newton's method to find new y
-  // NOTE: Despite the parameter being named "ANN" in Vyper (suggesting A * N^N),
-  // the actual Curve v2 code passes A directly from _A_gamma(), not A * 4.
-  // The A_MULTIPLIER scaling is handled inside the mul1 calculation.
-  const y = newtonY(A, gamma, xp, D, j);
-
-  // dy = xp[j] - y - 1
-  let dy = xp[j] - y - 1n;
-  if (dy < 0n) return 0n;
-
-  // Update xp[j] for fee calculation
-  const xp_after: [bigint, bigint] = [xp[0], xp[1]];
-  xp_after[j] = y;
-
-  // Convert dy back to external units
-  if (j > 0) {
-    // dy = dy * PRECISION / price_scale
-    dy = (dy * CRYPTO_PRECISION) / price_scale_internal;
-  }
-  // else: dy /= precisions[0] which is 1, so no change
-
-  // Apply dynamic fee using mid_fee and out_fee
-  const dynamic_fee = cryptoSwapFee(xp_after, feeGamma, midFee, outFee);
-  dy = dy - (dy * dynamic_fee) / (10n ** 10n);
-
-  return dy;
+  return cryptoswap.getDy(params, i, j, dx);
 }
 
 /**
@@ -3073,44 +2876,10 @@ export function estimatePegPointFromBalances(params: CryptoSwapParams): bigint {
 /**
  * Find peg point using off-chain CryptoSwap math (binary search)
  * Returns the maximum amount where swap output >= input (rate >= 1:1)
- *
- * Uses purely off-chain calculations - no RPC calls during search
+ * Uses npm package for calculations - wrapper for backwards compatibility (i=0, j=1)
  */
 export function findPegPointOffchainCryptoSwap(params: CryptoSwapParams): bigint {
-  // Check if even 1 token gives bonus
-  const minAmount = 10n ** 18n; // 1 token
-  const dyForMin = cryptoSwapGetDy(params, 0, 1, minAmount);
-  if (dyForMin < minAmount) {
-    // Even minimum swap doesn't give bonus
-    return 0n;
-  }
-
-  // Upper bound: use total pool TVL as reasonable max
-  // For very large swaps, output drops significantly
-  const maxSwap = params.balances[0] + params.balances[1];
-
-  // Binary search for peg point
-  let low = minAmount;
-  let high = maxSwap;
-
-  // Precision: search until range is within 10 tokens (10 * 10^18 wei)
-  const precision = 10n * 10n ** 18n;
-
-  while (high - low > precision) {
-    const mid = (low + high) / 2n;
-    const dy = cryptoSwapGetDy(params, 0, 1, mid);
-
-    if (dy >= mid) {
-      // Still profitable at mid, search higher
-      low = mid;
-    } else {
-      // Not profitable at mid, search lower
-      high = mid;
-    }
-  }
-
-  // Return low (conservative - guaranteed to be profitable)
-  return low;
+  return cryptoswap.findPegPoint(params, 0, 1);
 }
 
 /**
