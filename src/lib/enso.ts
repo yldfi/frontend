@@ -3,7 +3,7 @@
 // Using official Enso SDK: https://github.com/EnsoBuild/sdk-ts
 
 import { EnsoClient } from "@ensofinance/sdk";
-import type { EnsoToken, EnsoTokensResponse, EnsoRouteResponse, EnsoBundleAction, EnsoBundleResponse } from "@/types/enso";
+import type { EnsoToken, EnsoTokensResponse, EnsoRouteResponse, EnsoBundleAction, EnsoBundleResponse, RouteInfo, RouteStep, CustomBundleResponse, Hop } from "@/types/enso";
 import { TOKENS, VAULTS, VAULT_ADDRESSES, isYldfiVault as checkIsYldfiVault } from "@/config/vaults";
 import { PUBLIC_RPC_URLS } from "@/config/rpc";
 
@@ -11,6 +11,8 @@ import { PUBLIC_RPC_URLS } from "@/config/rpc";
 import {
   getCurveGetDy,
   getCurveGetDyFactory,
+  getEthToCvxEstimate,
+  getStableSwapParams,
   previewRedeem,
   batchRpcCalls,
   getPoolParams,
@@ -25,10 +27,12 @@ import {
   N_COINS as STABLESWAP_N_COINS,
   A_PRECISION as STABLESWAP_A_PRECISION,
   FEE_DENOMINATOR as STABLESWAP_FEE_DENOMINATOR,
-  // CryptoSwap math
+  // CryptoSwap helpers + math
   cryptoswap,
+  getCryptoSwapParams,
+  findCryptoSwapPegPoint,
 } from "@/lib/curve";
-import type { CryptoSwapParams as TwocryptoParams } from "@yldfi/curve-amm-math";
+import type { TwocryptoParams } from "@yldfi/curve-amm-math";
 
 // Destructure stableswap functions for existing usage
 const stableswapGetD = stableswap.getD;
@@ -57,86 +61,6 @@ export const ENSO_ROUTER_EXECUTOR = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf"
 
 // yld_fi referral code for Enso attribution
 export const ENSO_REFERRAL_CODE = "yldfi";
-
-// ============================================
-// Pool Params Cache (for optimal route calculation)
-// ============================================
-
-// Cache for pool params (valid for 12 seconds to avoid redundant calls)
-let poolParamsCache: {
-  poolAddress: string;
-  data: { balances: [bigint, bigint]; A: bigint; Ann: bigint; fee: bigint; offpegFeeMultiplier: bigint };
-  timestamp: number;
-} | null = null;
-const POOL_PARAMS_CACHE_TTL = 12 * 1000; // 12 seconds (matches quote refresh interval)
-
-/**
- * Fetch StableSwapNG pool parameters in a single multicall
- * Returns balances, A, fee, and offpeg_fee_multiplier
- * Results are cached for 12 seconds to avoid redundant calls
- */
-async function getCurvePoolParams(poolAddress: string): Promise<{
-  balances: [bigint, bigint];
-  A: bigint;
-  Ann: bigint;
-  fee: bigint;
-  offpegFeeMultiplier: bigint;
-}> {
-  // Check cache
-  const now = Date.now();
-  if (poolParamsCache &&
-      poolParamsCache.poolAddress === poolAddress &&
-      now - poolParamsCache.timestamp < POOL_PARAMS_CACHE_TTL) {
-    return poolParamsCache.data;
-  }
-
-  // Encode all calls
-  const balances0Data = "0x4903b0d10000000000000000000000000000000000000000000000000000000000000000";
-  const balances1Data = "0x4903b0d10000000000000000000000000000000000000000000000000000000000000001";
-  const aData = "0xf446c1d0"; // A()
-  const feeData = "0xddca3f43"; // fee()
-  const offpegData = "0x8edfdd5f"; // offpeg_fee_multiplier()
-
-  // Batch RPC call
-  const batch = [
-    { jsonrpc: "2.0", id: 0, method: "eth_call", params: [{ to: poolAddress, data: balances0Data }, "latest"] },
-    { jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: poolAddress, data: balances1Data }, "latest"] },
-    { jsonrpc: "2.0", id: 2, method: "eth_call", params: [{ to: poolAddress, data: aData }, "latest"] },
-    { jsonrpc: "2.0", id: 3, method: "eth_call", params: [{ to: poolAddress, data: feeData }, "latest"] },
-    { jsonrpc: "2.0", id: 4, method: "eth_call", params: [{ to: poolAddress, data: offpegData }, "latest"] },
-  ];
-
-  const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(batch),
-  });
-
-  const results = (await response.json()) as Array<{ id: number; result?: string }>;
-  results.sort((a, b) => a.id - b.id);
-
-  const balance0 = BigInt(results[0].result || "0");
-  const balance1 = BigInt(results[1].result || "0");
-  const A = BigInt(results[2].result || "0");
-  const fee = BigInt(results[3].result || "0");
-  const offpegFeeMultiplier = BigInt(results[4].result || "0");
-
-  // Compute Ann = A * A_PRECISION * N_COINS for backward compatibility
-  const Ann = A * STABLESWAP_A_PRECISION * STABLESWAP_N_COINS;
-
-  const data = {
-    balances: [balance0, balance1] as [bigint, bigint],
-    A,
-    Ann,
-    fee,
-    offpegFeeMultiplier,
-  };
-
-  // Update cache
-  poolParamsCache = { poolAddress, data, timestamp: now };
-
-  return data;
-}
 
 // Custom tokens not in Uniswap list (Convex ecosystem + yld_fi vaults)
 export const CUSTOM_TOKENS: EnsoToken[] = [
@@ -193,6 +117,43 @@ export const POPULAR_TOKENS = [
   "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E", // crvUSD
   ...Object.values(VAULT_ADDRESSES), // yld_fi vaults
 ];
+
+// Additional token symbols for route display
+const TOKEN_SYMBOLS: Record<string, string> = {
+  [ETH_ADDRESS.toLowerCase()]: "ETH",
+  [TOKENS.CVX.toLowerCase()]: "CVX",
+  [TOKENS.CVXCRV.toLowerCase()]: "cvxCRV",
+  [TOKENS.CVX1.toLowerCase()]: "CVX1",
+  [TOKENS.CVGCVX.toLowerCase()]: "cvgCVX",
+  [TOKENS.PXCVX.toLowerCase()]: "pxCVX",
+  "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "USDC",
+  "0xdac17f958d2ee523a2206206994597c13d831ec7": "USDT",
+  "0x6b175474e89094c44da98b954eedcdecb5be4dBf": "DAI",
+  "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": "WETH",
+  "0xd533a949740bb3306d119cc777fa900ba034cd52": "CRV",
+};
+
+/**
+ * Get token symbol by address
+ * Looks up in CUSTOM_TOKENS, TOKEN_SYMBOLS, and VAULTS
+ */
+export function getTokenSymbol(address: string): string {
+  const lower = address.toLowerCase();
+
+  // Check custom tokens first
+  const customToken = CUSTOM_TOKENS.find(t => t.address.toLowerCase() === lower);
+  if (customToken) return customToken.symbol;
+
+  // Check additional symbols
+  if (TOKEN_SYMBOLS[lower]) return TOKEN_SYMBOLS[lower];
+
+  // Check vaults
+  const vault = Object.values(VAULTS).find(v => v.address.toLowerCase() === lower);
+  if (vault) return vault.symbol;
+
+  // Fallback to shortened address
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
 
 /**
  * Fetch token list from Enso API with metadata using SDK
@@ -488,6 +449,7 @@ export async function fetchBundle(params: {
     amountsOut: Object.fromEntries(
       Object.entries(bundleData.amountsOut).map(([k, v]) => [k, String(v)])
     ),
+    route: bundleData.route,  // Pass through route steps from SDK
     priceImpact: bundleData.priceImpact,
   };
 }
@@ -761,11 +723,16 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
   amountIn: string;
   sourceUnderlyingToken: string;
   slippage: string;
-}): Promise<EnsoBundleResponse> {
+}): Promise<CustomBundleResponse> {
   const { TANGENT } = await import("@/config/vaults");
 
   // Validate slippage parameter
   const slippageBps = validateSlippage(params.slippage);
+
+  // Get symbols for route info
+  const sourceVaultSymbol = getTokenSymbol(params.sourceVault);
+  const targetVaultSymbol = getTokenSymbol(params.targetVault);
+  const sourceUnderlyingSymbol = getTokenSymbol(params.sourceUnderlyingToken);
 
   // Estimate underlying amount from vault redeem
   const estimatedUnderlying = await previewRedeem(params.sourceVault, params.amountIn);
@@ -795,6 +762,15 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
   if (expectedCvgCvx === null || expectedCvgCvx === 0n) {
     throw new Error("Failed to estimate Curve CVX1→cvgCVX swap output for slippage protection");
   }
+
+  // Calculate swap bonus: (output / input - 1) * 100
+  // CVX wraps 1:1 to CVX1, so compare cvgCVX output to CVX input
+  const swapBonus = (Number(expectedCvgCvx) / Number(conservativeCvx) - 1) * 100;
+
+  // Calculate bonus amount in tokens (cvgCVX received - CVX input)
+  // Positive = extra tokens from swap, Negative = fewer tokens than 1:1 mint
+  const bonusAmountWei = expectedCvgCvx - conservativeCvx;
+  const bonusAmountFormatted = (Number(bonusAmountWei) / 1e18).toFixed(4);
 
   // Calculate min_dy with slippage tolerance
   const minDyCvgCvx = calculateMinDy(expectedCvgCvx, slippageBps);
@@ -876,11 +852,34 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
     },
   ];
 
-  return fetchBundle({
+  const bundle = await fetchBundle({
     fromAddress: params.fromAddress,
     actions,
     routingStrategy: "router",
   });
+
+  // Build route info showing the actual path
+  const routeInfo: RouteInfo = {
+    steps: [
+      { tokenSymbol: sourceVaultSymbol, action: "Redeem", description: `${sourceVaultSymbol} for ${sourceUnderlyingSymbol}`, protocol: "yld_fi" },
+      { tokenSymbol: sourceUnderlyingSymbol, action: "Swap", description: `${sourceUnderlyingSymbol} for CVX`, protocol: "Enso" },
+      { tokenSymbol: "CVX", action: "Swap", description: "CVX for cvgCVX", protocol: "Curve", bonus: swapBonus, bonusAmount: bonusAmountFormatted, bonusSymbol: "cvgCVX" },
+      { tokenSymbol: "cvgCVX", action: "Deposit", description: `cvgCVX into ${targetVaultSymbol} vault`, protocol: "yld_fi" },
+      { tokenSymbol: targetVaultSymbol, action: "Receive", description: "vault shares", protocol: "yld_fi" },
+    ],
+    tokens: [sourceVaultSymbol, sourceUnderlyingSymbol, "CVX", "cvgCVX", targetVaultSymbol],
+    protocols: ["yld_fi", "Enso", "Curve", "yld_fi"],
+    // 100% swap (no mint) - show swap bonus
+    hybrid: {
+      swapAmount: conservativeCvx.toString(),
+      mintAmount: "0",
+      swapBonus,
+      swapProtocol: "Curve",
+      mintProtocol: "Convex",
+    },
+  };
+
+  return { ...bundle, routeInfo };
 }
 
 /**
@@ -1689,7 +1688,7 @@ export async function findMaxSwapBeforePeg(): Promise<bigint> {
   const { TANGENT } = await import("@/config/vaults");
 
   // RPC call 1: Get all pool parameters
-  const { balances, Ann, fee, offpegFeeMultiplier } = await getCurvePoolParams(TANGENT.CVX1_CVGCVX_POOL);
+  const { balances, Ann, fee, offpegFeeMultiplier } = await getStableSwapParams(TANGENT.CVX1_CVGCVX_POOL);
 
   // Find peg point using off-chain math (local computation, ~0ms)
   let pegPoint = findPegPointOffchain(balances, Ann, fee, offpegFeeMultiplier);
@@ -1773,6 +1772,204 @@ export async function getOptimalCvgCvxRoute(cvxAmount: string): Promise<"swap" |
 }
 
 /**
+ * Build route steps for cvgCVX zap in
+ */
+interface CvgCvxStepAmounts {
+  inputAmount?: string;      // Input token amount (formatted)
+  cvxAmount?: string;        // Total CVX amount after first swap (formatted)
+  swapCvxAmount?: string;    // CVX amount going to swap (formatted, for hybrid)
+  mintCvxAmount?: string;    // CVX amount going to mint (formatted, for hybrid)
+  cvgCvxAmount?: string;     // cvgCVX amount after Curve swap (formatted)
+  vaultSharesAmount?: string; // Vault shares received (formatted)
+}
+
+function buildCvgCvxZapInSteps(
+  inputSymbol: string,
+  vaultSymbol: string,
+  inputIsCvx: boolean,
+  swapAmount: bigint,
+  mintAmount: bigint,
+  swapBonus: number,
+  bonusAmount?: string,
+  amounts?: CvgCvxStepAmounts
+): RouteStep[] {
+  const steps: RouteStep[] = [];
+
+  // Step 1: Route input to CVX (if not already CVX)
+  if (!inputIsCvx && inputSymbol !== "cvgCVX") {
+    steps.push({
+      tokenSymbol: inputSymbol,
+      action: "Swap",
+      description: `${inputSymbol} for CVX`,
+      protocol: "Enso",
+      amount: amounts?.inputAmount,
+    });
+  }
+
+  // Step 2: Swap and/or Mint
+  if (swapAmount > 0n && mintAmount > 0n) {
+    // Hybrid: both swap and mint - show separate amounts
+    steps.push({
+      tokenSymbol: "CVX",
+      action: "Swap",
+      description: "CVX for cvgCVX",
+      protocol: "Curve",
+      amount: amounts?.swapCvxAmount,
+      bonus: swapBonus,
+      bonusAmount,
+      bonusSymbol: "cvgCVX",
+    });
+    steps.push({
+      tokenSymbol: "CVX",
+      action: "Mint",
+      description: "cvgCVX with CVX",
+      protocol: "Convex",
+      amount: amounts?.mintCvxAmount,
+    });
+  } else if (swapAmount > 0n) {
+    // 100% swap
+    steps.push({
+      tokenSymbol: "CVX",
+      action: "Swap",
+      description: "CVX for cvgCVX",
+      protocol: "Curve",
+      amount: amounts?.cvxAmount,
+      bonus: swapBonus,
+      bonusAmount,
+      bonusSymbol: "cvgCVX",
+    });
+  } else {
+    // 100% mint
+    steps.push({
+      tokenSymbol: "CVX",
+      action: "Mint",
+      description: "cvgCVX with CVX",
+      protocol: "Convex",
+      amount: amounts?.cvxAmount,
+    });
+  }
+
+  // Step 3: Deposit into vault
+  steps.push({
+    tokenSymbol: "cvgCVX",
+    action: "Deposit",
+    description: `cvgCVX into ${vaultSymbol}`,
+    protocol: "yld_fi",
+    amount: amounts?.cvgCvxAmount,
+  });
+
+  // Step 4: Receive vault shares
+  steps.push({
+    tokenSymbol: vaultSymbol,
+    action: "Receive",
+    description: "vault shares",
+    protocol: "yld_fi",
+    amount: amounts?.vaultSharesAmount,
+  });
+
+  return steps;
+}
+
+/**
+ * Build route steps for pxCVX zap in
+ */
+interface PxCvxStepAmounts {
+  inputAmount?: string;      // Input token amount (formatted)
+  cvxAmount?: string;        // Total CVX amount after first swap (formatted)
+  swapCvxAmount?: string;    // CVX amount going to swap (formatted, for hybrid)
+  mintCvxAmount?: string;    // CVX amount going to mint (formatted, for hybrid)
+  pxCvxAmount?: string;      // pxCVX amount after Curve swap (formatted)
+  vaultSharesAmount?: string; // Vault shares received (formatted)
+}
+
+function buildPxCvxZapInSteps(
+  inputSymbol: string,
+  vaultSymbol: string,
+  inputIsCvx: boolean,
+  swapAmount: bigint,
+  mintAmount: bigint,
+  swapBonus: number,
+  bonusAmount?: string,
+  amounts?: PxCvxStepAmounts
+): RouteStep[] {
+  const steps: RouteStep[] = [];
+
+  // Step 1: Route input to CVX (if not already CVX)
+  if (!inputIsCvx && inputSymbol !== "pxCVX") {
+    steps.push({
+      tokenSymbol: inputSymbol,
+      action: "Swap",
+      description: `${inputSymbol} for CVX`,
+      protocol: "Enso",
+      amount: amounts?.inputAmount,
+    });
+  }
+
+  // Step 2: Swap and/or Mint
+  if (swapAmount > 0n && mintAmount > 0n) {
+    // Hybrid: both swap and mint - show separate amounts
+    steps.push({
+      tokenSymbol: "CVX",
+      action: "Swap",
+      description: "CVX for pxCVX",
+      protocol: "Curve",
+      amount: amounts?.swapCvxAmount,
+      bonus: swapBonus,
+      bonusAmount,
+      bonusSymbol: "pxCVX",
+    });
+    steps.push({
+      tokenSymbol: "CVX",
+      action: "Mint",
+      description: "pxCVX with CVX",
+      protocol: "Pirex",
+      amount: amounts?.mintCvxAmount,
+    });
+  } else if (swapAmount > 0n) {
+    // 100% swap
+    steps.push({
+      tokenSymbol: "CVX",
+      action: "Swap",
+      description: "CVX for pxCVX",
+      protocol: "Curve",
+      amount: amounts?.cvxAmount,
+      bonus: swapBonus,
+      bonusAmount,
+      bonusSymbol: "pxCVX",
+    });
+  } else {
+    // 100% mint
+    steps.push({
+      tokenSymbol: "CVX",
+      action: "Mint",
+      description: "pxCVX with CVX",
+      protocol: "Pirex",
+      amount: amounts?.cvxAmount,
+    });
+  }
+
+  // Step 3: Deposit into vault
+  steps.push({
+    tokenSymbol: "pxCVX",
+    action: "Deposit",
+    description: `pxCVX into ${vaultSymbol}`,
+    protocol: "yld_fi",
+    amount: amounts?.pxCvxAmount,
+  });
+
+  // Step 4: Receive vault shares
+  steps.push({
+    tokenSymbol: vaultSymbol,
+    action: "Receive",
+    description: "vault shares",
+    protocol: "yld_fi",
+    amount: amounts?.vaultSharesAmount,
+  });
+
+  return steps;
+}
+
+/**
  * Create a custom Zap In route for cvgCVX via Tangent infrastructure
  * Uses hybrid swap/mint strategy for optimal cvgCVX acquisition:
  *
@@ -1790,9 +1987,11 @@ export async function fetchCvgCvxZapInRoute(params: {
   inputToken: string;
   amountIn: string;
   slippage?: string;
-}): Promise<EnsoBundleResponse> {
+}): Promise<CustomBundleResponse> {
   const { TANGENT } = await import("@/config/vaults");
   const slippageBps = parseInt(params.slippage ?? "100", 10);
+  const vaultSymbol = getTokenSymbol(params.vaultAddress);
+  const inputSymbol = getTokenSymbol(params.inputToken);
 
   // Check if input is already cvgCVX (vault's underlying) - just deposit directly
   const inputIsCvgCvx = params.inputToken.toLowerCase() === TOKENS.CVGCVX.toLowerCase();
@@ -1818,23 +2017,44 @@ export async function fetchCvgCvxZapInRoute(params: {
       },
     ];
 
-    return fetchBundle({
+    const bundle = await fetchBundle({
       fromAddress: params.fromAddress,
       actions,
       routingStrategy: "router",
     });
+
+    return {
+      ...bundle,
+      routeInfo: {
+        steps: [
+          { tokenSymbol: "cvgCVX", action: "Deposit", description: "cvgCVX into vault", protocol: "yld_fi" },
+          { tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld_fi" },
+        ],
+        tokens: ["cvgCVX", vaultSymbol],
+        protocols: ["yld_fi"],
+      },
+    };
   }
 
   // Check if input is already CVX - skip initial route step
   const inputIsCvx = params.inputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
+  const inputIsEth = params.inputToken.toLowerCase() === "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
-  // Step 1: Get CVX amount (either from route or directly if input is CVX)
+  // Step 1: Estimate CVX amount for optimal split calculation
+  // For ETH: use cached rate or fallback estimate (avoids extra API call)
+  // For CVX: use amount directly
+  // For other tokens: still need route call (but could extend cache)
   let expectedCvxOutput: string;
   if (inputIsCvx) {
     // Input is already CVX, use amount directly
     expectedCvxOutput = params.amountIn;
+  } else if (inputIsEth) {
+    // Use on-chain Curve pool pricing (RPC call, not Enso API)
+    // This avoids Enso rate limits while getting accurate real-time price
+    expectedCvxOutput = await getEthToCvxEstimate(params.amountIn);
   } else {
-    // Get quote for input → CVX
+    // For other tokens, we still need a route call
+    // TODO: Could extend caching for common pairs
     const routeQuote = await fetchRoute({
       fromAddress: params.fromAddress,
       tokenIn: params.inputToken,
@@ -1843,22 +2063,126 @@ export async function fetchCvgCvxZapInRoute(params: {
       slippage: params.slippage,
     });
     expectedCvxOutput = routeQuote.amountOut;
+
+    // Rate limit: Enso API allows 1 request/second
+    // Wait before the next API call (fetchBundle in build*Bundle)
+    await new Promise(resolve => setTimeout(resolve, 1100));
   }
 
   // Step 2: Calculate optimal split between swap and mint
   const { swapAmount, mintAmount } = await getOptimalSwapAmount(expectedCvxOutput);
 
+  // Build token path - skip CVX if input is already CVX
+  const tokenPath = inputIsCvx
+    ? ["CVX", "cvgCVX", vaultSymbol]
+    : [inputSymbol, "CVX", "cvgCVX", vaultSymbol];
+
   // Step 3: Build bundle based on optimal strategy
+  // Note: Hybrid bundles (swap + mint split) fail with Enso's simulator because it can't handle
+  // splitting an output into two paths. For amounts requiring hybrid, fall back to mint-only (safe 1:1).
+  let bundle: EnsoBundleResponse;
+  let swapBonus = 0;
+  const actualSwapAmount = swapAmount;
+  const actualMintAmount = mintAmount;
+
+  let bonusAmount: string | undefined;
+  let expectedCvgCvxOutput = "0";
+
   if (mintAmount === 0n) {
     // 100% swap through Curve pool (pool is above peg, get bonus)
-    return buildSwapOnlyBundle(params, TANGENT, expectedCvxOutput, slippageBps, inputIsCvx);
+    bundle = await buildSwapOnlyBundle(params, TANGENT, expectedCvxOutput, slippageBps, inputIsCvx);
+
+    // Calculate swap bonus and bonus amount
+    const swapOutput = await getCvgCvxSwapRate(expectedCvxOutput);
+    if (swapOutput) {
+      expectedCvgCvxOutput = swapOutput.toString();
+      swapBonus = (Number(swapOutput) / Number(expectedCvxOutput) - 1) * 100;
+      // Bonus amount = cvgCVX received - CVX input (what you gain vs 1:1 mint)
+      const bonusAmountWei = BigInt(swapOutput) - BigInt(expectedCvxOutput);
+      bonusAmount = (Number(bonusAmountWei) / 1e18).toFixed(4);
+    }
   } else if (swapAmount === 0n) {
     // 100% direct mint (pool is below peg, mint at 1:1)
-    return buildMintOnlyBundle(params, TANGENT, expectedCvxOutput, slippageBps, inputIsCvx);
+    bundle = await buildMintOnlyBundle(params, TANGENT, expectedCvxOutput, slippageBps, inputIsCvx);
+    swapBonus = 0;
+    expectedCvgCvxOutput = expectedCvxOutput; // 1:1 mint
+    // No bonus for mint-only
   } else {
-    // Hybrid: swap some, mint the rest
-    return buildHybridBundle(params, TANGENT, swapAmount, mintAmount, slippageBps, inputIsCvx);
+    // Hybrid path: split input between swap and mint paths
+    // Uses split routing strategy to avoid Enso's output-splitting limitation
+    bundle = await buildHybridBundle(params, TANGENT, swapAmount, mintAmount, slippageBps, inputIsCvx);
+
+    // Calculate swap bonus for display (swap path gets the bonus)
+    const conservativeSwapAmount = (swapAmount * 99n) / 100n;
+    const swapOutput = await getCvgCvxSwapRate(conservativeSwapAmount.toString());
+    if (swapOutput) {
+      swapBonus = (Number(swapOutput) / Number(conservativeSwapAmount) - 1) * 100;
+      // Bonus amount = cvgCVX received from swap - CVX swapped (gain on swap portion)
+      const bonusAmountWei = BigInt(swapOutput) - conservativeSwapAmount;
+      bonusAmount = (Number(bonusAmountWei) / 1e18).toFixed(4);
+      // Total cvgCVX = swap output + mint amount (1:1)
+      expectedCvgCvxOutput = (BigInt(swapOutput) + mintAmount).toString();
+    } else {
+      expectedCvgCvxOutput = (swapAmount + mintAmount).toString();
+    }
   }
+
+  // Calculate expected vault shares using previewDeposit
+  // (raw call doesn't track outputs, so we calculate manually)
+  let expectedShares: string | undefined;
+  try {
+    const previewDepositSelector = "0xef8b30f7"; // previewDeposit(uint256)
+    const previewData = previewDepositSelector + BigInt(expectedCvgCvxOutput).toString(16).padStart(64, "0");
+    const previewResponse = await fetch(PUBLIC_RPC_URLS.llamarpc, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "eth_call",
+        params: [{ to: params.vaultAddress, data: previewData }, "latest"],
+      }),
+    });
+    const previewResult = await previewResponse.json() as { result?: string };
+    if (previewResult.result && previewResult.result !== "0x") {
+      expectedShares = BigInt(previewResult.result).toString();
+      bundle.amountsOut = {
+        ...bundle.amountsOut,
+        [params.vaultAddress.toLowerCase()]: expectedShares,
+      };
+    }
+  } catch {
+    // Ignore preview errors - amountsOut will just be empty
+  }
+
+  // Format amounts for display
+  const formatWei = (wei: string | bigint) => (Number(wei) / 1e18).toFixed(4);
+  const stepAmounts: CvgCvxStepAmounts = {
+    inputAmount: formatWei(params.amountIn),
+    cvxAmount: formatWei(expectedCvxOutput),
+    swapCvxAmount: actualSwapAmount > 0n ? formatWei(actualSwapAmount) : undefined,
+    mintCvxAmount: actualMintAmount > 0n ? formatWei(actualMintAmount) : undefined,
+    cvgCvxAmount: formatWei(expectedCvgCvxOutput),
+    vaultSharesAmount: expectedShares ? formatWei(expectedShares) : undefined,
+  };
+
+  // Build route info with steps (use actual amounts after fallback logic)
+  const routeInfo: RouteInfo = {
+    steps: buildCvgCvxZapInSteps(inputSymbol, vaultSymbol, inputIsCvx, actualSwapAmount, actualMintAmount, swapBonus, bonusAmount, stepAmounts),
+    tokens: tokenPath,
+    protocols: inputIsCvx
+      ? (actualMintAmount === 0n ? ["Curve", "yld_fi"] : actualSwapAmount === 0n ? ["Convex", "yld_fi"] : ["Curve", "Convex", "yld_fi"])
+      : (actualMintAmount === 0n ? ["Enso", "Curve", "yld_fi"] : actualSwapAmount === 0n ? ["Enso", "Convex", "yld_fi"] : ["Enso", "Curve", "Convex", "yld_fi"]),
+    hybrid: {
+      swapAmount: actualSwapAmount.toString(),
+      mintAmount: actualMintAmount.toString(),
+      swapBonus,
+      swapProtocol: "Curve",
+      mintProtocol: "Convex",
+    },
+  };
+
+  return { ...bundle, routeInfo };
 }
 
 /**
@@ -2142,11 +2466,19 @@ async function buildMintOnlyBundle(
 
 /**
  * Build bundle for hybrid path (swap some, mint the rest)
- * Route: input → CVX → [split: CVX1→swap + direct mint] → cvgCVX → vault
- * When inputIsCvx=true: CVX → [split: CVX1→swap + direct mint] → cvgCVX → vault (skips initial route)
  *
- * This is complex because Enso bundles don't support amount splitting.
- * We use pre-calculated literal amounts based on expected CVX output.
+ * Strategy: Split at the INPUT level, not after CVX routing.
+ * This avoids Enso's simulator issue where literal amounts derived from a prior action's
+ * output fail validation.
+ *
+ * For inputIsCvx=true:
+ *   CVX → [split: CVX1→swap + direct mint] → cvgCVX → vault
+ *   Uses literal amounts since we know exactly how much CVX we have.
+ *
+ * For inputIsCvx=false:
+ *   Route swapInput → CVX → CVX1 → swap → cvgCVX → vault (deposit 1)
+ *   Route mintInput → CVX → mint → cvgCVX → vault (deposit 2)
+ *   All downstream amounts use useOutputOfCallAt references.
  */
 async function buildHybridBundle(
   params: { fromAddress: string; vaultAddress: string; inputToken: string; amountIn: string; slippage?: string },
@@ -2156,20 +2488,22 @@ async function buildHybridBundle(
   slippageBps: number,
   inputIsCvx: boolean
 ): Promise<EnsoBundleResponse> {
-  // Calculate expected outputs for each path
+  // Calculate min_dy for swap path (using estimated swap amount)
+  // Apply 1% buffer for upstream slippage
+  const conservativeSwapAmount = (swapAmount * 99n) / 100n;
   const expectedSwapOutput = await getCurveGetDy(
     TANGENT.CVX1_CVGCVX_POOL,
-    0, 1, swapAmount.toString()
+    0, 1, conservativeSwapAmount.toString()
   );
   const minSwapDy = expectedSwapOutput
     ? calculateMinDy(expectedSwapOutput, slippageBps)
     : "0";
 
-  // Total expected cvgCVX = swap output + mint amount (1:1)
-  const totalExpectedCvgCvx = (expectedSwapOutput ?? swapAmount) + mintAmount;
-
   if (inputIsCvx) {
-    // Input is already CVX - skip the route step, use literal amounts directly
+    // Input is already CVX - use literal amounts directly (no route to split)
+    // Total expected cvgCVX = swap output + mint amount (1:1)
+    const totalExpectedCvgCvx = (expectedSwapOutput ?? swapAmount) + mintAmount;
+
     const actions: EnsoBundleAction[] = [
       // === SWAP PATH (swapAmount CVX → CVX1 → cvgCVX via Curve) ===
 
@@ -2256,9 +2590,17 @@ async function buildHybridBundle(
     });
   }
 
-  // Standard path: route input → CVX first
+  // === NON-CVX INPUT: Route full input → CVX, then split CVX ===
+  // This approach follows the working pxCVX pattern:
+  // 1. Single route action for the full input
+  // 2. Split the resulting CVX between swap and mint paths using literal amounts
+  // This avoids the Enso shortcut builder issues with split input routing.
+
+  // Total expected cvgCVX = swap output + mint amount (1:1)
+  const totalExpectedCvgCvx = (expectedSwapOutput ?? swapAmount) + mintAmount;
+
   const actions: EnsoBundleAction[] = [
-    // Action 0: Swap input → CVX
+    // Action 0: Route full input → CVX (single route)
     {
       protocol: "enso",
       action: "route",
@@ -2270,7 +2612,7 @@ async function buildHybridBundle(
       },
     },
 
-    // === SWAP PATH (swapAmount CVX → CVX1 → cvgCVX via Curve) ===
+    // === SWAP PATH (uses pre-calculated swapAmount) ===
 
     // Action 1: Approve swapAmount CVX → CVX1
     {
@@ -2295,7 +2637,7 @@ async function buildHybridBundle(
       action: "approve",
       args: { token: TOKENS.CVX1, spender: TANGENT.CVX1_CVGCVX_POOL, amount: swapAmount.toString() },
     },
-    // Action 4: Swap CVX1 → cvgCVX via Curve
+    // Action 4: Swap CVX1 → cvgCVX via Curve (returns cvgCVX amount)
     {
       protocol: "enso",
       action: "call",
@@ -2307,7 +2649,7 @@ async function buildHybridBundle(
       },
     },
 
-    // === MINT PATH (mintAmount CVX → cvgCVX directly) ===
+    // === MINT PATH (uses pre-calculated mintAmount) ===
 
     // Action 5: Approve mintAmount CVX → cvgCVX contract
     {
@@ -2330,14 +2672,13 @@ async function buildHybridBundle(
     // === DEPOSIT ALL cvgCVX TO VAULT ===
 
     // Action 7: Approve all cvgCVX → vault
-    // Use total expected (swap output + mint output)
     {
       protocol: "erc20",
       action: "approve",
       args: { token: TOKENS.CVGCVX, spender: params.vaultAddress, amount: totalExpectedCvgCvx.toString() },
     },
     // Action 8: Deposit all cvgCVX → vault
-    // Note: We use totalExpectedCvgCvx as a maximum, actual deposit will use user's balance
+    // Use erc4626 action so amountsOut tracks the vault shares
     {
       protocol: "erc4626",
       action: "deposit",
@@ -2692,62 +3033,74 @@ export async function fetchPxCvxZapOutRoute(params: {
  * Get the Curve CryptoSwap pool swap rate for CVX → lpxCVX
  * Returns the amount of lpxCVX you'd get for a given amount of CVX
  *
- * Note: This pool uses uint256 indices (not int128 like StableSwap pools)
- * get_dy(uint256,uint256,uint256) selector: 0x556d6e9f
+ * Uses off-chain math with cached pool parameters for reliability.
+ * Falls back to on-chain RPC call if off-chain calculation fails.
  */
 export async function getPxCvxSwapRate(amountIn: string): Promise<bigint> {
   const { PIREX } = await import("@/config/vaults");
 
-  // get_dy(uint256 i, uint256 j, uint256 dx) - CVX (0) → lpxCVX (1)
-  const selector = "0x556d6e9f";
-  const i = "0".padStart(64, "0"); // CVX index
-  const j = "1".padStart(64, "0"); // lpxCVX index
-  const dx = BigInt(amountIn).toString(16).padStart(64, "0");
+  try {
+    // Use cached pool params + off-chain math (more reliable, no RPC rate limits)
+    const params = await getCryptoSwapParams(PIREX.LPXCVX_CVX_POOL);
+    return cryptoswap.getDy(params, 0, 1, BigInt(amountIn)); // CVX (0) → lpxCVX (1)
+  } catch {
+    // Fallback to on-chain RPC call
+    const selector = "0x556d6e9f"; // get_dy(uint256,uint256,uint256)
+    const i = "0".padStart(64, "0"); // CVX index
+    const j = "1".padStart(64, "0"); // lpxCVX index
+    const dx = BigInt(amountIn).toString(16).padStart(64, "0");
 
-  const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      method: "eth_call",
-      params: [{ to: PIREX.LPXCVX_CVX_POOL, data: selector + i + j + dx }, "latest"],
-      id: 1,
-    }),
-  });
+    const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "eth_call",
+        params: [{ to: PIREX.LPXCVX_CVX_POOL, data: selector + i + j + dx }, "latest"],
+        id: 1,
+      }),
+    });
 
-  const result = (await response.json()) as { result?: string };
-  return BigInt(result.result || "0");
+    const result = (await response.json()) as { result?: string };
+    return BigInt(result.result || "0");
+  }
 }
 
 /**
  * Get expected CVX output for lpxCVX → CVX swap on Curve CryptoSwap pool
  * This is the reverse direction of getPxCvxSwapRate (for zap out)
  *
- * Note: This pool uses uint256 indices (not int128 like StableSwap pools)
- * get_dy(uint256,uint256,uint256) selector: 0x556d6e9f
+ * Uses off-chain math with cached pool parameters for reliability.
+ * Falls back to on-chain RPC call if off-chain calculation fails.
  */
 async function getLpxCvxToCvxSwapRate(amountIn: string): Promise<bigint> {
   const { PIREX } = await import("@/config/vaults");
 
-  // get_dy(uint256 i, uint256 j, uint256 dx) - lpxCVX (1) → CVX (0)
-  const selector = "0x556d6e9f";
-  const i = "1".padStart(64, "0"); // lpxCVX index
-  const j = "0".padStart(64, "0"); // CVX index
-  const dx = BigInt(amountIn).toString(16).padStart(64, "0");
+  try {
+    // Use cached pool params + off-chain math (more reliable, no RPC rate limits)
+    const params = await getCryptoSwapParams(PIREX.LPXCVX_CVX_POOL);
+    return cryptoswap.getDy(params, 1, 0, BigInt(amountIn)); // lpxCVX (1) → CVX (0)
+  } catch {
+    // Fallback to on-chain RPC call
+    const selector = "0x556d6e9f"; // get_dy(uint256,uint256,uint256)
+    const i = "1".padStart(64, "0"); // lpxCVX index
+    const j = "0".padStart(64, "0"); // CVX index
+    const dx = BigInt(amountIn).toString(16).padStart(64, "0");
 
-  const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      method: "eth_call",
-      params: [{ to: PIREX.LPXCVX_CVX_POOL, data: selector + i + j + dx }, "latest"],
-      id: 1,
-    }),
-  });
+    const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "eth_call",
+        params: [{ to: PIREX.LPXCVX_CVX_POOL, data: selector + i + j + dx }, "latest"],
+        id: 1,
+      }),
+    });
 
-  const result = (await response.json()) as { result?: string };
-  return BigInt(result.result || "0");
+    const result = (await response.json()) as { result?: string };
+    return BigInt(result.result || "0");
+  }
 }
 
 /**
@@ -2780,65 +3133,12 @@ export async function getPxCvxPoolBalances(): Promise<{ cvxBalance: bigint; lpxC
 
 // ============================================================================
 // CryptoSwap Off-Chain Math (for pxCVX pool)
-// Uses @yldfi/curve-amm-math for calculations
+// Uses @yldfi/curve-amm-math via @/lib/curve for calculations
 // ============================================================================
 
-// Local interface extending TwocryptoParams with backwards-compat fee field
-interface CryptoSwapParams extends TwocryptoParams {
-  fee: bigint; // Current dynamic fee (kept for backwards compat)
-}
-
-/**
- * Fetch all CryptoSwap pool parameters in a single batch RPC call
- */
-export async function getCryptoSwapPoolParams(poolAddress: string): Promise<CryptoSwapParams> {
-  // Function selectors
-  const selectors = {
-    A: "0xf446c1d0", // A()
-    gamma: "0xb1373929", // gamma()
-    D: "0x0f529ba2", // D()
-    fee: "0xddca3f43", // fee()
-    midFee: "0x92526c0c", // mid_fee()
-    outFee: "0xee8de675", // out_fee()
-    feeGamma: "0x72d4f0e2", // fee_gamma()
-    priceScale: "0xb9e8c9fd", // price_scale()
-    balances0: "0x4903b0d10000000000000000000000000000000000000000000000000000000000000000",
-    balances1: "0x4903b0d10000000000000000000000000000000000000000000000000000000000000001",
-  };
-
-  const batch = Object.entries(selectors).map(([key, data], id) => ({
-    jsonrpc: "2.0",
-    id,
-    method: "eth_call",
-    params: [{ to: poolAddress, data }, "latest"],
-  }));
-
-  const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(batch),
-  });
-
-  const results = (await response.json()) as Array<{ id: number; result?: string }>;
-  results.sort((a, b) => a.id - b.id);
-
-  return {
-    A: BigInt(results[0].result || "0"),
-    gamma: BigInt(results[1].result || "0"),
-    D: BigInt(results[2].result || "0"),
-    fee: BigInt(results[3].result || "0"),
-    midFee: BigInt(results[4].result || "0"),
-    outFee: BigInt(results[5].result || "0"),
-    feeGamma: BigInt(results[6].result || "0"),
-    priceScale: BigInt(results[7].result || "0"),
-    balances: [BigInt(results[8].result || "0"), BigInt(results[9].result || "0")],
-  };
-}
-
-// Use cryptoswap functions from npm package
-// Wrapper that accepts our CryptoSwapParams interface
+// Use cryptoswap functions from npm package via curve lib
 export function cryptoSwapGetDy(
-  params: CryptoSwapParams,
+  params: TwocryptoParams,
   i: number,
   j: number,
   dx: bigint
@@ -2847,38 +3147,11 @@ export function cryptoSwapGetDy(
 }
 
 /**
- * Estimate peg point using pool balance heuristics
- * For CryptoSwap, the peg point is roughly where adding more CVX
- * would push the rate below 1:1
- *
- * This provides a reasonable starting point for on-chain verification
- */
-export function estimatePegPointFromBalances(params: CryptoSwapParams): bigint {
-  const cvxBalance = params.balances[0];
-  const lpxCvxBalance = params.balances[1];
-
-  // If pool has more CVX than lpxCVX, peg point is likely small or zero
-  // If pool has more lpxCVX than CVX, peg point is larger
-
-  // Rough heuristic: peg point ~ (lpxCvxBalance - cvxBalance) / 2
-  // This is just an estimate to narrow the binary search range
-  if (lpxCvxBalance > cvxBalance) {
-    // Excess lpxCVX means there's swap bonus available
-    const excess = lpxCvxBalance - cvxBalance;
-    // Start with a conservative estimate
-    return excess / 3n;
-  }
-
-  // No excess lpxCVX, likely no swap bonus
-  return 0n;
-}
-
-/**
  * Find peg point using off-chain CryptoSwap math (binary search)
  * Returns the maximum amount where swap output >= input (rate >= 1:1)
- * Uses npm package for calculations - wrapper for backwards compatibility (i=0, j=1)
+ * Wrapper for backwards compatibility (i=0, j=1)
  */
-export function findPegPointOffchainCryptoSwap(params: CryptoSwapParams): bigint {
+export function findPegPointOffchainCryptoSwap(params: TwocryptoParams): bigint {
   return cryptoswap.findPegPoint(params, 0, 1);
 }
 
@@ -2899,8 +3172,8 @@ export async function getOptimalPxCvxSwapAmount(totalCvxAmount: string): Promise
   try {
     const { PIREX } = await import("@/config/vaults");
 
-    // RPC call 1: Get all pool parameters in single batch
-    const params = await getCryptoSwapPoolParams(PIREX.LPXCVX_CVX_POOL);
+    // RPC call 1: Get all pool parameters in single batch (with caching)
+    const params = await getCryptoSwapParams(PIREX.LPXCVX_CVX_POOL);
 
     // Check swap rate for total amount using off-chain math
     const dyForTotal = cryptoSwapGetDy(params, 0, 1, totalAmount);
@@ -2963,8 +3236,10 @@ export async function fetchPxCvxZapInRoute(params: {
   inputToken: string;
   amountIn: string;
   slippage?: string;
-}): Promise<EnsoBundleResponse> {
+}): Promise<CustomBundleResponse> {
   const { PIREX } = await import("@/config/vaults");
+  const vaultSymbol = getTokenSymbol(params.vaultAddress);
+  const inputSymbol = getTokenSymbol(params.inputToken);
 
   // Check if input is already CVX
   const inputIsCvx = params.inputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
@@ -2974,19 +3249,32 @@ export async function fetchPxCvxZapInRoute(params: {
   let estimatedCvxAmount = params.amountIn;
 
   if (!inputIsCvx) {
-    // Get estimated CVX output from Enso route
-    try {
-      const routeEstimate = await fetchRoute({
-        fromAddress: params.fromAddress,
-        tokenIn: params.inputToken,
-        tokenOut: TOKENS.CVX,
-        amountIn: params.amountIn,
-        slippage: params.slippage ?? "100",
-      });
-      estimatedCvxAmount = routeEstimate.amountOut || params.amountIn;
-    } catch {
-      // Fallback: assume 1:1 for estimation
-      estimatedCvxAmount = params.amountIn;
+    // Estimate CVX output for optimal split calculation
+    const inputIsEth = params.inputToken.toLowerCase() === "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+
+    if (inputIsEth) {
+      // Use on-chain Curve pool pricing (RPC call, not Enso API)
+      // This avoids Enso rate limits while getting accurate real-time price
+      estimatedCvxAmount = await getEthToCvxEstimate(params.amountIn);
+    } else {
+      // For other tokens, we need a route call
+      try {
+        const routeEstimate = await fetchRoute({
+          fromAddress: params.fromAddress,
+          tokenIn: params.inputToken,
+          tokenOut: TOKENS.CVX,
+          amountIn: params.amountIn,
+          slippage: params.slippage ?? "100",
+        });
+        estimatedCvxAmount = routeEstimate.amountOut || params.amountIn;
+
+        // Rate limit: Enso API allows 1 request/second
+        // Wait before the next API call (fetchBundle)
+        await new Promise(resolve => setTimeout(resolve, 1100));
+      } catch {
+        // Fallback: assume 1:1 for estimation
+        estimatedCvxAmount = params.amountIn;
+      }
     }
   }
 
@@ -3103,7 +3391,7 @@ export async function fetchPxCvxZapInRoute(params: {
     });
     actionIndex++;
 
-    // Action: Deposit CVX to Pirex → pxCVX
+    // Action: Deposit CVX to Pirex → pxCVX (mint to router for subsequent vault deposit)
     // deposit(uint256 assets, address receiver, bool shouldCompound, address developer)
     actions.push({
       protocol: "enso",
@@ -3114,7 +3402,7 @@ export async function fetchPxCvxZapInRoute(params: {
         abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
         args: [
           mintAmount.toString(),
-          params.fromAddress, // receiver
+          ENSO_ROUTER_EXECUTOR, // Send to router so it can deposit into vault
           "false", // shouldCompound (boolean as string for Enso API)
           "0x0000000000000000000000000000000000000000", // developer
         ],
@@ -3195,7 +3483,7 @@ export async function fetchPxCvxZapInRoute(params: {
     });
     actionIndex++;
 
-    // Action: Deposit CVX to Pirex → pxCVX
+    // Action: Deposit CVX to Pirex → pxCVX (mint to router for subsequent vault deposit)
     actions.push({
       protocol: "enso",
       action: "call",
@@ -3205,7 +3493,7 @@ export async function fetchPxCvxZapInRoute(params: {
         abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
         args: [
           inputIsCvx ? params.amountIn : { useOutputOfCallAt: actionIndex - 2 },
-          params.fromAddress,
+          ENSO_ROUTER_EXECUTOR, // Send to router so it can deposit into vault
           "false", // shouldCompound (boolean as string for Enso API)
           "0x0000000000000000000000000000000000000000",
         ],
@@ -3214,33 +3502,21 @@ export async function fetchPxCvxZapInRoute(params: {
     actionIndex++;
   }
 
-  // Final action: Approve pxCVX to vault and deposit
-  // Use calculated total expected pxCVX amount (swap output + mint amount)
-  actions.push({
-    protocol: "erc20",
-    action: "approve",
-    args: {
-      token: PIREX.PXCVX,
-      spender: params.vaultAddress,
-      amount: totalExpectedPxCvx.toString(),
-    },
-  });
-  actionIndex++;
-
-  // Action: Deposit pxCVX into vault
+  // Final action: Deposit pxCVX into vault
+  // Use erc4626 action so amountsOut tracks the vault shares
+  // NOTE: erc4626 handles approval internally, no manual approve needed
   // NOTE: We use the pre-calculated expected pxCVX amount because:
   // - lpxCVX.unwrap() doesn't return a value
   // - PirexCVX.deposit() doesn't return a value
   // The total is: expectedSwapPxCvx (from Curve get_dy) + mintAmount (1:1)
-  // IMPORTANT: Use raw call instead of erc4626 action to avoid Enso routing conflicts
   actions.push({
-    protocol: "enso",
-    action: "call",
+    protocol: "erc4626",
+    action: "deposit",
     args: {
-      address: params.vaultAddress,
-      method: "deposit",
-      abi: "function deposit(uint256 assets, address receiver) returns (uint256)",
-      args: [totalExpectedPxCvx.toString(), params.fromAddress],
+      tokenIn: PIREX.PXCVX,
+      tokenOut: params.vaultAddress,
+      amountIn: totalExpectedPxCvx.toString(),
+      primaryAddress: params.vaultAddress,
     },
   });
 
@@ -3251,32 +3527,59 @@ export async function fetchPxCvxZapInRoute(params: {
     routingStrategy: "router",
   });
 
-  // Calculate expected vault shares using previewDeposit
-  // (raw call doesn't track outputs, so we calculate manually)
-  try {
-    const previewDepositSelector = "0xef8b30f7"; // previewDeposit(uint256)
-    const previewData = previewDepositSelector + totalExpectedPxCvx.toString(16).padStart(64, "0");
-    const previewResponse = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "eth_call",
-        params: [{ to: params.vaultAddress, data: previewData }, "latest"],
-      }),
-    });
-    const previewResult = await previewResponse.json() as { result?: string };
-    if (previewResult.result && previewResult.result !== "0x") {
-      const expectedShares = BigInt(previewResult.result).toString();
-      bundleResult.amountsOut = {
-        ...bundleResult.amountsOut,
-        [params.vaultAddress.toLowerCase()]: expectedShares,
-      };
-    }
-  } catch {
-    // Ignore preview errors - amountsOut will just be empty
+  // Get expected vault shares from erc4626 action's amountsOut
+  const expectedSharesPxCvx = bundleResult.amountsOut[params.vaultAddress.toLowerCase()];
+
+  // Build routeInfo for the display
+  const tokenPath = inputIsCvx
+    ? ["CVX", "pxCVX", vaultSymbol]
+    : [inputSymbol, "CVX", "pxCVX", vaultSymbol];
+
+  // Calculate swap bonus if swap was used
+  let swapBonus = 0;
+  let bonusAmount: string | undefined;
+  if (swapAmount > 0n && expectedSwapPxCvx > 0n) {
+    // For pxCVX swap: CVX → lpxCVX (via Curve), lpxCVX unwraps 1:1 to pxCVX
+    // So bonus is lpxCVX output / CVX input
+    swapBonus = (Number(expectedSwapPxCvx) / Number(swapAmount) - 1) * 100;
+    // Bonus amount = pxCVX received - CVX input (what you gain vs 1:1 mint)
+    const bonusAmountWei = expectedSwapPxCvx - swapAmount;
+    bonusAmount = (Number(bonusAmountWei) / 1e18).toFixed(4);
   }
 
-  return bundleResult;
+  // Determine protocols based on strategy
+  let protocols: string[];
+  if (swapAmount > 0n && mintAmount > 0n) {
+    protocols = inputIsCvx ? ["Curve", "Pirex", "yld_fi"] : ["Enso", "Curve", "Pirex", "yld_fi"];
+  } else if (swapAmount > 0n) {
+    protocols = inputIsCvx ? ["Curve", "yld_fi"] : ["Enso", "Curve", "yld_fi"];
+  } else {
+    protocols = inputIsCvx ? ["Pirex", "yld_fi"] : ["Enso", "Pirex", "yld_fi"];
+  }
+
+  // Format amounts for display
+  const formatWei = (wei: string | bigint) => (Number(wei) / 1e18).toFixed(4);
+  const stepAmounts: PxCvxStepAmounts = {
+    inputAmount: formatWei(params.amountIn),
+    cvxAmount: formatWei(estimatedCvxAmount),
+    swapCvxAmount: swapAmount > 0n ? formatWei(swapAmount) : undefined,
+    mintCvxAmount: mintAmount > 0n ? formatWei(mintAmount) : undefined,
+    pxCvxAmount: formatWei(totalExpectedPxCvx),
+    vaultSharesAmount: expectedSharesPxCvx ? formatWei(expectedSharesPxCvx) : undefined,
+  };
+
+  const routeInfo: RouteInfo = {
+    steps: buildPxCvxZapInSteps(inputSymbol, vaultSymbol, inputIsCvx, swapAmount, mintAmount, swapBonus, bonusAmount, stepAmounts),
+    tokens: tokenPath,
+    protocols,
+    hybrid: {
+      swapAmount: swapAmount.toString(),
+      mintAmount: mintAmount.toString(),
+      swapBonus,
+      swapProtocol: "Curve",
+      mintProtocol: "Pirex",
+    },
+  };
+
+  return { ...bundleResult, routeInfo };
 }

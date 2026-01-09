@@ -3,9 +3,185 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAccount, usePublicClient } from "wagmi";
 import { parseUnits, formatUnits } from "viem";
-import { fetchZapInRoute, fetchZapOutRoute, fetchVaultToVaultRoute, fetchCvgCvxZapInRoute, fetchCvgCvxZapOutRoute, fetchPxCvxZapInRoute, fetchPxCvxZapOutRoute, fetchTokenPrices, CVXCRV_ADDRESS, isYldfiVault } from "@/lib/enso";
+import { fetchZapInRoute, fetchZapOutRoute, fetchVaultToVaultRoute, fetchCvgCvxZapInRoute, fetchCvgCvxZapOutRoute, fetchPxCvxZapInRoute, fetchPxCvxZapOutRoute, fetchTokenPrices, CVXCRV_ADDRESS, isYldfiVault, getTokenSymbol } from "@/lib/enso";
 import { TOKENS, getVaultByAddress } from "@/config/vaults";
-import type { EnsoToken, ZapQuote, ZapDirection } from "@/types/enso";
+import type { EnsoToken, ZapQuote, ZapDirection, RouteInfo, RouteStep } from "@/types/enso";
+
+/**
+ * Build route info for vault-to-vault zaps
+ */
+function buildVaultToVaultRouteInfo(
+  sourceVaultAddress: string,
+  targetVaultAddress: string,
+  sourceUnderlyingAddress: string,
+  targetUnderlyingAddress: string,
+  sourceUnderlyingAmount?: string,  // Amount after redeem (calculated from convertToAssets)
+  targetUnderlyingAmount?: string   // Amount after swap (from amountsOut if different underlying)
+): RouteInfo {
+  const sourceVault = getVaultByAddress(sourceVaultAddress);
+  const targetVault = getVaultByAddress(targetVaultAddress);
+
+  const sourceSymbol = sourceVault?.symbol || getTokenSymbol(sourceVaultAddress);
+  const targetSymbol = targetVault?.symbol || getTokenSymbol(targetVaultAddress);
+
+  const sameUnderlying = sourceUnderlyingAddress.toLowerCase() === targetUnderlyingAddress.toLowerCase();
+  const sourceUnderlyingSymbol = getTokenSymbol(sourceUnderlyingAddress);
+  const targetUnderlyingSymbol = getTokenSymbol(targetUnderlyingAddress);
+
+  const steps: RouteStep[] = [
+    {
+      tokenSymbol: sourceSymbol,
+      action: "Redeem",
+      description: `${sourceSymbol} for ${sourceUnderlyingSymbol}`,
+      protocol: "yld_fi",
+    },
+  ];
+
+  if (!sameUnderlying) {
+    steps.push({
+      tokenSymbol: sourceUnderlyingSymbol,
+      action: "Swap",
+      description: `${sourceUnderlyingSymbol} for ${targetUnderlyingSymbol}`,
+      protocol: "Enso",
+      amount: sourceUnderlyingAmount,
+    });
+    steps.push({
+      tokenSymbol: targetUnderlyingSymbol,
+      action: "Deposit",
+      description: `${targetUnderlyingSymbol} into ${targetSymbol}`,
+      protocol: "yld_fi",
+      amount: targetUnderlyingAmount,
+    });
+  } else {
+    steps.push({
+      tokenSymbol: sourceUnderlyingSymbol,
+      action: "Deposit",
+      description: `${sourceUnderlyingSymbol} into ${targetSymbol}`,
+      protocol: "yld_fi",
+      amount: sourceUnderlyingAmount,
+    });
+  }
+
+  steps.push({
+    tokenSymbol: targetSymbol,
+    action: "Receive",
+    description: `${targetSymbol} shares`,
+    protocol: "yld_fi",
+  });
+
+  return { steps };
+}
+
+/**
+ * Build route info for standard zap in (token → vault)
+ */
+function buildZapInRouteInfo(
+  inputToken: EnsoToken,
+  vaultAddress: string,
+  underlyingAddress: string,
+  vaultSharesOut?: string,
+  assetsPerShare?: number | null
+): RouteInfo {
+  const vault = getVaultByAddress(vaultAddress);
+  const vaultSymbol = vault?.symbol || getTokenSymbol(vaultAddress);
+  const underlyingSymbol = getTokenSymbol(underlyingAddress);
+  const inputSymbol = inputToken.symbol;
+
+  // Calculate intermediate amount: vault shares × assetsPerShare = underlying deposited
+  let underlyingAmount: string | undefined;
+  if (vaultSharesOut && assetsPerShare) {
+    const vaultShares = Number(formatUnits(BigInt(vaultSharesOut), 18));
+    underlyingAmount = (vaultShares * assetsPerShare).toFixed(4);
+  }
+
+  const steps: RouteStep[] = [];
+
+  // If input is the underlying, direct deposit
+  if (inputToken.address.toLowerCase() === underlyingAddress.toLowerCase()) {
+    steps.push({
+      tokenSymbol: inputSymbol,
+      action: "Deposit",
+      description: `${inputSymbol} into ${vaultSymbol}`,
+      protocol: "yld_fi",
+    });
+  } else {
+    // Swap → deposit
+    steps.push({
+      tokenSymbol: inputSymbol,
+      action: "Swap",
+      description: `${inputSymbol} for ${underlyingSymbol}`,
+      protocol: "Enso",
+    });
+    steps.push({
+      tokenSymbol: underlyingSymbol,
+      action: "Deposit",
+      description: `${underlyingSymbol} into ${vaultSymbol}`,
+      protocol: "yld_fi",
+      amount: underlyingAmount,
+    });
+  }
+
+  steps.push({
+    tokenSymbol: vaultSymbol,
+    action: "Receive",
+    description: `${vaultSymbol} shares`,
+    protocol: "yld_fi",
+  });
+
+  return { steps };
+}
+
+/**
+ * Build route info for standard zap out (vault → token)
+ */
+function buildZapOutRouteInfo(
+  outputToken: EnsoToken,
+  vaultAddress: string,
+  underlyingAddress: string,
+  amountsOut?: Record<string, string>,
+  intermediateAmount?: string  // Calculated from vault shares × assetsPerShare
+): RouteInfo {
+  const vault = getVaultByAddress(vaultAddress);
+  const vaultSymbol = vault?.symbol || getTokenSymbol(vaultAddress);
+  const underlyingSymbol = getTokenSymbol(underlyingAddress);
+  const outputSymbol = outputToken.symbol;
+
+  // Use calculated intermediate amount, or try to get from amountsOut
+  let underlyingAmount = intermediateAmount;
+  if (!underlyingAmount) {
+    const underlyingAmountRaw = amountsOut?.[underlyingAddress.toLowerCase()] || amountsOut?.[underlyingAddress];
+    underlyingAmount = underlyingAmountRaw ? Number(formatUnits(BigInt(underlyingAmountRaw), 18)).toFixed(4) : undefined;
+  }
+
+  const steps: RouteStep[] = [
+    {
+      tokenSymbol: vaultSymbol,
+      action: "Redeem",
+      description: `${vaultSymbol} for ${underlyingSymbol}`,
+      protocol: "yld_fi",
+    },
+  ];
+
+  // If output is the underlying, direct redeem (no swap needed)
+  if (outputToken.address.toLowerCase() !== underlyingAddress.toLowerCase()) {
+    steps.push({
+      tokenSymbol: underlyingSymbol,
+      action: "Swap",
+      description: `${underlyingSymbol} for ${outputSymbol}`,
+      protocol: "Enso",
+      amount: underlyingAmount,
+    });
+  }
+
+  steps.push({
+    tokenSymbol: outputSymbol,
+    action: "Receive",
+    description: "tokens",
+    protocol: outputToken.address.toLowerCase() === underlyingAddress.toLowerCase() ? "yld_fi" : "Enso",
+  });
+
+  return { steps };
+}
 
 // ERC4626 ABI for convertToAssets
 const ERC4626_ABI = [
@@ -198,6 +374,24 @@ export function useZapQuote({
             value: bundle.tx.value,
           },
           route: [],
+          // Use routeInfo from bundle if available (custom routes like cvgCVX have detailed info)
+          // Otherwise build generic vault-to-vault route info
+          routeInfo: (bundle as { routeInfo?: RouteInfo }).routeInfo ?? (() => {
+            // Use already-calculated values for intermediate amounts
+            // sourceUnderlyingAmount = input vault shares × source assetsPerShare
+            const sourceUnderlyingAmount = inputUnderlyingValue.toFixed(4);
+            // targetUnderlyingAmount = output vault shares × target assetsPerShare
+            const targetUnderlyingAmount = outputUnderlyingValue.toFixed(4);
+
+            return buildVaultToVaultRouteInfo(
+              vaultAddress,
+              outputToken.address,
+              sourceUnderlyingToken,
+              targetUnderlyingToken,
+              sourceUnderlyingAmount,
+              targetUnderlyingAmount
+            );
+          })(),
         };
       }
 
@@ -254,6 +448,24 @@ export function useZapQuote({
             value: bundle.tx.value,
           },
           route: [],
+          // Use routeInfo from bundle if available (custom routes like cvgCVX have detailed info)
+          // Otherwise build generic vault-to-vault route info
+          routeInfo: (bundle as { routeInfo?: RouteInfo }).routeInfo ?? (() => {
+            // Use already-calculated values for intermediate amounts
+            // sourceUnderlyingAmount = input vault shares × source assetsPerShare
+            const sourceUnderlyingAmount = inputUnderlyingValue.toFixed(4);
+            // targetUnderlyingAmount = output vault shares × target assetsPerShare
+            const targetUnderlyingAmount = outputUnderlyingValue.toFixed(4);
+
+            return buildVaultToVaultRouteInfo(
+              inputToken.address,
+              vaultAddress,
+              sourceUnderlyingToken,
+              targetUnderlyingToken,
+              sourceUnderlyingAmount,
+              targetUnderlyingAmount
+            );
+          })(),
         };
       }
 
@@ -306,6 +518,7 @@ export function useZapQuote({
               value: bundle.tx.value,
             },
             route: [],
+            routeInfo: bundle.routeInfo,
           };
         }
 
@@ -340,6 +553,8 @@ export function useZapQuote({
           const outputUsdValue = outputTokenPrice !== null ? outputNum * outputTokenPrice : null;
           const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
 
+          const vault = getVaultByAddress(vaultAddress);
+          const vaultSymbol = vault?.symbol || "Vault";
           return {
             inputToken: {
               address: vaultAddress,
@@ -363,6 +578,14 @@ export function useZapQuote({
               value: bundle.tx.value,
             },
             route: [],
+            routeInfo: {
+              steps: [
+                { tokenSymbol: vaultSymbol, action: "Redeem", description: `${vaultSymbol} for cvgCVX`, protocol: "yld_fi" },
+                { tokenSymbol: "cvgCVX", action: "Swap", description: "cvgCVX for CVX", protocol: "Curve" },
+                { tokenSymbol: "CVX", action: "Swap", description: `CVX for ${outputToken.symbol}`, protocol: "Enso" },
+                { tokenSymbol: outputToken.symbol, action: "Receive", description: "tokens", protocol: "Enso" },
+              ],
+            },
           };
         }
       }
@@ -416,6 +639,7 @@ export function useZapQuote({
               value: bundle.tx.value,
             },
             route: [],
+            routeInfo: bundle.routeInfo,
           };
         }
 
@@ -450,6 +674,8 @@ export function useZapQuote({
           const outputUsdValue = outputTokenPrice !== null ? outputNum * outputTokenPrice : null;
           const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
 
+          const vault = getVaultByAddress(vaultAddress);
+          const vaultSymbol = vault?.symbol || "Vault";
           return {
             inputToken: {
               address: vaultAddress,
@@ -473,6 +699,14 @@ export function useZapQuote({
               value: bundle.tx.value,
             },
             route: [],
+            routeInfo: {
+              steps: [
+                { tokenSymbol: vaultSymbol, action: "Redeem", description: `${vaultSymbol} for pxCVX`, protocol: "yld_fi" },
+                { tokenSymbol: "pxCVX", action: "Swap", description: "pxCVX for CVX", protocol: "Curve" },
+                { tokenSymbol: "CVX", action: "Swap", description: `CVX for ${outputToken.symbol}`, protocol: "Enso" },
+                { tokenSymbol: outputToken.symbol, action: "Receive", description: "tokens", protocol: "Enso" },
+              ],
+            },
           };
         }
       }
@@ -537,7 +771,15 @@ export function useZapQuote({
             data: bundle.tx.data,
             value: bundle.tx.value,
           },
-          route: [], // Bundle doesn't return route array
+          route: [],
+          routeInfo: (() => {
+            // Calculate intermediate underlying amount: input shares × assetsPerShare
+            const intermediateAmount = assetsPerShare !== null
+              ? (inputNum * assetsPerShare).toFixed(4)
+              : undefined;
+            // Use custom route info with correct messaging (don't merge with hops)
+            return buildZapOutRouteInfo(outputToken, vaultAddress, underlying, bundle.amountsOut, intermediateAmount);
+          })(),
         };
 
         return quote;
@@ -596,7 +838,8 @@ export function useZapQuote({
             data: bundle.tx.data,
             value: bundle.tx.value,
           },
-          route: [], // Bundle doesn't return route array
+          route: [],
+          routeInfo: buildZapInRouteInfo(inputToken, vaultAddress, underlying, outputAmountRaw, assetsPerShare),
         };
 
         return quote;

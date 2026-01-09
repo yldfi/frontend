@@ -11,6 +11,7 @@ export {
   batchRpcCalls,
   getCurveGetDy,
   getCurveGetDyFactory,
+  getEthToCvxEstimate,
   buildGetDyCalldata,
   buildGetDyFactoryCalldata,
   buildPreviewRedeemCalldata,
@@ -20,13 +21,19 @@ export {
   previewRedeemAndGetDy,
   previewRedeem,
   batchPreviewRedeem,
-  // Optimized helpers with caching + off-chain math
+  // StableSwap helpers with caching + off-chain math
   getStableSwapParams,
   clearPoolParamsCache,
   estimateSwapOffchain,
+  // CryptoSwap (Curve V2) helpers with caching + off-chain math
+  getCryptoSwapParams,
+  clearCryptoPoolParamsCache,
+  estimateCryptoSwapOffchain,
+  findCryptoSwapPegPoint,
   // Selectors for building calldata
   SELECTORS,
   STABLESWAP_SELECTORS,
+  CRYPTOSWAP_SELECTORS,
   type CurvePoolParams,
   type StableSwapParams,
 } from "./rpc";
