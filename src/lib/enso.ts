@@ -118,6 +118,23 @@ export const POPULAR_TOKENS = [
   ...Object.values(VAULT_ADDRESSES), // yld_fi vaults
 ];
 
+/**
+ * Calculate conservative input amount after slippage has been applied to previous step.
+ * When chaining bundle actions with fixed amounts (instead of useOutputOfCallAt),
+ * we need to account for the fact that the previous step may have received less
+ * than estimated due to slippage. This function reduces the estimated amount
+ * by the slippage percentage to avoid trying to spend more than we have.
+ *
+ * @param estimatedAmount - The estimated amount from the previous step
+ * @param slippageBps - Slippage in basis points (100 = 1%)
+ * @returns Conservative amount as string that's safe to use after slippage
+ */
+function applySlippageBuffer(estimatedAmount: bigint, slippageBps: number): string {
+  // Apply same formula as calculateMinDy: amount * (10000 - slippage) / 10000
+  const conservativeAmount = (estimatedAmount * BigInt(10000 - slippageBps)) / BigInt(10000);
+  return conservativeAmount.toString();
+}
+
 // Additional token symbols for route display
 const TOKEN_SYMBOLS: Record<string, string> = {
   [ETH_ADDRESS.toLowerCase()]: "ETH",
@@ -746,8 +763,9 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
     params.slippage
   );
 
-  // Apply conservative buffer: reduce input by 1% for upstream slippage
-  const conservativeCvx = (BigInt(estimatedCvx) * 99n) / 100n;
+  // Apply slippage buffer to CVX estimate for fixed-amount actions
+  // This ensures we don't try to spend more CVX than we received after slippage
+  const conservativeCvx = BigInt(applySlippageBuffer(BigInt(estimatedCvx), slippageBps));
 
   // CVX wraps 1:1 to CVX1
   // Estimate cvgCVX output from Curve swap (CVX1 → cvgCVX)
@@ -799,11 +817,12 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
         slippage: params.slippage,
       },
     },
-    // Action 2: Approve CVX → CVX1 wrapper (use estimated CVX)
+    // Action 2: Approve CVX → CVX1 wrapper
+    // Use slippage-buffered estimate to account for slippage from Action 1 route
     {
       protocol: "erc20",
       action: "approve",
-      args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: estimatedCvx },
+      args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: conservativeCvx.toString() },
     },
     // Action 3: Wrap CVX → CVX1 (mint to router so subsequent actions can use it)
     {
@@ -813,14 +832,14 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
         address: TOKENS.CVX1,
         method: "mint",
         abi: "function mint(address to, uint256 amount)",
-        args: [ENSO_ROUTER_EXECUTOR, estimatedCvx],
+        args: [ENSO_ROUTER_EXECUTOR, conservativeCvx.toString()],
       },
     },
     // Action 4: Approve CVX1 → Curve pool
     {
       protocol: "erc20",
       action: "approve",
-      args: { token: TOKENS.CVX1, spender: TANGENT.CVX1_CVGCVX_POOL, amount: estimatedCvx },
+      args: { token: TOKENS.CVX1, spender: TANGENT.CVX1_CVGCVX_POOL, amount: conservativeCvx.toString() },
     },
     // Action 5: Swap CVX1 → cvgCVX via Curve pool
     {
@@ -830,7 +849,7 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
         address: TANGENT.CVX1_CVGCVX_POOL,
         method: "exchange",
         abi: "function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) returns (uint256)",
-        args: [0, 1, estimatedCvx, minDyCvgCvx], // min_dy with slippage protection
+        args: [0, 1, conservativeCvx.toString(), minDyCvgCvx], // min_dy with slippage protection
       },
     },
     // Action 6: Approve cvgCVX → vault
@@ -908,13 +927,15 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
 
   // OPTIMIZED: Batch previewRedeem + pool params in single RPC call
   // Uses off-chain StableSwap math for getDy calculation
+  // Apply slippage buffer dynamically based on user's slippage setting
+  const bufferMultiplier = 1 - slippageBps / 10000;
   const { redeemAmount: cvgCvxAmount, swapOutput: estimatedCvx1 } = await batchRedeemAndEstimateSwap(
     params.sourceVault,
     params.amountIn,
     TANGENT.CVX1_CVGCVX_POOL,
     1, // cvgCVX index (input)
     0, // CVX1 index (output)
-    0.99 // Conservative buffer: reduce input by 1% for upstream slippage
+    bufferMultiplier // Conservative buffer based on user's slippage setting
   );
 
   // CRITICAL: Throw if estimation fails or returns zero - never use min_dy=0
@@ -964,16 +985,18 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
     // Target is pxCVX - needs custom routing: CVX1 → CVX → lpxCVX → pxCVX
     // CVX1 unwraps 1:1 to CVX, so use CVX1 amount for subsequent operations
 
-    // Use concrete estimates for better Enso simulation
-    const estimatedCvxStr = estimatedCvx1.toString(); // CVX1 unwraps 1:1 to CVX
+    // Apply slippage buffer to CVX estimate for fixed-amount actions
+    // The Curve swap (Action 2) may receive less than estimatedCvx1 due to slippage,
+    // so we use a conservative amount to avoid trying to spend more than we received
+    const conservativeCvxStr = applySlippageBuffer(estimatedCvx1, slippageBps);
 
-    // Estimate lpxCVX output from CVX → lpxCVX Curve swap
+    // Estimate lpxCVX output from CVX → lpxCVX Curve swap (using conservative CVX amount)
     // Use factory-style helper since lpxCVX/CVX pool uses uint256 indices
     const estimatedLpxCvx = await getCurveGetDyFactory(
       PIREX.LPXCVX_CVX_POOL,
       0, // CVX index
       1, // lpxCVX index
-      estimatedCvxStr
+      conservativeCvxStr
     );
 
     if (estimatedLpxCvx === null || estimatedLpxCvx === 0n) {
@@ -987,9 +1010,13 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
     const minDyLpxCvx = calculateMinDy(estimatedLpxCvx, slippageBps);
 
     // Use useOutputOfCallAt where Enso simulation supports it
-    // Limitation: Each output can only be referenced by ONE subsequent action
-    // Action 2 (Curve cvgCVX→CVX1) returns CVX1 amount - used by Action 3
-    // Action 5 (Curve CVX→lpxCVX) returns lpxCVX amount - used by Actions 6-8
+    // Limitation: Each output can only be CONSUMED by ONE subsequent action.
+    // However, non-consuming references (like approve which just reads the value) are allowed.
+    // Action 2 (Curve cvgCVX→CVX1) returns CVX1 amount - consumed by Action 3 (withdraw)
+    // Action 5 (Curve CVX→lpxCVX) returns lpxCVX amount - referenced by Actions 6-8:
+    //   - Action 6: approve (non-consuming, just sets allowance)
+    //   - Action 7: unwrap (consuming, transfers the lpxCVX)
+    //   - Action 8: deposit (uses output from Action 7, not Action 5)
     actions.push(
       // Action 3: Unwrap CVX1 → CVX (send to router)
       // Use output from Action 2 (Curve exchange returns CVX1 amount)
@@ -1004,18 +1031,18 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
         },
       },
       // Action 4: Approve CVX → Curve lpxCVX pool
-      // Use fixed estimate - Action 2's output already consumed by Action 3
+      // Use slippage-buffered estimate - Action 2's output already consumed by Action 3
       {
         protocol: "erc20",
         action: "approve",
         args: {
           token: TOKENS.CVX,
           spender: PIREX.LPXCVX_CVX_POOL,
-          amount: estimatedCvxStr,
+          amount: conservativeCvxStr,
         },
       },
       // Action 5: Swap CVX → lpxCVX via Curve (RETURNS uint256)
-      // Use fixed estimate - CVX1→CVX is 1:1, so use same amount
+      // Use slippage-buffered estimate - accounts for potential slippage from Action 2
       {
         protocol: "enso",
         action: "call",
@@ -1026,7 +1053,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
           args: [
             String(PIREX.POOL_INDEX.CVX), // i = 0 (CVX)
             String(PIREX.POOL_INDEX.LPXCVX), // j = 1 (lpxCVX)
-            estimatedCvxStr, // dx = CVX amount (fixed estimate)
+            conservativeCvxStr, // dx = CVX amount (slippage-buffered)
             minDyLpxCvx, // min_dy with slippage protection
           ],
         },
@@ -1164,10 +1191,14 @@ async function fetchVaultToPxCvxVaultRoute(params: {
     );
   }
 
-  // Step 3: Calculate optimal swap vs mint split for pxCVX
-  const { swapAmount, mintAmount } = await getOptimalPxCvxSwapAmount(estimatedCvxAmount);
+  // Step 3: Apply slippage buffer to CVX amount before splitting
+  // This ensures we don't try to use more CVX than we actually received after slippage
+  const conservativeCvxAmount = applySlippageBuffer(BigInt(estimatedCvxAmount), slippageBps);
 
-  // Step 4: Calculate expected pxCVX output and min_dy for slippage protection
+  // Step 4: Calculate optimal swap vs mint split for pxCVX using conservative amount
+  const { swapAmount, mintAmount } = await getOptimalPxCvxSwapAmount(conservativeCvxAmount);
+
+  // Step 5: Calculate expected pxCVX output and min_dy for slippage protection
   // For hybrid path: use swapAmount
   // For swap-only path: use full estimatedCvxAmount
   let expectedSwapPxCvx = 0n;
@@ -1175,8 +1206,8 @@ async function fetchVaultToPxCvxVaultRoute(params: {
   let fullSwapMinDy = "0"; // For swap-only path
 
   if (swapAmount > 0n) {
-    // Apply conservative buffer: reduce input by 1% for upstream slippage
-    const conservativeSwapAmount = (swapAmount * 99n) / 100n;
+    // Apply slippage buffer using user's slippage setting for consistency
+    const conservativeSwapAmount = BigInt(applySlippageBuffer(swapAmount, slippageBps));
     const swapOutput = await getPxCvxSwapRate(conservativeSwapAmount.toString());
     // CRITICAL: Throw if estimation fails or returns zero - never use min_dy=0
     if (!swapOutput || swapOutput === 0n) {
@@ -1188,9 +1219,8 @@ async function fetchVaultToPxCvxVaultRoute(params: {
 
   // For swap-only path, calculate min_dy for full CVX amount
   if (mintAmount === 0n && swapAmount > 0n) {
-    // Apply conservative buffer: reduce input by 1% for upstream slippage
-    const conservativeFullCvx = (BigInt(estimatedCvxAmount) * 99n) / 100n;
-    const fullSwapOutput = await getPxCvxSwapRate(conservativeFullCvx.toString());
+    // Use already-buffered conservative CVX amount (no need to apply 1% buffer again)
+    const fullSwapOutput = await getPxCvxSwapRate(conservativeCvxAmount);
     // CRITICAL: Throw if estimation fails or returns zero
     if (!fullSwapOutput || fullSwapOutput === 0n) {
       throw new Error("Failed to estimate Curve CVX→lpxCVX swap output for slippage protection");
@@ -1532,24 +1562,28 @@ async function fetchPxCvxVaultToVaultRoute(params: {
     // Target is cvgCVX - needs custom routing via CVX1 wrap + Curve swap
     const { TANGENT } = await import("@/config/vaults");
 
-    // Use concrete estimated CVX amount for better Enso simulation
-    const estimatedCvxStr = estimatedCvx.toString();
+    // Apply slippage buffer to CVX estimate for fixed-amount actions
+    // The Curve swap (Action 4) may receive less than estimatedCvx due to slippage,
+    // so we use a conservative amount to avoid trying to spend more than we received
+    const conservativeCvxStr = applySlippageBuffer(estimatedCvx, slippageBps);
 
-    // Estimate cvgCVX output for the deposit action
-    const estimatedCvgCvx = await getCvgCvxSwapRate(estimatedCvxStr);
-    const estimatedCvgCvxStr = estimatedCvgCvx.toString();
+    // Estimate cvgCVX output for the deposit action (using conservative CVX amount)
+    const estimatedCvgCvx = await getCvgCvxSwapRate(conservativeCvxStr);
+    // Apply slippage buffer to cvgCVX estimate for the deposit action
+    const conservativeCvgCvxStr = applySlippageBuffer(estimatedCvgCvx, slippageBps);
     // Calculate min_dy for the CVX1 → cvgCVX swap with slippage protection
     const minDyCvgCvx = calculateMinDy(estimatedCvgCvx, slippageBps);
 
     actions.push(
       // Action 5: Approve CVX → CVX1 wrapper
+      // Use slippage-buffered estimate to account for slippage from Action 4
       {
         protocol: "erc20",
         action: "approve",
         args: {
           token: TOKENS.CVX,
           spender: TOKENS.CVX1,
-          amount: estimatedCvxStr, // CVX from Curve exchange
+          amount: conservativeCvxStr, // CVX from Curve exchange (slippage-buffered)
         },
       },
       // Action 6: Mint CVX → CVX1 (1:1, mint to router so subsequent actions can use it)
@@ -1560,7 +1594,7 @@ async function fetchPxCvxVaultToVaultRoute(params: {
           address: TOKENS.CVX1,
           method: "mint",
           abi: "function mint(address to, uint256 amount)",
-          args: [ENSO_ROUTER_EXECUTOR, estimatedCvxStr],
+          args: [ENSO_ROUTER_EXECUTOR, conservativeCvxStr],
         },
       },
       // Action 7: Approve CVX1 → Curve pool (use CVX amount since mint is 1:1)
@@ -1570,7 +1604,7 @@ async function fetchPxCvxVaultToVaultRoute(params: {
         args: {
           token: TOKENS.CVX1,
           spender: TANGENT.CVX1_CVGCVX_POOL,
-          amount: estimatedCvxStr, // Use CVX amount (1:1 with CVX1)
+          amount: conservativeCvxStr, // Use CVX amount (1:1 with CVX1, slippage-buffered)
         },
       },
       // Action 8: Swap CVX1 → cvgCVX on Curve pool
@@ -1584,19 +1618,20 @@ async function fetchPxCvxVaultToVaultRoute(params: {
           args: [
             "0", // i = 0 (CVX1)
             "1", // j = 1 (cvgCVX)
-            estimatedCvxStr, // dx = CVX1 amount (same as CVX, 1:1 mint)
+            conservativeCvxStr, // dx = CVX1 amount (same as CVX, 1:1 mint, slippage-buffered)
             minDyCvgCvx, // min_dy with slippage protection
           ],
         },
       },
       // Action 9: Deposit cvgCVX into target vault
+      // Use slippage-buffered estimate to account for slippage from Action 8
       {
         protocol: "erc4626",
         action: "deposit",
         args: {
           tokenIn: TOKENS.CVGCVX,
           tokenOut: params.targetVault,
-          amountIn: estimatedCvgCvxStr, // Use estimated Curve exchange output
+          amountIn: conservativeCvgCvxStr, // Use estimated Curve exchange output (slippage-buffered)
           primaryAddress: params.targetVault,
         },
       }
@@ -2084,8 +2119,14 @@ export async function fetchCvgCvxZapInRoute(params: {
     await new Promise(resolve => setTimeout(resolve, 1100));
   }
 
-  // Step 2: Calculate optimal split between swap and mint
-  const { swapAmount, mintAmount } = await getOptimalSwapAmount(expectedCvxOutput);
+  // Step 2: Apply slippage buffer to CVX estimate for non-CVX inputs
+  // This ensures we don't try to use more CVX than we actually receive after routing slippage
+  const cvxAmountForSplit = inputIsCvx
+    ? expectedCvxOutput
+    : applySlippageBuffer(BigInt(expectedCvxOutput), slippageBps);
+
+  // Step 3: Calculate optimal split between swap and mint using conservative CVX amount
+  const { swapAmount, mintAmount } = await getOptimalSwapAmount(cvxAmountForSplit);
 
   // Build token path - skip CVX if input is already CVX
   const tokenPath = inputIsCvx
@@ -2105,22 +2146,22 @@ export async function fetchCvgCvxZapInRoute(params: {
 
   if (mintAmount === 0n) {
     // 100% swap through Curve pool (pool is above peg, get bonus)
-    bundle = await buildSwapOnlyBundle(params, TANGENT, expectedCvxOutput, slippageBps, inputIsCvx);
+    bundle = await buildSwapOnlyBundle(params, TANGENT, cvxAmountForSplit, slippageBps, inputIsCvx);
 
-    // Calculate swap bonus and bonus amount
-    const swapOutput = await getCvgCvxSwapRate(expectedCvxOutput);
+    // Calculate swap bonus and bonus amount using conservative CVX amount
+    const swapOutput = await getCvgCvxSwapRate(cvxAmountForSplit);
     if (swapOutput) {
       expectedCvgCvxOutput = swapOutput.toString();
-      swapBonus = (Number(swapOutput) / Number(expectedCvxOutput) - 1) * 100;
+      swapBonus = (Number(swapOutput) / Number(cvxAmountForSplit) - 1) * 100;
       // Bonus amount = cvgCVX received - CVX input (what you gain vs 1:1 mint)
-      const bonusAmountWei = BigInt(swapOutput) - BigInt(expectedCvxOutput);
+      const bonusAmountWei = BigInt(swapOutput) - BigInt(cvxAmountForSplit);
       bonusAmount = (Number(bonusAmountWei) / 1e18).toFixed(4);
     }
   } else if (swapAmount === 0n) {
     // 100% direct mint (pool is below peg, mint at 1:1)
-    bundle = await buildMintOnlyBundle(params, TANGENT, expectedCvxOutput, slippageBps, inputIsCvx);
+    bundle = await buildMintOnlyBundle(params, TANGENT, cvxAmountForSplit, slippageBps, inputIsCvx);
     swapBonus = 0;
-    expectedCvgCvxOutput = expectedCvxOutput; // 1:1 mint
+    expectedCvgCvxOutput = cvxAmountForSplit; // 1:1 mint
     // No bonus for mint-only
   } else {
     // Hybrid path: split input between swap and mint paths
@@ -2128,7 +2169,7 @@ export async function fetchCvgCvxZapInRoute(params: {
     bundle = await buildHybridBundle(params, TANGENT, swapAmount, mintAmount, slippageBps, inputIsCvx);
 
     // Calculate swap bonus for display (swap path gets the bonus)
-    const conservativeSwapAmount = (swapAmount * 99n) / 100n;
+    const conservativeSwapAmount = BigInt(applySlippageBuffer(swapAmount, slippageBps));
     const swapOutput = await getCvgCvxSwapRate(conservativeSwapAmount.toString());
     if (swapOutput) {
       swapBonus = (Number(swapOutput) / Number(conservativeSwapAmount) - 1) * 100;
@@ -2504,8 +2545,8 @@ async function buildHybridBundle(
   inputIsCvx: boolean
 ): Promise<EnsoBundleResponse> {
   // Calculate min_dy for swap path (using estimated swap amount)
-  // Apply 1% buffer for upstream slippage
-  const conservativeSwapAmount = (swapAmount * 99n) / 100n;
+  // Apply slippage buffer using user's slippage setting
+  const conservativeSwapAmount = BigInt(applySlippageBuffer(swapAmount, slippageBps));
   const expectedSwapOutput = await getCurveGetDy(
     TANGENT.CVX1_CVGCVX_POOL,
     0, 1, conservativeSwapAmount.toString()
@@ -2938,8 +2979,8 @@ export async function fetchPxCvxZapOutRoute(params: {
   // Estimate pxCVX output from vault redeem using previewRedeem (throws on failure)
   const expectedPxCvxOutput = await previewRedeem(params.vaultAddress, params.amountIn);
 
-  // Apply conservative buffer: reduce input by 1% for upstream slippage
-  const conservativePxCvxAmount = (BigInt(expectedPxCvxOutput) * 99n) / 100n;
+  // Apply slippage buffer using user's slippage setting for consistency
+  const conservativePxCvxAmount = BigInt(applySlippageBuffer(BigInt(expectedPxCvxOutput), slippageBps));
 
   // Query Curve CryptoSwap pool get_dy to estimate CVX output from lpxCVX swap
   // Uses uint256 indices: lpxCVX (index 1) to CVX (index 0)
@@ -3293,18 +3334,24 @@ export async function fetchPxCvxZapInRoute(params: {
     }
   }
 
-  // Step 2: Calculate optimal swap vs mint split
-  const { swapAmount, mintAmount } = await getOptimalPxCvxSwapAmount(estimatedCvxAmount);
+  // Step 2: Apply slippage buffer to CVX estimate for non-CVX inputs
+  // This ensures we don't try to use more CVX than we actually receive after routing slippage
+  const slippageBps = validateSlippage(params.slippage);
+  const cvxAmountForSplit = inputIsCvx
+    ? estimatedCvxAmount
+    : applySlippageBuffer(BigInt(estimatedCvxAmount), slippageBps);
 
-  // Step 3: Calculate expected pxCVX output for each path
+  // Step 3: Calculate optimal swap vs mint split using conservative CVX amount
+  const { swapAmount, mintAmount } = await getOptimalPxCvxSwapAmount(cvxAmountForSplit);
+
+  // Step 4: Calculate expected pxCVX output for each path
   // - Swap path: CVX → lpxCVX (via Curve) → pxCVX (1:1 unwrap)
   // - Mint path: CVX → pxCVX (1:1 via Pirex)
-  const slippageBps = validateSlippage(params.slippage);
   let expectedSwapPxCvx = 0n;
   let swapMinDy = "0";
   if (swapAmount > 0n) {
-    // Apply conservative buffer: reduce input by 1% for upstream slippage
-    const conservativeSwapAmount = (swapAmount * 99n) / 100n;
+    // Apply slippage buffer using user's slippage setting for consistency
+    const conservativeSwapAmount = BigInt(applySlippageBuffer(swapAmount, slippageBps));
     const swapOutput = await getPxCvxSwapRate(conservativeSwapAmount.toString());
     // CRITICAL: Throw if estimation fails or returns zero - never use min_dy=0
     if (!swapOutput || swapOutput === 0n) {
