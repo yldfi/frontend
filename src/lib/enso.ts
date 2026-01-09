@@ -986,12 +986,12 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
     // Calculate min_dy for the CVX → lpxCVX swap with slippage protection
     const minDyLpxCvx = calculateMinDy(estimatedLpxCvx, slippageBps);
 
-    // Note: Using fixed estimates rather than useOutputOfCallAt because Enso's
-    // simulation doesn't handle dynamic references well for certain action sequences.
-    // The estimates are computed from the Curve pool's get_dy and should be accurate
-    // unless there's significant price movement between quote and execution.
+    // Use useOutputOfCallAt where possible, fixed estimates where Enso simulation requires
+    // Action 2 (Curve cvgCVX→CVX1) returns CVX1 amount
+    // Action 5 (Curve CVX→lpxCVX) returns lpxCVX amount
     actions.push(
-      // Action 3: Unwrap CVX1 → CVX (send to router so it can be used in next action)
+      // Action 3: Unwrap CVX1 → CVX (send to router)
+      // Use output from Action 2 (Curve exchange returns CVX1 amount)
       {
         protocol: "enso",
         action: "call",
@@ -999,17 +999,18 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
           address: TOKENS.CVX1,
           method: "withdraw",
           abi: "function withdraw(uint256 amount, address to)",
-          args: [estimatedCvxStr, ENSO_ROUTER_EXECUTOR],
+          args: [{ useOutputOfCallAt: 2 }, ENSO_ROUTER_EXECUTOR],
         },
       },
       // Action 4: Approve CVX → Curve lpxCVX pool
+      // Use fixed estimate - Enso simulation may struggle with multiple dynamic refs
       {
         protocol: "erc20",
         action: "approve",
         args: {
           token: TOKENS.CVX,
           spender: PIREX.LPXCVX_CVX_POOL,
-          amount: estimatedCvxStr, // Same as CVX1 (1:1 unwrap)
+          amount: estimatedCvxStr,
         },
       },
       // Action 5: Swap CVX → lpxCVX via Curve (RETURNS uint256)
@@ -1023,19 +1024,20 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
           args: [
             String(PIREX.POOL_INDEX.CVX), // i = 0 (CVX)
             String(PIREX.POOL_INDEX.LPXCVX), // j = 1 (lpxCVX)
-            estimatedCvxStr, // dx = CVX amount (same as CVX1)
+            estimatedCvxStr, // dx = CVX amount
             minDyLpxCvx, // min_dy with slippage protection
           ],
         },
       },
       // Action 6: Approve lpxCVX for unwrap
+      // Use output from Action 5 (Curve exchange returns lpxCVX amount)
       {
         protocol: "erc20",
         action: "approve",
         args: {
           token: PIREX.LPXCVX,
           spender: PIREX.LPXCVX,
-          amount: estimatedLpxCvxStr, // lpxCVX from Curve swap
+          amount: { useOutputOfCallAt: 5 },
         },
       },
       // Action 7: Unwrap lpxCVX → pxCVX
@@ -1046,18 +1048,18 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
           address: PIREX.LPXCVX,
           method: "unwrap",
           abi: "function unwrap(uint256 amount)",
-          args: [estimatedLpxCvxStr],
+          args: [{ useOutputOfCallAt: 5 }],
         },
       },
       // Action 8: Deposit pxCVX into target vault
-      // Use erc4626 action so amountsOut tracks the vault shares
+      // lpxCVX unwraps 1:1 to pxCVX, so use Action 5's output
       {
         protocol: "erc4626",
         action: "deposit",
         args: {
           tokenIn: TOKENS.PXCVX,
           tokenOut: params.targetVault,
-          amountIn: estimatedPxCvxStr, // Same as lpxCVX (1:1 unwrap)
+          amountIn: { useOutputOfCallAt: 5 },
           primaryAddress: params.targetVault,
         },
       }
