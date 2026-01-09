@@ -30,8 +30,10 @@
     ]
   },
   "dependencies": {
+    "@ensofinance/sdk": "^2.0.12",
     "@rainbow-me/rainbowkit": "^2.2.0",
     "@tanstack/react-query": "^5.90.16",
+    "@yldfi/curve-amm-math": "^1.0.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.562.0",
     "react": "19.2.3",
