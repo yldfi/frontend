@@ -983,6 +983,8 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
     const estimatedLpxCvxStr = estimatedLpxCvx.toString();
     // pxCVX wraps 1:1 from lpxCVX
     const estimatedPxCvxStr = estimatedLpxCvxStr;
+    // Calculate min_dy for the CVX → lpxCVX swap with slippage protection
+    const minDyLpxCvx = calculateMinDy(estimatedLpxCvx, slippageBps);
 
     actions.push(
       // Action 3: Unwrap CVX1 → CVX (send to router so it can be used in next action)
@@ -1018,7 +1020,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
             String(PIREX.POOL_INDEX.CVX), // i = 0 (CVX)
             String(PIREX.POOL_INDEX.LPXCVX), // j = 1 (lpxCVX)
             estimatedCvxStr, // dx = CVX amount (same as CVX1)
-            "0", // min_dy - bundle slippage handles this
+            minDyLpxCvx, // min_dy with slippage protection
           ],
         },
       },
@@ -1424,6 +1426,9 @@ async function fetchPxCvxVaultToVaultRoute(params: {
 }): Promise<EnsoBundleResponse> {
   const { PIREX } = await import("@/config/vaults");
 
+  // Validate slippage parameter
+  const slippageBps = validateSlippage(params.slippage);
+
   // Check if target is CVX - can skip the route step
   const targetIsCvx = params.targetUnderlyingToken.toLowerCase() === TOKENS.CVX.toLowerCase();
 
@@ -1437,6 +1442,8 @@ async function fetchPxCvxVaultToVaultRoute(params: {
   const estimatedLpxCvx = estimatedPxCvx;
   // Estimate CVX output from Curve exchange (lpxCVX → CVX)
   const estimatedCvx = await getLpxCvxToCvxSwapRate(estimatedLpxCvx);
+  // Calculate min_dy for the lpxCVX → CVX swap with slippage protection
+  const minDyCvx = calculateMinDy(estimatedCvx, slippageBps);
 
   // Note: Using concrete estimates to help Enso simulate the bundle correctly
   const actions: EnsoBundleAction[] = [
@@ -1484,7 +1491,6 @@ async function fetchPxCvxVaultToVaultRoute(params: {
     },
     // Action 4: Swap lpxCVX → CVX on Curve pool (RETURNS the CVX amount!)
     // exchange(i=1, j=0, dx, min_dy) where 1=lpxCVX, 0=CVX
-    // Note: min_dy=0 for dynamic amounts, bundle's slippage protects final output
     {
       protocol: "enso",
       action: "call",
@@ -1496,7 +1502,7 @@ async function fetchPxCvxVaultToVaultRoute(params: {
           String(PIREX.POOL_INDEX.LPXCVX), // i = 1 (lpxCVX)
           String(PIREX.POOL_INDEX.CVX), // j = 0 (CVX)
           { useOutputOfCallAt: 0 }, // dx = amount (same as pxCVX from redeem)
-          "0",
+          minDyCvx, // min_dy with slippage protection
         ],
       },
     },
@@ -1524,6 +1530,8 @@ async function fetchPxCvxVaultToVaultRoute(params: {
     // Estimate cvgCVX output for the deposit action
     const estimatedCvgCvx = await getCvgCvxSwapRate(estimatedCvxStr);
     const estimatedCvgCvxStr = estimatedCvgCvx.toString();
+    // Calculate min_dy for the CVX1 → cvgCVX swap with slippage protection
+    const minDyCvgCvx = calculateMinDy(estimatedCvgCvx, slippageBps);
 
     actions.push(
       // Action 5: Approve CVX → CVX1 wrapper
@@ -1558,7 +1566,6 @@ async function fetchPxCvxVaultToVaultRoute(params: {
         },
       },
       // Action 8: Swap CVX1 → cvgCVX on Curve pool
-      // Note: min_dy=0 for dynamic amounts, bundle's slippage protects final output
       {
         protocol: "enso",
         action: "call",
@@ -1570,7 +1577,7 @@ async function fetchPxCvxVaultToVaultRoute(params: {
             "0", // i = 0 (CVX1)
             "1", // j = 1 (cvgCVX)
             estimatedCvxStr, // dx = CVX1 amount (same as CVX, 1:1 mint)
-            "0", // min_dy - bundle slippage handles this
+            minDyCvgCvx, // min_dy with slippage protection
           ],
         },
       },
