@@ -6,7 +6,8 @@ import { notFound } from "next/navigation";
 import { useAccount, useBalance } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
-import { ArrowLeft, ArrowUpRight, ExternalLink, Loader2, Search } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, ExternalLink, Loader2, Search, Route, RouteOff } from "lucide-react";
+import { RouteDisplay } from "@/components/RouteDisplay";
 
 // Animated loading dots for quote fetching
 function LoadingDots() {
@@ -16,6 +17,90 @@ function LoadingDots() {
       <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
       <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
     </span>
+  );
+}
+
+// Parse Enso API errors into user-friendly messages
+function parseQuoteError(error: Error | null): string {
+  if (!error) return "Failed to get quote";
+  const msg = error.message || "";
+
+  // Amount too large/out of range
+  if (msg.includes("amountIn") && msg.includes("acceptable range")) {
+    return "Amount too large to quote - try a smaller amount";
+  }
+  // Insufficient liquidity
+  if (msg.includes("insufficient liquidity") || msg.includes("no route found")) {
+    return "No route available - insufficient liquidity";
+  }
+  // Rate limit
+  if (msg.includes("rate limit") || msg.includes("429")) {
+    return "Too many requests - please wait a moment";
+  }
+  // Network/timeout errors
+  if (msg.includes("timeout") || msg.includes("network") || msg.includes("fetch")) {
+    return "Network error - please try again";
+  }
+  // Generic API error - show shortened version
+  if (msg.startsWith("API Error:")) {
+    return "Quote unavailable - try a different amount";
+  }
+
+  return "Failed to get quote";
+}
+
+// MAX button with percentage options on hover
+function MaxButton({ balance, onSelect }: { balance: string; onSelect: (amount: string) => void }) {
+  const [isHovered, setIsHovered] = useState(false);
+  const balanceNum = parseFloat(balance) || 0;
+
+  const handlePercentage = (percent: number) => {
+    const amount = balanceNum * (percent / 100);
+    // Use full precision for 100%, otherwise limit decimals
+    if (percent === 100) {
+      onSelect(balance);
+    } else {
+      onSelect(amount.toString());
+    }
+  };
+
+  return (
+    <div
+      className="relative"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      {/* Floating percentage options - stacked vertically above MAX */}
+      <div
+        className={cn(
+          "absolute bottom-full right-0 pb-1 flex flex-col gap-1 transition-all duration-150",
+          isHovered ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1 pointer-events-none"
+        )}
+      >
+        {[25, 50, 75].map((percent) => (
+          <button
+            key={percent}
+            type="button"
+            tabIndex={-1}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => handlePercentage(percent)}
+            className="shrink-0 px-2 py-1 text-xs font-medium bg-[var(--background)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded transition-colors cursor-pointer"
+          >
+            {percent}%
+          </button>
+        ))}
+      </div>
+      {/* Main MAX button */}
+      <button
+        type="button"
+        tabIndex={-1}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => handlePercentage(100)}
+        className="shrink-0 px-2 py-1 text-xs font-medium bg-[var(--background)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded transition-colors cursor-pointer"
+      >
+        MAX
+      </button>
+    </div>
   );
 }
 import { ContractExplorer, useContractExplorer } from "@/components/ContractExplorer";
@@ -54,19 +139,83 @@ import { toast } from "sonner";
 export function VaultPageContent({ id }: { id: string }) {
   const vault = getVault(id);
 
+  // Check if vault is deployed (has non-zero address)
+  const isVaultDeployed = vault?.address && vault.address !== "0x0000000000000000000000000000000000000000";
+
   const { isConnected, address: userAddress } = useAccount();
   const { openConnectModal } = useConnectModal();
-  const [activeTab, setActiveTab] = useState<"deposit" | "withdraw" | "zap">("deposit");
+  // Active tab with localStorage persistence
+  const [activeTab, setActiveTabState] = useState<"deposit" | "withdraw" | "zap">(() => {
+    if (typeof window === "undefined") return "deposit";
+    const saved = localStorage.getItem("yldfi-active-tab");
+    if (saved === "deposit" || saved === "withdraw" || saved === "zap") return saved;
+    return "deposit";
+  });
+  const setActiveTab = (tab: "deposit" | "withdraw" | "zap") => {
+    setActiveTabState(tab);
+    localStorage.setItem("yldfi-active-tab", tab);
+  };
 
   // Contract explorer state
   const { isOpen: explorerOpen, address: explorerAddress, title: explorerTitle, lastUpdated: explorerLastUpdated, icon: explorerIcon, openExplorer, closeExplorer } = useContractExplorer();
   const [amount, setAmount] = useState("");
 
-  // Zap state
-  const [zapDirection, setZapDirection] = useState<ZapDirection>("in");
-  const [zapInputToken, setZapInputToken] = useState<EnsoToken | null>(DEFAULT_ETH_TOKEN);
-  const [zapOutputToken, setZapOutputToken] = useState<EnsoToken | null>(DEFAULT_ETH_TOKEN);
-  const [zapAmount, setZapAmount] = useState("");
+  // Zap state with localStorage persistence (scoped per vault)
+  const [zapDirection, setZapDirectionState] = useState<ZapDirection>(() => {
+    if (typeof window === "undefined") return "in";
+    const saved = localStorage.getItem(`yldfi-zap-direction-${id}`);
+    return saved === "out" ? "out" : "in";
+  });
+  const setZapDirection = (dir: ZapDirection) => {
+    setZapDirectionState(dir);
+    localStorage.setItem(`yldfi-zap-direction-${id}`, dir);
+  };
+  const [zapInputToken, setZapInputTokenState] = useState<EnsoToken | null>(() => {
+    if (typeof window === "undefined") return DEFAULT_ETH_TOKEN;
+    try {
+      const saved = localStorage.getItem(`yldfi-zap-input-token-${id}`);
+      return saved ? JSON.parse(saved) : DEFAULT_ETH_TOKEN;
+    } catch {
+      return DEFAULT_ETH_TOKEN;
+    }
+  });
+  const setZapInputToken = (token: EnsoToken | null) => {
+    setZapInputTokenState(token);
+    if (token) {
+      localStorage.setItem(`yldfi-zap-input-token-${id}`, JSON.stringify(token));
+    } else {
+      localStorage.removeItem(`yldfi-zap-input-token-${id}`);
+    }
+  };
+  const [zapOutputToken, setZapOutputTokenState] = useState<EnsoToken | null>(() => {
+    if (typeof window === "undefined") return DEFAULT_ETH_TOKEN;
+    try {
+      const saved = localStorage.getItem(`yldfi-zap-output-token-${id}`);
+      return saved ? JSON.parse(saved) : DEFAULT_ETH_TOKEN;
+    } catch {
+      return DEFAULT_ETH_TOKEN;
+    }
+  });
+  const setZapOutputToken = (token: EnsoToken | null) => {
+    setZapOutputTokenState(token);
+    if (token) {
+      localStorage.setItem(`yldfi-zap-output-token-${id}`, JSON.stringify(token));
+    } else {
+      localStorage.removeItem(`yldfi-zap-output-token-${id}`);
+    }
+  };
+  const [zapAmount, setZapAmountState] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return localStorage.getItem(`yldfi-zap-amount-${id}`) ?? "";
+  });
+  const setZapAmount = (amount: string) => {
+    setZapAmountState(amount);
+    if (amount) {
+      localStorage.setItem(`yldfi-zap-amount-${id}`, amount);
+    } else {
+      localStorage.removeItem(`yldfi-zap-amount-${id}`);
+    }
+  };
   // Load slippage from localStorage with lazy initialization
   const [zapSlippage, setZapSlippage] = useState(() => {
     if (typeof window === "undefined") return "10";
@@ -75,6 +224,26 @@ export function VaultPageContent({ id }: { id: string }) {
   const [showSlippageModal, setShowSlippageModal] = useState(false);
   const [showPriceImpactModal, setShowPriceImpactModal] = useState(false);
   const [priceImpactConfirmText, setPriceImpactConfirmText] = useState("");
+  // Route display toggle with localStorage persistence
+  const [showRoute, setShowRoute] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("yldfi-show-route") === "true";
+  });
+  const toggleRoute = () => {
+    const newValue = !showRoute;
+    setShowRoute(newValue);
+    localStorage.setItem("yldfi-show-route", String(newValue));
+  };
+
+  // Handle token selection and reset amount
+  const handleZapInputTokenChange = (token: EnsoToken) => {
+    setZapInputToken(token);
+    setZapAmount("");
+  };
+  const handleZapOutputTokenChange = (token: EnsoToken) => {
+    setZapOutputToken(token);
+    setZapAmount("");
+  };
 
   // Last transaction result for showing success/error message
   const [lastTxResult, setLastTxResult] = useState<{
@@ -389,10 +558,19 @@ export function VaultPageContent({ id }: { id: string }) {
     }
   }, [zapActionError]);
 
-  // Show toast for quote errors
+  // Show toast for quote errors (with friendly message and deduplication)
+  const lastQuoteErrorRef = useRef<string | null>(null);
   useEffect(() => {
     if (zapQuoteError) {
-      toast.error(zapQuoteError.message || "Failed to get quote");
+      const friendlyMessage = parseQuoteError(zapQuoteError);
+      // Only show toast if it's a different error message
+      if (lastQuoteErrorRef.current !== friendlyMessage) {
+        lastQuoteErrorRef.current = friendlyMessage;
+        toast.error(friendlyMessage);
+      }
+    } else {
+      // Clear the ref when there's no error (quote succeeded)
+      lastQuoteErrorRef.current = null;
     }
   }, [zapQuoteError]);
 
@@ -633,38 +811,63 @@ export function VaultPageContent({ id }: { id: string }) {
                 {/* Tabs */}
                 <div className="p-5 pb-0">
                   <div className="flex border-b border-[var(--border)]">
-                    {(["deposit", "withdraw", "zap"] as const).map((tab) => (
-                      <button
-                        key={tab}
-                        onClick={() => {
-                          setActiveTab(tab);
-                          setAmount("");
-                          setZapAmount("");
-                          setLastTxResult(null);
-                          // Clear any pending error states when switching tabs
-                          resetVaultActions();
-                          resetZapActions();
-                        }}
-                        className={cn(
-                          "flex-1 pb-3 text-sm font-medium transition-all capitalize relative cursor-pointer",
-                          activeTab === tab
-                            ? "text-[var(--foreground)]"
-                            : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                        )}
-                      >
-                        {tab}
-                        {activeTab === tab && (
-                          <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--foreground)]" />
-                        )}
-                      </button>
-                    ))}
+                    {(["deposit", "withdraw", "zap"] as const).map((tab) => {
+                      // Disable all tabs for non-deployed vaults
+                      const isDisabled = !isVaultDeployed;
+                      return (
+                        <button
+                          key={tab}
+                          disabled={isDisabled}
+                          onClick={() => {
+                            if (isDisabled) return;
+                            setActiveTab(tab);
+                            setAmount("");
+                            setZapAmount("");
+                            setLastTxResult(null);
+                            // Clear any pending error states when switching tabs
+                            resetVaultActions();
+                            resetZapActions();
+                          }}
+                          className={cn(
+                            "flex-1 pb-3 text-sm font-medium transition-all capitalize relative",
+                            isDisabled
+                              ? "text-[var(--muted-foreground)]/50 cursor-not-allowed"
+                              : "cursor-pointer",
+                            !isDisabled && activeTab === tab
+                              ? "text-[var(--foreground)]"
+                              : !isDisabled && "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                          )}
+                          title={isDisabled ? "Vault not yet deployed" : undefined}
+                        >
+                          {tab}
+                          {!isDisabled && activeTab === tab && (
+                            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--foreground)]" />
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
                 {/* Form - min-height prevents layout shift when switching tabs */}
                 <div className="p-5 space-y-5 min-h-[622px]">
+                  {/* Coming Soon banner for non-deployed vaults */}
+                  {!isVaultDeployed && (
+                    <div className="flex flex-col items-center justify-center py-16 text-center">
+                      <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
+                        <svg className="w-8 h-8 text-[var(--muted-foreground)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      </div>
+                      <h3 className="text-lg font-medium mb-2">Coming Soon</h3>
+                      <p className="text-sm text-[var(--muted-foreground)] max-w-xs">
+                        This vault is not yet deployed. Check back later or follow us for updates.
+                      </p>
+                    </div>
+                  )}
+
                   {/* Deposit/Withdraw Form */}
-                  {activeTab !== "zap" && (
+                  {isVaultDeployed && activeTab !== "zap" && (
                     <>
                       {/* Input */}
                       <div>
@@ -688,12 +891,10 @@ export function VaultPageContent({ id }: { id: string }) {
                           <span className="mono text-sm font-medium shrink-0">
                             {activeTab === "deposit" ? vault.assetSymbol : vault.symbol}
                           </span>
-                          <button
-                            onClick={() => setAmount(activeTab === "deposit" ? tokenBalanceMax : vaultBalanceMax)}
-                            className="shrink-0 px-2 py-1 text-xs font-medium bg-[var(--background)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded transition-colors cursor-pointer"
-                          >
-                            MAX
-                          </button>
+                          <MaxButton
+                            balance={activeTab === "deposit" ? tokenBalanceMax : vaultBalanceMax}
+                            onSelect={setAmount}
+                          />
                         </div>
                         <p className={cn(
                           "text-xs mt-2 h-4",
@@ -789,7 +990,7 @@ export function VaultPageContent({ id }: { id: string }) {
                   )}
 
                   {/* Zap Form */}
-                  {activeTab === "zap" && (
+                  {isVaultDeployed && activeTab === "zap" && (
                     <>
                       {/* Direction Toggle + Settings */}
                       <div className="flex gap-2">
@@ -842,15 +1043,13 @@ export function VaultPageContent({ id }: { id: string }) {
                               />
                               <TokenSelector
                                 selectedToken={zapInputToken}
-                                onSelect={setZapInputToken}
+                                onSelect={handleZapInputTokenChange}
                                 excludeTokens={[...VAULT_UNDERLYING_TOKENS, vault?.address ?? ""]} // Exclude underlying tokens + current vault
                               />
-                              <button
-                                onClick={() => setZapAmount(zapInputBalanceFormatted)}
-                                className="shrink-0 px-2 py-1 text-xs font-medium bg-[var(--background)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded transition-colors cursor-pointer"
-                              >
-                                MAX
-                              </button>
+                              <MaxButton
+                                balance={zapInputBalanceFormatted}
+                                onSelect={setZapAmount}
+                              />
                             </div>
                           </div>
 
@@ -896,12 +1095,10 @@ export function VaultPageContent({ id }: { id: string }) {
                                 className="flex-1 min-w-0 bg-transparent mono text-base outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
                               />
                               <span className="mono text-sm font-medium shrink-0">{vault.symbol}</span>
-                              <button
-                                onClick={() => setZapAmount(vaultBalanceMax)}
-                                className="shrink-0 px-2 py-1 text-xs font-medium bg-[var(--background)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded transition-colors cursor-pointer"
-                              >
-                                MAX
-                              </button>
+                              <MaxButton
+                                balance={vaultBalanceMax}
+                                onSelect={setZapAmount}
+                              />
                             </div>
                           </div>
 
@@ -925,7 +1122,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               </span>
                               <TokenSelector
                                 selectedToken={zapOutputToken}
-                                onSelect={setZapOutputToken}
+                                onSelect={handleZapOutputTokenChange}
                                 excludeTokens={[...VAULT_UNDERLYING_TOKENS, vault?.address ?? ""]} // Exclude underlying tokens + current vault
                               />
                             </div>
@@ -1018,7 +1215,7 @@ export function VaultPageContent({ id }: { id: string }) {
                           ) : !zapQuote ? (
                             "No route found"
                           ) : zapNeedsApproval() ? (
-                            "Approve"
+                            `Approve ${zapDirection === "in" ? zapInputToken?.symbol : vault.symbol}`
                           ) : (
                             `Zap ${zapDirection === "in" ? "In" : "Out"}`
                           )}
@@ -1032,7 +1229,7 @@ export function VaultPageContent({ id }: { id: string }) {
                         </button>
                       )}
 
-                      {/* Enso Attribution + Slippage Settings */}
+                      {/* Enso Attribution + Route Toggle + Slippage Settings */}
                       <div className="flex items-center justify-between pt-2">
                         <a
                           href="https://www.enso.build"
@@ -1045,18 +1242,49 @@ export function VaultPageContent({ id }: { id: string }) {
                           <img src="/enso.png" alt="Enso" width={14} height={14} className="rounded-sm" />
                           <span className="font-medium">Enso</span>
                         </a>
-                        <button
-                          onClick={() => setShowSlippageModal(true)}
-                          className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
-                          title="Slippage settings"
-                        >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <line x1="4" y1="6" x2="20" y2="6"/>
-                            <circle cx="8" cy="6" r="2"/>
-                            <line x1="4" y1="18" x2="20" y2="18"/>
-                            <circle cx="16" cy="18" r="2"/>
-                          </svg>
-                        </button>
+                        <div className="flex items-center gap-1">
+                          {/* Route toggle */}
+                          <button
+                            onClick={toggleRoute}
+                            className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
+                            title={showRoute ? "Hide route" : "Show route"}
+                          >
+                            {showRoute ? <RouteOff size={16} /> : <Route size={16} />}
+                          </button>
+                          {/* Slippage settings */}
+                          <button
+                            onClick={() => setShowSlippageModal(true)}
+                            className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
+                            title="Slippage settings"
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <line x1="4" y1="6" x2="20" y2="6"/>
+                              <circle cx="8" cy="6" r="2"/>
+                              <line x1="4" y1="18" x2="20" y2="18"/>
+                              <circle cx="16" cy="18" r="2"/>
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Route details panel - expandable with slide animation (only show when have quote or loading) */}
+                      <div
+                        className="grid transition-all duration-300 ease-in-out"
+                        style={{ gridTemplateRows: showRoute && zapAmount && Number(zapAmount) > 0 && (zapQuote || zapQuoteLoading) ? "1fr" : "0fr" }}
+                      >
+                        <div className="overflow-hidden">
+                          <div className="pt-3 mt-3 border-t border-[var(--border)]">
+                            <div className="text-xs text-[var(--muted-foreground)] mb-2">Route</div>
+                            <RouteDisplay
+                              routeInfo={zapQuote?.routeInfo}
+                              inputSymbol={zapDirection === "in" ? zapInputToken?.symbol : vault?.symbol}
+                              outputSymbol={zapDirection === "in" ? vault?.symbol : zapOutputToken?.symbol}
+                              inputAmount={zapAmount ? Number(zapAmount).toFixed(4) : undefined}
+                              outputAmount={zapQuote?.outputAmountFormatted ? Number(zapQuote.outputAmountFormatted).toFixed(4) : undefined}
+                              isLoading={zapQuoteLoading}
+                            />
+                          </div>
+                        </div>
                       </div>
                     </>
                   )}

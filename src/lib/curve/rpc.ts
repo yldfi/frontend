@@ -23,6 +23,17 @@ export const SELECTORS = {
   CONVERT_TO_ASSETS: "0x07a2d13a", // convertToAssets(uint256)
 } as const;
 
+// CryptoSwap (Curve V2) selectors
+export const CRYPTOSWAP_SELECTORS = {
+  A: "0xf446c1d0", // A()
+  GAMMA: "0xb1373929", // gamma()
+  D: "0x0f529ba2", // D()
+  MID_FEE: "0x92526c0c", // mid_fee()
+  OUT_FEE: "0xee8de675", // out_fee()
+  FEE_GAMMA: "0x72d4f0e2", // fee_gamma()
+  PRICE_SCALE: "0xb9e8c9fd", // price_scale()
+} as const;
+
 interface RpcCall {
   to: string;
   data: string;
@@ -157,6 +168,74 @@ export async function getCurveGetDyFactory(
     console.error("Error fetching get_dy (factory):", error);
     return null;
   }
+}
+
+// ============================================
+// ETH → CVX On-Chain Pricing (via Curve V2 Pool)
+// ============================================
+
+// Curve V2 ETH/CVX Pool (WETH/CVX) - used for on-chain price discovery
+// Index 0: WETH, Index 1: CVX
+const CURVE_ETH_CVX_POOL = "0xB576491F1E6e5E62f1d8F26062Ee822B40B0E0d4";
+
+// Cache for ETH→CVX rate (valid for 30 seconds to reduce RPC calls)
+let ethToCvxRateCache: {
+  rate: bigint; // CVX per ETH (in wei units, e.g., 1500e18 means 1 ETH = 1500 CVX)
+  timestamp: number;
+} | null = null;
+const ETH_CVX_CACHE_TTL = 30 * 1000; // 30 seconds
+
+/**
+ * Get estimated CVX output for ETH input using on-chain Curve pool pricing.
+ * This avoids making a separate Enso route call for price discovery.
+ * Uses RPC calls which don't count against Enso's API rate limit.
+ *
+ * @param ethAmount - Amount of ETH in wei
+ * @returns Estimated CVX output in wei
+ * @throws Error if RPC call fails after retries
+ */
+export async function getEthToCvxEstimate(ethAmount: string): Promise<string> {
+  const now = Date.now();
+  const ethBigInt = BigInt(ethAmount);
+
+  // Check cache first
+  if (ethToCvxRateCache && now - ethToCvxRateCache.timestamp < ETH_CVX_CACHE_TTL) {
+    const cvxEstimate = (ethBigInt * ethToCvxRateCache.rate) / (10n ** 18n);
+    return cvxEstimate.toString();
+  }
+
+  // Fetch real-time price from Curve V2 ETH/CVX pool via RPC
+  // Index 0: WETH, Index 1: CVX (V2 pools use uint256 indices)
+  // Retry up to 3 times with exponential backoff
+  let cvxOutput: bigint | null = null;
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) {
+      // Exponential backoff: 100ms, 200ms
+      await new Promise(resolve => setTimeout(resolve, 100 * attempt));
+    }
+
+    cvxOutput = await getCurveGetDyFactory(CURVE_ETH_CVX_POOL, 0, 1, ethAmount);
+
+    if (cvxOutput && cvxOutput > 0n) {
+      break;
+    }
+
+    lastError = new Error(`Attempt ${attempt + 1}: RPC returned ${cvxOutput}`);
+  }
+
+  if (!cvxOutput || cvxOutput === 0n) {
+    throw new Error(`Failed to fetch ETH/CVX price from Curve pool after 3 attempts: ${lastError?.message}`);
+  }
+
+  // Update cache with implied rate
+  if (ethBigInt > 0n) {
+    const rate = (cvxOutput * (10n ** 18n)) / ethBigInt;
+    ethToCvxRateCache = { rate, timestamp: now };
+  }
+
+  return cvxOutput.toString();
 }
 
 /**
@@ -350,7 +429,8 @@ export async function batchPreviewRedeem(
 // ============================================
 
 // Import math functions for off-chain calculations
-import { stableswap, A_PRECISION } from "@yldfi/curve-amm-math";
+import { stableswap, cryptoswap, A_PRECISION } from "@yldfi/curve-amm-math";
+import type { TwocryptoParams } from "@yldfi/curve-amm-math";
 const { getDy } = stableswap;
 const N_COINS = 2n; // For 2-coin StableSwap pools
 
@@ -452,4 +532,137 @@ export async function estimateSwapOffchain(
     poolParams.fee,
     poolParams.offpegFeeMultiplier
   );
+}
+
+// ============================================
+// CryptoSwap (Curve V2) Pool Helpers
+// ============================================
+
+/**
+ * CryptoSwap pool parameters - matches TwocryptoParams from curve-amm-math
+ */
+export type CryptoSwapParams = TwocryptoParams;
+
+// Cache for CryptoSwap pool params (12 second TTL matches quote refresh)
+const cryptoPoolParamsCache = new Map<string, { data: CryptoSwapParams; timestamp: number }>();
+const CRYPTO_POOL_PARAMS_CACHE_TTL = 12_000; // 12 seconds
+
+/**
+ * Get CryptoSwap (Curve V2) pool parameters with caching
+ * Fetches A, gamma, D, fees, priceScale, and balances in a single batched call
+ * Retries up to 3 times on failure.
+ *
+ * @throws Error if critical parameters (A, gamma, D) are zero/missing after retries
+ */
+export async function getCryptoSwapParams(poolAddress: string): Promise<CryptoSwapParams> {
+  const cacheKey = poolAddress.toLowerCase();
+  const now = Date.now();
+  const cached = cryptoPoolParamsCache.get(cacheKey);
+
+  if (cached && now - cached.timestamp < CRYPTO_POOL_PARAMS_CACHE_TTL) {
+    return cached.data;
+  }
+
+  // Build batch call for all pool parameters
+  const calls: RpcCall[] = [
+    { to: poolAddress, data: CRYPTOSWAP_SELECTORS.A },
+    { to: poolAddress, data: CRYPTOSWAP_SELECTORS.GAMMA },
+    { to: poolAddress, data: CRYPTOSWAP_SELECTORS.D },
+    { to: poolAddress, data: CRYPTOSWAP_SELECTORS.MID_FEE },
+    { to: poolAddress, data: CRYPTOSWAP_SELECTORS.OUT_FEE },
+    { to: poolAddress, data: CRYPTOSWAP_SELECTORS.FEE_GAMMA },
+    { to: poolAddress, data: CRYPTOSWAP_SELECTORS.PRICE_SCALE },
+    { to: poolAddress, data: buildBalancesCalldata(0) },
+    { to: poolAddress, data: buildBalancesCalldata(1) },
+  ];
+
+  // Retry up to 3 times with exponential backoff
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) {
+      // Exponential backoff: 100ms, 200ms
+      await new Promise(resolve => setTimeout(resolve, 100 * attempt));
+    }
+
+    const results = await batchRpcCalls(calls);
+
+    const A = results[0] ?? 0n;
+    const gamma = results[1] ?? 0n;
+    const D = results[2] ?? 0n;
+    const midFee = results[3] ?? 0n;
+    const outFee = results[4] ?? 0n;
+    const feeGamma = results[5] ?? 0n;
+    const priceScale = results[6] ?? 0n;
+    const balance0 = results[7] ?? 0n;
+    const balance1 = results[8] ?? 0n;
+
+    // Validate critical parameters
+    if (A === 0n) {
+      lastError = new Error(`CryptoSwap pool ${poolAddress}: A parameter is zero (attempt ${attempt + 1})`);
+      continue;
+    }
+    if (gamma === 0n) {
+      lastError = new Error(`CryptoSwap pool ${poolAddress}: gamma parameter is zero (attempt ${attempt + 1})`);
+      continue;
+    }
+    if (D === 0n && (balance0 > 0n || balance1 > 0n)) {
+      lastError = new Error(`CryptoSwap pool ${poolAddress}: D is zero but pool has balances (attempt ${attempt + 1})`);
+      continue;
+    }
+
+    // Success - all critical params are valid
+    const data: CryptoSwapParams = {
+      A,
+      gamma,
+      D,
+      midFee,
+      outFee,
+      feeGamma,
+      priceScale,
+      balances: [balance0, balance1],
+    };
+
+    // Update cache
+    cryptoPoolParamsCache.set(cacheKey, { data, timestamp: Date.now() });
+
+    return data;
+  }
+
+  // All retries failed
+  throw lastError ?? new Error(`CryptoSwap pool ${poolAddress}: failed to fetch params after 3 attempts`);
+}
+
+/**
+ * Clear CryptoSwap pool params cache (useful for testing)
+ */
+export function clearCryptoPoolParamsCache(): void {
+  cryptoPoolParamsCache.clear();
+}
+
+/**
+ * Get swap estimate for CryptoSwap pool using cached params + off-chain math
+ */
+export async function estimateCryptoSwapOffchain(
+  poolAddress: string,
+  i: number,
+  j: number,
+  dx: string | bigint
+): Promise<bigint> {
+  const poolParams = await getCryptoSwapParams(poolAddress);
+  const inputAmount = typeof dx === "string" ? BigInt(dx) : dx;
+
+  return cryptoswap.getDy(poolParams, i, j, inputAmount);
+}
+
+/**
+ * Find peg point for CryptoSwap pool (max amount where output >= input)
+ */
+export async function findCryptoSwapPegPoint(
+  poolAddress: string,
+  i: number,
+  j: number
+): Promise<bigint> {
+  const poolParams = await getCryptoSwapParams(poolAddress);
+  return cryptoswap.findPegPoint(poolParams, i, j);
 }
