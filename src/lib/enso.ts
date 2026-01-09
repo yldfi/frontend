@@ -986,6 +986,10 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
     // Calculate min_dy for the CVX → lpxCVX swap with slippage protection
     const minDyLpxCvx = calculateMinDy(estimatedLpxCvx, slippageBps);
 
+    // Note: Using fixed estimates rather than useOutputOfCallAt because Enso's
+    // simulation doesn't handle dynamic references well for certain action sequences.
+    // The estimates are computed from the Curve pool's get_dy and should be accurate
+    // unless there's significant price movement between quote and execution.
     actions.push(
       // Action 3: Unwrap CVX1 → CVX (send to router so it can be used in next action)
       {
