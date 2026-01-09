@@ -986,9 +986,10 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
     // Calculate min_dy for the CVX → lpxCVX swap with slippage protection
     const minDyLpxCvx = calculateMinDy(estimatedLpxCvx, slippageBps);
 
-    // Use useOutputOfCallAt where possible, fixed estimates where Enso simulation requires
-    // Action 2 (Curve cvgCVX→CVX1) returns CVX1 amount
-    // Action 5 (Curve CVX→lpxCVX) returns lpxCVX amount
+    // Use useOutputOfCallAt where Enso simulation supports it
+    // Limitation: Each output can only be referenced by ONE subsequent action
+    // Action 2 (Curve cvgCVX→CVX1) returns CVX1 amount - used by Action 3
+    // Action 5 (Curve CVX→lpxCVX) returns lpxCVX amount - used by Actions 6-8
     actions.push(
       // Action 3: Unwrap CVX1 → CVX (send to router)
       // Use output from Action 2 (Curve exchange returns CVX1 amount)
@@ -1003,7 +1004,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
         },
       },
       // Action 4: Approve CVX → Curve lpxCVX pool
-      // Use fixed estimate - Enso simulation may struggle with multiple dynamic refs
+      // Use fixed estimate - Action 2's output already consumed by Action 3
       {
         protocol: "erc20",
         action: "approve",
@@ -1014,6 +1015,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
         },
       },
       // Action 5: Swap CVX → lpxCVX via Curve (RETURNS uint256)
+      // Use fixed estimate - CVX1→CVX is 1:1, so use same amount
       {
         protocol: "enso",
         action: "call",
@@ -1024,7 +1026,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
           args: [
             String(PIREX.POOL_INDEX.CVX), // i = 0 (CVX)
             String(PIREX.POOL_INDEX.LPXCVX), // j = 1 (lpxCVX)
-            estimatedCvxStr, // dx = CVX amount
+            estimatedCvxStr, // dx = CVX amount (fixed estimate)
             minDyLpxCvx, // min_dy with slippage protection
           ],
         },
