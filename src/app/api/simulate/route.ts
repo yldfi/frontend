@@ -211,8 +211,8 @@ export async function POST(request: NextRequest) {
     input: body.data,
     value: body.value ?? "0",
     gas: body.gas,
-    save: isDev,
-    save_if_fails: isDev,
+    save: true,
+    save_if_fails: true,
     simulation_type: "full",
     overrides,
   };
