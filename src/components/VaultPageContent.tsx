@@ -238,14 +238,16 @@ export function VaultPageContent({ id }: { id: string }) {
     localStorage.setItem("yldfi-show-route", String(newValue));
   };
 
-  // Handle token selection and reset amount
+  // Handle token selection
+  // Zap in: changing input token resets amount (you're changing what you send)
+  // Zap out: changing output token does NOT reset amount (you're just changing what you receive)
   const handleZapInputTokenChange = (token: EnsoToken) => {
     setZapInputToken(token);
-    setZapAmount("");
+    setZapAmount(""); // Reset when changing input (zap in)
   };
   const handleZapOutputTokenChange = (token: EnsoToken) => {
     setZapOutputToken(token);
-    setZapAmount("");
+    // Don't reset amount - user is just changing what they want to receive
   };
 
   // Last transaction result for showing success/error message (stored for potential future UI use)
