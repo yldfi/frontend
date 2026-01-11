@@ -77,6 +77,8 @@ jobs:
           NEXT_PUBLIC_ENSO_API_KEY: ${{ secrets.NEXT_PUBLIC_ENSO_API_KEY }}
           TOKEN_HOLDER_API_KEY: ${{ secrets.TOKEN_HOLDER_API_KEY }}
           TOKEN_HOLDER_API_URL: ${{ secrets.TOKEN_HOLDER_API_URL }}
+          DEBUG_RPC_URL: ${{ secrets.DEBUG_RPC_URL }}
+          DEBUG_RPC_AUTH: ${{ secrets.DEBUG_RPC_AUTH }}
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@v5
