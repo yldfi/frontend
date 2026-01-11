@@ -181,7 +181,7 @@ describeWithApi("Zap Integration Tests", () => {
     // Each test needs 30s timeout to account for multiple API calls + retries
 
     describe("ERC20 → Vault", () => {
-      it("ETH → yscvgCVX: creates bundle with correct value", { timeout: 30000 }, async () => {
+      it("ETH → yscvgCVX: creates bundle with correct value", { timeout: 60000 }, async () => {
         const { fetchCvgCvxZapInRoute } = await import("@/lib/enso");
 
         const route = await fetchCvgCvxZapInRoute({
@@ -506,7 +506,7 @@ describeWithApi("Route Matrix", () => {
     ];
 
     testCases.forEach(({ from, inputToken, amount, decimals }) => {
-      it(`${from} → yscvgCVX: creates valid bundle`, { timeout: 30000 }, async () => {
+      it(`${from} → yscvgCVX: creates valid bundle`, { timeout: 60000 }, async () => {
         const { fetchCvgCvxZapInRoute } = await import("@/lib/enso");
 
         const amountIn = decimals
