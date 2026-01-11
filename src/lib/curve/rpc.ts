@@ -62,6 +62,14 @@ interface RpcBatchResult {
 }
 
 /**
+ * Check if running in test environment
+ */
+const isTestEnv = typeof process !== "undefined" && (
+  process.env.NODE_ENV === "test" ||
+  process.env.VITEST === "true"
+);
+
+/**
  * Execute multiple eth_call requests in a single HTTP request
  * Reduces latency by batching RPC calls
  * Includes retry logic for RPC resilience
@@ -79,8 +87,8 @@ export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]
     params: [{ to: call.to, data: call.data }, "latest"],
   }));
 
-  const maxRetries = 5;
-  const baseDelayMs = 500;
+  const maxRetries = isTestEnv ? 1 : 5;
+  const baseDelayMs = isTestEnv ? 0 : 500;
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -96,8 +104,8 @@ export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]
         body: JSON.stringify(batch),
       });
 
-      if (!response.ok) {
-        throw new Error(`RPC batch request failed: ${response.status}`);
+      if (!response || !response.ok) {
+        throw new Error(`RPC batch request failed: ${response?.status ?? 'no response'}`);
       }
 
       const json = await response.json();
@@ -137,14 +145,6 @@ export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]
 function encodeUint256(value: bigint | string | number): string {
   return BigInt(value).toString(16).padStart(64, "0");
 }
-
-/**
- * Check if running in test environment
- */
-const isTestEnv = typeof process !== "undefined" && (
-  process.env.NODE_ENV === "test" ||
-  process.env.VITEST === "true"
-);
 
 /**
  * Retry wrapper with exponential backoff

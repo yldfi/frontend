@@ -13,9 +13,17 @@
  * - DEBUG_RPC_AUTH: Basic auth for debug RPC (optional)
  */
 
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, vi } from "vitest";
 import { createPublicClient, http, parseEther, formatEther, type Address } from "viem";
 import { mainnet } from "viem/chains";
+import crossFetch from "cross-fetch";
+
+// Restore real fetch for live API tests
+// The global mock in vitest.setup.ts breaks network requests
+// We use cross-fetch as a real fetch implementation
+beforeAll(() => {
+  vi.stubGlobal("fetch", crossFetch);
+});
 
 // Test configuration
 const ENSO_API_KEY = process.env.NEXT_PUBLIC_ENSO_API_KEY;
@@ -70,7 +78,6 @@ async function fetchEnsoBundle(params: {
         Authorization: `Bearer ${ENSO_API_KEY}`,
       },
       body: JSON.stringify({
-        fromAddress: params.fromAddress,
         routingStrategy: params.routingStrategy ?? "router",
         ...params,
       }),
@@ -118,7 +125,7 @@ async function simulateBundle(params: {
     }),
   });
 
-  const result = await response.json();
+  const result = await response.json() as { error?: { message?: string; data?: string }; result?: string };
 
   if (result.error) {
     // Check for specific step failure
@@ -266,7 +273,8 @@ describeWithApi("Zap Integration Tests", () => {
         });
 
         expect(route.tx).toBeDefined();
-        expect(route.routeInfo).toBeDefined();
+        // routeInfo is added by our custom route functions
+        expect((route as { routeInfo?: unknown }).routeInfo).toBeDefined();
       });
 
       it("yscvgCVX → CVX: creates zap out to CVX", async () => {
@@ -291,13 +299,13 @@ describeWithApi("Zap Integration Tests", () => {
         const route = await fetchVaultToVaultRoute({
           fromAddress: WHALES.ETH,
           sourceVault: VAULTS.YSCVGCVX,
-          destVault: VAULTS.YSPXCVX,
+          targetVault: VAULTS.YSPXCVX,
           amountIn: parseEther("100").toString(),
           slippage: "300",
         });
 
         expect(route.tx).toBeDefined();
-        expect(route.routeInfo).toBeDefined();
+        expect((route as { routeInfo?: unknown }).routeInfo).toBeDefined();
       });
 
       it("yscvgCVX → ycvxCRV: different underlying vault", async () => {
@@ -306,7 +314,7 @@ describeWithApi("Zap Integration Tests", () => {
         const route = await fetchVaultToVaultRoute({
           fromAddress: WHALES.ETH,
           sourceVault: VAULTS.YSCVGCVX,
-          destVault: VAULTS.YCVXCRV,
+          targetVault: VAULTS.YCVXCRV,
           amountIn: parseEther("100").toString(),
           slippage: "300",
         });
@@ -457,13 +465,13 @@ describeWithApi("Route Matrix", () => {
   describe("Zap In Routes", () => {
     testCases.forEach(({ from, to, inputToken, vault, amount, decimals }) => {
       it(`${from} → ${to}: creates valid bundle`, async () => {
-        const { fetchEnsoZapInRoute } = await import("@/lib/enso");
+        const { fetchZapInRoute } = await import("@/lib/enso");
 
         const amountIn = decimals
           ? (BigInt(amount) * 10n ** BigInt(decimals)).toString()
           : parseEther(amount).toString();
 
-        const route = await fetchEnsoZapInRoute({
+        const route = await fetchZapInRoute({
           fromAddress: WHALES.ETH,
           inputToken,
           amountIn,

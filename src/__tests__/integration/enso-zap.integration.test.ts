@@ -507,7 +507,7 @@ async function getTokenBalance(token: string, holder: string): Promise<bigint> {
       }),
     });
 
-    const result = await response.json();
+    const result = await response.json() as { result?: string };
     if (result.result && result.result !== "0x") {
       return BigInt(result.result);
     }
@@ -546,9 +546,9 @@ async function isUsdcBlacklisted(address: string): Promise<boolean> {
       }),
     });
 
-    const result = await response.json();
+    const result = await response.json() as { result?: string };
     // Returns true (0x01) if blacklisted
-    return result.result && result.result !== "0x" && BigInt(result.result) !== 0n;
+    return !!(result.result && result.result !== "0x" && BigInt(result.result) !== 0n);
   } catch {
     return false;
   }
@@ -577,7 +577,7 @@ async function isEOA(address: string): Promise<boolean> {
       }),
     });
 
-    const result = await response.json();
+    const result = await response.json() as { result?: string };
     // EOA has no code (returns "0x")
     return result.result === "0x" || result.result === "0x0" || !result.result;
   } catch {
@@ -656,7 +656,7 @@ async function fetchHoldersFromMoralis(token: string, minAmount: bigint, maxHold
         }),
       });
 
-      const data = await response.json();
+      const data = await response.json() as { success?: boolean; holders?: string[]; cached?: boolean; cacheAge?: number };
       if (data.success && Array.isArray(data.holders)) {
         if (data.cached) {
           console.log(`Using cached holders for ${token.slice(0, 10)}... (age: ${data.cacheAge}s)`);
@@ -681,7 +681,7 @@ async function fetchHoldersFromMoralis(token: string, minAmount: bigint, maxHold
       },
     });
 
-    const data = await response.json();
+    const data = await response.json() as { result?: Array<{ owner_address: string }> };
     const holders: string[] = [];
 
     if (Array.isArray(data.result)) {
@@ -757,7 +757,7 @@ async function findHolderViaLogs(token: string, minAmount: bigint): Promise<stri
       }),
     });
 
-    const result = await response.json();
+    const result = await response.json() as { result?: Array<{ topics?: string[] }> };
     if (result.result && Array.isArray(result.result)) {
       // Extract unique recipients (topic[2] is the 'to' address)
       const recipients = new Set<string>();
@@ -848,7 +848,7 @@ async function simulateBundle(params: {
       }),
     });
 
-    const result = await response.json();
+    const result = await response.json() as { error?: { message?: string; data?: string }; result?: string };
 
     if (result.error) {
       // Try to decode revert reason
@@ -875,7 +875,8 @@ async function simulateBundle(params: {
             ],
           }),
         });
-        const traceResult = await traceResponse.json();
+        type TraceCall = { type?: string; to?: string; error?: string; calls?: TraceCall[] };
+        const traceResult = await traceResponse.json() as { result?: TraceCall };
         if (traceResult.result) {
           // Write trace to file for debugging
           const fs = await import("fs");
@@ -883,12 +884,12 @@ async function simulateBundle(params: {
           console.log("DEBUG: Trace written to /tmp/trace-debug.json");
 
           // Find the failing call in the trace
-          function findFailingCall(call: { type?: string; to?: string; error?: string; calls?: unknown[] }): { type?: string; to?: string; error?: string } | null {
+          function findFailingCall(call: TraceCall): { type?: string; to?: string; error?: string } | null {
             if (call.error) {
               return { type: call.type, to: call.to, error: call.error };
             }
             if (call.calls) {
-              for (const subcall of call.calls as { type?: string; to?: string; error?: string; calls?: unknown[] }[]) {
+              for (const subcall of call.calls) {
                 const failing = findFailingCall(subcall);
                 if (failing) return failing;
               }
@@ -1501,7 +1502,7 @@ describe("Enso Zap Integration Tests", () => {
         const fs = await import("fs");
         fs.writeFileSync("/tmp/yscvgcvx-route-debug.json", JSON.stringify({
           route: result.route,
-          routeInfo: result.routeInfo,
+          routeInfo: (result as { routeInfo?: unknown }).routeInfo,
           amountsOut: result.amountsOut,
           tx: { to: result.tx!.to, data: result.tx!.data.slice(0, 500) },
         }, null, 2));
