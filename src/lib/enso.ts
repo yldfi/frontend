@@ -58,6 +58,9 @@ export const CVXCRV_ADDRESS = TOKENS.CVXCRV;
 export const ENSO_ROUTER = "0x80EbA3855878739F4710233A8a19d89Bdd2ffB8E";
 // Enso Router - holds tokens during bundle execution
 export const ENSO_ROUTER_EXECUTOR = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf";
+// EnsoShortcuts contract - executes calls, tokens must be here for external contract calls
+// This is the msg.sender when Enso calls external contracts via the "call" action
+export const ENSO_SHORTCUTS = "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003";
 
 // yld_fi referral code for Enso attribution
 export const ENSO_REFERRAL_CODE = "yldfi";
@@ -439,7 +442,15 @@ export async function fetchBundle(params: {
   actions: EnsoBundleAction[];
   receiver?: string;
   routingStrategy?: "router" | "delegate";
+  skipQuote?: boolean;
 }): Promise<EnsoBundleResponse> {
+  const isDev = process.env.NODE_ENV === "development";
+
+  // Log actions being sent (dev only)
+  if (isDev) {
+    console.log("[Enso Bundle] Actions:", JSON.stringify(params.actions, null, 2));
+  }
+
   // Use SDK to call bundle API
   // Note: SDK BundleAction type is a complex union, we cast our actions
   const bundleData = await ensoClient.getBundleData(
@@ -449,12 +460,140 @@ export async function fetchBundle(params: {
       routingStrategy: params.routingStrategy ?? "router",
       referralCode: ENSO_REFERRAL_CODE,
       receiver: params.receiver as `0x${string}` | undefined,
+      skipQuote: params.skipQuote,
     },
     // Cast our generic actions to SDK's union type
     params.actions as unknown as Parameters<typeof ensoClient.getBundleData>[1]
   );
 
+  // Log response from Enso (dev only)
+  if (isDev) {
+    console.log("[Enso Bundle] Response:", {
+      to: bundleData.tx.to,
+      from: bundleData.tx.from,
+      value: String(bundleData.tx.value),
+      dataLength: bundleData.tx.data.length,
+      gas: bundleData.gas,
+      amountsOut: bundleData.amountsOut,
+      amountsIn: (bundleData as Record<string, unknown>).amountsIn ?? "(not returned)",
+    });
+  }
+
+  // Debug RPC simulation (dev only) - run immediately after getting Enso response
+  // Uses debug_traceCall for detailed execution trace
+  const debugRpcUrl = process.env.DEBUG_RPC_URL;
+  const debugRpcAuth = process.env.DEBUG_RPC_AUTH;
+  if (isDev && debugRpcUrl && debugRpcAuth) {
+    try {
+      const debugResponse = await fetch(debugRpcUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Basic ${debugRpcAuth}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_call",
+          params: [
+            {
+              from: params.fromAddress,
+              to: bundleData.tx.to,
+              data: bundleData.tx.data,
+              value: `0x${BigInt(bundleData.tx.value).toString(16)}`,
+            },
+            "latest",
+          ],
+        }),
+      });
+      const debugResult = await debugResponse.json() as { error?: { message?: string; code?: number }; result?: string };
+      if (debugResult.error) {
+        console.log("[Debug RPC] eth_call FAILED:", debugResult.error);
+        // If eth_call fails, try debug_traceCall for more details
+        const traceResponse = await fetch(debugRpcUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Basic ${debugRpcAuth}`,
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 2,
+            method: "debug_traceCall",
+            params: [
+              {
+                from: params.fromAddress,
+                to: bundleData.tx.to,
+                data: bundleData.tx.data,
+                value: `0x${BigInt(bundleData.tx.value).toString(16)}`,
+              },
+              "latest",
+              { tracer: "callTracer" },
+            ],
+          }),
+        });
+        const traceResult = await traceResponse.json() as {
+          result?: {
+            error?: string;
+            revertReason?: string;
+            from?: string;
+            to?: string;
+            calls?: Array<{ error?: string; revertReason?: string; to?: string; input?: string }>;
+          };
+          error?: { message?: string };
+        };
+
+        // Log key info from trace
+        if (traceResult.result) {
+          const trace = traceResult.result;
+          console.log("[Debug RPC] Trace result:", {
+            error: trace.error,
+            revertReason: trace.revertReason,
+            from: trace.from,
+            to: trace.to,
+          });
+
+          // Find the failing call in the trace
+          if (trace.calls) {
+            const findFailingCall = (calls: typeof trace.calls): typeof trace.calls[0] | undefined => {
+              for (const call of calls) {
+                if (call.error || call.revertReason) {
+                  return call;
+                }
+                if ((call as { calls?: typeof trace.calls }).calls) {
+                  const nested = findFailingCall((call as { calls: typeof trace.calls }).calls);
+                  if (nested) return nested;
+                }
+              }
+              return undefined;
+            };
+            const failingCall = findFailingCall(trace.calls);
+            if (failingCall) {
+              console.log("[Debug RPC] Failing call:", {
+                to: failingCall.to,
+                error: failingCall.error,
+                revertReason: failingCall.revertReason,
+                inputPrefix: failingCall.input?.slice(0, 10), // function selector
+              });
+            }
+          }
+        } else if (traceResult.error) {
+          console.log("[Debug RPC] Trace error:", traceResult.error);
+        }
+
+        // Log trace data to console (copy and save to file for ethcli analysis)
+        console.log("[Debug RPC] Full trace (copy to .json file for analysis):");
+        console.log(JSON.stringify(traceResult, null, 2));
+      } else {
+        console.log("[Debug RPC] eth_call SUCCESS");
+      }
+    } catch (error) {
+      console.log("[Debug RPC] Error:", error instanceof Error ? error.message : error);
+    }
+  }
+
   // Transform SDK response to match our expected type
+  // Note: amountsOut may be null when skipQuote is true
   return {
     tx: {
       to: bundleData.tx.to,
@@ -462,10 +601,12 @@ export async function fetchBundle(params: {
       value: String(bundleData.tx.value),
       from: bundleData.tx.from ?? params.fromAddress,
     },
-    gas: String(bundleData.gas),
-    amountsOut: Object.fromEntries(
-      Object.entries(bundleData.amountsOut).map(([k, v]) => [k, String(v)])
-    ),
+    gas: String(bundleData.gas ?? "0"),
+    amountsOut: bundleData.amountsOut
+      ? Object.fromEntries(
+          Object.entries(bundleData.amountsOut).map(([k, v]) => [k, String(v)])
+        )
+      : {},
     route: bundleData.route,  // Pass through route steps from SDK
     priceImpact: bundleData.priceImpact,
   };
@@ -2121,9 +2262,15 @@ export async function fetchCvgCvxZapInRoute(params: {
 
   // Step 2: Apply slippage buffer to CVX estimate for non-CVX inputs
   // This ensures we don't try to use more CVX than we actually receive after routing slippage
+  // For non-CVX inputs, we apply DOUBLE the user's slippage as a safety buffer because:
+  // 1. Our estimate (Curve pool) might differ from Enso's actual route
+  // 2. The route itself has slippage
+  // 3. State can change between quote and execution
+  // Better to leave some CVX dust in router than to have tx revert
+  const routingBufferBps = inputIsCvx ? slippageBps : slippageBps * 2;
   const cvxAmountForSplit = inputIsCvx
     ? expectedCvxOutput
-    : applySlippageBuffer(BigInt(expectedCvxOutput), slippageBps);
+    : applySlippageBuffer(BigInt(expectedCvxOutput), routingBufferBps);
 
   // Step 3: Calculate optimal split between swap and mint using conservative CVX amount
   const { swapAmount, mintAmount } = await getOptimalSwapAmount(cvxAmountForSplit);
@@ -2134,18 +2281,28 @@ export async function fetchCvgCvxZapInRoute(params: {
     : [inputSymbol, "CVX", "cvgCVX", vaultSymbol];
 
   // Step 3: Build bundle based on optimal strategy
-  // Note: Hybrid bundles (swap + mint split) fail with Enso's simulator because it can't handle
-  // splitting an output into two paths. For amounts requiring hybrid, fall back to mint-only (safe 1:1).
+  // Note: Hybrid bundles (swap + mint split) only work with CVX input because Enso's shortcut
+  // builder can't handle splitting route output into two paths. For non-CVX inputs that would
+  // trigger hybrid, we fall back to mint-only (safe 1:1).
   let bundle: EnsoBundleResponse;
   let swapBonus = 0;
-  const actualSwapAmount = swapAmount;
-  const actualMintAmount = mintAmount;
+  let actualSwapAmount = swapAmount;
+  let actualMintAmount = mintAmount;
 
   let bonusAmount: string | undefined;
   let expectedCvgCvxOutput = "0";
 
+  const isDev = process.env.NODE_ENV === "development";
+
   if (mintAmount === 0n) {
     // 100% swap through Curve pool (pool is above peg, get bonus)
+    if (isDev) {
+      console.log("[cvgCVX Zap] Using SWAP-ONLY path", {
+        inputIsCvx,
+        cvxAmountForSplit,
+        slippageBps,
+      });
+    }
     bundle = await buildSwapOnlyBundle(params, TANGENT, cvxAmountForSplit, slippageBps, inputIsCvx);
 
     // Calculate swap bonus and bonus amount using conservative CVX amount
@@ -2159,27 +2316,134 @@ export async function fetchCvgCvxZapInRoute(params: {
     }
   } else if (swapAmount === 0n) {
     // 100% direct mint (pool is below peg, mint at 1:1)
+    if (isDev) {
+      console.log("[cvgCVX Zap] Using MINT-ONLY path", {
+        inputIsCvx,
+        cvxAmountForSplit,
+        slippageBps,
+      });
+    }
     bundle = await buildMintOnlyBundle(params, TANGENT, cvxAmountForSplit, slippageBps, inputIsCvx);
     swapBonus = 0;
     expectedCvgCvxOutput = cvxAmountForSplit; // 1:1 mint
     // No bonus for mint-only
   } else {
     // Hybrid path: split input between swap and mint paths
-    // Uses split routing strategy to avoid Enso's output-splitting limitation
-    bundle = await buildHybridBundle(params, TANGENT, swapAmount, mintAmount, slippageBps, inputIsCvx);
+    // CVX input: uses literal amounts (no route needed) - true hybrid works
+    // ETH input: use direct Curve call (bypasses Enso route validation) - true hybrid works
+    // Other tokens: fall back to dominant single path (Enso validates combined route inputs)
 
-    // Calculate swap bonus for display (swap path gets the bonus)
-    const conservativeSwapAmount = BigInt(applySlippageBuffer(swapAmount, slippageBps));
-    const swapOutput = await getCvgCvxSwapRate(conservativeSwapAmount.toString());
-    if (swapOutput) {
-      swapBonus = (Number(swapOutput) / Number(conservativeSwapAmount) - 1) * 100;
-      // Bonus amount = cvgCVX received from swap - CVX swapped (gain on swap portion)
-      const bonusAmountWei = BigInt(swapOutput) - conservativeSwapAmount;
-      bonusAmount = (Number(bonusAmountWei) / 1e18).toFixed(4);
-      // Total cvgCVX = swap output + mint amount (1:1)
-      expectedCvgCvxOutput = (BigInt(swapOutput) + mintAmount).toString();
+    if (inputIsCvx) {
+      // CVX input: true hybrid works with literal amounts
+      if (isDev) {
+        console.log("[cvgCVX Zap] Using HYBRID path (CVX input)", {
+          swapAmount: swapAmount.toString(),
+          mintAmount: mintAmount.toString(),
+          slippageBps,
+        });
+      }
+      bundle = await buildHybridBundle(params, TANGENT, swapAmount, mintAmount, slippageBps, inputIsCvx);
+    } else if (inputIsEth) {
+      // ETH input: TRUE HYBRID using fee action split!
+      // Uses fee action to split CVX between swap and mint paths
+      if (isDev) {
+        console.log("[cvgCVX Zap] Using TRUE HYBRID path (ETH input with fee action split)", {
+          swapAmount: swapAmount.toString(),
+          mintAmount: mintAmount.toString(),
+          slippageBps,
+        });
+      }
+
+      const TANGENT_WITH_ETH = {
+        ...TANGENT,
+        CVX_ETH_POOL: "0xB576491F1E6e5E62f1d8F26062Ee822B40B0E0d4" as const,
+      };
+
+      bundle = await buildEthHybridBundle(
+        { fromAddress: params.fromAddress, vaultAddress: params.vaultAddress, amountIn: params.amountIn, slippage: params.slippage },
+        TANGENT_WITH_ETH,
+        swapAmount,
+        mintAmount,
+        slippageBps,
+        cvxAmountForSplit
+      );
+
+      // Calculate expected cvgCVX output for route info
+      const swapOutput = await getCvgCvxSwapRate(swapAmount.toString());
+      expectedCvgCvxOutput = ((swapOutput ?? swapAmount) + mintAmount).toString();
+
+      // Swap bonus is proportional to swap portion
+      if (swapOutput && swapAmount > 0n) {
+        const totalAmount = swapAmount + mintAmount;
+        const swapBonusAmount = swapOutput - swapAmount;
+        swapBonus = Number(swapBonusAmount) / Number(totalAmount) * 100;
+        bonusAmount = (Number(swapBonusAmount) / 1e18).toFixed(4);
+      }
     } else {
-      expectedCvgCvxOutput = (swapAmount + mintAmount).toString();
+      // Other non-CVX inputs (USDC, etc.): fall back to dominant single path
+      // Hybrid doesn't work because:
+      // - Enso's shortcut builder validates combined route inputs for split amounts
+      // - CVX1.mint has no return value, so Enso can't chain CVX1
+      //   operations and tries to pre-fund CVX1 from user (which fails)
+      const totalAmount = swapAmount + mintAmount;
+      if (swapAmount > mintAmount) {
+        // Swap is larger - use swap-only (get bonus from Curve pool)
+        if (isDev) {
+          console.log("[cvgCVX Zap] Non-CVX hybrid fallback: using SWAP-ONLY", {
+            reason: "CVX1.mint has no return value - Enso pre-funds CVX1 from user",
+            inputToken: params.inputToken.slice(0, 10),
+            swapPct: (Number(swapAmount) / Number(totalAmount) * 100).toFixed(1),
+            mintPct: (Number(mintAmount) / Number(totalAmount) * 100).toFixed(1),
+          });
+        }
+        bundle = await buildSwapOnlyBundle(params, TANGENT, cvxAmountForSplit, slippageBps, inputIsCvx);
+
+        // Update actual amounts to reflect swap-only path
+        actualSwapAmount = BigInt(cvxAmountForSplit);
+        actualMintAmount = 0n;
+
+        // Calculate swap bonus
+        const swapOutput = await getCvgCvxSwapRate(cvxAmountForSplit);
+        if (swapOutput) {
+          expectedCvgCvxOutput = swapOutput.toString();
+          swapBonus = (Number(swapOutput) / Number(cvxAmountForSplit) - 1) * 100;
+          const bonusAmountWei = BigInt(swapOutput) - BigInt(cvxAmountForSplit);
+          bonusAmount = (Number(bonusAmountWei) / 1e18).toFixed(4);
+        }
+      } else {
+        // Mint is larger - use mint-only (safe 1:1 rate)
+        if (isDev) {
+          console.log("[cvgCVX Zap] Non-CVX hybrid fallback: using MINT-ONLY", {
+            reason: "CVX1.mint has no return value - Enso pre-funds CVX1 from user",
+            inputToken: params.inputToken.slice(0, 10),
+            swapPct: (Number(swapAmount) / Number(totalAmount) * 100).toFixed(1),
+            mintPct: (Number(mintAmount) / Number(totalAmount) * 100).toFixed(1),
+          });
+        }
+        bundle = await buildMintOnlyBundle(params, TANGENT, cvxAmountForSplit, slippageBps, inputIsCvx);
+
+        // Update actual amounts to reflect mint-only path
+        actualSwapAmount = 0n;
+        actualMintAmount = BigInt(cvxAmountForSplit);
+        swapBonus = 0;
+        expectedCvgCvxOutput = cvxAmountForSplit; // 1:1 mint
+      }
+    }
+
+    // Calculate swap bonus for hybrid paths (CVX input only - non-CVX uses dominant single path)
+    if (inputIsCvx) {
+      const conservativeSwapAmount = BigInt(applySlippageBuffer(swapAmount, slippageBps));
+      const swapOutput = await getCvgCvxSwapRate(conservativeSwapAmount.toString());
+      if (swapOutput) {
+        swapBonus = (Number(swapOutput) / Number(conservativeSwapAmount) - 1) * 100;
+        // Bonus amount = cvgCVX received from swap - CVX swapped (gain on swap portion)
+        const bonusAmountWei = BigInt(swapOutput) - conservativeSwapAmount;
+        bonusAmount = (Number(bonusAmountWei) / 1e18).toFixed(4);
+        // Total cvgCVX = swap output + mint amount (1:1)
+        expectedCvgCvxOutput = (BigInt(swapOutput) + mintAmount).toString();
+      } else {
+        expectedCvgCvxOutput = (swapAmount + mintAmount).toString();
+      }
     }
   }
 
@@ -2326,10 +2590,22 @@ async function buildSwapOnlyBundle(
   }
 
   // Standard path: route input → CVX first
-  // Note: Using concrete estimates for amounts to help Enso simulate the bundle correctly
-  // The route action uses dynamic output, but subsequent actions use the estimated CVX amount
+  //
+  // CRITICAL: Use useOutputOfCallAt:0 for ALL CVX/CVX1 operations to prevent Enso
+  // from trying to pre-fund tokens from the user. Literal amounts cause simulation
+  // failures because Enso validates token balances.
+  //
+  // Key insights:
+  // 1. The route action outputs the CVX amount, which we reference with useOutputOfCallAt:0
+  // 2. CVX → CVX1 is 1:1, so we can use the same output reference for CVX1 amounts
+  // 3. CVX1 must be minted to ENSO_SHORTCUTS (not ENSO_ROUTER_EXECUTOR) because the
+  //    Curve exchange is executed BY the Shortcuts contract, and Curve.exchange does
+  //    transferFrom(msg.sender, ...) to pull CVX1 from the caller
+  //
+  // For the final vault deposit, we use { useOutputOfCallAt: 4 } to chain from
+  // the Curve exchange output (which does return a value).
   const actions: EnsoBundleAction[] = [
-    // Action 0: Swap input → CVX
+    // Action 0: Swap input → CVX (produces CVX output)
     {
       protocol: "enso",
       action: "route",
@@ -2340,13 +2616,13 @@ async function buildSwapOnlyBundle(
         slippage: params.slippage ?? "100",
       },
     },
-    // Action 1: Approve CVX → CVX1 (use estimated CVX amount)
+    // Action 1: Approve CVX → CVX1 (use route output reference)
     {
       protocol: "erc20",
       action: "approve",
-      args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: expectedCvxOutput },
+      args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: { useOutputOfCallAt: 0 } },
     },
-    // Action 2: Wrap CVX → CVX1 (mint to router so subsequent actions can use it)
+    // Action 2: Wrap CVX → CVX1 (mint to EnsoShortcuts for Curve call)
     {
       protocol: "enso",
       action: "call",
@@ -2354,16 +2630,16 @@ async function buildSwapOnlyBundle(
         address: TOKENS.CVX1,
         method: "mint",
         abi: "function mint(address to, uint256 amount)",
-        args: [ENSO_ROUTER_EXECUTOR, expectedCvxOutput],
+        args: [ENSO_SHORTCUTS, { useOutputOfCallAt: 0 }],
       },
     },
-    // Action 3: Approve CVX1 → Curve pool
+    // Action 3: Approve CVX1 → Curve pool (CVX1 is 1:1 with CVX, use same ref)
     {
       protocol: "erc20",
       action: "approve",
-      args: { token: TOKENS.CVX1, spender: TANGENT.CVX1_CVGCVX_POOL, amount: expectedCvxOutput },
+      args: { token: TOKENS.CVX1, spender: TANGENT.CVX1_CVGCVX_POOL, amount: { useOutputOfCallAt: 0 } },
     },
-    // Action 4: Swap CVX1 → cvgCVX via Curve
+    // Action 4: Swap CVX1 → cvgCVX via Curve (use same ref, minDy for slippage protection)
     {
       protocol: "enso",
       action: "call",
@@ -2371,16 +2647,16 @@ async function buildSwapOnlyBundle(
         address: TANGENT.CVX1_CVGCVX_POOL,
         method: "exchange",
         abi: "function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) returns (uint256)",
-        args: [0, 1, expectedCvxOutput, minDy],
+        args: [0, 1, { useOutputOfCallAt: 0 }, minDy],
       },
     },
-    // Action 5: Approve cvgCVX → vault
+    // Action 5: Approve cvgCVX → vault (chain from Curve exchange output)
     {
       protocol: "erc20",
       action: "approve",
       args: { token: TOKENS.CVGCVX, spender: params.vaultAddress, amount: { useOutputOfCallAt: 4 } },
     },
-    // Action 6: Deposit cvgCVX → vault
+    // Action 6: Deposit cvgCVX → vault (chain from Curve exchange output)
     {
       protocol: "erc4626",
       action: "deposit",
@@ -2393,11 +2669,23 @@ async function buildSwapOnlyBundle(
     },
   ];
 
-  return fetchBundle({
+  // Use skipQuote to bypass Enso's simulation which fails with complex output chaining.
+  // The bundle uses useOutputOfCallAt to chain outputs, which Enso's simulator can't handle.
+  const bundleResult = await fetchBundle({
     fromAddress: params.fromAddress,
     actions,
     routingStrategy: "router",
+    skipQuote: true,
   });
+
+  // Manually provide expected amountsOut since skipQuote returns null
+  const expectedOutput = expectedCvgCvxOutput?.toString() ?? expectedCvxOutput;
+  bundleResult.amountsOut = {
+    [params.vaultAddress.toLowerCase()]: expectedOutput,
+    [TOKENS.CVGCVX.toLowerCase()]: expectedOutput,
+  };
+
+  return bundleResult;
 }
 
 /**
@@ -2463,9 +2751,12 @@ async function buildMintOnlyBundle(
   }
 
   // Standard path: route input → CVX first
-  // Note: Using concrete estimates for amounts to help Enso simulate the bundle correctly
+  //
+  // CRITICAL: Use useOutputOfCallAt:0 for CVX operations to prevent Enso
+  // from trying to pre-fund tokens from the user.
+  // The cvgCVX.mint function returns uint256, so we can chain from it for deposit.
   const actions: EnsoBundleAction[] = [
-    // Action 0: Swap input → CVX
+    // Action 0: Swap input → CVX (produces CVX output)
     {
       protocol: "enso",
       action: "route",
@@ -2476,13 +2767,13 @@ async function buildMintOnlyBundle(
         slippage: params.slippage ?? "100",
       },
     },
-    // Action 1: Approve CVX → cvgCVX contract (use estimated CVX amount)
+    // Action 1: Approve CVX → cvgCVX contract (use route output reference)
     {
       protocol: "erc20",
       action: "approve",
-      args: { token: TOKENS.CVX, spender: TANGENT.CVGCVX_CONTRACT, amount: expectedCvxOutput },
+      args: { token: TOKENS.CVX, spender: TANGENT.CVGCVX_CONTRACT, amount: { useOutputOfCallAt: 0 } },
     },
-    // Action 2: Mint cvgCVX from CVX (1:1, isLock=true for no fees, mint to router)
+    // Action 2: Mint cvgCVX from CVX (use route output, mint returns 1:1)
     // mint(address to, uint256 amount, bool isLock) returns (uint256)
     {
       protocol: "enso",
@@ -2491,16 +2782,16 @@ async function buildMintOnlyBundle(
         address: TANGENT.CVGCVX_CONTRACT,
         method: "mint",
         abi: "function mint(address to, uint256 amount, bool isLock) returns (uint256)",
-        args: [ENSO_ROUTER_EXECUTOR, expectedCvxOutput, true],
+        args: [ENSO_ROUTER_EXECUTOR, { useOutputOfCallAt: 0 }, true],
       },
     },
-    // Action 3: Approve cvgCVX → vault
+    // Action 3: Approve cvgCVX → vault (chain from mint output)
     {
       protocol: "erc20",
       action: "approve",
       args: { token: TOKENS.CVGCVX, spender: params.vaultAddress, amount: { useOutputOfCallAt: 2 } },
     },
-    // Action 4: Deposit cvgCVX → vault
+    // Action 4: Deposit cvgCVX → vault (chain from mint output)
     {
       protocol: "erc4626",
       action: "deposit",
@@ -2513,11 +2804,21 @@ async function buildMintOnlyBundle(
     },
   ];
 
-  return fetchBundle({
+  // Use skipQuote to bypass Enso's simulation which fails with output chaining
+  const bundleResult = await fetchBundle({
     fromAddress: params.fromAddress,
     actions,
     routingStrategy: "router",
+    skipQuote: true,
   });
+
+  // Manually provide expected amountsOut (1:1 mint from CVX)
+  bundleResult.amountsOut = {
+    [params.vaultAddress.toLowerCase()]: expectedCvxOutput,
+    [TOKENS.CVGCVX.toLowerCase()]: expectedCvxOutput,
+  };
+
+  return bundleResult;
 }
 
 /**
@@ -2560,8 +2861,15 @@ async function buildHybridBundle(
     // Total expected cvgCVX = swap output + mint amount (1:1)
     const totalExpectedCvgCvx = (expectedSwapOutput ?? swapAmount) + mintAmount;
 
+    // NOTE: CVX input hybrid bundles require skipQuote: true because Enso's
+    // simulator only pulls tokens for the FIRST action that consumes each token type.
+    // Since we need CVX for both swap path (CVX → CVX1) and mint path (CVX → cvgCVX),
+    // the simulator fails with "ERC20: transfer amount exceeds balance".
+    // We've exhaustively tested alternatives (transferfrom, split, wrap-all-then-unwrap,
+    // balance action, delegate routing) - all fail. skipQuote is the only working solution.
+
     const actions: EnsoBundleAction[] = [
-      // === SWAP PATH (swapAmount CVX → CVX1 → cvgCVX via Curve) ===
+      // === SWAP PATH ===
 
       // Action 0: Approve swapAmount CVX → CVX1
       {
@@ -2598,7 +2906,7 @@ async function buildHybridBundle(
         },
       },
 
-      // === MINT PATH (mintAmount CVX → cvgCVX directly) ===
+      // === MINT PATH ===
 
       // Action 4: Approve mintAmount CVX → cvgCVX contract
       {
@@ -2639,44 +2947,120 @@ async function buildHybridBundle(
       },
     ];
 
-    return fetchBundle({
+    // Use skipQuote to bypass Enso simulation (which fails for multi-consumption CVX bundles)
+    //
+    // NOTE: We intentionally do NOT self-simulate CVX hybrid bundles because:
+    // 1. The bundle uses multiple intermediate tokens (CVX → CVX1 → cvgCVX via Curve)
+    // 2. CVX1 uses non-standard storage slots (51 for balances, 52 for approvals)
+    // 3. State overrides for multiple tokens in a complex bundle execution context
+    //    don't work reliably with eth_call - the Curve exchange fails even with
+    //    correct slot overrides due to internal state tracking differences.
+    // 4. skipQuote=true has been verified to work correctly on-chain.
+    const bundleResult = await fetchBundle({
       fromAddress: params.fromAddress,
       actions,
       routingStrategy: "router",
+      skipQuote: true,
     });
+
+    // Manually provide expected amountsOut since skipQuote returns null
+    bundleResult.amountsOut = {
+      [params.vaultAddress.toLowerCase()]: totalExpectedCvgCvx.toString(),
+      [TOKENS.CVGCVX.toLowerCase()]: totalExpectedCvgCvx.toString(),
+    };
+
+    return bundleResult;
   }
 
-  // === NON-CVX INPUT: Route full input → CVX, then split CVX ===
-  // This approach follows the working pxCVX pattern:
-  // 1. Single route action for the full input
-  // 2. Split the resulting CVX between swap and mint paths using literal amounts
-  // This avoids the Enso shortcut builder issues with split input routing.
+  // Non-CVX hybrid bundles are not supported due to Enso's shortcut builder
+  // validating combined route inputs. The caller should fall back to swap-only
+  // or mint-only paths for non-CVX inputs.
+  throw new Error("Hybrid bundle is only supported for CVX inputs");
+}
 
-  // Total expected cvgCVX = swap output + mint amount (1:1)
-  const totalExpectedCvgCvx = (expectedSwapOutput ?? swapAmount) + mintAmount;
+/**
+ * Build TRUE HYBRID bundle for ETH → cvgCVX using fee action split
+ *
+ * Uses the Enso "fee" action to split CVX between swap and mint paths.
+ * The fee action takes a percentage and sends it to a receiver, returning
+ * the remainder as its output.
+ *
+ * Flow:
+ * 1. Route ETH → CVX (via Enso's DEX aggregator for best price)
+ * 2. Fee action splits CVX: feeBps% to router (mint path), rest returned (swap path)
+ * 3. Swap path: CVX → CVX1 → cvgCVX (Curve swap, above peg)
+ * 4. Mint path: CVX → cvgCVX (1:1 direct mint)
+ * 5. Combine all cvgCVX and deposit to vault
+ *
+ * Key insights:
+ * - Fee action output is the REMAINDER after fee (swap path portion)
+ * - Balance action gets the fee'd portion (mint path) from router
+ * - CVX1.mint() has no return value - use fee output ref for CVX1 amounts
+ * - All useOutputOfCallAt references chain properly with skipQuote
+ */
+async function buildEthHybridBundle(
+  params: { fromAddress: string; vaultAddress: string; amountIn: string; slippage?: string },
+  TANGENT: { CVX1_CVGCVX_POOL: string; CVGCVX_CONTRACT: string; CVX_ETH_POOL: string },
+  swapAmount: bigint,
+  mintAmount: bigint,
+  slippageBps: number,
+  expectedCvxOutput: string
+): Promise<EnsoBundleResponse> {
+  // Calculate fee basis points to split CVX (fee = mint portion, remainder = swap portion)
+  // feeBps = (mintAmount / totalCVX) * 10000
+  const totalCvx = swapAmount + mintAmount;
+  const feeBps = totalCvx > 0n
+    ? Number((mintAmount * 10000n) / totalCvx)
+    : 5000; // Default 50/50 if no split calculated
+
+  // Calculate expected outputs for slippage protection
+  const expectedSwapCvgCvx = await getCurveGetDy(
+    TANGENT.CVX1_CVGCVX_POOL,
+    0, 1, swapAmount.toString()
+  );
+  const minSwapDy = expectedSwapCvgCvx
+    ? calculateMinDy(expectedSwapCvgCvx, slippageBps)
+    : "0";
+
+  // Total expected cvgCVX = swap output + mint output (1:1)
+  const totalExpectedCvgCvx = (expectedSwapCvgCvx ?? swapAmount) + mintAmount;
 
   const actions: EnsoBundleAction[] = [
-    // Action 0: Route full input → CVX (single route)
+    // === STEP 1: Route ETH → CVX ===
+    // Action 0: Route (output: total CVX amount)
     {
       protocol: "enso",
       action: "route",
       args: {
-        tokenIn: params.inputToken,
+        tokenIn: ETH_ADDRESS,
         tokenOut: TOKENS.CVX,
         amountIn: params.amountIn,
         slippage: params.slippage ?? "100",
       },
     },
 
-    // === SWAP PATH (uses pre-calculated swapAmount) ===
+    // === STEP 2: Split CVX using fee action ===
+    // Action 1: Fee takes mintAmount% to router, returns swapAmount% as output
+    {
+      protocol: "enso",
+      action: "fee",
+      args: {
+        token: TOKENS.CVX,
+        bps: feeBps,
+        receiver: ENSO_ROUTER_EXECUTOR, // Mint path CVX stays here
+        amount: { useOutputOfCallAt: 0 },
+      },
+    },
 
-    // Action 1: Approve swapAmount CVX → CVX1
+    // === SWAP PATH (uses fee output = swap portion) ===
+    // Action 2: Approve CVX → CVX1
     {
       protocol: "erc20",
       action: "approve",
-      args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: swapAmount.toString() },
+      args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: { useOutputOfCallAt: 1 } },
     },
-    // Action 2: Wrap swapAmount CVX → CVX1 (mint to router)
+    // Action 3: Mint CVX → CVX1 (mint to ENSO_SHORTCUTS for Curve call)
+    // Note: CVX1.mint() has no return value
     {
       protocol: "enso",
       action: "call",
@@ -2684,16 +3068,16 @@ async function buildHybridBundle(
         address: TOKENS.CVX1,
         method: "mint",
         abi: "function mint(address to, uint256 amount)",
-        args: [ENSO_ROUTER_EXECUTOR, swapAmount.toString()],
+        args: [ENSO_SHORTCUTS, { useOutputOfCallAt: 1 }],
       },
     },
-    // Action 3: Approve CVX1 → Curve pool
+    // Action 4: Approve CVX1 → Curve pool (CVX1 is 1:1 with CVX)
     {
       protocol: "erc20",
       action: "approve",
-      args: { token: TOKENS.CVX1, spender: TANGENT.CVX1_CVGCVX_POOL, amount: swapAmount.toString() },
+      args: { token: TOKENS.CVX1, spender: TANGENT.CVX1_CVGCVX_POOL, amount: { useOutputOfCallAt: 1 } },
     },
-    // Action 4: Swap CVX1 → cvgCVX via Curve (returns cvgCVX amount)
+    // Action 5: Swap CVX1 → cvgCVX via Curve
     {
       protocol: "enso",
       action: "call",
@@ -2701,19 +3085,24 @@ async function buildHybridBundle(
         address: TANGENT.CVX1_CVGCVX_POOL,
         method: "exchange",
         abi: "function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) returns (uint256)",
-        args: [0, 1, swapAmount.toString(), minSwapDy],
+        args: [0, 1, { useOutputOfCallAt: 1 }, minSwapDy],
       },
     },
 
-    // === MINT PATH (uses pre-calculated mintAmount) ===
-
-    // Action 5: Approve mintAmount CVX → cvgCVX contract
+    // === MINT PATH (uses balance of remaining CVX on router) ===
+    // Action 6: Get CVX balance (the fee'd portion for mint path)
+    {
+      protocol: "enso",
+      action: "balance",
+      args: { token: TOKENS.CVX },
+    },
+    // Action 7: Approve CVX → cvgCVX contract
     {
       protocol: "erc20",
       action: "approve",
-      args: { token: TOKENS.CVX, spender: TANGENT.CVGCVX_CONTRACT, amount: mintAmount.toString() },
+      args: { token: TOKENS.CVX, spender: TANGENT.CVGCVX_CONTRACT, amount: { useOutputOfCallAt: 6 } },
     },
-    // Action 6: Mint cvgCVX from CVX (1:1, isLock=true, mint to router)
+    // Action 8: Mint CVX → cvgCVX (1:1, isLock=true for no fees)
     {
       protocol: "enso",
       action: "call",
@@ -2721,37 +3110,52 @@ async function buildHybridBundle(
         address: TANGENT.CVGCVX_CONTRACT,
         method: "mint",
         abi: "function mint(address to, uint256 amount, bool isLock) returns (uint256)",
-        args: [ENSO_ROUTER_EXECUTOR, mintAmount.toString(), true],
+        args: [ENSO_ROUTER_EXECUTOR, { useOutputOfCallAt: 6 }, true],
       },
     },
 
     // === DEPOSIT ALL cvgCVX TO VAULT ===
-
-    // Action 7: Approve all cvgCVX → vault
+    // Action 9: Get total cvgCVX balance (from both paths)
+    {
+      protocol: "enso",
+      action: "balance",
+      args: { token: TOKENS.CVGCVX },
+    },
+    // Action 10: Approve cvgCVX → vault
     {
       protocol: "erc20",
       action: "approve",
-      args: { token: TOKENS.CVGCVX, spender: params.vaultAddress, amount: totalExpectedCvgCvx.toString() },
+      args: { token: TOKENS.CVGCVX, spender: params.vaultAddress, amount: { useOutputOfCallAt: 9 } },
     },
-    // Action 8: Deposit all cvgCVX → vault
-    // Use erc4626 action so amountsOut tracks the vault shares
+    // Action 11: Deposit cvgCVX → vault
     {
       protocol: "erc4626",
       action: "deposit",
       args: {
         tokenIn: TOKENS.CVGCVX,
         tokenOut: params.vaultAddress,
-        amountIn: totalExpectedCvgCvx.toString(),
+        amountIn: { useOutputOfCallAt: 9 },
         primaryAddress: params.vaultAddress,
       },
     },
   ];
 
-  return fetchBundle({
+  // Use router strategy with skipQuote to bypass simulation
+  // (skipQuote is required for fee action and complex output chaining)
+  const bundleResult = await fetchBundle({
     fromAddress: params.fromAddress,
     actions,
     routingStrategy: "router",
+    skipQuote: true,
   });
+
+  // Manually provide expected amountsOut since skipQuote returns null
+  bundleResult.amountsOut = {
+    [params.vaultAddress.toLowerCase()]: totalExpectedCvgCvx.toString(),
+    [TOKENS.CVGCVX.toLowerCase()]: totalExpectedCvgCvx.toString(),
+  };
+
+  return bundleResult;
 }
 
 /**

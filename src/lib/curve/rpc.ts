@@ -7,6 +7,22 @@
 
 import { PUBLIC_RPC_URLS } from "@/config/rpc";
 
+// Use DEBUG_RPC_URL if available (more reliable, higher rate limits)
+// Falls back to public llamarpc for production
+const getRpcUrl = (): string => {
+  if (typeof process !== "undefined" && process.env?.DEBUG_RPC_URL) {
+    return process.env.DEBUG_RPC_URL;
+  }
+  return PUBLIC_RPC_URLS.llamarpc;
+};
+
+const getRpcAuth = (): string | undefined => {
+  if (typeof process !== "undefined" && process.env?.DEBUG_RPC_AUTH) {
+    return process.env.DEBUG_RPC_AUTH;
+  }
+  return undefined;
+};
+
 // Function selectors (exported for helpers)
 export const SELECTORS = {
   // Old-style pools (int128 indices)
@@ -48,9 +64,13 @@ interface RpcBatchResult {
 /**
  * Execute multiple eth_call requests in a single HTTP request
  * Reduces latency by batching RPC calls
+ * Includes retry logic for RPC resilience
  */
 export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]> {
   if (calls.length === 0) return [];
+
+  const rpcUrl = getRpcUrl();
+  const rpcAuth = getRpcAuth();
 
   const batch = calls.map((call, id) => ({
     jsonrpc: "2.0",
@@ -59,30 +79,56 @@ export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]
     params: [{ to: call.to, data: call.data }, "latest"],
   }));
 
-  const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(batch),
-  });
+  const maxRetries = 5;
+  const baseDelayMs = 500;
+  let lastError: Error | undefined;
 
-  const json = await response.json();
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (rpcAuth) {
+        headers["Authorization"] = `Basic ${rpcAuth}`;
+      }
 
-  // Handle case where response is not an array (RPC error, invalid response, etc.)
-  if (!Array.isArray(json)) {
-    return calls.map(() => null);
+      const response = await fetch(rpcUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(batch),
+      });
+
+      if (!response.ok) {
+        throw new Error(`RPC batch request failed: ${response.status}`);
+      }
+
+      const json = await response.json();
+
+      // Handle case where response is not an array (RPC error, invalid response, etc.)
+      if (!Array.isArray(json)) {
+        throw new Error("RPC batch response is not an array");
+      }
+
+      const results = json as RpcBatchResult[];
+
+      // Sort by id to maintain order
+      results.sort((a, b) => a.id - b.id);
+
+      return results.map((r) => {
+        if (r.result && r.result !== "0x" && r.result !== "0x0") {
+          return BigInt(r.result);
+        }
+        return null;
+      });
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt < maxRetries - 1) {
+        const delay = baseDelayMs * Math.pow(2, attempt);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
   }
 
-  const results = json as RpcBatchResult[];
-
-  // Sort by id to maintain order
-  results.sort((a, b) => a.id - b.id);
-
-  return results.map((r) => {
-    if (r.result && r.result !== "0x" && r.result !== "0x0") {
-      return BigInt(r.result);
-    }
-    return null;
-  });
+  console.error("batchRpcCalls failed after retries:", lastError);
+  return calls.map(() => null);
 }
 
 /**
@@ -93,8 +139,32 @@ function encodeUint256(value: bigint | string | number): string {
 }
 
 /**
+ * Retry wrapper with exponential backoff
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries = 5,
+  baseDelayMs = 500
+): Promise<T> {
+  let lastError: Error | undefined;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt < maxRetries - 1) {
+        const delay = baseDelayMs * Math.pow(2, attempt);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+  throw lastError;
+}
+
+/**
  * Get expected output from an old-style Curve pool (uses int128 indices)
  * These are pools like CVX1/cvgCVX that use get_dy(int128,int128,uint256)
+ * Includes retry logic for RPC resilience
  */
 export async function getCurveGetDy(
   poolAddress: string,
@@ -102,31 +172,48 @@ export async function getCurveGetDy(
   j: number,
   dx: string
 ): Promise<bigint | null> {
+  const rpcUrl = getRpcUrl();
+  const rpcAuth = getRpcAuth();
+
+  const data =
+    SELECTORS.GET_DY_INT128 +
+    encodeUint256(i) +
+    encodeUint256(j) +
+    encodeUint256(dx);
+
   try {
-    const data =
-      SELECTORS.GET_DY_INT128 +
-      encodeUint256(i) +
-      encodeUint256(j) +
-      encodeUint256(dx);
+    return await withRetry(async () => {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (rpcAuth) {
+        headers["Authorization"] = `Basic ${rpcAuth}`;
+      }
 
-    const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "eth_call",
-        params: [{ to: poolAddress, data }, "latest"],
-        id: 1,
-      }),
+      const response = await fetch(rpcUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "eth_call",
+          params: [{ to: poolAddress, data }, "latest"],
+          id: 1,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`RPC request failed: ${response.status}`);
+      }
+
+      const result = (await response.json()) as { result?: string; error?: { message: string } };
+      if (result.error) {
+        throw new Error(`RPC error: ${result.error.message}`);
+      }
+      if (result.result && result.result !== "0x") {
+        return BigInt(result.result);
+      }
+      return null;
     });
-
-    const result = (await response.json()) as { result?: string };
-    if (result.result && result.result !== "0x") {
-      return BigInt(result.result);
-    }
-    return null;
   } catch (error) {
-    console.error("Error fetching get_dy:", error);
+    console.error("Error fetching get_dy after retries:", error);
     return null;
   }
 }
@@ -134,6 +221,7 @@ export async function getCurveGetDy(
 /**
  * Get expected output from a factory-style Curve pool (uses uint256 indices)
  * These are newer pools like lpxCVX/CVX that use get_dy(uint256,uint256,uint256)
+ * Includes retry logic for RPC resilience
  */
 export async function getCurveGetDyFactory(
   poolAddress: string,
@@ -141,31 +229,48 @@ export async function getCurveGetDyFactory(
   j: number,
   dx: string
 ): Promise<bigint | null> {
+  const rpcUrl = getRpcUrl();
+  const rpcAuth = getRpcAuth();
+
+  const data =
+    SELECTORS.GET_DY_UINT256 +
+    encodeUint256(i) +
+    encodeUint256(j) +
+    encodeUint256(dx);
+
   try {
-    const data =
-      SELECTORS.GET_DY_UINT256 +
-      encodeUint256(i) +
-      encodeUint256(j) +
-      encodeUint256(dx);
+    return await withRetry(async () => {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (rpcAuth) {
+        headers["Authorization"] = `Basic ${rpcAuth}`;
+      }
 
-    const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "eth_call",
-        params: [{ to: poolAddress, data }, "latest"],
-        id: 1,
-      }),
+      const response = await fetch(rpcUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "eth_call",
+          params: [{ to: poolAddress, data }, "latest"],
+          id: 1,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`RPC request failed: ${response.status}`);
+      }
+
+      const result = (await response.json()) as { result?: string; error?: { message: string } };
+      if (result.error) {
+        throw new Error(`RPC error: ${result.error.message}`);
+      }
+      if (result.result && result.result !== "0x") {
+        return BigInt(result.result);
+      }
+      return null;
     });
-
-    const result = (await response.json()) as { result?: string };
-    if (result.result && result.result !== "0x") {
-      return BigInt(result.result);
-    }
-    return null;
   } catch (error) {
-    console.error("Error fetching get_dy (factory):", error);
+    console.error("Error fetching get_dy (factory) after retries:", error);
     return null;
   }
 }
