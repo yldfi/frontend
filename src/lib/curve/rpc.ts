@@ -199,8 +199,8 @@ export async function getCurveGetDy(
         }),
       });
 
-      if (!response.ok) {
-        throw new Error(`RPC request failed: ${response.status}`);
+      if (!response || !response.ok) {
+        throw new Error(`RPC request failed: ${response?.status ?? 'no response'}`);
       }
 
       const result = (await response.json()) as { result?: string; error?: { message: string } };
@@ -256,8 +256,8 @@ export async function getCurveGetDyFactory(
         }),
       });
 
-      if (!response.ok) {
-        throw new Error(`RPC request failed: ${response.status}`);
+      if (!response || !response.ok) {
+        throw new Error(`RPC request failed: ${response?.status ?? 'no response'}`);
       }
 
       const result = (await response.json()) as { result?: string; error?: { message: string } };
