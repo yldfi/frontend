@@ -177,8 +177,11 @@ describeWithApi("Zap Integration Tests", () => {
   });
 
   describe("Bundle Creation (Enso API)", () => {
+    // These tests make live Enso API calls with rate limiting (1 req/sec)
+    // Each test needs 30s timeout to account for multiple API calls + retries
+
     describe("ERC20 → Vault", () => {
-      it("ETH → yscvgCVX: creates bundle with correct value", async () => {
+      it("ETH → yscvgCVX: creates bundle with correct value", { timeout: 30000 }, async () => {
         const { fetchCvgCvxZapInRoute } = await import("@/lib/enso");
 
         const route = await fetchCvgCvxZapInRoute({
@@ -196,7 +199,7 @@ describeWithApi("Zap Integration Tests", () => {
         expect(route.routeInfo?.tokens).toContain("CVX");
       });
 
-      it("CVX → yscvgCVX: creates bundle without ETH value", async () => {
+      it("CVX → yscvgCVX: creates bundle without ETH value", { timeout: 30000 }, async () => {
         const { fetchCvgCvxZapInRoute } = await import("@/lib/enso");
 
         const route = await fetchCvgCvxZapInRoute({
@@ -212,7 +215,7 @@ describeWithApi("Zap Integration Tests", () => {
         expect(route.routeInfo?.hybrid).toBeDefined();
       });
 
-      it("USDC → yscvgCVX: creates multi-hop route", async () => {
+      it("USDC → yscvgCVX: creates multi-hop route", { timeout: 30000 }, async () => {
         const { fetchCvgCvxZapInRoute } = await import("@/lib/enso");
 
         const route = await fetchCvgCvxZapInRoute({
@@ -227,7 +230,7 @@ describeWithApi("Zap Integration Tests", () => {
         expect(route.routeInfo?.tokens).toContain("USDC");
       });
 
-      it("ETH → yspxCVX: creates pxCVX route", async () => {
+      it("ETH → yspxCVX: creates pxCVX route", { timeout: 30000 }, async () => {
         const { fetchPxCvxZapInRoute } = await import("@/lib/enso");
 
         const route = await fetchPxCvxZapInRoute({
@@ -244,7 +247,7 @@ describeWithApi("Zap Integration Tests", () => {
     });
 
     describe("Underlying → Vault", () => {
-      it("cvgCVX → yscvgCVX: direct deposit route", async () => {
+      it("cvgCVX → yscvgCVX: direct deposit route", { timeout: 30000 }, async () => {
         const { fetchCvgCvxZapInRoute } = await import("@/lib/enso");
 
         const route = await fetchCvgCvxZapInRoute({
@@ -261,7 +264,7 @@ describeWithApi("Zap Integration Tests", () => {
     });
 
     describe("Vault → ERC20", () => {
-      it("yscvgCVX → ETH: creates zap out route", async () => {
+      it("yscvgCVX → ETH: creates zap out route", { timeout: 30000 }, async () => {
         const { fetchZapOutRoute } = await import("@/lib/enso");
 
         // Note: Requires vault shares holder for impersonation
@@ -278,7 +281,7 @@ describeWithApi("Zap Integration Tests", () => {
         expect((route as { routeInfo?: unknown }).routeInfo).toBeDefined();
       });
 
-      it("yscvgCVX → CVX: creates zap out to CVX", async () => {
+      it("yscvgCVX → CVX: creates zap out to CVX", { timeout: 30000 }, async () => {
         const { fetchZapOutRoute } = await import("@/lib/enso");
 
         const route = await fetchZapOutRoute({
@@ -294,7 +297,7 @@ describeWithApi("Zap Integration Tests", () => {
     });
 
     describe("Vault → Vault", () => {
-      it("yscvgCVX → yspxCVX: cross-vault zap", async () => {
+      it("yscvgCVX → yspxCVX: cross-vault zap", { timeout: 30000 }, async () => {
         const { fetchVaultToVaultRoute } = await import("@/lib/enso");
 
         const route = await fetchVaultToVaultRoute({
@@ -309,7 +312,7 @@ describeWithApi("Zap Integration Tests", () => {
         expect((route as { routeInfo?: unknown }).routeInfo).toBeDefined();
       });
 
-      it("yscvgCVX → ycvxCRV: different underlying vault", async () => {
+      it("yscvgCVX → ycvxCRV: different underlying vault", { timeout: 30000 }, async () => {
         const { fetchVaultToVaultRoute } = await import("@/lib/enso");
 
         const route = await fetchVaultToVaultRoute({
@@ -386,7 +389,7 @@ describeWithApi("Zap Integration Tests", () => {
   describe("Simulation with debug_traceCall", () => {
     const hasDebugRpc = DEBUG_RPC_URL && DEBUG_RPC_AUTH;
 
-    it.skipIf(!hasDebugRpc)("ETH → yscvgCVX: simulates successfully", async () => {
+    it.skipIf(!hasDebugRpc)("ETH → yscvgCVX: simulates successfully", { timeout: 30000 }, async () => {
       const { fetchCvgCvxZapInRoute } = await import("@/lib/enso");
 
       const route = await fetchCvgCvxZapInRoute({
@@ -414,7 +417,7 @@ describeWithApi("Zap Integration Tests", () => {
       console.log("Simulation result:", result);
     });
 
-    it.skipIf(!hasDebugRpc)("CVX → yscvgCVX with whale balance", async () => {
+    it.skipIf(!hasDebugRpc)("CVX → yscvgCVX with whale balance", { timeout: 30000 }, async () => {
       const { fetchCvgCvxZapInRoute } = await import("@/lib/enso");
 
       // Check whale has CVX
