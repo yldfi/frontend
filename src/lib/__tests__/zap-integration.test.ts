@@ -57,8 +57,9 @@ const WHALES = {
   ETH: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" as Address,
   // Convex treasury has CVX
   CVX: "0x1389388d01708118b497f59521f6943Be2541bb7" as Address,
-  // Circle USDC treasury
-  USDC: "0x55FE002aeff02F77364de339a1292923A15844B8" as Address,
+  // Binance hot wallet - has USDC
+  // Note: Don't use Circle treasury (0x55FE...44B8) - Enso/DEXs refuse to quote for it
+  USDC: "0x28C6c06298d514Db089934071355E5743bf21d60" as Address,
   // cvgCVX holder (from Convergence)
   CVGCVX: "0x2191DF768ad71140F9F3E96c1e4407A4aA31d082" as Address,
 };
@@ -219,11 +220,7 @@ describeWithApi("Zap Integration Tests", () => {
         const { fetchCvgCvxZapInRoute, fetchRoute } = await import("@/lib/enso");
 
         // Pre-check: Test if USDC → CVX route works via Enso's route endpoint.
-        // Known limitation: Enso's /shortcuts/route API often finds a path for USDC→CVX
-        // (via 0x, odos, fly) but returns "Could not build shortcuts" when generating tx data.
-        // This is NOT a transient error - it's a consistent limitation of the route endpoint.
-        // However, the actual USDC→yscvgCVX zap WORKS via the bundle API (fetchCvgCvxZapInRoute).
-        // The Route Matrix tests below verify the bundle-based approach works correctly.
+        // This verifies the whale address has sufficient balance and Enso can route from it.
         try {
           await fetchRoute({
             fromAddress: WHALES.USDC,
@@ -243,9 +240,8 @@ describeWithApi("Zap Integration Tests", () => {
             console.log("Note: USDC → CVX route check failed due to transient error:", errorMsg.slice(0, 100));
             return; // Skip on transient errors
           }
-          // Known Enso limitation: route endpoint can't build shortcuts for USDC→CVX
-          // The actual zap via bundle API works - see Route Matrix tests below
-          console.log("Note: USDC → CVX route failed (known Enso limitation):", errorMsg.slice(0, 100));
+          // Route failed - could be whale address issue or liquidity
+          console.log("Note: USDC → CVX route failed:", errorMsg.slice(0, 100));
           return;
         }
 
