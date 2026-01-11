@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import {
   useAccount,
   useWriteContract,
   useReadContract,
   useSendTransaction,
   useWaitForTransactionReceipt,
+  usePublicClient,
 } from "wagmi";
 import { useZapActions } from "@/hooks/useZapActions";
 import type { ZapQuote, EnsoToken } from "@/types/enso";
@@ -16,6 +17,7 @@ const mockUseWriteContract = vi.mocked(useWriteContract);
 const mockUseReadContract = vi.mocked(useReadContract);
 const mockUseSendTransaction = vi.mocked(useSendTransaction);
 const mockUseWaitForTransactionReceipt = vi.mocked(useWaitForTransactionReceipt);
+const mockUsePublicClient = vi.mocked(usePublicClient);
 
 describe("useZapActions integration", () => {
   const USER_ADDRESS = "0x1234567890123456789012345678901234567890" as `0x${string}`;
@@ -80,9 +82,35 @@ describe("useZapActions integration", () => {
   const mockSendTransaction = vi.fn();
   const mockResetZap = vi.fn();
   const mockRefetchAllowance = vi.fn();
+  const mockPublicClientCall = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
+
+    // Mock fetch for simulation API calls
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/api/simulate/nonce")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            nonce: "test-nonce",
+            expires: Date.now() + 60000,
+            sig: "test-sig",
+          }),
+        });
+      }
+      if (url.includes("/api/simulate")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({}),
+      });
+    }));
 
     mockUseAccount.mockReturnValue({
       address: USER_ADDRESS,
@@ -112,6 +140,11 @@ describe("useZapActions integration", () => {
       isLoading: false,
       isSuccess: false,
     } as unknown as ReturnType<typeof useWaitForTransactionReceipt>);
+
+    // Mock usePublicClient with call method for eth_call simulation
+    mockUsePublicClient.mockReturnValue({
+      call: mockPublicClientCall.mockResolvedValue(undefined),
+    } as unknown as ReturnType<typeof usePublicClient>);
   });
 
   describe("ETH zaps (no approval needed)", () => {
@@ -121,11 +154,11 @@ describe("useZapActions integration", () => {
       expect(result.current.needsApproval()).toBe(false);
     });
 
-    it("executes zap immediately for ETH", () => {
+    it("executes zap immediately for ETH", async () => {
       const { result } = renderHook(() => useZapActions(mockEthQuote));
 
-      act(() => {
-        result.current.executeZap();
+      await act(async () => {
+        await result.current.executeZap();
       });
 
       expect(mockSendTransaction).toHaveBeenCalledWith({
@@ -135,13 +168,14 @@ describe("useZapActions integration", () => {
       });
     });
 
-    it("shows zapping status after executeZap", () => {
+    it("shows zapping status after executeZap", async () => {
       const { result } = renderHook(() => useZapActions(mockEthQuote));
 
-      act(() => {
-        result.current.executeZap();
+      await act(async () => {
+        await result.current.executeZap();
       });
 
+      // After successful simulation, status transitions to zapping
       expect(result.current.status).toBe("zapping");
       expect(result.current.isLoading).toBe(true);
     });
@@ -379,7 +413,7 @@ describe("useZapActions integration", () => {
       expect(result.current.status).toBe("idle");
     });
 
-    it("does not execute zap when user is not connected", () => {
+    it("does not execute zap when user is not connected", async () => {
       mockUseAccount.mockReturnValue({
         address: undefined,
         isConnected: false,
@@ -387,8 +421,8 @@ describe("useZapActions integration", () => {
 
       const { result } = renderHook(() => useZapActions(mockEthQuote));
 
-      act(() => {
-        result.current.executeZap();
+      await act(async () => {
+        await result.current.executeZap();
       });
 
       expect(mockSendTransaction).not.toHaveBeenCalled();
@@ -441,7 +475,7 @@ describe("useZapActions integration", () => {
       expect(result.current.needsApproval()).toBe(true);
     });
 
-    it("handles zero value tx", () => {
+    it("handles zero value tx", async () => {
       const zeroValueQuote = {
         ...mockUsdcQuote,
         tx: { ...mockUsdcQuote.tx, value: "0" },
@@ -454,8 +488,8 @@ describe("useZapActions integration", () => {
 
       const { result } = renderHook(() => useZapActions(zeroValueQuote));
 
-      act(() => {
-        result.current.executeZap();
+      await act(async () => {
+        await result.current.executeZap();
       });
 
       expect(mockSendTransaction).toHaveBeenCalledWith(
@@ -465,7 +499,7 @@ describe("useZapActions integration", () => {
       );
     });
 
-    it("handles undefined tx value", () => {
+    it("handles undefined tx value", async () => {
       const undefinedValueQuote = {
         ...mockUsdcQuote,
         tx: { to: mockUsdcQuote.tx.to, data: mockUsdcQuote.tx.data, value: "" },
@@ -478,8 +512,8 @@ describe("useZapActions integration", () => {
 
       const { result } = renderHook(() => useZapActions(undefinedValueQuote));
 
-      act(() => {
-        result.current.executeZap();
+      await act(async () => {
+        await result.current.executeZap();
       });
 
       expect(mockSendTransaction).toHaveBeenCalledWith(

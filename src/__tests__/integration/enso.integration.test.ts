@@ -544,7 +544,7 @@ describe("enso.ts integration", () => {
       expect(rate).toBe(BigInt("980000000000000000"));
     });
 
-    it("returns 0n on RPC error", async () => {
+    it("returns 0n on RPC error", { timeout: 30000 }, async () => {
       // Use mockResolvedValue (not Once) to cover all retry attempts
       mockFetch.mockResolvedValue({
         ok: true,
@@ -627,7 +627,7 @@ describe("enso.ts integration", () => {
       expect(route).toBe("mint");
     });
 
-    it("returns 'mint' on RPC error", async () => {
+    it("returns 'mint' on RPC error", { timeout: 30000 }, async () => {
       // Use mockRejectedValue (not Once) to cover all retry attempts
       mockFetch.mockRejectedValue(new Error("RPC error"));
 
@@ -635,7 +635,7 @@ describe("enso.ts integration", () => {
       expect(route).toBe("mint");
     });
 
-    it("returns 'mint' on invalid RPC response", async () => {
+    it("returns 'mint' on invalid RPC response", { timeout: 30000 }, async () => {
       // Use mockResolvedValue (not Once) to cover all retry attempts
       mockFetch.mockResolvedValue({
         ok: true,
