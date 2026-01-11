@@ -545,7 +545,8 @@ describe("enso.ts integration", () => {
     });
 
     it("returns 0n on RPC error", async () => {
-      mockFetch.mockResolvedValueOnce({
+      // Use mockResolvedValue (not Once) to cover all retry attempts
+      mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({ error: { message: "RPC error" } }),
       } as Response);
@@ -627,14 +628,16 @@ describe("enso.ts integration", () => {
     });
 
     it("returns 'mint' on RPC error", async () => {
-      mockFetch.mockRejectedValueOnce(new Error("RPC error"));
+      // Use mockRejectedValue (not Once) to cover all retry attempts
+      mockFetch.mockRejectedValue(new Error("RPC error"));
 
       const route = await getOptimalCvgCvxRoute("1000000000000000000");
       expect(route).toBe("mint");
     });
 
     it("returns 'mint' on invalid RPC response", async () => {
-      mockFetch.mockResolvedValueOnce({
+      // Use mockResolvedValue (not Once) to cover all retry attempts
+      mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({ error: { message: "Invalid call" } }),
       } as Response);
