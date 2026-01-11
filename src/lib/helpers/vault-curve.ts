@@ -83,11 +83,22 @@ export async function batchRedeemAndEstimateSwap(
   // Get pool params (from batch or cache)
   let poolParams: StableSwapParams;
   if (needsPoolParams) {
-    const balance0 = results[1] ?? 0n;
-    const balance1 = results[2] ?? 0n;
-    const A = results[3] ?? 0n;
+    const balance0 = results[1];
+    const balance1 = results[2];
+    const A = results[3];
     const fee = results[4] ?? 0n;
     const offpegFeeMultiplier = results[5] ?? 0n;
+
+    // Validate critical pool parameters
+    if (balance0 === null || balance1 === null || A === null) {
+      throw new Error(`Failed to fetch pool parameters for ${poolAddress}`);
+    }
+
+    // Validate balances are non-zero to avoid division by zero in getD
+    if (balance0 === 0n || balance1 === 0n) {
+      throw new Error(`Pool ${poolAddress} has zero balance - cannot calculate swap output`);
+    }
+
     const Ann = A * A_PRECISION * N_COINS;
 
     poolParams = {

@@ -15,7 +15,7 @@ export const TOKENS = {
   STKCVXCRV: "0xaa0C3f5F7DFD688C6E646F66CD2a6B66ACdbE434" as const,
   CVGCVX: "0x2191DF768ad71140F9F3E96c1e4407A4aA31d082" as const,
   PXCVX: "0xBCe0Cf87F513102F22232436CCa2ca49e815C3aC" as const,
-  CVX1: "0x6c9815826fdf8c7a45ccfed2064dbab33a078712" as const, // CVX wrapper for Convergence
+  CVX1: "0x6C9815826FdF8c7a45cCfEd2064dbaB33a078712" as const, // CVX wrapper for Convergence
 } as const;
 
 // All vault underlying tokens - excluded from zap (use deposit/withdraw tabs instead)
@@ -30,9 +30,11 @@ export const TANGENT = {
   // LiquidBoost staking contract - can deposit ETH/CVX and get cvgCVX
   LIQUID_BOOST: "0x2c1D293c50C6d1a4370ebb442A02c5956bbAb119" as const,
   // Curve pool for CVX1 <-> cvgCVX swaps
-  CVX1_CVGCVX_POOL: "0xc50e191f703fb3160fc15d8b168a8c740fec3666" as const,
+  CVX1_CVGCVX_POOL: "0xc50E191F703FB3160fC15d8b168A8c740fec3666" as const,
   // cvgCVX token contract (has mint function for 1:1 CVX -> cvgCVX)
   CVGCVX_CONTRACT: "0x2191DF768ad71140F9F3E96c1e4407A4aA31d082" as const,
+  // Curve CryptoSwap pool for ETH <-> CVX swaps (coin0=WETH, coin1=CVX)
+  CVX_ETH_POOL: "0xB576491F1E6e5E62f1d8F26062Ee822B40B0E0d4" as const,
   // IN_TOKEN_TYPE enum values for deposit()
   IN_TOKEN_TYPE: {
     cvgCVX: 0,

@@ -85,6 +85,14 @@ export default function PrivacyPage() {
                 Cloudflare&apos;s Privacy Policy
               </a>.
             </p>
+
+            <h3 className="text-lg font-medium mb-3 mt-6">Transaction Simulation Data</h3>
+            <p className="text-[var(--muted-foreground)] leading-relaxed">
+              When you initiate a zap, we may simulate the transaction server-side to detect failures before
+              on-chain submission. This can include your wallet address, transaction calldata, and related
+              metadata processed by our transaction simulation provider (Tenderly). This data is used only
+              to validate execution and improve reliability.
+            </p>
           </section>
 
           {/* Information We Don't Collect */}
@@ -139,6 +147,15 @@ export default function PrivacyPage() {
                 <strong>Cloudflare</strong> - infrastructure and security services
               </li>
               <li>
+                <strong>Enso</strong> - route/bundle API for transaction construction and quoting
+              </li>
+              <li>
+                <strong>Tenderly</strong> - server-side transaction simulation for pre-flight checks
+              </li>
+              <li>
+                <strong>RPC Providers</strong> (public Ethereum RPC endpoints) - used to read chain data and simulate transactions
+              </li>
+              <li>
                 <strong>Google Analytics</strong> - usage analytics
               </li>
               <li>
@@ -153,6 +170,7 @@ export default function PrivacyPage() {
             <p className="text-[var(--muted-foreground)] leading-relaxed">
               Analytics data is retained according to Google Analytics&apos; standard retention policies.
               Cloudflare logs are retained according to their data retention policies.
+              We do not store transaction simulation results on our servers.
               Blockchain data is permanent and immutable by nature.
             </p>
           </section>

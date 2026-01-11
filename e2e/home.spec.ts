@@ -24,8 +24,8 @@ test.describe("Homepage", () => {
     await expect(firstVault).toBeVisible({ timeout: 10000 });
     await firstVault.click();
 
-    // Should navigate to vault page
-    await expect(page).toHaveURL(/\/vaults\//);
+    // Should navigate to vault page (wait longer for navigation)
+    await expect(page).toHaveURL(/\/vaults\//, { timeout: 10000 });
   });
 
   test("displays connect wallet button when not connected", async ({

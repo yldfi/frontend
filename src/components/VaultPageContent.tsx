@@ -117,6 +117,7 @@ import { useVaultCache } from "@/hooks/useVaultCache";
 import { useVaultActions } from "@/hooks/useVaultActions";
 import { useZapQuote } from "@/hooks/useZapQuote";
 import { useZapActions } from "@/hooks/useZapActions";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS } from "@/lib/enso";
@@ -216,6 +217,8 @@ export function VaultPageContent({ id }: { id: string }) {
       localStorage.removeItem(`yldfi-zap-amount-${id}`);
     }
   };
+  // Debounce zap amount to prevent rate limiting from Enso API (1 req/sec)
+  const debouncedZapAmount = useDebouncedValue(zapAmount, 500);
   // Load slippage from localStorage with lazy initialization
   const [zapSlippage, setZapSlippage] = useState(() => {
     if (typeof window === "undefined") return "10";
@@ -356,11 +359,11 @@ export function VaultPageContent({ id }: { id: string }) {
     withdrawHash,
   } = useVaultActions(vaultAddressTyped, vault?.assetAddress ?? TOKENS.CVXCRV, vault?.assetDecimals ?? 18);
 
-  // Zap quote - fetch route from Enso
+  // Zap quote - fetch route from Enso (debounced to prevent rate limiting)
   const { quote: zapQuote, isLoading: zapQuoteLoading, error: zapQuoteError } = useZapQuote({
     inputToken: zapDirection === "in" ? zapInputToken : null,
     outputToken: zapDirection === "out" ? zapOutputToken : null,
-    inputAmount: zapAmount,
+    inputAmount: debouncedZapAmount,
     direction: zapDirection,
     vaultAddress: vault?.address ?? "",
     underlyingToken: vault?.assetAddress ?? "",

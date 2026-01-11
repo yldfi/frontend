@@ -7,6 +7,7 @@ import {
   useWaitForTransactionReceipt,
   useReadContract,
   useSendTransaction,
+  usePublicClient,
 } from "wagmi";
 import { parseUnits, maxUint256 } from "viem";
 import { ETH_ADDRESS } from "@/lib/enso";
@@ -80,9 +81,14 @@ function parseErrorMessage(error: Error | null, defaultMsg: string): string | nu
     return "Transaction simulation failed";
   }
 
-  // Insufficient funds
-  if (msg.includes("insufficient funds") || msg.includes("exceeds balance")) {
-    return "Insufficient funds for transaction";
+  // Insufficient ETH for gas
+  if (msg.includes("insufficient funds")) {
+    return "Insufficient funds for gas";
+  }
+
+  // ERC20 transfer failures (slippage, stale quote, or swap conditions changed)
+  if (msg.includes("transfer amount exceeds balance") || msg.includes("ERC20: transfer amount exceeds")) {
+    return "Transaction would fail: swap conditions changed, try refreshing the quote";
   }
 
   // Gas estimation failed
@@ -110,7 +116,9 @@ function parseErrorMessage(error: Error | null, defaultMsg: string): string | nu
 
 export function useZapActions(quote: ZapQuote | null | undefined) {
   const { address: userAddress, chainId } = useAccount();
-  const [actionState, setActionState] = useState<"idle" | "approving" | "zapping">("idle");
+  const publicClient = usePublicClient();
+  const [actionState, setActionState] = useState<"idle" | "approving" | "simulating" | "zapping">("idle");
+  const [simulationError, setSimulationError] = useState<string | null>(null);
 
   const isEth =
     quote?.inputToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
@@ -173,24 +181,26 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     if (isZapSuccess) return "success";
     if (isApprovalSuccess) return "idle";
     // Error states for pre-send failures (wallet rejection, simulation failure, RPC errors)
-    if (approveError || zapError) return "error";
+    if (approveError || zapError || simulationError) return "error";
     // Pending transaction states
     if (isApprovalPending) return "waitingApproval";
     if (isZapPending) return "waitingTx";
     // User-initiated action states
     if (actionState === "approving") return "approving";
+    if (actionState === "simulating") return "zapping"; // Show as "zapping" to user (simulating is quick)
     if (actionState === "zapping") return "zapping";
     return "idle";
-  }, [approveError, zapError, isZapReverted, isApprovalReverted, isZapSuccess, isApprovalSuccess, isApprovalPending, isZapPending, actionState]);
+  }, [approveError, zapError, simulationError, isZapReverted, isApprovalReverted, isZapSuccess, isApprovalSuccess, isApprovalPending, isZapPending, actionState]);
 
   // Derive error message from errors or reverts
   const error = useMemo(() => {
+    if (simulationError) return simulationError;
     if (approveError) return parseErrorMessage(approveError, "Approval failed");
     if (zapError) return parseErrorMessage(zapError, "Zap transaction failed");
     if (isApprovalReverted) return "Approval transaction reverted";
     if (isZapReverted) return "Zap transaction reverted";
     return null;
-  }, [approveError, zapError, isApprovalReverted, isZapReverted]);
+  }, [simulationError, approveError, zapError, isApprovalReverted, isZapReverted]);
 
   // Check if approval needed
   const needsApproval = useCallback((): boolean => {
@@ -226,22 +236,117 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     });
   }, [userAddress, isEth, tokenAddress, routerAddress, writeApprove]);
 
-  // Execute zap transaction
-  const executeZap = useCallback(() => {
-    if (!quote || !userAddress) return;
-    setActionState("zapping");
+  // Execute zap transaction with pre-flight simulation
+  const executeZap = useCallback(async () => {
+    if (!quote || !userAddress || !publicClient) return;
 
-    // Send the transaction from Enso's route response
-    sendTransaction({
+    // Clear any previous simulation error
+    setSimulationError(null);
+    setActionState("simulating");
+
+    const txParams = {
       to: quote.tx.to as `0x${string}`,
       data: quote.tx.data as `0x${string}`,
       value: BigInt(quote.tx.value || "0"),
-    });
-  }, [quote, userAddress, sendTransaction]);
+    };
+
+    const tenderlyPromise = (async () => {
+      try {
+        const nonceResponse = await fetch("/api/simulate/nonce", {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+        });
+        const nonceResult = (await nonceResponse.json()) as {
+          success: boolean;
+          nonce?: string;
+          expires?: number;
+          sig?: string;
+        };
+
+        if (!nonceResult.success || !nonceResult.nonce || !nonceResult.expires || !nonceResult.sig) {
+          return {
+            ok: false as const,
+            errorMessage: "Failed to obtain simulation nonce",
+            retryable: true,
+          };
+        }
+
+        const response = await fetch("/api/simulate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from: userAddress,
+            to: quote.tx.to,
+            data: quote.tx.data,
+            value: quote.tx.value,
+            inputToken: quote.inputToken.address,
+            nonce: nonceResult.nonce,
+            expires: nonceResult.expires,
+            sig: nonceResult.sig,
+          }),
+        });
+
+        const result = (await response.json()) as {
+          success: boolean;
+          errorMessage?: string | null;
+          retryable?: boolean;
+        };
+
+        if (result.success) return { ok: true as const };
+        return {
+          ok: false as const,
+          errorMessage: result.errorMessage ?? "Tenderly simulation failed",
+          retryable: Boolean(result.retryable),
+        };
+      } catch (error) {
+        return {
+          ok: false as const,
+          errorMessage: error instanceof Error ? error.message : "Tenderly simulation failed",
+          retryable: true,
+        };
+      }
+    })();
+
+    const ethCallPromise = (async () => {
+      try {
+        await publicClient.call({
+          account: userAddress,
+          ...txParams,
+        });
+        return { ok: true as const };
+      } catch (error) {
+        return {
+          ok: false as const,
+          errorMessage: error instanceof Error ? error.message : "Unknown error",
+        };
+      }
+    })();
+
+    const [tenderlyResult, ethCallResult] = await Promise.all([
+      tenderlyPromise,
+      ethCallPromise,
+    ]);
+
+    if (!tenderlyResult.ok && !ethCallResult.ok) {
+      const errorMsg = tenderlyResult.retryable
+        ? ethCallResult.errorMessage ?? tenderlyResult.errorMessage
+        : tenderlyResult.errorMessage;
+      setSimulationError(
+        parseErrorMessage(new Error(errorMsg), "Transaction would fail")
+      );
+      setActionState("idle");
+      return;
+    }
+
+    // Simulation passed - send the actual transaction
+    setActionState("zapping");
+    sendTransaction(txParams);
+  }, [quote, userAddress, publicClient, sendTransaction]);
 
   // Reset state
   const reset = useCallback(() => {
     setActionState("idle");
+    setSimulationError(null);
     resetApprove();
     resetZap();
   }, [resetApprove, resetZap]);

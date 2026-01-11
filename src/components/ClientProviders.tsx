@@ -5,6 +5,7 @@ import { type ReactNode } from "react";
 import { CookieConsent } from "@/components/CookieConsent";
 import { GoogleAnalytics } from "@/components/GoogleAnalytics";
 import { TestNetworkBanner } from "@/components/TestNetworkBanner";
+import { ImpersonatorAutoConnect } from "@/components/ImpersonatorAutoConnect";
 
 const Providers = dynamic(
   () => import("@/components/Providers").then((mod) => mod.Providers),
@@ -16,6 +17,7 @@ export function ClientProviders({ children }: { children: ReactNode }) {
 
   return (
     <Providers>
+      <ImpersonatorAutoConnect />
       <TestNetworkBanner />
       {children}
       <CookieConsent />

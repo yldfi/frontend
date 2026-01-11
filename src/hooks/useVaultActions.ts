@@ -1,6 +1,6 @@
 "use client";
 
-import { useReadContract, useWriteContract, useWaitForTransactionReceipt, useAccount } from "wagmi";
+import { useReadContract, useWriteContract, useWaitForTransactionReceipt, useAccount, usePublicClient } from "wagmi";
 import { parseUnits, maxUint256 } from "viem";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { ERC20_APPROVAL_ABI, VAULT_ABI } from "@/lib/abis";
@@ -55,7 +55,9 @@ export function useVaultActions(
   decimals: number = 18
 ) {
   const { address: userAddress, chainId } = useAccount();
-  const [actionState, setActionState] = useState<"idle" | "approving" | "depositing" | "withdrawing">("idle");
+  const publicClient = usePublicClient();
+  const [actionState, setActionState] = useState<"idle" | "approving" | "simulating" | "depositing" | "withdrawing">("idle");
+  const [simulationError, setSimulationError] = useState<string | null>(null);
 
   // Check allowance
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
@@ -120,17 +122,18 @@ export function useVaultActions(
     if (isDepositSuccess || isWithdrawSuccess) return "success";
     if (isApprovalSuccess) return "idle";
     // Error states for pre-send failures (wallet rejection, simulation failure, RPC errors)
-    if (approveError || depositError || withdrawError) return "error";
+    if (approveError || depositError || withdrawError || simulationError) return "error";
     // Pending transaction states
     if (isApprovalPending) return "waitingApproval";
     if (isDepositPending || isWithdrawPending) return "waitingTx";
     // User-initiated action states
     if (actionState === "approving") return "approving";
+    if (actionState === "simulating") return "depositing"; // Show as depositing/withdrawing to user
     if (actionState === "depositing") return "depositing";
     if (actionState === "withdrawing") return "withdrawing";
     return "idle";
   }, [
-    approveError, depositError, withdrawError,
+    approveError, depositError, withdrawError, simulationError,
     isApprovalReverted, isDepositReverted, isWithdrawReverted,
     isDepositSuccess, isWithdrawSuccess, isApprovalSuccess,
     isApprovalPending, isDepositPending, isWithdrawPending,
@@ -139,6 +142,7 @@ export function useVaultActions(
 
   // Derive error message from errors or reverts
   const error = useMemo(() => {
+    if (simulationError) return simulationError;
     if (approveError) return parseErrorMessage(approveError, "Approval failed");
     if (depositError) return parseErrorMessage(depositError, "Deposit failed");
     if (withdrawError) return parseErrorMessage(withdrawError, "Withdraw failed");
@@ -146,7 +150,7 @@ export function useVaultActions(
     if (isDepositReverted) return "Deposit transaction reverted";
     if (isWithdrawReverted) return "Withdraw transaction reverted";
     return null;
-  }, [approveError, depositError, withdrawError, isApprovalReverted, isDepositReverted, isWithdrawReverted]);
+  }, [simulationError, approveError, depositError, withdrawError, isApprovalReverted, isDepositReverted, isWithdrawReverted]);
 
   // Refetch allowance after approval success (external side effect only)
   useEffect(() => {
@@ -179,39 +183,80 @@ export function useVaultActions(
     });
   }, [userAddress, tokenAddress, vaultAddress, writeApprove]);
 
-  // Deposit
-  const deposit = useCallback((amount: string) => {
-    if (!userAddress || !amount) return;
-    setActionState("depositing");
+  // Deposit with pre-flight simulation
+  const deposit = useCallback(async (amount: string) => {
+    if (!userAddress || !amount || !publicClient) return;
+
+    setSimulationError(null);
+    setActionState("simulating");
 
     const amountWei = parseUnits(amount, decimals);
 
+    // Pre-flight simulation
+    try {
+      await publicClient.simulateContract({
+        address: vaultAddress,
+        abi: VAULT_ABI,
+        functionName: "deposit",
+        args: [amountWei, userAddress],
+        account: userAddress,
+      });
+    } catch (simError: unknown) {
+      const errorMsg = simError instanceof Error ? simError.message : "Unknown error";
+      setSimulationError(parseErrorMessage(new Error(errorMsg), "Deposit would fail"));
+      setActionState("idle");
+      return;
+    }
+
+    // Simulation passed - send transaction
+    setActionState("depositing");
     writeDeposit({
       address: vaultAddress,
       abi: VAULT_ABI,
       functionName: "deposit",
       args: [amountWei, userAddress],
     });
-  }, [userAddress, vaultAddress, decimals, writeDeposit]);
+  }, [userAddress, vaultAddress, decimals, publicClient, writeDeposit]);
 
-  // Withdraw (using redeem for shares)
-  const withdraw = useCallback((shares: string) => {
-    if (!userAddress || !shares) return;
-    setActionState("withdrawing");
+  // Withdraw with pre-flight simulation (using redeem for shares)
+  const withdraw = useCallback(async (shares: string) => {
+    if (!userAddress || !shares || !publicClient) return;
+
+    setSimulationError(null);
+    setActionState("simulating");
 
     const sharesWei = parseUnits(shares, decimals);
 
+    // Pre-flight simulation
+    try {
+      await publicClient.simulateContract({
+        address: vaultAddress,
+        abi: VAULT_ABI,
+        functionName: "redeem",
+        args: [sharesWei, userAddress, userAddress],
+        account: userAddress,
+      });
+    } catch (simError: unknown) {
+      const errorMsg = simError instanceof Error ? simError.message : "Unknown error";
+      setSimulationError(parseErrorMessage(new Error(errorMsg), "Withdraw would fail"));
+      setActionState("idle");
+      return;
+    }
+
+    // Simulation passed - send transaction
+    setActionState("withdrawing");
     writeWithdraw({
       address: vaultAddress,
       abi: VAULT_ABI,
       functionName: "redeem",
       args: [sharesWei, userAddress, userAddress],
     });
-  }, [userAddress, vaultAddress, decimals, writeWithdraw]);
+  }, [userAddress, vaultAddress, decimals, publicClient, writeWithdraw]);
 
   // Reset state
   const reset = useCallback(() => {
     setActionState("idle");
+    setSimulationError(null);
     resetApprove();
     resetDeposit();
     resetWithdraw();
