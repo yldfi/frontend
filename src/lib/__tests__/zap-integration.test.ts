@@ -11,6 +11,8 @@
  * - NEXT_PUBLIC_ENSO_API_KEY: Enso API key
  * - DEBUG_RPC_URL: RPC with debug_traceCall support (optional)
  * - DEBUG_RPC_AUTH: Basic auth for debug RPC (optional)
+ * - TOKEN_HOLDER_API_URL: Token holder API endpoint (optional)
+ * - TOKEN_HOLDER_API_KEY: Token holder API key (optional)
  */
 
 import { describe, it, expect, beforeAll, vi } from "vitest";
@@ -29,6 +31,10 @@ beforeAll(() => {
 const ENSO_API_KEY = process.env.NEXT_PUBLIC_ENSO_API_KEY;
 const DEBUG_RPC_URL = process.env.DEBUG_RPC_URL;
 const DEBUG_RPC_AUTH = process.env.DEBUG_RPC_AUTH;
+
+// Token holder API configuration
+const TOKEN_HOLDER_API_URL = process.env.TOKEN_HOLDER_API_URL || "";
+const TOKEN_HOLDER_API_KEY = process.env.TOKEN_HOLDER_API_KEY || "";
 
 // Skip tests if no API key
 const describeWithApi = ENSO_API_KEY ? describe : describe.skip;
@@ -51,17 +57,81 @@ const VAULTS = {
   YSCVXCRV: "0xE36E5c24F7a99f8a8fC3a5f96e4f906C4a129f2C" as const, // staked cvxCRV vault
 };
 
-// Known whales for impersonation
-const WHALES = {
+// Fallback whales - used when token holder API is unavailable
+// Note: Don't use protocol treasuries (e.g., Circle) - DEXs refuse to quote for them
+const FALLBACK_WHALES: Record<string, Address> = {
   // Vitalik has ETH
-  ETH: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" as Address,
+  [TOKENS.ETH.toLowerCase()]: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" as Address,
   // Convex treasury has CVX
-  CVX: "0x1389388d01708118b497f59521f6943Be2541bb7" as Address,
-  // Binance hot wallet - has USDC
-  // Note: Don't use Circle treasury (0x55FE...44B8) - Enso/DEXs refuse to quote for it
-  USDC: "0x28C6c06298d514Db089934071355E5743bf21d60" as Address,
-  // cvgCVX holder (from Convergence)
-  CVGCVX: "0x2191DF768ad71140F9F3E96c1e4407A4aA31d082" as Address,
+  [TOKENS.CVX.toLowerCase()]: "0x1389388d01708118b497f59521f6943Be2541bb7" as Address,
+  // Binance hot wallet - has USDC (not Circle treasury which DEXs block)
+  [TOKENS.USDC.toLowerCase()]: "0x28C6c06298d514Db089934071355E5743bf21d60" as Address,
+  // cvgCVX contract is also a holder
+  [TOKENS.CVGCVX.toLowerCase()]: "0x2191DF768ad71140F9F3E96c1e4407A4aA31d082" as Address,
+};
+
+// Cache for dynamically fetched whales
+const whaleCache = new Map<string, Address>();
+
+/**
+ * Fetch token holder from API or fall back to hardcoded addresses
+ */
+async function getWhale(token: string): Promise<Address> {
+  const tokenLower = token.toLowerCase();
+
+  // Check cache first
+  if (whaleCache.has(tokenLower)) {
+    return whaleCache.get(tokenLower)!;
+  }
+
+  // Try token holder API
+  if (TOKEN_HOLDER_API_URL && TOKEN_HOLDER_API_KEY) {
+    try {
+      const response = await crossFetch(TOKEN_HOLDER_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": TOKEN_HOLDER_API_KEY,
+        },
+        body: JSON.stringify({
+          token: tokenLower,
+          minBalance: "1000000", // Minimum 1 token (adjust decimals as needed)
+          maxHolders: 1,
+        }),
+      });
+
+      const data = (await response.json()) as {
+        success?: boolean;
+        holders?: string[];
+      };
+
+      if (data.success && data.holders && data.holders.length > 0) {
+        const whale = data.holders[0] as Address;
+        whaleCache.set(tokenLower, whale);
+        return whale;
+      }
+    } catch (err) {
+      console.warn(`Token holder API failed for ${token}:`, err);
+    }
+  }
+
+  // Fall back to hardcoded whales
+  const fallback = FALLBACK_WHALES[tokenLower];
+  if (fallback) {
+    return fallback;
+  }
+
+  // Last resort: use Vitalik's address (works for ETH-based routes)
+  return "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" as Address;
+}
+
+// Legacy WHALES object for backwards compatibility
+// Tests should prefer getWhale() for dynamic fetching
+const WHALES = {
+  get ETH() { return FALLBACK_WHALES[TOKENS.ETH.toLowerCase()]; },
+  get CVX() { return FALLBACK_WHALES[TOKENS.CVX.toLowerCase()]; },
+  get USDC() { return FALLBACK_WHALES[TOKENS.USDC.toLowerCase()]; },
+  get CVGCVX() { return FALLBACK_WHALES[TOKENS.CVGCVX.toLowerCase()]; },
 };
 
 // Helper: Fetch bundle from Enso (kept for manual testing)
@@ -219,11 +289,14 @@ describeWithApi("Zap Integration Tests", () => {
       it("USDC → yscvgCVX: creates multi-hop route", { timeout: 60000 }, async () => {
         const { fetchCvgCvxZapInRoute, fetchRoute } = await import("@/lib/enso");
 
+        // Get USDC whale dynamically (avoids issues with blocked addresses like Circle treasury)
+        const usdcWhale = await getWhale(TOKENS.USDC);
+
         // Pre-check: Test if USDC → CVX route works via Enso's route endpoint.
         // This verifies the whale address has sufficient balance and Enso can route from it.
         try {
           await fetchRoute({
-            fromAddress: WHALES.USDC,
+            fromAddress: usdcWhale,
             tokenIn: TOKENS.USDC,
             tokenOut: TOKENS.CVX,
             amountIn: "10000000", // 10 USDC (smaller amount for better liquidity)
@@ -246,7 +319,7 @@ describeWithApi("Zap Integration Tests", () => {
         }
 
         const route = await fetchCvgCvxZapInRoute({
-          fromAddress: WHALES.USDC,
+          fromAddress: usdcWhale,
           inputToken: TOKENS.USDC,
           amountIn: "10000000", // 10 USDC (6 decimals) - smaller amount
           vaultAddress: VAULTS.YSCVGCVX,
