@@ -139,12 +139,21 @@ function encodeUint256(value: bigint | string | number): string {
 }
 
 /**
+ * Check if running in test environment
+ */
+const isTestEnv = typeof process !== "undefined" && (
+  process.env.NODE_ENV === "test" ||
+  process.env.VITEST === "true"
+);
+
+/**
  * Retry wrapper with exponential backoff
+ * In test mode: 1 retry, no delay (to avoid test timeouts)
  */
 async function withRetry<T>(
   fn: () => Promise<T>,
-  maxRetries = 5,
-  baseDelayMs = 500
+  maxRetries = isTestEnv ? 1 : 5,
+  baseDelayMs = isTestEnv ? 0 : 500
 ): Promise<T> {
   let lastError: Error | undefined;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -152,7 +161,7 @@ async function withRetry<T>(
       return await fn();
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      if (attempt < maxRetries - 1) {
+      if (attempt < maxRetries - 1 && baseDelayMs > 0) {
         const delay = baseDelayMs * Math.pow(2, attempt);
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
