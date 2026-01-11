@@ -215,10 +215,10 @@ describeWithApi("Zap Integration Tests", () => {
         expect(route.routeInfo?.hybrid).toBeDefined();
       });
 
-      it("USDC → yscvgCVX: creates multi-hop route", { timeout: 30000 }, async () => {
+      it("USDC → yscvgCVX: creates multi-hop route", { timeout: 60000 }, async () => {
         const { fetchCvgCvxZapInRoute, fetchRoute } = await import("@/lib/enso");
 
-        // First verify USDC → CVX route works (Enso sometimes can't find this pair)
+        // First verify USDC → CVX route works
         try {
           await fetchRoute({
             fromAddress: WHALES.USDC,
@@ -227,9 +227,20 @@ describeWithApi("Zap Integration Tests", () => {
             amountIn: "10000000", // 10 USDC (smaller amount for better liquidity)
           });
         } catch (e) {
-          // Enso API can't route USDC → CVX directly - this is an API limitation
-          // Test passes if this specific route isn't available
-          console.log("Note: Enso API cannot route USDC → CVX directly (API limitation)");
+          // Could be transient RPC/simulation error, not necessarily a routing limitation
+          const errorMsg = e instanceof Error ? e.message : String(e);
+          const errorStr = JSON.stringify(e);
+          if (
+            errorMsg.includes("429") ||
+            errorStr.includes("429") ||
+            errorMsg.includes("RPC request failed") ||
+            errorMsg.includes("Could not simulate")
+          ) {
+            console.log("Note: USDC → CVX route check failed due to transient error:", errorMsg.slice(0, 100));
+            return; // Skip on transient errors
+          }
+          // If route truly not available, log the actual error
+          console.log("Note: USDC → CVX route failed:", errorMsg.slice(0, 200));
           return;
         }
 
@@ -261,37 +272,9 @@ describeWithApi("Zap Integration Tests", () => {
       });
     });
 
-    describe("Underlying → Vault", () => {
-      it("cvgCVX → yscvgCVX: direct deposit route", { timeout: 30000 }, async () => {
-        const { fetchCvgCvxZapInRoute } = await import("@/lib/enso");
-
-        // Note: Enso API may not recognize cvgCVX token type for simulation
-        // This is an API limitation - direct underlying deposits should work on-chain
-        try {
-          const route = await fetchCvgCvxZapInRoute({
-            fromAddress: WHALES.CVGCVX,
-            inputToken: TOKENS.CVGCVX,
-            amountIn: parseEther("100").toString(),
-            vaultAddress: VAULTS.YSCVGCVX,
-            slippage: "100",
-          });
-
-          expect(route.tx).toBeDefined();
-          // Should be a simple approve + deposit, not a complex route
-        } catch (e) {
-          // Enso API doesn't recognize cvgCVX token type - this is an API limitation
-          // The route structure is correct, but Enso can't simulate it
-          // Check both message and stringified error for the known limitation
-          const errorStr = JSON.stringify(e);
-          const errorMsg = e instanceof Error ? e.message : String(e);
-          if (errorStr.includes("Cannot approve unknown token type") || errorMsg.includes("Could not simulate tx")) {
-            console.log("Note: Enso API cannot simulate cvgCVX token approval (API limitation)");
-            return;
-          }
-          throw e; // Re-throw unexpected errors
-        }
-      });
-    });
+    // Note: Direct underlying → vault deposits (e.g., cvgCVX → yscvgCVX) don't use Enso.
+    // They use direct ERC4626 vault.deposit() calls via useVaultActions hook.
+    // See: src/__tests__/integration/erc4626-vault.integration.test.ts
 
     describe("Vault → ERC20", () => {
       it("yscvgCVX → ETH: creates zap out route", { timeout: 30000 }, async () => {

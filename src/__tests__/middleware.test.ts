@@ -191,6 +191,38 @@ describe("middleware geo-blocking logic", () => {
     });
   });
 
+  // API endpoints exempt from geo-blocking (for CI/testing)
+  const GEO_EXEMPT_API_PATHS = [
+    "/api/token-holders",
+    "/api/simulate",
+  ];
+
+  describe("geo-exempt API paths", () => {
+    function isGeoExempt(pathname: string): boolean {
+      return GEO_EXEMPT_API_PATHS.some((path) => pathname.startsWith(path));
+    }
+
+    it("exempts /api/token-holders", () => {
+      expect(isGeoExempt("/api/token-holders")).toBe(true);
+    });
+
+    it("exempts /api/simulate", () => {
+      expect(isGeoExempt("/api/simulate")).toBe(true);
+    });
+
+    it("does not exempt /api/avatar", () => {
+      expect(isGeoExempt("/api/avatar/test.eth")).toBe(false);
+    });
+
+    it("does not exempt /api/explorer", () => {
+      expect(isGeoExempt("/api/explorer")).toBe(false);
+    });
+
+    it("does not exempt root path", () => {
+      expect(isGeoExempt("/")).toBe(false);
+    });
+  });
+
   describe("middleware decision logic", () => {
     function getMiddlewareDecision(
       country: string,
@@ -207,6 +239,11 @@ describe("middleware geo-blocking logic", () => {
         pathname.endsWith(".css") ||
         pathname.endsWith(".js")
       ) {
+        return "bypass";
+      }
+
+      // Check geo-exempt API paths
+      if (GEO_EXEMPT_API_PATHS.some((path) => pathname.startsWith(path))) {
         return "bypass";
       }
 
@@ -248,6 +285,23 @@ describe("middleware geo-blocking logic", () => {
 
     it("handles unknown country code", () => {
       expect(getMiddlewareDecision("XX", "/")).toBe("pass");
+    });
+
+    // Geo-exempt API paths should bypass blocking
+    it("bypasses US user for /api/token-holders", () => {
+      expect(getMiddlewareDecision("US", "/api/token-holders")).toBe("bypass");
+    });
+
+    it("bypasses US user for /api/simulate", () => {
+      expect(getMiddlewareDecision("US", "/api/simulate")).toBe("bypass");
+    });
+
+    it("still blocks US user for /api/avatar", () => {
+      expect(getMiddlewareDecision("US", "/api/avatar/test.eth")).toBe("block");
+    });
+
+    it("still blocks US user for /api/explorer", () => {
+      expect(getMiddlewareDecision("US", "/api/explorer")).toBe("block");
     });
   });
 });
