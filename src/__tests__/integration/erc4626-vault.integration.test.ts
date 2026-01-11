@@ -517,20 +517,7 @@ describe("Direct ERC4626 Vault Operations", () => {
 
           console.log(`Using ${config.name} holder: ${holder}`);
 
-          // Need to ensure vault has underlying tokens to pay out
-          const vaultUnderlyingBalanceSlot = computeBalanceSlot(
-            config.vault,
-            config.underlyingBalanceSlot
-          );
-
-          const stateOverrides = {
-            [config.underlying]: {
-              stateDiff: {
-                // Give vault plenty of underlying to pay out
-                [vaultUnderlyingBalanceSlot]: pad(toHex(parseEther("100000")), { size: 32 }),
-              },
-            },
-          };
+          // No state overrides needed - vault has real underlying tokens from real deposits
 
           // First check previewRedeem to see expected assets
           const previewData = encodeFunctionData({
@@ -544,7 +531,6 @@ describe("Direct ERC4626 Vault Operations", () => {
             const previewResult = await callWithOverrides({
               to: config.vault,
               data: previewData,
-              stateOverrides,
             });
             expectedAssets = BigInt(previewResult);
             console.log(
@@ -566,7 +552,7 @@ describe("Direct ERC4626 Vault Operations", () => {
             from: holder,
             to: config.vault,
             data: redeemData,
-            stateOverrides,
+            stateOverrides: {},
           });
 
           if (!result.success) {
