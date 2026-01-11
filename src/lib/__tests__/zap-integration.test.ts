@@ -362,7 +362,7 @@ describeWithApi("Zap Integration Tests", () => {
   });
 
   describe("Hybrid Strategy Scenarios", () => {
-    it("detects current pool state (swap vs mint)", async () => {
+    it("detects current pool state (swap vs mint)", { timeout: 30000 }, async () => {
       const { getOptimalSwapAmount, getCvgCvxSwapRate } = await import("@/lib/enso");
 
       // Check swap rate for 1000 CVX
@@ -385,7 +385,7 @@ describeWithApi("Zap Integration Tests", () => {
       expect(swapAmount + mintAmount).toBe(parseEther("10000"));
     });
 
-    it("pure swap: when pool is significantly above peg", async () => {
+    it("pure swap: when pool is significantly above peg", { timeout: 30000 }, async () => {
       const { getOptimalSwapAmount } = await import("@/lib/enso");
 
       // Small amount should always be pure swap if pool has any bonus
@@ -395,7 +395,7 @@ describeWithApi("Zap Integration Tests", () => {
       expect(swapAmount === parseEther("100") || mintAmount === parseEther("100")).toBe(true);
     });
 
-    it("hybrid: when amount exceeds peg point", async () => {
+    it("hybrid: when amount exceeds peg point", { timeout: 30000 }, async () => {
       const { getOptimalSwapAmount, findMaxSwapBeforePeg } = await import("@/lib/enso");
 
       const pegPoint = await findMaxSwapBeforePeg();
