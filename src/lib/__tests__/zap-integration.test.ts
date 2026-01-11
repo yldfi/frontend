@@ -44,10 +44,11 @@ const TOKENS = {
 };
 
 const VAULTS = {
-  YSCVGCVX: "0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359" as const,
-  YSPXCVX: "0x09F51fB1C78bFBaE6F6f838569D1f6cAD0EC3F00" as const,
-  YCVXCRV: "0x0B3E08E95CD0bc13f83bB7b6c2ee8FF0f5bA2B08" as const,
-  YSCVXCRV: "0xE36E5c24F7a99f8a8fC3a5f96e4f906C4a129f2C" as const,
+  // Yearn vaults from config/vaults.ts - must match VAULT_ADDRESSES
+  YSCVGCVX: "0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359" as const, // cvgCVX vault
+  YSPXCVX: "0xB246DB2A73EEE3ee026153660c74657C123f8E42" as const,  // pxCVX vault
+  YCVXCRV: "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86" as const,  // cvxCRV vault
+  YSCVXCRV: "0xE36E5c24F7a99f8a8fC3a5f96e4f906C4a129f2C" as const, // staked cvxCRV vault
 };
 
 // Known whales for impersonation
@@ -456,6 +457,10 @@ describeWithApi("Route Matrix", () => {
   // - cvgCVX vaults (YSCVGCVX): fetchCvgCvxZapInRoute
   // - pxCVX vaults (YSPXCVX): fetchPxCvxZapInRoute
   // - cvxCRV vaults (YCVXCRV, YSCVXCRV): fetchZapInRoute
+  //
+  // NOTE: These tests make live API calls with rate limiting delays.
+  // The 30s timeout accounts for multiple Enso API calls (1.1s delay each)
+  // plus RPC calls to Curve pools for price estimation.
 
   describe("cvgCVX Vault Zap In Routes", () => {
     const testCases = [
@@ -465,7 +470,7 @@ describeWithApi("Route Matrix", () => {
     ];
 
     testCases.forEach(({ from, inputToken, amount, decimals }) => {
-      it(`${from} → yscvgCVX: creates valid bundle`, async () => {
+      it(`${from} → yscvgCVX: creates valid bundle`, { timeout: 30000 }, async () => {
         const { fetchCvgCvxZapInRoute } = await import("@/lib/enso");
 
         const amountIn = decimals
@@ -495,7 +500,7 @@ describeWithApi("Route Matrix", () => {
     ];
 
     testCases.forEach(({ from, inputToken, amount }) => {
-      it(`${from} → yspxCVX: creates valid bundle`, async () => {
+      it(`${from} → yspxCVX: creates valid bundle`, { timeout: 30000 }, async () => {
         const { fetchPxCvxZapInRoute } = await import("@/lib/enso");
 
         const amountIn = parseEther(amount).toString();
@@ -517,7 +522,7 @@ describeWithApi("Route Matrix", () => {
   });
 
   describe("cvxCRV Vault Zap In Routes", () => {
-    it("ETH → ycvxCRV: creates valid bundle", async () => {
+    it("ETH → ycvxCRV: creates valid bundle", { timeout: 30000 }, async () => {
       const { fetchZapInRoute } = await import("@/lib/enso");
 
       const route = await fetchZapInRoute({

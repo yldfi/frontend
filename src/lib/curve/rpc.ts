@@ -63,11 +63,19 @@ interface RpcBatchResult {
 
 /**
  * Check if running in test environment
+ * Live integration tests (with ENSO API key) should use normal retry settings
  */
 const isTestEnv = typeof process !== "undefined" && (
   process.env.NODE_ENV === "test" ||
   process.env.VITEST === "true"
 );
+
+/**
+ * Check if running live integration tests (tests with real API access)
+ * These need normal retry settings to handle network latency/rate limits
+ */
+const isLiveIntegrationTest = isTestEnv && typeof process !== "undefined" &&
+  Boolean(process.env.NEXT_PUBLIC_ENSO_API_KEY);
 
 /**
  * Execute multiple eth_call requests in a single HTTP request
@@ -87,8 +95,11 @@ export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]
     params: [{ to: call.to, data: call.data }, "latest"],
   }));
 
-  const maxRetries = isTestEnv ? 1 : 5;
-  const baseDelayMs = isTestEnv ? 0 : 500;
+  // Use normal retry settings for live integration tests and production
+  // Only use reduced settings for mocked unit tests
+  const useMockedSettings = isTestEnv && !isLiveIntegrationTest;
+  const maxRetries = useMockedSettings ? 1 : 5;
+  const baseDelayMs = useMockedSettings ? 0 : 500;
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -148,12 +159,13 @@ function encodeUint256(value: bigint | string | number): string {
 
 /**
  * Retry wrapper with exponential backoff
- * In test mode: 1 retry, no delay (to avoid test timeouts)
+ * In mocked test mode: 1 retry, no delay (to avoid test timeouts)
+ * In live integration tests: normal retry settings (5 retries, 500ms base delay)
  */
 async function withRetry<T>(
   fn: () => Promise<T>,
-  maxRetries = isTestEnv ? 1 : 5,
-  baseDelayMs = isTestEnv ? 0 : 500
+  maxRetries = (isTestEnv && !isLiveIntegrationTest) ? 1 : 5,
+  baseDelayMs = (isTestEnv && !isLiveIntegrationTest) ? 0 : 500
 ): Promise<T> {
   let lastError: Error | undefined;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
