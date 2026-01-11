@@ -453,27 +453,111 @@ describeWithApi("Zap Integration Tests", () => {
     });
 
     it("hybrid: when amount exceeds peg point", { timeout: 30000 }, async () => {
-      const { getOptimalSwapAmount, findMaxSwapBeforePeg } = await import("@/lib/enso");
+      const { getOptimalSwapAmount, findMaxSwapBeforePeg, getCvgCvxSwapRate } = await import("@/lib/enso");
 
       const pegPoint = await findMaxSwapBeforePeg();
       console.log(`Current peg point: ${formatEther(pegPoint)} CVX`);
 
       if (pegPoint > 0n) {
-        // Test amount larger than peg point
-        const testAmount = pegPoint * 2n;
+        // Test realistic amount slightly above peg point (e.g., 15,000 CVX)
+        const testAmount = parseEther("15000");
         const { swapAmount, mintAmount } = await getOptimalSwapAmount(testAmount.toString());
 
-        console.log(`For ${formatEther(testAmount)} CVX:`);
-        console.log(`  Swap: ${formatEther(swapAmount)}`);
-        console.log(`  Mint: ${formatEther(mintAmount)}`);
+        // Calculate swap output
+        const swapOutput = swapAmount > 0n ? await getCvgCvxSwapRate(swapAmount.toString()) : 0n;
+        const swapRatio = swapAmount > 0n ? Number(swapOutput) / Number(swapAmount) : 0;
 
-        // Should be hybrid (both > 0)
+        console.log(`\nFor 15,000 CVX (peg point ~${formatEther(pegPoint).slice(0, 8)} CVX):`);
+        console.log(`  Swap: ${formatEther(swapAmount)} CVX → ${formatEther(swapOutput)} cvgCVX (${swapRatio.toFixed(4)} ratio)`);
+        console.log(`  Mint: ${formatEther(mintAmount)} CVX → ${formatEther(mintAmount)} cvgCVX (1:1)`);
+        console.log(`  Total: ${formatEther(swapOutput + mintAmount)} cvgCVX`);
+
+        // Should be hybrid (both > 0) when amount > peg point
         if (testAmount > pegPoint) {
           expect(swapAmount).toBeGreaterThan(0n);
           expect(mintAmount).toBeGreaterThan(0n);
+          // Swap amount should equal peg point
+          expect(swapAmount).toBe(pegPoint);
+          // Mint amount should be remainder
+          expect(mintAmount).toBe(testAmount - pegPoint);
         }
       }
     });
+
+    // Note: Pure mint scenario (pegPoint = 0) is tested in hybrid-swap.test.ts
+    // See: "handles reversed imbalance" and "should mint all when peg point is 0"
+    // We can't easily test this in integration since arbitrageurs keep the pool balanced.
+  });
+
+  describe("pxCVX Hybrid Strategy Scenarios", () => {
+    // pxCVX uses a crypto swap pool (lpxCVX/CVX) instead of stableswap
+    // Same hybrid logic: swap when bonus available, mint when not
+
+    it("detects current pxCVX pool state (swap vs mint)", { timeout: 30000 }, async () => {
+      const { getOptimalPxCvxSwapAmount, getPxCvxSwapRate } = await import("@/lib/enso");
+
+      // Check swap rate for 1000 CVX
+      const swapOutput = await getPxCvxSwapRate(parseEther("1000").toString());
+      const inputAmount = parseEther("1000");
+
+      if (swapOutput && swapOutput > inputAmount) {
+        console.log(`pxCVX Pool ABOVE peg: ${formatEther(swapOutput)} lpxCVX for 1000 CVX (${((Number(swapOutput) / Number(inputAmount) - 1) * 100).toFixed(2)}% bonus)`);
+      } else {
+        console.log(`pxCVX Pool AT/BELOW peg: ${swapOutput ? formatEther(swapOutput) : "N/A"} lpxCVX for 1000 CVX`);
+      }
+
+      // Get optimal split
+      const { swapAmount, mintAmount } = await getOptimalPxCvxSwapAmount(parseEther("10000").toString());
+
+      console.log(`Optimal split for 10,000 CVX → pxCVX:`);
+      console.log(`  Swap: ${formatEther(swapAmount)} CVX`);
+      console.log(`  Mint: ${formatEther(mintAmount)} CVX`);
+
+      expect(swapAmount + mintAmount).toBe(parseEther("10000"));
+    });
+
+    it("pure swap: when pxCVX pool has bonus", { timeout: 30000 }, async () => {
+      const { getOptimalPxCvxSwapAmount } = await import("@/lib/enso");
+
+      // Small amount should use swap if pool has any bonus
+      const { swapAmount, mintAmount } = await getOptimalPxCvxSwapAmount(parseEther("100").toString());
+
+      // For small amounts, expect either all swap or all mint
+      expect(swapAmount === parseEther("100") || mintAmount === parseEther("100")).toBe(true);
+    });
+
+    it("hybrid: when pxCVX amount exceeds peg point", { timeout: 30000 }, async () => {
+      const { getOptimalPxCvxSwapAmount, getPxCvxSwapRate } = await import("@/lib/enso");
+
+      // Test with a large amount that might trigger hybrid
+      const testAmount = parseEther("50000");
+      const { swapAmount, mintAmount } = await getOptimalPxCvxSwapAmount(testAmount.toString());
+
+      // Calculate swap output if swapping
+      const swapOutput = swapAmount > 0n ? await getPxCvxSwapRate(swapAmount.toString()) : 0n;
+      const swapRatio = swapAmount > 0n ? Number(swapOutput) / Number(swapAmount) : 0;
+
+      console.log(`\nFor 50,000 CVX → pxCVX:`);
+      if (mintAmount > 0n) {
+        console.log(`  Hybrid strategy:`);
+        console.log(`    Swap: ${formatEther(swapAmount)} CVX → ${formatEther(swapOutput)} lpxCVX (${swapRatio.toFixed(4)} ratio)`);
+        console.log(`    Mint: ${formatEther(mintAmount)} CVX → ${formatEther(mintAmount)} pxCVX (1:1)`);
+      } else {
+        console.log(`  Pure swap: ${formatEther(swapAmount)} CVX → ${formatEther(swapOutput)} lpxCVX (${swapRatio.toFixed(4)} ratio)`);
+      }
+
+      // Verify amounts sum correctly
+      expect(swapAmount + mintAmount).toBe(testAmount);
+
+      // If hybrid, swap should give ~1:1 at peg point
+      if (mintAmount > 0n && swapAmount > 0n) {
+        expect(swapRatio).toBeGreaterThan(0.99);
+        expect(swapRatio).toBeLessThan(1.02);
+      }
+    });
+
+    // Note: Pure mint scenario tested in hybrid-swap.test.ts
+    // See: "pxCVX pool hybrid strategy" tests
   });
 
   describe("Simulation with debug_traceCall", () => {
