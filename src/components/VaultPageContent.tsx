@@ -217,6 +217,26 @@ export function VaultPageContent({ id }: { id: string }) {
       localStorage.removeItem(`yldfi-zap-amount-${id}`);
     }
   }, [id]);
+
+  // Clear zap amount when navigating away (but not on refresh)
+  // On refresh: beforeunload fires, sets flag, cleanup sees flag and skips clear
+  // On navigation: cleanup runs without flag, clears the amount
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      sessionStorage.setItem("yldfi-is-refresh", "true");
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      // Only clear if not a refresh (SPA navigation)
+      if (!sessionStorage.getItem("yldfi-is-refresh")) {
+        localStorage.removeItem(`yldfi-zap-amount-${id}`);
+      }
+      sessionStorage.removeItem("yldfi-is-refresh");
+    };
+  }, [id]);
+
   // Debounce zap amount to prevent rate limiting from Enso API (1 req/sec)
   const debouncedZapAmount = useDebouncedValue(zapAmount, 500);
   // Load slippage from localStorage with lazy initialization
