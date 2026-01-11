@@ -29,11 +29,9 @@ beforeAll(() => {
 const ENSO_API_KEY = process.env.NEXT_PUBLIC_ENSO_API_KEY;
 const DEBUG_RPC_URL = process.env.DEBUG_RPC_URL;
 const DEBUG_RPC_AUTH = process.env.DEBUG_RPC_AUTH;
-const IS_CI = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
 
-// Skip tests if no API key OR if running in CI (these are live integration tests)
-// Run these tests locally with: pnpm vitest src/lib/__tests__/zap-integration.test.ts
-const describeWithApi = (ENSO_API_KEY && !IS_CI) ? describe : describe.skip;
+// Skip tests if no API key
+const describeWithApi = ENSO_API_KEY ? describe : describe.skip;
 
 // Addresses
 const TOKENS = {
@@ -454,39 +452,86 @@ describeWithApi("Zap Integration Tests", () => {
 // ============================================
 
 describeWithApi("Route Matrix", () => {
-  const testCases = [
-    // ERC20 → Vault
-    { from: "ETH", to: "yscvgCVX", inputToken: TOKENS.ETH, vault: VAULTS.YSCVGCVX, amount: "1" },
-    { from: "CVX", to: "yscvgCVX", inputToken: TOKENS.CVX, vault: VAULTS.YSCVGCVX, amount: "1000" },
-    { from: "USDC", to: "yscvgCVX", inputToken: TOKENS.USDC, vault: VAULTS.YSCVGCVX, amount: "1000", decimals: 6 },
-    { from: "ETH", to: "yspxCVX", inputToken: TOKENS.ETH, vault: VAULTS.YSPXCVX, amount: "1" },
-    { from: "CVX", to: "yspxCVX", inputToken: TOKENS.CVX, vault: VAULTS.YSPXCVX, amount: "1000" },
-    { from: "ETH", to: "ycvxCRV", inputToken: TOKENS.ETH, vault: VAULTS.YCVXCRV, amount: "1" },
-  ];
+  // Different vault types need different route functions:
+  // - cvgCVX vaults (YSCVGCVX): fetchCvgCvxZapInRoute
+  // - pxCVX vaults (YSPXCVX): fetchPxCvxZapInRoute
+  // - cvxCRV vaults (YCVXCRV, YSCVXCRV): fetchZapInRoute
 
-  describe("Zap In Routes", () => {
-    testCases.forEach(({ from, to, inputToken, vault, amount, decimals }) => {
-      it(`${from} → ${to}: creates valid bundle`, async () => {
-        const { fetchZapInRoute } = await import("@/lib/enso");
+  describe("cvgCVX Vault Zap In Routes", () => {
+    const testCases = [
+      { from: "ETH", inputToken: TOKENS.ETH, amount: "1" },
+      { from: "CVX", inputToken: TOKENS.CVX, amount: "1000" },
+      { from: "USDC", inputToken: TOKENS.USDC, amount: "1000", decimals: 6 },
+    ];
+
+    testCases.forEach(({ from, inputToken, amount, decimals }) => {
+      it(`${from} → yscvgCVX: creates valid bundle`, async () => {
+        const { fetchCvgCvxZapInRoute } = await import("@/lib/enso");
 
         const amountIn = decimals
           ? (BigInt(amount) * 10n ** BigInt(decimals)).toString()
           : parseEther(amount).toString();
 
-        const route = await fetchZapInRoute({
+        const route = await fetchCvgCvxZapInRoute({
           fromAddress: WHALES.ETH,
           inputToken,
           amountIn,
-          vaultAddress: vault,
+          vaultAddress: VAULTS.YSCVGCVX,
           slippage: "300",
         });
 
         expect(route.tx).toBeDefined();
         expect(route.tx?.to).toBeDefined();
         expect(route.tx?.data).toBeDefined();
-
-        console.log(`✅ ${from} → ${to}: Bundle created`);
+        console.log(`✅ ${from} → yscvgCVX: Bundle created`);
       });
+    });
+  });
+
+  describe("pxCVX Vault Zap In Routes", () => {
+    const testCases = [
+      { from: "ETH", inputToken: TOKENS.ETH, amount: "1" },
+      { from: "CVX", inputToken: TOKENS.CVX, amount: "1000" },
+    ];
+
+    testCases.forEach(({ from, inputToken, amount }) => {
+      it(`${from} → yspxCVX: creates valid bundle`, async () => {
+        const { fetchPxCvxZapInRoute } = await import("@/lib/enso");
+
+        const amountIn = parseEther(amount).toString();
+
+        const route = await fetchPxCvxZapInRoute({
+          fromAddress: WHALES.ETH,
+          inputToken,
+          amountIn,
+          vaultAddress: VAULTS.YSPXCVX,
+          slippage: "300",
+        });
+
+        expect(route.tx).toBeDefined();
+        expect(route.tx?.to).toBeDefined();
+        expect(route.tx?.data).toBeDefined();
+        console.log(`✅ ${from} → yspxCVX: Bundle created`);
+      });
+    });
+  });
+
+  describe("cvxCRV Vault Zap In Routes", () => {
+    it("ETH → ycvxCRV: creates valid bundle", async () => {
+      const { fetchZapInRoute } = await import("@/lib/enso");
+
+      const route = await fetchZapInRoute({
+        fromAddress: WHALES.ETH,
+        inputToken: TOKENS.ETH,
+        amountIn: parseEther("1").toString(),
+        vaultAddress: VAULTS.YCVXCRV,
+        slippage: "300",
+      });
+
+      expect(route.tx).toBeDefined();
+      expect(route.tx?.to).toBeDefined();
+      expect(route.tx?.data).toBeDefined();
+      console.log("✅ ETH → ycvxCRV: Bundle created");
     });
   });
 });
