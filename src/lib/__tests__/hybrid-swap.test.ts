@@ -278,7 +278,7 @@ describe("getOptimalSwapAmount", () => {
       // Given: peg point is 0 (pool has no swap bonus)
       // When: user wants to swap 5,000 CVX1
       // Then: mint all 5,000 (no point swapping)
-      const pegPoint = 0n;
+      const _pegPoint = 0n; // Context: peg point scenario
       const totalAmount = 5000n * 10n ** 18n;
 
       // When pegPoint is 0, all should go to mint
@@ -293,7 +293,7 @@ describe("getOptimalSwapAmount", () => {
       // Given: any peg point
       // When: user wants to swap 0 CVX1
       // Then: return 0 for both
-      const totalAmount = 0n;
+      const _totalAmount = 0n; // Context: zero input scenario
 
       const expectedSwap = 0n;
       const expectedMint = 0n;
@@ -375,12 +375,12 @@ describe("pxCVX pool hybrid strategy", () => {
     });
 
     it("swap logic works same as cvgCVX", () => {
-      const pegPoint = findPegPoint(
+      const _pegPoint = findPegPoint(
         pxPoolSnapshot.xp,
         Ann,
         pxPoolSnapshot.fee,
         pxPoolSnapshot.offpegFeeMultiplier
-      );
+      ); // Calculated to verify findPegPoint works, value not used in assertions
 
       // Test small swap gives bonus
       const dx = 100n * 10n ** 18n;

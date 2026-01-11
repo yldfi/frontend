@@ -12,8 +12,8 @@ import {
  * Uses API mocking for reliable, fast tests
  */
 
-// Test user address (Vitalik's address for simulation)
-const TEST_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+// Test user address (Vitalik's address for simulation) - reserved for future wallet mock tests
+const _TEST_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
 
 // Helper to set up API mocks
 async function setupApiMocks(page: Page) {

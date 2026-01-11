@@ -3,7 +3,7 @@
 // Using official Enso SDK: https://github.com/EnsoBuild/sdk-ts
 
 import { EnsoClient } from "@ensofinance/sdk";
-import type { EnsoToken, EnsoTokensResponse, EnsoRouteResponse, EnsoBundleAction, EnsoBundleResponse, RouteInfo, RouteStep, CustomBundleResponse, Hop } from "@/types/enso";
+import type { EnsoToken, EnsoTokensResponse, EnsoRouteResponse, EnsoBundleAction, EnsoBundleResponse, RouteInfo, RouteStep, CustomBundleResponse } from "@/types/enso";
 import { TOKENS, VAULTS, VAULT_ADDRESSES, isYldfiVault as checkIsYldfiVault } from "@/config/vaults";
 import { PUBLIC_RPC_URLS } from "@/config/rpc";
 
@@ -14,31 +14,17 @@ import {
   getEthToCvxEstimate,
   getStableSwapParams,
   previewRedeem,
-  batchRpcCalls,
-  getPoolParams,
   // Optimized helpers (batch + off-chain math)
   batchRedeemAndEstimateSwap,
-  estimateSwapOffchain,
   // StableSwap math
-  stableswap,
   findPegPoint as findPegPointOffchain,
   calculateMinDy,
   validateSlippage,
-  N_COINS as STABLESWAP_N_COINS,
-  A_PRECISION as STABLESWAP_A_PRECISION,
-  FEE_DENOMINATOR as STABLESWAP_FEE_DENOMINATOR,
   // CryptoSwap helpers + math
   cryptoswap,
   getCryptoSwapParams,
-  findCryptoSwapPegPoint,
 } from "@/lib/curve";
 import type { TwocryptoParams } from "@yldfi/curve-amm-math";
-
-// Destructure stableswap functions for existing usage
-const stableswapGetD = stableswap.getD;
-const stableswapGetY = stableswap.getY;
-const stableswapGetDyOffchain = stableswap.getDy;
-const stableswapDynamicFee = stableswap.dynamicFee;
 
 const CHAIN_ID = 1; // Ethereum mainnet
 
@@ -1070,7 +1056,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
   // Uses off-chain StableSwap math for getDy calculation
   // Apply slippage buffer dynamically based on user's slippage setting
   const bufferMultiplier = 1 - slippageBps / 10000;
-  const { redeemAmount: cvgCvxAmount, swapOutput: estimatedCvx1 } = await batchRedeemAndEstimateSwap(
+  const { redeemAmount: _cvgCvxAmount, swapOutput: estimatedCvx1 } = await batchRedeemAndEstimateSwap(
     params.sourceVault,
     params.amountIn,
     TANGENT.CVX1_CVGCVX_POOL,
@@ -1145,8 +1131,8 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
     }
 
     const estimatedLpxCvxStr = estimatedLpxCvx.toString();
-    // pxCVX wraps 1:1 from lpxCVX
-    const estimatedPxCvxStr = estimatedLpxCvxStr;
+    // pxCVX wraps 1:1 from lpxCVX (variable kept for documentation)
+    const _estimatedPxCvxStr = estimatedLpxCvxStr;
     // Calculate min_dy for the CVX → lpxCVX swap with slippage protection
     const minDyLpxCvx = calculateMinDy(estimatedLpxCvx, slippageBps);
 
@@ -3004,7 +2990,7 @@ async function buildEthHybridBundle(
   swapAmount: bigint,
   mintAmount: bigint,
   slippageBps: number,
-  expectedCvxOutput: string
+  _expectedCvxOutput: string // Kept for API consistency; function calculates its own estimates
 ): Promise<EnsoBundleResponse> {
   // Calculate fee basis points to split CVX (fee = mint portion, remainder = swap portion)
   // feeBps = (mintAmount / totalCVX) * 10000

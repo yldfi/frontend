@@ -187,7 +187,7 @@ async function keccak256(data: string): Promise<string> {
  * BASE_STRATEGY_STORAGE = keccak256("yearn.base.strategy.storage") - 1
  */
 async function getTokenizedStrategyBaseSlot(): Promise<bigint> {
-  const { keccak256: viemKeccak, toHex, stringToBytes } = await import("viem");
+  const { keccak256: viemKeccak, stringToBytes } = await import("viem");
   const hash = viemKeccak(stringToBytes("yearn.base.strategy.storage"));
   return BigInt(hash) - 1n;
 }
@@ -942,7 +942,7 @@ function decodeRevertReason(error: { data?: string; message?: string }): string 
     try {
       // Decode the string from the error data
       const hexString = error.data.slice(10); // Remove selector
-      const offset = parseInt(hexString.slice(0, 64), 16);
+      const _offset = parseInt(hexString.slice(0, 64), 16); // Offset to string data (unused but kept for ABI decoding reference)
       const length = parseInt(hexString.slice(64, 128), 16);
       const messageHex = hexString.slice(128, 128 + length * 2);
       const message = Buffer.from(messageHex, "hex").toString("utf8");
