@@ -180,6 +180,12 @@ const blockedPageHtml = `<!DOCTYPE html>
 </body>
 </html>`;
 
+// API endpoints that should bypass geo-blocking (for CI/testing and programmatic access)
+const GEO_EXEMPT_API_PATHS = [
+  "/api/token-holders",
+  "/api/simulate",
+];
+
 export function middleware(request: NextRequest) {
   // Get country from Cloudflare headers (available on Cloudflare Workers)
   // cf-ipcountry is set by Cloudflare for all proxied requests
@@ -197,6 +203,11 @@ export function middleware(request: NextRequest) {
     pathname.endsWith(".css") ||
     pathname.endsWith(".js")
   ) {
+    return NextResponse.next();
+  }
+
+  // Allow geo-exempt API endpoints (for CI/testing)
+  if (GEO_EXEMPT_API_PATHS.some((path) => pathname.startsWith(path))) {
     return NextResponse.next();
   }
 
