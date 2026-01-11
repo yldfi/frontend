@@ -29,9 +29,11 @@ beforeAll(() => {
 const ENSO_API_KEY = process.env.NEXT_PUBLIC_ENSO_API_KEY;
 const DEBUG_RPC_URL = process.env.DEBUG_RPC_URL;
 const DEBUG_RPC_AUTH = process.env.DEBUG_RPC_AUTH;
+const IS_CI = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
 
-// Skip tests if no API key
-const describeWithApi = ENSO_API_KEY ? describe : describe.skip;
+// Skip tests if no API key OR if running in CI (these are live integration tests)
+// Run these tests locally with: pnpm vitest src/lib/__tests__/zap-integration.test.ts
+const describeWithApi = (ENSO_API_KEY && !IS_CI) ? describe : describe.skip;
 
 // Addresses
 const TOKENS = {
