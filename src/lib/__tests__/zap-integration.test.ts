@@ -63,8 +63,8 @@ const WHALES = {
   CVGCVX: "0x2191DF768ad71140F9F3E96c1e4407A4aA31d082" as Address,
 };
 
-// Helper: Fetch bundle from Enso
-async function fetchEnsoBundle(params: {
+// Helper: Fetch bundle from Enso (kept for manual testing)
+async function _fetchEnsoBundle(params: {
   fromAddress: string;
   actions: Record<string, unknown>[];
   routingStrategy?: string;
@@ -167,10 +167,10 @@ async function getTokenBalance(token: Address, holder: Address): Promise<bigint>
 // ============================================
 
 describeWithApi("Zap Integration Tests", () => {
-  let client: ReturnType<typeof createPublicClient>;
+  let _client: ReturnType<typeof createPublicClient>; // Kept for potential simulation tests
 
   beforeAll(() => {
-    client = createPublicClient({
+    _client = createPublicClient({
       chain: mainnet,
       transport: http(),
     });

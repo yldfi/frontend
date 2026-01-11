@@ -12,7 +12,7 @@
  * Enso limitation: Each output can only be consumed by ONE subsequent action,
  * UNLESS the consumers are sequential (consecutive actions can share refs).
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { maxUint256 } from "viem";
 
 // ============================================

@@ -275,19 +275,6 @@ async function findWalletWithBalance(
 // ============================================================================
 
 /**
- * Compute storage slot for ERC20 balanceOf mapping
- */
-function computeBalanceSlot(holder: string, baseSlot: number, isVyper = false): string {
-  const paddedHolder = pad(holder.toLowerCase() as `0x${string}`, { size: 32 });
-  const paddedSlot = pad(toHex(baseSlot), { size: 32 });
-
-  // Vyper uses slot || key, Solidity uses key || slot
-  const data = isVyper ? concat([paddedSlot, paddedHolder]) : concat([paddedHolder, paddedSlot]);
-
-  return keccak256(data);
-}
-
-/**
  * Compute storage slot for ERC20 allowance mapping
  */
 function computeAllowanceSlot(
@@ -413,7 +400,7 @@ describe("Direct ERC4626 Vault Operations", () => {
   });
 
   describe("Deposit Operations", () => {
-    Object.entries(VAULT_CONFIGS).forEach(([key, config]) => {
+    Object.entries(VAULT_CONFIGS).forEach(([_key, config]) => {
       skipIfNoRpc(
         `${config.underlyingName} → ${config.name}: direct deposit succeeds`,
         async () => {
@@ -501,7 +488,7 @@ describe("Direct ERC4626 Vault Operations", () => {
   });
 
   describe("Redeem Operations", () => {
-    Object.entries(VAULT_CONFIGS).forEach(([key, config]) => {
+    Object.entries(VAULT_CONFIGS).forEach(([_key, config]) => {
       skipIfNoRpc(
         `${config.name} → ${config.underlyingName}: direct redeem succeeds`,
         async () => {
@@ -573,7 +560,7 @@ describe("Direct ERC4626 Vault Operations", () => {
   });
 
   describe("Preview Functions", () => {
-    Object.entries(VAULT_CONFIGS).forEach(([key, config]) => {
+    Object.entries(VAULT_CONFIGS).forEach(([_key, config]) => {
       skipIfNoRpc(
         `${config.name}: previewDeposit returns non-zero for valid amount`,
         async () => {

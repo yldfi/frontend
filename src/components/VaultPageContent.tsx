@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { useAccount, useBalance } from "wagmi";
@@ -209,14 +209,14 @@ export function VaultPageContent({ id }: { id: string }) {
     if (typeof window === "undefined") return "";
     return localStorage.getItem(`yldfi-zap-amount-${id}`) ?? "";
   });
-  const setZapAmount = (amount: string) => {
+  const setZapAmount = useCallback((amount: string) => {
     setZapAmountState(amount);
     if (amount) {
       localStorage.setItem(`yldfi-zap-amount-${id}`, amount);
     } else {
       localStorage.removeItem(`yldfi-zap-amount-${id}`);
     }
-  };
+  }, [id]);
   // Debounce zap amount to prevent rate limiting from Enso API (1 req/sec)
   const debouncedZapAmount = useDebouncedValue(zapAmount, 500);
   // Load slippage from localStorage with lazy initialization
@@ -248,8 +248,8 @@ export function VaultPageContent({ id }: { id: string }) {
     setZapAmount("");
   };
 
-  // Last transaction result for showing success/error message
-  const [lastTxResult, setLastTxResult] = useState<{
+  // Last transaction result for showing success/error message (stored for potential future UI use)
+  const [_lastTxResult, setLastTxResult] = useState<{
     hash: string;
     status: "success" | "reverted";
     type: "deposit" | "withdraw" | "zap";
@@ -546,7 +546,7 @@ export function VaultPageContent({ id }: { id: string }) {
         }
       }, 0);
     }
-  }, [zapIsSuccess, zapIsReverted, zapHash, refetchTokenBalance, refetchVaultBalance, refetchZapInputBalance, resetZapActions]);
+  }, [zapIsSuccess, zapIsReverted, zapHash, refetchTokenBalance, refetchVaultBalance, refetchZapInputBalance, resetZapActions, setZapAmount]);
 
   // Show toast notifications for errors
   useEffect(() => {
