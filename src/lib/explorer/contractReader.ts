@@ -11,13 +11,10 @@ import {
 import { mainnet } from "viem/chains";
 import type { ABIItem, ContractValue } from "@/types/explorer";
 import { getContractABI, isValidAddress, isZeroAddress } from "./etherscan";
+import { RPC_URL_LIST } from "@/config/rpc";
 
-// Fallback RPC endpoints (same as wagmi.ts for consistency)
-const FALLBACK_RPC_URLS = [
-  "https://cloudflare-eth.com",
-  "https://ethereum-rpc.publicnode.com",
-  "https://rpc.ankr.com/eth",
-];
+// Fallback RPC endpoints from central config
+const FALLBACK_RPC_URLS = RPC_URL_LIST;
 
 let fallbackClient: PublicClient | null = null;
 

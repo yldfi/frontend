@@ -465,118 +465,6 @@ export async function fetchBundle(params: {
     });
   }
 
-  // Debug RPC simulation (dev only) - run immediately after getting Enso response
-  // Uses debug_traceCall for detailed execution trace
-  const debugRpcUrl = process.env.DEBUG_RPC_URL;
-  const debugRpcAuth = process.env.DEBUG_RPC_AUTH;
-  if (isDev && debugRpcUrl && debugRpcAuth) {
-    try {
-      const debugResponse = await fetch(debugRpcUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Basic ${debugRpcAuth}`,
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "eth_call",
-          params: [
-            {
-              from: params.fromAddress,
-              to: bundleData.tx.to,
-              data: bundleData.tx.data,
-              value: `0x${BigInt(bundleData.tx.value).toString(16)}`,
-            },
-            "latest",
-          ],
-        }),
-      });
-      const debugResult = await debugResponse.json() as { error?: { message?: string; code?: number }; result?: string };
-      if (debugResult.error) {
-        console.log("[Debug RPC] eth_call FAILED:", debugResult.error);
-        // If eth_call fails, try debug_traceCall for more details
-        const traceResponse = await fetch(debugRpcUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Basic ${debugRpcAuth}`,
-          },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 2,
-            method: "debug_traceCall",
-            params: [
-              {
-                from: params.fromAddress,
-                to: bundleData.tx.to,
-                data: bundleData.tx.data,
-                value: `0x${BigInt(bundleData.tx.value).toString(16)}`,
-              },
-              "latest",
-              { tracer: "callTracer" },
-            ],
-          }),
-        });
-        const traceResult = await traceResponse.json() as {
-          result?: {
-            error?: string;
-            revertReason?: string;
-            from?: string;
-            to?: string;
-            calls?: Array<{ error?: string; revertReason?: string; to?: string; input?: string }>;
-          };
-          error?: { message?: string };
-        };
-
-        // Log key info from trace
-        if (traceResult.result) {
-          const trace = traceResult.result;
-          console.log("[Debug RPC] Trace result:", {
-            error: trace.error,
-            revertReason: trace.revertReason,
-            from: trace.from,
-            to: trace.to,
-          });
-
-          // Find the failing call in the trace
-          if (trace.calls) {
-            const findFailingCall = (calls: typeof trace.calls): typeof trace.calls[0] | undefined => {
-              for (const call of calls) {
-                if (call.error || call.revertReason) {
-                  return call;
-                }
-                if ((call as { calls?: typeof trace.calls }).calls) {
-                  const nested = findFailingCall((call as { calls: typeof trace.calls }).calls);
-                  if (nested) return nested;
-                }
-              }
-              return undefined;
-            };
-            const failingCall = findFailingCall(trace.calls);
-            if (failingCall) {
-              console.log("[Debug RPC] Failing call:", {
-                to: failingCall.to,
-                error: failingCall.error,
-                revertReason: failingCall.revertReason,
-                inputPrefix: failingCall.input?.slice(0, 10), // function selector
-              });
-            }
-          }
-        } else if (traceResult.error) {
-          console.log("[Debug RPC] Trace error:", traceResult.error);
-        }
-
-        // Log trace data to console (copy and save to file for ethcli analysis)
-        console.log("[Debug RPC] Full trace (copy to .json file for analysis):");
-        console.log(JSON.stringify(traceResult, null, 2));
-      } else {
-        console.log("[Debug RPC] eth_call SUCCESS");
-      }
-    } catch (error) {
-      console.log("[Debug RPC] Error:", error instanceof Error ? error.message : error);
-    }
-  }
 
   // Transform SDK response to match our expected type
   // Note: amountsOut may be null when skipQuote is true
@@ -933,25 +821,28 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
         primaryAddress: params.sourceVault,
       },
     },
-    // Action 1: Route source underlying → CVX via Enso (use estimated underlying)
+    // Action 1: Route source underlying → CVX via Enso
+    // Use dynamic output chaining so Enso doesn't expect user to pre-fund intermediate tokens
     {
       protocol: "enso",
       action: "route",
       args: {
         tokenIn: params.sourceUnderlyingToken,
         tokenOut: TOKENS.CVX,
-        amountIn: estimatedUnderlying,
+        amountIn: { useOutputOfCallAt: 0 },
         slippage: params.slippage,
       },
     },
     // Action 2: Approve CVX → CVX1 wrapper
-    // Use slippage-buffered estimate to account for slippage from Action 1 route
+    // Use dynamic output from route action to approve exact amount received
     {
       protocol: "erc20",
       action: "approve",
-      args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: conservativeCvx.toString() },
+      args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: { useOutputOfCallAt: 1 } },
     },
-    // Action 3: Wrap CVX → CVX1 (mint to router so subsequent actions can use it)
+    // Action 3: Wrap CVX → CVX1 (mint to ENSO_SHORTCUTS, not ENSO_ROUTER_EXECUTOR)
+    // CVX1 must go to ENSO_SHORTCUTS because Curve.exchange does transferFrom(msg.sender, ...)
+    // and the Shortcuts contract is the one executing the Curve call
     {
       protocol: "enso",
       action: "call",
@@ -959,16 +850,18 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
         address: TOKENS.CVX1,
         method: "mint",
         abi: "function mint(address to, uint256 amount)",
-        args: [ENSO_ROUTER_EXECUTOR, conservativeCvx.toString()],
+        args: [ENSO_SHORTCUTS, { useOutputOfCallAt: 1 }],
       },
     },
     // Action 4: Approve CVX1 → Curve pool
+    // CVX1 mint is 1:1, so amount equals route output
     {
       protocol: "erc20",
       action: "approve",
-      args: { token: TOKENS.CVX1, spender: TANGENT.CVX1_CVGCVX_POOL, amount: conservativeCvx.toString() },
+      args: { token: TOKENS.CVX1, spender: TANGENT.CVX1_CVGCVX_POOL, amount: { useOutputOfCallAt: 1 } },
     },
     // Action 5: Swap CVX1 → cvgCVX via Curve pool
+    // Use dynamic CVX1 amount (same as CVX from route, since mint is 1:1)
     {
       protocol: "enso",
       action: "call",
@@ -976,7 +869,7 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
         address: TANGENT.CVX1_CVGCVX_POOL,
         method: "exchange",
         abi: "function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) returns (uint256)",
-        args: [0, 1, conservativeCvx.toString(), minDyCvgCvx], // min_dy with slippage protection
+        args: [0, 1, { useOutputOfCallAt: 1 }, minDyCvgCvx], // dx from route, min_dy with slippage
       },
     },
     // Action 6: Approve cvgCVX → vault
@@ -1072,9 +965,6 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
 
   // Calculate min_dy with slippage tolerance
   const minDyCvx1 = calculateMinDy(estimatedCvx1, slippageBps);
-
-  // Use estimated amount with conservative buffer for route quote
-  const estimatedCvxForQuote = (estimatedCvx1 * BigInt(10000 - slippageBps * 2)) / BigInt(10000);
 
   // Build common actions for cvgCVX → CVX conversion
   const actions: EnsoBundleAction[] = [
@@ -1242,15 +1132,14 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
       },
     },
     // Action 4: Route CVX → target underlying via Enso
-    // Use estimated amount for quote (KyberSwap requires concrete amount at quote time)
-    // Execution will use the actual CVX amount received
+    // Use dynamic output chaining so Enso doesn't expect user to pre-fund intermediate tokens
     {
       protocol: "enso",
       action: "route",
       args: {
         tokenIn: TOKENS.CVX,
         tokenOut: params.targetUnderlyingToken,
-        amountIn: estimatedCvxForQuote.toString(),
+        amountIn: { useOutputOfCallAt: 3 },
         slippage: params.slippage,
       },
     },
@@ -1376,15 +1265,14 @@ async function fetchVaultToPxCvxVaultRoute(params: {
 
   if (!sourceIsCvx) {
     // Action: Route source underlying → CVX
-    // NOTE: Use literal amount instead of useOutputOfCallAt because bundle API
-    // needs to pre-compute the route and can't do that with dynamic amounts
+    // Use dynamic output chaining so Enso doesn't expect user to pre-fund intermediate tokens
     actions.push({
       protocol: "enso",
       action: "route",
       args: {
         tokenIn: params.sourceUnderlyingToken,
         tokenOut: TOKENS.CVX,
-        amountIn: estimatedUnderlyingAmount,
+        amountIn: { useOutputOfCallAt: redeemIdx },
         slippage: params.slippage,
       },
     });
@@ -1713,7 +1601,8 @@ async function fetchPxCvxVaultToVaultRoute(params: {
           amount: conservativeCvxStr, // CVX from Curve exchange (slippage-buffered)
         },
       },
-      // Action 6: Mint CVX → CVX1 (1:1, mint to router so subsequent actions can use it)
+      // Action 6: Mint CVX → CVX1 (mint to ENSO_SHORTCUTS for Curve call)
+      // CVX1 must go to ENSO_SHORTCUTS because Curve.exchange does transferFrom(msg.sender, ...)
       {
         protocol: "enso",
         action: "call",
@@ -1721,7 +1610,7 @@ async function fetchPxCvxVaultToVaultRoute(params: {
           address: TOKENS.CVX1,
           method: "mint",
           abi: "function mint(address to, uint256 amount)",
-          args: [ENSO_ROUTER_EXECUTOR, conservativeCvxStr],
+          args: [ENSO_SHORTCUTS, conservativeCvxStr],
         },
       },
       // Action 7: Approve CVX1 → Curve pool (use CVX amount since mint is 1:1)
@@ -2521,7 +2410,8 @@ async function buildSwapOnlyBundle(
         action: "approve",
         args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: params.amountIn },
       },
-      // Action 1: Wrap CVX → CVX1 (mint to router so subsequent actions can use it)
+      // Action 1: Wrap CVX → CVX1 (mint to ENSO_SHORTCUTS for Curve call)
+      // CVX1 must go to ENSO_SHORTCUTS because Curve.exchange does transferFrom(msg.sender, ...)
       {
         protocol: "enso",
         action: "call",
@@ -2529,7 +2419,7 @@ async function buildSwapOnlyBundle(
           address: TOKENS.CVX1,
           method: "mint",
           abi: "function mint(address to, uint256 amount)",
-          args: [ENSO_ROUTER_EXECUTOR, params.amountIn],
+          args: [ENSO_SHORTCUTS, params.amountIn],
         },
       },
       // Action 2: Approve CVX1 → Curve pool
@@ -2863,7 +2753,8 @@ async function buildHybridBundle(
         action: "approve",
         args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: swapAmount.toString() },
       },
-      // Action 1: Wrap swapAmount CVX → CVX1 (mint to router)
+      // Action 1: Wrap swapAmount CVX → CVX1 (mint to ENSO_SHORTCUTS for Curve call)
+      // CVX1 must go to ENSO_SHORTCUTS because Curve.exchange does transferFrom(msg.sender, ...)
       {
         protocol: "enso",
         action: "call",
@@ -2871,7 +2762,7 @@ async function buildHybridBundle(
           address: TOKENS.CVX1,
           method: "mint",
           abi: "function mint(address to, uint256 amount)",
-          args: [ENSO_ROUTER_EXECUTOR, swapAmount.toString()],
+          args: [ENSO_SHORTCUTS, swapAmount.toString()],
         },
       },
       // Action 2: Approve CVX1 → Curve pool

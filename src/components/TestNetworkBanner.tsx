@@ -2,13 +2,16 @@
 
 import { useEffect } from "react";
 import { useAccount } from "wagmi";
+import { useTenderly } from "@/contexts/TenderlyContext";
 
 const TEST_CHAIN_ID = 1337;
 const BANNER_HEIGHT = "24px";
 
 export function TestNetworkBanner() {
   const { chain, isConnected } = useAccount();
-  const isTestNetwork = isConnected && chain?.id === TEST_CHAIN_ID;
+  const { isTenderlyVNet } = useTenderly();
+
+  const isTestNetwork = isConnected && (chain?.id === TEST_CHAIN_ID || isTenderlyVNet);
 
   // Set CSS variable for header offset when on test network
   useEffect(() => {
@@ -25,12 +28,14 @@ export function TestNetworkBanner() {
     return null;
   }
 
+  const displayChainId = chain?.id === TEST_CHAIN_ID ? TEST_CHAIN_ID : 1;
+
   return (
     <div
       className="fixed top-0 left-0 right-0 z-[100] bg-amber-500 text-black text-center py-1 text-xs font-medium"
       style={{ height: BANNER_HEIGHT }}
     >
-      TEST MODE: Tenderly Fork (Chain {TEST_CHAIN_ID}) - Transactions are simulated
+      TEST MODE: Tenderly VNet (Chain {displayChainId}) - Transactions are simulated
     </div>
   );
 }

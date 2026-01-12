@@ -1,10 +1,12 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAccount, usePublicClient } from "wagmi";
 import { parseUnits, formatUnits } from "viem";
 import { fetchZapInRoute, fetchZapOutRoute, fetchVaultToVaultRoute, fetchCvgCvxZapInRoute, fetchCvgCvxZapOutRoute, fetchPxCvxZapInRoute, fetchPxCvxZapOutRoute, fetchTokenPrices, CVXCRV_ADDRESS, isYldfiVault, getTokenSymbol } from "@/lib/enso";
 import { TOKENS, getVaultByAddress } from "@/config/vaults";
+import { useTenderly } from "@/contexts/TenderlyContext";
 import type { EnsoToken, ZapQuote, ZapDirection, RouteInfo, RouteStep } from "@/types/enso";
 
 /**
@@ -267,6 +269,7 @@ export function useZapQuote({
 }: UseZapQuoteParams) {
   const { address: userAddress } = useAccount();
   const publicClient = usePublicClient();
+  const { isTenderlyVNet } = useTenderly();
 
   // Check if vault uses cvgCVX or pxCVX as underlying (requires custom routing)
   const isCvgCvxVault = underlyingToken?.toLowerCase() === TOKENS.CVGCVX.toLowerCase();
@@ -853,6 +856,89 @@ export function useZapQuote({
     refetchInterval: enabled ? 30 * 1000 : false, // Refresh quote every 30 seconds
     retry: 1,
   });
+
+  // Validate quote with eth_call on quote refresh (dev only)
+  // - Mainnet: use debug trace API (DEBUG_RPC_URL) for detailed traces
+  // - VNet: use publicClient.call() directly (goes to VNet RPC via Frame)
+  const prevTxDataRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    if (!data?.tx || !userAddress || !publicClient) return;
+
+    // Only run when tx data changes (not on every render)
+    const txKey = `${data.tx.to}-${data.tx.data}`;
+    if (prevTxDataRef.current === txKey) return;
+    prevTxDataRef.current = txKey;
+
+    if (isTenderlyVNet) {
+      // VNet: use publicClient.call() directly (goes to VNet RPC)
+      publicClient
+        .call({
+          account: userAddress,
+          to: data.tx.to as `0x${string}`,
+          data: data.tx.data as `0x${string}`,
+          value: data.tx.value ? BigInt(data.tx.value) : 0n,
+        })
+        .then((result) => {
+          console.log("[VNet] eth_call SUCCESS", { data: result.data });
+        })
+        .catch((error: Error) => {
+          console.log("[VNet] eth_call FAILED:", error.message);
+          console.warn(
+            "[VNet] Note: VNets fork from mainnet but don't stay in sync. " +
+            "Enso quotes are based on current mainnet state, which may differ from your VNet's forked state. " +
+            "If this failure seems unexpected, try creating a fresher VNet fork."
+          );
+        });
+    } else {
+      // Mainnet: call debug trace API for detailed traces
+      fetch("/api/debug-trace", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: userAddress,
+          to: data.tx.to,
+          data: data.tx.data,
+          value: data.tx.value ? `0x${BigInt(data.tx.value).toString(16)}` : "0x0",
+        }),
+      })
+        .then((res) => res.json() as Promise<{
+          success: boolean;
+          ethCallSuccess?: boolean;
+          error?: string;
+          debugInfo?: {
+            ethCallError?: { message?: string; code?: number };
+            trace?: { error?: string; revertReason?: string; from?: string; to?: string };
+            failingCall?: { to?: string; error?: string; revertReason?: string; functionSelector?: string };
+            fullTrace?: unknown;
+          };
+        }>)
+        .then((result) => {
+          if (!result.success) {
+            if (result.error !== "DEBUG_RPC_URL not configured") {
+              console.log("[Debug RPC] API error:", result.error);
+            }
+          } else if (result.ethCallSuccess) {
+            console.log("[Debug RPC] eth_call SUCCESS");
+          } else if (result.debugInfo) {
+            console.log("[Debug RPC] eth_call FAILED:", result.debugInfo.ethCallError);
+            if (result.debugInfo.trace) {
+              console.log("[Debug RPC] Trace result:", result.debugInfo.trace);
+            }
+            if (result.debugInfo.failingCall) {
+              console.log("[Debug RPC] Failing call:", result.debugInfo.failingCall);
+            }
+            if (result.debugInfo.fullTrace) {
+              console.log("[Debug RPC] Full trace (copy to .json file for analysis):");
+              console.log(JSON.stringify(result.debugInfo.fullTrace, null, 2));
+            }
+          }
+        })
+        .catch(() => {
+          // Silently ignore - debug trace is optional
+        });
+    }
+  }, [data?.tx, userAddress, isTenderlyVNet, publicClient]);
 
   return {
     quote: data,
