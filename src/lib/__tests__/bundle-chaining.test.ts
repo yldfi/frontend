@@ -9,8 +9,11 @@
  * Solution: Use { useOutputOfCallAt: X } to dynamically chain outputs
  * instead of hardcoded amounts.
  *
- * Enso limitation: Each output can only be consumed by ONE subsequent action,
- * UNLESS the consumers are sequential (consecutive actions can share refs).
+ * Important: When using useOutputOfCallAt with complex bundles, you must use
+ * skipQuote: true in the bundle request. Enso's simulator doesn't handle
+ * complex output chaining, but the on-chain execution works correctly.
+ * Multiple actions CAN reference the same output - there is no one-consumer
+ * limitation (verified working in buildCvxHybridBundle).
  */
 import { describe, it, expect } from "vitest";
 import { maxUint256 } from "viem";
@@ -220,24 +223,23 @@ describe("cvgCVX swap bundle structure", () => {
   });
 });
 
-describe("Enso output chaining limitations", () => {
-  it("documents the one-consumer-per-output limitation", () => {
+describe("Enso output chaining behavior", () => {
+  it("documents that skipQuote is required for complex output chaining", () => {
     /**
-     * Enso's bundle simulator has a limitation: each action output can only
-     * be consumed by ONE subsequent action.
+     * Enso's bundle SIMULATOR has issues with complex output chaining.
+     * The actual on-chain execution works correctly.
      *
-     * EXCEPTION: Sequential consumers (consecutive actions) can share refs.
+     * When using useOutputOfCallAt with multiple consumers or complex bundles,
+     * use skipQuote: true in the bundle request to bypass the simulator.
      *
-     * This is why we can't do:
-     * - Action 0 output → consumed by Actions 1, 2, 3, 4 (FAILS)
+     * Example working pattern (with skipQuote: true):
+     * - Action 1 output → consumed by Actions 2, 3, 4, 5 (ALL WORK!)
+     * - This is verified in buildCvxHybridBundle
      *
-     * But we CAN do:
-     * - Action 0 output → consumed by Action 2 only
-     * - Action 2 output → consumed by Action 4 only
-     * - Action 4 output → consumed by Actions 5 and 6 (sequential, works!)
+     * When skipQuote is true, you must manually provide amountsOut.
      */
 
-    // This test documents the limitation for future reference
+    // This test documents the skipQuote requirement for future reference
     expect(true).toBe(true);
   });
 
@@ -247,8 +249,6 @@ describe("Enso output chaining limitations", () => {
      * 1. The approval just sets a spending limit, doesn't transfer tokens
      * 2. The actual transfer/spend happens in subsequent actions
      * 3. The Enso router is the spender, which is trusted
-     *
-     * This workaround avoids the one-consumer limitation for approvals.
      */
 
     // MaxUint256 should be safe for any approval

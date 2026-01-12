@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { PUBLIC_RPC_URLS } from "@/config/rpc";
 
 export const dynamic = "force-dynamic";
 
@@ -106,7 +107,7 @@ async function fetchFromMoralis(
   const holders: string[] = [];
 
   // Use public RPC for EOA checks
-  const rpcUrl = process.env.DEBUG_RPC_URL || "https://eth.llamarpc.com";
+  const rpcUrl = process.env.DEBUG_RPC_URL || PUBLIC_RPC_URLS.llamarpc;
 
   for (const holder of data.result || []) {
     if (holders.length >= maxHolders) break;

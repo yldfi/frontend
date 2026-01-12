@@ -7,3 +7,6 @@ export const PUBLIC_RPC_URLS = {
   drpc: "https://eth.drpc.org",
   cloudflare: "https://cloudflare-eth.com",
 } as const;
+
+// Array format for fallback chains
+export const RPC_URL_LIST = Object.values(PUBLIC_RPC_URLS);

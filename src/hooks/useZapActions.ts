@@ -12,6 +12,7 @@ import {
 import { parseUnits, maxUint256 } from "viem";
 import { ETH_ADDRESS } from "@/lib/enso";
 import { ERC20_APPROVAL_ABI } from "@/lib/abis";
+import { useTenderly } from "@/contexts/TenderlyContext";
 import type { ZapQuote } from "@/types/enso";
 
 export type ZapStatus =
@@ -117,6 +118,7 @@ function parseErrorMessage(error: Error | null, defaultMsg: string): string | nu
 export function useZapActions(quote: ZapQuote | null | undefined) {
   const { address: userAddress, chainId } = useAccount();
   const publicClient = usePublicClient();
+  const { isTenderlyVNet } = useTenderly();
   const [actionState, setActionState] = useState<"idle" | "approving" | "simulating" | "zapping">("idle");
   const [simulationError, setSimulationError] = useState<string | null>(null);
 
@@ -172,6 +174,31 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   // Check if transactions reverted (mined but failed)
   const isApprovalReverted = approvalReceipt?.status === "reverted";
   const isZapReverted = zapReceipt?.status === "reverted";
+
+  // Log transaction receipts to browser console in dev
+  useEffect(() => {
+    if (approvalReceipt && process.env.NODE_ENV === "development") {
+      console.log("[Approval Transaction]", {
+        hash: approvalReceipt.transactionHash,
+        status: approvalReceipt.status,
+        blockNumber: Number(approvalReceipt.blockNumber),
+        gasUsed: approvalReceipt.gasUsed.toString(),
+      });
+    }
+  }, [approvalReceipt]);
+
+  useEffect(() => {
+    if (zapReceipt && process.env.NODE_ENV === "development") {
+      console.log("[Zap Transaction]", {
+        hash: zapReceipt.transactionHash,
+        status: zapReceipt.status,
+        blockNumber: Number(zapReceipt.blockNumber),
+        gasUsed: zapReceipt.gasUsed.toString(),
+        effectiveGasPrice: zapReceipt.effectiveGasPrice?.toString(),
+        logsCount: zapReceipt.logs.length,
+      });
+    }
+  }, [zapReceipt]);
 
   // Derive status from state (avoids setState in effects)
   const status: ZapStatus = useMemo(() => {
@@ -250,62 +277,79 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       value: BigInt(quote.tx.value || "0"),
     };
 
-    const tenderlyPromise = (async () => {
-      try {
-        const nonceResponse = await fetch("/api/simulate/nonce", {
-          method: "GET",
-          headers: { "Content-Type": "application/json" },
-        });
-        const nonceResult = (await nonceResponse.json()) as {
-          success: boolean;
-          nonce?: string;
-          expires?: number;
-          sig?: string;
-        };
+    // Skip Tenderly simulation on VNet - it simulates against mainnet, not VNet state
+    const tenderlyPromise = (isTenderlyVNet || chainId === 1337)
+      ? Promise.resolve({ ok: true as const })
+      : (async () => {
+          try {
+            const nonceResponse = await fetch("/api/simulate/nonce", {
+              method: "GET",
+              headers: { "Content-Type": "application/json" },
+            });
+            const nonceResult = (await nonceResponse.json()) as {
+              success: boolean;
+              nonce?: string;
+              expires?: number;
+              sig?: string;
+            };
 
-        if (!nonceResult.success || !nonceResult.nonce || !nonceResult.expires || !nonceResult.sig) {
-          return {
-            ok: false as const,
-            errorMessage: "Failed to obtain simulation nonce",
-            retryable: true,
-          };
-        }
+            if (!nonceResult.success || !nonceResult.nonce || !nonceResult.expires || !nonceResult.sig) {
+              return {
+                ok: false as const,
+                errorMessage: "Failed to obtain simulation nonce",
+                retryable: true,
+              };
+            }
 
-        const response = await fetch("/api/simulate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            from: userAddress,
-            to: quote.tx.to,
-            data: quote.tx.data,
-            value: quote.tx.value,
-            inputToken: quote.inputToken.address,
-            nonce: nonceResult.nonce,
-            expires: nonceResult.expires,
-            sig: nonceResult.sig,
-          }),
-        });
+            const response = await fetch("/api/simulate", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                from: userAddress,
+                to: quote.tx.to,
+                data: quote.tx.data,
+                value: quote.tx.value,
+                inputToken: quote.inputToken.address,
+                nonce: nonceResult.nonce,
+                expires: nonceResult.expires,
+                sig: nonceResult.sig,
+              }),
+            });
 
-        const result = (await response.json()) as {
-          success: boolean;
-          errorMessage?: string | null;
-          retryable?: boolean;
-        };
+            const result = (await response.json()) as {
+              success: boolean;
+              errorMessage?: string | null;
+              retryable?: boolean;
+              simulationId?: string;
+              tenderlyUrl?: string;
+              gasUsed?: number;
+            };
 
-        if (result.success) return { ok: true as const };
-        return {
-          ok: false as const,
-          errorMessage: result.errorMessage ?? "Tenderly simulation failed",
-          retryable: Boolean(result.retryable),
-        };
-      } catch (error) {
-        return {
-          ok: false as const,
-          errorMessage: error instanceof Error ? error.message : "Tenderly simulation failed",
-          retryable: true,
-        };
-      }
-    })();
+            // Log simulation result to browser console in dev
+            if (process.env.NODE_ENV === "development") {
+              console.log("[Tenderly Simulation]", {
+                success: result.success,
+                simulationId: result.simulationId,
+                tenderlyUrl: result.tenderlyUrl,
+                gasUsed: result.gasUsed,
+                errorMessage: result.errorMessage,
+              });
+            }
+
+            if (result.success) return { ok: true as const };
+            return {
+              ok: false as const,
+              errorMessage: result.errorMessage ?? "Tenderly simulation failed",
+              retryable: Boolean(result.retryable),
+            };
+          } catch (error) {
+            return {
+              ok: false as const,
+              errorMessage: error instanceof Error ? error.message : "Tenderly simulation failed",
+              retryable: true,
+            };
+          }
+        })();
 
     const ethCallPromise = (async () => {
       try {
@@ -341,7 +385,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     // Simulation passed - send the actual transaction
     setActionState("zapping");
     sendTransaction(txParams);
-  }, [quote, userAddress, publicClient, sendTransaction]);
+  }, [quote, userAddress, publicClient, sendTransaction, chainId, isTenderlyVNet]);
 
   // Reset state
   const reset = useCallback(() => {

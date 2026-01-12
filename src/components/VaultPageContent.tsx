@@ -161,6 +161,15 @@ export function VaultPageContent({ id }: { id: string }) {
   const { isOpen: explorerOpen, address: explorerAddress, title: explorerTitle, lastUpdated: explorerLastUpdated, icon: explorerIcon, openExplorer, closeExplorer } = useContractExplorer();
   const [amount, setAmount] = useState("");
 
+  // Reset amount when Tenderly network changes (mainnet <-> VNet)
+  useEffect(() => {
+    const handleNetworkChange = () => {
+      setAmount("");
+    };
+    window.addEventListener("tenderly-network-change", handleNetworkChange);
+    return () => window.removeEventListener("tenderly-network-change", handleNetworkChange);
+  }, []);
+
   // Zap state with localStorage persistence (scoped per vault)
   const [zapDirection, setZapDirectionState] = useState<ZapDirection>(() => {
     if (typeof window === "undefined") return "in";
