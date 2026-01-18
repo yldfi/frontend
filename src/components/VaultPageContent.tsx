@@ -1449,6 +1449,7 @@ export function VaultPageContent({ id }: { id: string }) {
               <>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src="https://docs.flashbots.net/img/brand-assets/flashbots_icon.svg"
                       alt="Flashbots"

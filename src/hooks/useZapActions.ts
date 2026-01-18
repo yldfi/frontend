@@ -224,7 +224,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     if (actionState === "simulating") return "zapping"; // Show as "zapping" to user (simulating is quick)
     if (actionState === "zapping") return "zapping";
     return "idle";
-  }, [approveError, zapError, simulationError, isZapReverted, isApprovalReverted, isZapSuccess, isApprovalSuccess, isApprovalPending, isZapPending, actionState]);
+  }, [approveError, zapError, flashbotsError, simulationError, isZapReverted, isApprovalReverted, isZapSuccess, isApprovalSuccess, isApprovalPending, isZapPending, actionState]);
 
   // Derive error message from errors or reverts
   const error = useMemo(() => {

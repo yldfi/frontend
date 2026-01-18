@@ -899,7 +899,7 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
 
   // Validate slippage parameter
   const slippageBps = validateSlippage(params.slippage);
-  const totalSlippageBps = getBufferedSlippageBps(slippageBps);
+  const _totalSlippageBps = getBufferedSlippageBps(slippageBps);
 
   // Get symbols for route info
   const sourceVaultSymbol = getTokenSymbol(params.sourceVault);
@@ -1296,7 +1296,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
       throw new Error("Failed to estimate CVX→WETH output from Curve cvxETH pool");
     }
 
-    const minDyWeth = calculateMinDy(expectedWeth, slippageBps);
+    const _minDyWeth = calculateMinDy(expectedWeth, slippageBps);
     const conservativeWethStr = applySlippageBuffer(expectedWeth, slippageBps);
 
     const expectedCrv = await getCurveGetDyFactory(
@@ -1310,7 +1310,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
       throw new Error("Failed to estimate WETH→CRV output from Curve TriCRV pool");
     }
 
-    const minDyCrv = calculateMinDy(expectedCrv, slippageBps);
+    const _minDyCrv = calculateMinDy(expectedCrv, slippageBps);
     const conservativeCrvStr = applySlippageBuffer(expectedCrv, slippageBps);
 
     const expectedCvxCrv = await getCurveGetDy(
