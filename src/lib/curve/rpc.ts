@@ -131,12 +131,43 @@ export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]
       // Sort by id to maintain order
       results.sort((a, b) => a.id - b.id);
 
-      return results.map((r) => {
+      const parsed = results.map((r) => {
         if (r.result && r.result !== "0x" && r.result !== "0x0") {
           return BigInt(r.result);
         }
         return null;
       });
+
+      // Fallback: if a batch entry errored, retry it individually
+      if (parsed.some((value) => value === null)) {
+        const singleResults = await Promise.all(parsed.map(async (value, index) => {
+          if (value !== null) return value;
+          const call = calls[index];
+          try {
+            const single = await fetch(rpcUrl, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: 0,
+                method: "eth_call",
+                params: [{ to: call.to, data: call.data }, "latest"],
+              }),
+            });
+            if (!single || !single.ok) return null;
+            const jsonSingle = (await single.json()) as RpcBatchResult;
+            if (!jsonSingle.result || jsonSingle.result === "0x" || jsonSingle.result === "0x0") {
+              return null;
+            }
+            return BigInt(jsonSingle.result);
+          } catch {
+            return null;
+          }
+        }));
+        return singleResults;
+      }
+
+      return parsed;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       if (attempt < maxRetries - 1) {

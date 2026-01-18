@@ -266,6 +266,7 @@ export function useZapQuote({
   vaultAddress,
   underlyingToken,
   slippage = "100",
+  underlyingTokenPrice,
 }: UseZapQuoteParams) {
   const { address: userAddress } = useAccount();
   const publicClient = usePublicClient();
@@ -337,16 +338,20 @@ export function useZapQuote({
         const exchangeRate = inputNum > 0 ? outputNum / inputNum : 0;
 
         // Get underlying token prices for BOTH vaults (they may have different underlying tokens)
+        // For V2V OUT: source = current vault, so use underlyingTokenPrice if available (for illiquid tokens)
         const sourceUnderlyingToken = underlyingToken || CVXCRV_ADDRESS;
         const targetVaultConfig = getVaultByAddress(outputToken.address);
         const targetUnderlyingToken = targetVaultConfig?.assetAddress || CVXCRV_ADDRESS;
 
-        const [sourceUnderlyingPrice, targetUnderlyingPrice, sourceAssetsPerShare, targetAssetsPerShare] = await Promise.all([
+        // Fetch prices from Enso for consistency, fall back to passed underlyingTokenPrice for illiquid tokens
+        const [ensoSourcePrice, targetUnderlyingPrice, sourceAssetsPerShare, targetAssetsPerShare] = await Promise.all([
           getTokenPrice(sourceUnderlyingToken),
           getTokenPrice(targetUnderlyingToken),
           getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
           getVaultAssetsPerShare(publicClient, outputToken.address as `0x${string}`),
         ]);
+        // Prefer Enso price for consistency, fall back to passed price for illiquid tokens without Enso data
+        const sourceUnderlyingPrice = ensoSourcePrice ?? underlyingTokenPrice ?? null;
 
         const inputUnderlyingValue = sourceAssetsPerShare !== null ? inputNum * sourceAssetsPerShare : inputNum;
         const inputUsdValue = sourceUnderlyingPrice !== null ? inputUnderlyingValue * sourceUnderlyingPrice : null;
@@ -418,16 +423,20 @@ export function useZapQuote({
         const exchangeRate = inputNum > 0 ? outputNum / inputNum : 0;
 
         // Get underlying token prices for BOTH vaults (they may have different underlying tokens)
+        // For V2V IN: target = current vault, so use underlyingTokenPrice if available (for illiquid tokens)
         const sourceVaultConfig = getVaultByAddress(inputToken.address);
         const sourceUnderlyingToken = sourceVaultConfig?.assetAddress || CVXCRV_ADDRESS;
         const targetUnderlyingToken = underlyingToken || CVXCRV_ADDRESS;
 
-        const [sourceUnderlyingPrice, targetUnderlyingPrice, sourceAssetsPerShare, targetAssetsPerShare] = await Promise.all([
+        // Fetch prices from Enso for consistency, fall back to passed underlyingTokenPrice for illiquid tokens
+        const [sourceUnderlyingPrice, ensoTargetPrice, sourceAssetsPerShare, targetAssetsPerShare] = await Promise.all([
           getTokenPrice(sourceUnderlyingToken),
           getTokenPrice(targetUnderlyingToken),
           getVaultAssetsPerShare(publicClient, inputToken.address as `0x${string}`),
           getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
         ]);
+        // Prefer Enso price for consistency, fall back to passed price for illiquid tokens without Enso data
+        const targetUnderlyingPrice = ensoTargetPrice ?? underlyingTokenPrice ?? null;
 
         const inputUnderlyingValue = sourceAssetsPerShare !== null ? inputNum * sourceAssetsPerShare : inputNum;
         const inputUsdValue = sourceUnderlyingPrice !== null ? inputUnderlyingValue * sourceUnderlyingPrice : null;
@@ -436,7 +445,17 @@ export function useZapQuote({
         const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
 
         return {
-          inputToken,
+          // Manually construct inputToken from vault config to ensure correct address
+          // This matches how Zap Out constructs its inputToken (line ~764)
+          inputToken: {
+            address: sourceVaultConfig?.address ?? inputToken.address,
+            symbol: sourceVaultConfig?.symbol ?? inputToken.symbol ?? "Vault Shares",
+            name: sourceVaultConfig?.name ?? inputToken.name ?? "Vault Shares",
+            decimals: sourceVaultConfig?.decimals ?? inputToken.decimals ?? 18,
+            chainId: 1,
+            type: "defi",
+            logoURI: sourceVaultConfig?.logo ?? inputToken.logoURI,
+          } as EnsoToken,
           inputAmount,
           outputAmount: outputAmountRaw,
           outputAmountFormatted,

@@ -18,7 +18,9 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:install": "playwright install chromium",
     "test:curve": "bun x tsx test-stableswap-exact.ts && bun x tsx test-cryptoswap-exact.ts",
-    "prepare": "husky"
+    "compare:cvxcrv": "npx tsx scripts/compare-cvxcrv-routes.ts",
+    "prepare": "husky",
+    "postinstall": "node scripts/fix-next-jsonc.js"
   },
   "lint-staged": {
     "*.{ts,tsx}": [
@@ -46,6 +48,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260111.0",
     "@opennextjs/cloudflare": "^1.14.8",
+    "@openzeppelin/contracts": "^5.4.0",
     "@playwright/test": "^1.57.0",
     "@tailwindcss/postcss": "^4",
     "@testing-library/dom": "^10.4.1",

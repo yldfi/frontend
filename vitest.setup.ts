@@ -65,6 +65,11 @@ vi.mock("wagmi", () => ({
     isPending: false,
     error: null,
   })),
+  useWalletClient: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+    error: null,
+  })),
   useChainId: vi.fn(() => 1),
   useConfig: vi.fn(() => ({})),
   useBalance: vi.fn(() => ({

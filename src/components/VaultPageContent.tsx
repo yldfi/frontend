@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, useRouter } from "next/navigation";
 import { useAccount, useBalance } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
-import { ArrowLeft, ArrowUpRight, ExternalLink, Loader2, Search, Route, RouteOff } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, ExternalLink, Loader2, Search, Route, RouteOff, Copy, ChevronDown } from "lucide-react";
 import { RouteDisplay } from "@/components/RouteDisplay";
 
 // Animated loading dots for quote fetching
@@ -121,7 +121,7 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS } from "@/lib/enso";
-import { getVault, getParentVault, TOKENS, VAULT_UNDERLYING_TOKENS } from "@/config/vaults";
+import { getVault, getParentVault, TOKENS, VAULT_UNDERLYING_TOKENS, VAULTS } from "@/config/vaults";
 import type { EnsoToken, ZapDirection } from "@/types/enso";
 import {
   trackVaultView,
@@ -139,11 +139,30 @@ import { toast } from "sonner";
 
 export function VaultPageContent({ id }: { id: string }) {
   const vault = getVault(id);
+  const router = useRouter();
+  const [vaultSelectorOpen, setVaultSelectorOpen] = useState(false);
+  const vaultSelectorRef = useRef<HTMLDivElement>(null);
+
+  // Get all visible vaults for the selector
+  const availableVaults = Object.values(VAULTS).filter(
+    (v) => !v.hidden && v.address !== "0x0000000000000000000000000000000000000000"
+  );
+
+  // Close vault selector when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (vaultSelectorRef.current && !vaultSelectorRef.current.contains(event.target as Node)) {
+        setVaultSelectorOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   // Check if vault is deployed (has non-zero address)
   const isVaultDeployed = vault?.address && vault.address !== "0x0000000000000000000000000000000000000000";
 
-  const { isConnected, address: userAddress } = useAccount();
+  const { isConnected, address: userAddress, chainId } = useAccount();
   const { openConnectModal } = useConnectModal();
   // Active tab with localStorage persistence
   const [activeTab, setActiveTabState] = useState<"deposit" | "withdraw" | "zap">(() => {
@@ -414,6 +433,9 @@ export function VaultPageContent({ id }: { id: string }) {
     isSuccess: zapIsSuccess,
     isReverted: zapIsReverted,
     zapHash,
+    isFlashbotsEnabled,
+    isFlashbotsSupported,
+    toggleFlashbots,
   } = useZapActions(zapQuote);
 
   const inputAmount = parseFloat(amount) || 0;
@@ -582,12 +604,14 @@ export function VaultPageContent({ id }: { id: string }) {
   // Show toast notifications for errors
   useEffect(() => {
     if (txError) {
+      console.log("[TOAST ERROR] txError:", txError);
       toast.error(txError);
     }
   }, [txError]);
 
   useEffect(() => {
     if (zapActionError) {
+      console.log("[TOAST ERROR] zapActionError:", zapActionError);
       toast.error(zapActionError);
     }
   }, [zapActionError]);
@@ -597,6 +621,7 @@ export function VaultPageContent({ id }: { id: string }) {
   useEffect(() => {
     if (zapQuoteError) {
       const friendlyMessage = parseQuoteError(zapQuoteError);
+      console.log("[TOAST ERROR] zapQuoteError:", zapQuoteError, "friendly:", friendlyMessage);
       // Only show toast if it's a different error message
       if (lastQuoteErrorRef.current !== friendlyMessage) {
         lastQuoteErrorRef.current = friendlyMessage;
@@ -653,9 +678,56 @@ export function VaultPageContent({ id }: { id: string }) {
                       className="rounded-full translate-y-[1px]"
                     />
                   )}
-                  <h1 className="text-3xl md:text-4xl font-medium tracking-tight leading-none">
-                    {vault.name}
-                  </h1>
+                  <div className="relative" ref={vaultSelectorRef}>
+                    <button
+                      onClick={() => setVaultSelectorOpen(!vaultSelectorOpen)}
+                      className="flex items-center gap-2 text-3xl md:text-4xl font-medium tracking-tight leading-none hover:text-[var(--accent)] transition-colors"
+                    >
+                      {vault.name}
+                      <ChevronDown
+                        size={24}
+                        className={cn(
+                          "transition-transform text-[var(--muted-foreground)]",
+                          vaultSelectorOpen && "rotate-180"
+                        )}
+                      />
+                    </button>
+                    {vaultSelectorOpen && (
+                      <div className="absolute top-full left-0 mt-2 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-lg z-50 min-w-[200px] py-1 max-h-[300px] overflow-y-auto">
+                        {availableVaults.map((v) => (
+                          <button
+                            key={v.id}
+                            onClick={() => {
+                              setVaultSelectorOpen(false);
+                              if (v.id !== id) {
+                                router.push(`/vaults/${v.name}`);
+                              }
+                            }}
+                            className={cn(
+                              "w-full px-4 py-2 text-left flex items-center gap-3 hover:bg-[var(--muted)] transition-colors",
+                              v.id === id && "bg-[var(--muted)]"
+                            )}
+                          >
+                            {v.logo && (
+                              <Image
+                                src={v.logo}
+                                alt={v.name}
+                                width={24}
+                                height={24}
+                                className="rounded-full"
+                              />
+                            )}
+                            <span className={cn(
+                              "font-medium",
+                              v.id === id && "text-[var(--accent)]"
+                            )}>
+                              {v.name}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <p className="text-[var(--muted-foreground)] max-w-xl leading-relaxed">
                   {vault.longDescription}
@@ -730,6 +802,16 @@ export function VaultPageContent({ id }: { id: string }) {
                         {vault.address.slice(0, 6)}...{vault.address.slice(-4)}
                         <ExternalLink size={12} />
                       </a>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(vault.address);
+                          toast.success("Address copied to clipboard");
+                        }}
+                        className="p-1 hover:bg-[var(--muted)] rounded transition-colors"
+                        title="Copy address"
+                      >
+                        <Copy size={12} />
+                      </button>
                     </div>
                   </div>
                   {vault.underlyingStrategy && vault.type === "vault" && (
@@ -752,6 +834,16 @@ export function VaultPageContent({ id }: { id: string }) {
                           {vault.underlyingStrategy.slice(0, 6)}...{vault.underlyingStrategy.slice(-4)}
                           <ExternalLink size={12} />
                         </a>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(vault.underlyingStrategy!);
+                            toast.success("Address copied to clipboard");
+                          }}
+                          className="p-1 hover:bg-[var(--muted)] rounded transition-colors"
+                          title="Copy address"
+                        >
+                          <Copy size={12} />
+                        </button>
                       </div>
                     </div>
                   )}
@@ -919,6 +1011,7 @@ export function VaultPageContent({ id }: { id: string }) {
                             type="number"
                             value={amount}
                             onChange={(e) => setAmount(e.target.value)}
+                            onWheel={(e) => e.currentTarget.blur()}
                             placeholder="0.00"
                             className="flex-1 min-w-0 bg-transparent mono text-base outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
                           />
@@ -1072,6 +1165,7 @@ export function VaultPageContent({ id }: { id: string }) {
                                 type="number"
                                 value={zapAmount}
                                 onChange={(e) => setZapAmount(e.target.value)}
+                                onWheel={(e) => e.currentTarget.blur()}
                                 placeholder="0.00"
                                 className="flex-1 min-w-0 bg-transparent mono text-base outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
                               />
@@ -1125,6 +1219,7 @@ export function VaultPageContent({ id }: { id: string }) {
                                 type="number"
                                 value={zapAmount}
                                 onChange={(e) => setZapAmount(e.target.value)}
+                                onWheel={(e) => e.currentTarget.blur()}
                                 placeholder="0.00"
                                 className="flex-1 min-w-0 bg-transparent mono text-base outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
                               />
@@ -1289,7 +1384,7 @@ export function VaultPageContent({ id }: { id: string }) {
                           <button
                             onClick={() => setShowSlippageModal(true)}
                             className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
-                            title="Slippage settings"
+                            title="Zap settings"
                           >
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                               <line x1="4" y1="6" x2="20" y2="6"/>
@@ -1329,7 +1424,7 @@ export function VaultPageContent({ id }: { id: string }) {
         </div>
       </main>
 
-      {/* Slippage Settings Modal */}
+      {/* Settings Modal */}
       {showSlippageModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
@@ -1338,7 +1433,7 @@ export function VaultPageContent({ id }: { id: string }) {
           />
           <div className="relative bg-[var(--background)] border border-[var(--border)] rounded-xl w-full max-w-sm p-5 space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="font-medium">Slippage Tolerance</h3>
+              <h3 className="font-medium">Zap Settings</h3>
               <button
                 onClick={() => setShowSlippageModal(false)}
                 className="p-1 hover:bg-[var(--muted)] rounded transition-colors"
@@ -1349,58 +1444,98 @@ export function VaultPageContent({ id }: { id: string }) {
               </button>
             </div>
 
-            <p className="text-sm text-[var(--muted-foreground)]">
-              Maximum price change you&apos;re willing to accept. Higher slippage may result in worse rates.
-            </p>
-
-            {/* Preset buttons */}
-            <div className="flex gap-2">
-              {["10", "50", "100", "300"].map((value) => (
-                <button
-                  key={value}
-                  onClick={() => updateSlippage(value)}
-                  className={cn(
-                    "flex-1 py-2 text-sm rounded-lg transition-colors",
-                    zapSlippage === value
-                      ? "bg-[var(--foreground)] text-[var(--background)]"
-                      : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                  )}
-                >
-                  {(Number(value) / 100).toFixed(1)}%
-                </button>
-              ))}
-            </div>
-
-            {/* Custom input */}
-            <div>
-              <label className="text-sm text-[var(--muted-foreground)] mb-2 block">Custom</label>
-              <div className="relative">
-                <input
-                  type="number"
-                  value={(Number(zapSlippage) / 100).toString()}
-                  onChange={(e) => {
-                    const percent = parseFloat(e.target.value) || 0;
-                    const bps = Math.round(percent * 100).toString();
-                    updateSlippage(bps);
-                  }}
-                  step="0.1"
-                  min="0.01"
-                  max="50"
-                  className="w-full bg-[var(--muted)] rounded-lg p-3 pr-8 mono text-base focus:outline-none focus:ring-1 focus:ring-[var(--border-hover)]"
-                />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]">%</span>
-              </div>
-            </div>
-
-            {/* Warning for high slippage */}
-            {Number(zapSlippage) > 300 && (
-              <p className="text-xs text-[var(--warning)] flex items-center gap-1.5">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-                High slippage increases risk of unfavorable trades
-              </p>
+            {/* Flashbots Protect Toggle - only show on mainnet when wallet supports it */}
+            {chainId === 1 && isFlashbotsSupported && (
+              <>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <img
+                      src="https://docs.flashbots.net/img/brand-assets/flashbots_icon.svg"
+                      alt="Flashbots"
+                      width={20}
+                      height={20}
+                    />
+                    <span className="text-sm font-medium">Flashbots Protect</span>
+                  </div>
+                  <button
+                    onClick={() => toggleFlashbots(!isFlashbotsEnabled)}
+                    className={cn(
+                      "relative w-11 h-6 rounded-full transition-colors",
+                      isFlashbotsEnabled ? "bg-[#FFA800]" : "bg-[var(--muted)]"
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform",
+                        isFlashbotsEnabled && "translate-x-5"
+                      )}
+                    />
+                  </button>
+                </div>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  Protects transactions from frontrunning and sandwich attacks via private mempool.
+                </p>
+                <div className="border-t border-[var(--border)]" />
+              </>
             )}
+
+            {/* Slippage Section */}
+            <div>
+              <h4 className="text-sm font-medium mb-2">Slippage Tolerance</h4>
+              <p className="text-xs text-[var(--muted-foreground)] mb-3">
+                Maximum price change you&apos;re willing to accept.
+              </p>
+
+              {/* Preset buttons */}
+              <div className="flex gap-2 mb-3">
+                {["10", "50", "100", "300"].map((value) => (
+                  <button
+                    key={value}
+                    onClick={() => updateSlippage(value)}
+                    className={cn(
+                      "flex-1 py-2 text-sm rounded-lg transition-colors",
+                      zapSlippage === value
+                        ? "bg-[var(--foreground)] text-[var(--background)]"
+                        : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                    )}
+                  >
+                    {(Number(value) / 100).toFixed(1)}%
+                  </button>
+                ))}
+              </div>
+
+              {/* Custom input */}
+              <div>
+                <label className="text-xs text-[var(--muted-foreground)] mb-1.5 block">Custom</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    value={(Number(zapSlippage) / 100).toString()}
+                    onChange={(e) => {
+                      const percent = parseFloat(e.target.value) || 0;
+                      const bps = Math.round(percent * 100).toString();
+                      updateSlippage(bps);
+                    }}
+                    onWheel={(e) => e.currentTarget.blur()}
+                    step="0.1"
+                    min="0.01"
+                    max="50"
+                    className="w-full bg-[var(--muted)] rounded-lg p-3 pr-8 mono text-base focus:outline-none focus:ring-1 focus:ring-[var(--border-hover)]"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]">%</span>
+                </div>
+              </div>
+
+              {/* Warning for high slippage */}
+              {Number(zapSlippage) > 300 && (
+                <p className="text-xs text-[var(--warning)] flex items-center gap-1.5 mt-2">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  High slippage increases risk of unfavorable trades
+                </p>
+              )}
+            </div>
           </div>
         </div>
       )}

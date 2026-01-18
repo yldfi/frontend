@@ -104,6 +104,11 @@ async function fetchFromMoralis(
   }
 
   const data = (await response.json()) as MoralisResponse;
+  if (process.env.NODE_ENV !== "production") {
+    // Temporary debug: log raw Moralis response during local dev
+     
+    console.log("[token-holders] Moralis response:", JSON.stringify(data));
+  }
   const holders: string[] = [];
 
   // Use public RPC for EOA checks
