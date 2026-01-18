@@ -57,7 +57,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="dark" style={{ colorScheme: "dark" }}>
       <body className={`${inter.variable} ${jetbrainsMono.variable} min-h-screen`}>
         <ClientProviders>{children}</ClientProviders>
       </body>

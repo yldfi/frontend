@@ -167,13 +167,21 @@ export function VaultPageContent({ id }: { id: string }) {
   // Active tab with localStorage persistence
   const [activeTab, setActiveTabState] = useState<"deposit" | "withdraw" | "zap">(() => {
     if (typeof window === "undefined") return "deposit";
-    const saved = localStorage.getItem("yldfi-active-tab");
-    if (saved === "deposit" || saved === "withdraw" || saved === "zap") return saved;
+    try {
+      const saved = localStorage.getItem("yldfi-active-tab");
+      if (saved === "deposit" || saved === "withdraw" || saved === "zap") return saved;
+    } catch {
+      // localStorage unavailable (incognito, disabled, quota exceeded)
+    }
     return "deposit";
   });
   const setActiveTab = (tab: "deposit" | "withdraw" | "zap") => {
     setActiveTabState(tab);
-    localStorage.setItem("yldfi-active-tab", tab);
+    try {
+      localStorage.setItem("yldfi-active-tab", tab);
+    } catch {
+      // localStorage unavailable
+    }
   };
 
   // Contract explorer state
@@ -192,12 +200,20 @@ export function VaultPageContent({ id }: { id: string }) {
   // Zap state with localStorage persistence (scoped per vault)
   const [zapDirection, setZapDirectionState] = useState<ZapDirection>(() => {
     if (typeof window === "undefined") return "in";
-    const saved = localStorage.getItem(`yldfi-zap-direction-${id}`);
-    return saved === "out" ? "out" : "in";
+    try {
+      const saved = localStorage.getItem(`yldfi-zap-direction-${id}`);
+      return saved === "out" ? "out" : "in";
+    } catch {
+      return "in";
+    }
   });
   const setZapDirection = (dir: ZapDirection) => {
     setZapDirectionState(dir);
-    localStorage.setItem(`yldfi-zap-direction-${id}`, dir);
+    try {
+      localStorage.setItem(`yldfi-zap-direction-${id}`, dir);
+    } catch {
+      // localStorage unavailable
+    }
   };
   const [zapInputToken, setZapInputTokenState] = useState<EnsoToken | null>(() => {
     if (typeof window === "undefined") return DEFAULT_ETH_TOKEN;
@@ -210,10 +226,14 @@ export function VaultPageContent({ id }: { id: string }) {
   });
   const setZapInputToken = (token: EnsoToken | null) => {
     setZapInputTokenState(token);
-    if (token) {
-      localStorage.setItem(`yldfi-zap-input-token-${id}`, JSON.stringify(token));
-    } else {
-      localStorage.removeItem(`yldfi-zap-input-token-${id}`);
+    try {
+      if (token) {
+        localStorage.setItem(`yldfi-zap-input-token-${id}`, JSON.stringify(token));
+      } else {
+        localStorage.removeItem(`yldfi-zap-input-token-${id}`);
+      }
+    } catch {
+      // localStorage unavailable
     }
   };
   const [zapOutputToken, setZapOutputTokenState] = useState<EnsoToken | null>(() => {
@@ -227,22 +247,34 @@ export function VaultPageContent({ id }: { id: string }) {
   });
   const setZapOutputToken = (token: EnsoToken | null) => {
     setZapOutputTokenState(token);
-    if (token) {
-      localStorage.setItem(`yldfi-zap-output-token-${id}`, JSON.stringify(token));
-    } else {
-      localStorage.removeItem(`yldfi-zap-output-token-${id}`);
+    try {
+      if (token) {
+        localStorage.setItem(`yldfi-zap-output-token-${id}`, JSON.stringify(token));
+      } else {
+        localStorage.removeItem(`yldfi-zap-output-token-${id}`);
+      }
+    } catch {
+      // localStorage unavailable
     }
   };
   const [zapAmount, setZapAmountState] = useState(() => {
     if (typeof window === "undefined") return "";
-    return localStorage.getItem(`yldfi-zap-amount-${id}`) ?? "";
+    try {
+      return localStorage.getItem(`yldfi-zap-amount-${id}`) ?? "";
+    } catch {
+      return "";
+    }
   });
   const setZapAmount = useCallback((amount: string) => {
     setZapAmountState(amount);
-    if (amount) {
-      localStorage.setItem(`yldfi-zap-amount-${id}`, amount);
-    } else {
-      localStorage.removeItem(`yldfi-zap-amount-${id}`);
+    try {
+      if (amount) {
+        localStorage.setItem(`yldfi-zap-amount-${id}`, amount);
+      } else {
+        localStorage.removeItem(`yldfi-zap-amount-${id}`);
+      }
+    } catch {
+      // localStorage unavailable
     }
   }, [id]);
 
@@ -251,17 +283,25 @@ export function VaultPageContent({ id }: { id: string }) {
   // On navigation: cleanup runs without flag, clears the amount
   useEffect(() => {
     const handleBeforeUnload = () => {
-      sessionStorage.setItem("yldfi-is-refresh", "true");
+      try {
+        sessionStorage.setItem("yldfi-is-refresh", "true");
+      } catch {
+        // sessionStorage unavailable
+      }
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
 
     return () => {
       window.removeEventListener("beforeunload", handleBeforeUnload);
-      // Only clear if not a refresh (SPA navigation)
-      if (!sessionStorage.getItem("yldfi-is-refresh")) {
-        localStorage.removeItem(`yldfi-zap-amount-${id}`);
+      try {
+        // Only clear if not a refresh (SPA navigation)
+        if (!sessionStorage.getItem("yldfi-is-refresh")) {
+          localStorage.removeItem(`yldfi-zap-amount-${id}`);
+        }
+        sessionStorage.removeItem("yldfi-is-refresh");
+      } catch {
+        // storage unavailable
       }
-      sessionStorage.removeItem("yldfi-is-refresh");
     };
   }, [id]);
 
@@ -270,7 +310,11 @@ export function VaultPageContent({ id }: { id: string }) {
   // Load slippage from localStorage with lazy initialization
   const [zapSlippage, setZapSlippage] = useState(() => {
     if (typeof window === "undefined") return "10";
-    return localStorage.getItem("yldfi-zap-slippage") ?? "10";
+    try {
+      return localStorage.getItem("yldfi-zap-slippage") ?? "10";
+    } catch {
+      return "10";
+    }
   });
   const [showSlippageModal, setShowSlippageModal] = useState(false);
   const [showPriceImpactModal, setShowPriceImpactModal] = useState(false);
@@ -278,12 +322,20 @@ export function VaultPageContent({ id }: { id: string }) {
   // Route display toggle with localStorage persistence
   const [showRoute, setShowRoute] = useState(() => {
     if (typeof window === "undefined") return false;
-    return localStorage.getItem("yldfi-show-route") === "true";
+    try {
+      return localStorage.getItem("yldfi-show-route") === "true";
+    } catch {
+      return false;
+    }
   });
   const toggleRoute = () => {
     const newValue = !showRoute;
     setShowRoute(newValue);
-    localStorage.setItem("yldfi-show-route", String(newValue));
+    try {
+      localStorage.setItem("yldfi-show-route", String(newValue));
+    } catch {
+      // localStorage unavailable
+    }
   };
 
   // Handle token selection
@@ -311,7 +363,11 @@ export function VaultPageContent({ id }: { id: string }) {
   // Save slippage to localStorage when changed
   const updateSlippage = (value: string) => {
     setZapSlippage(value);
-    localStorage.setItem("yldfi-zap-slippage", value);
+    try {
+      localStorage.setItem("yldfi-zap-slippage", value);
+    } catch {
+      // localStorage unavailable
+    }
   };
 
   // Fetch Yearn Kong API data
@@ -808,7 +864,7 @@ export function VaultPageContent({ id }: { id: string }) {
                           toast.success("Address copied to clipboard");
                         }}
                         className="p-1 hover:bg-[var(--muted)] rounded transition-colors"
-                        title="Copy address"
+                        aria-label="Copy vault address"
                       >
                         <Copy size={12} />
                       </button>
@@ -840,7 +896,7 @@ export function VaultPageContent({ id }: { id: string }) {
                             toast.success("Address copied to clipboard");
                           }}
                           className="p-1 hover:bg-[var(--muted)] rounded transition-colors"
-                          title="Copy address"
+                          aria-label="Copy strategy address"
                         >
                           <Copy size={12} />
                         </button>
