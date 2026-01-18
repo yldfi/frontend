@@ -34,7 +34,9 @@ const ensoClient = new EnsoClient({
   apiKey: process.env.ENSO_API_KEY || process.env.NEXT_PUBLIC_ENSO_API_KEY || "",
 });
 
-const ENSO_RATE_LIMIT_MS = Number(process.env.ENSO_RATE_LIMIT_MS ?? "1100");
+// Rate limit disabled - testing shows Enso API handles rapid requests fine
+// Keep env var override in case we need to throttle in the future
+const ENSO_RATE_LIMIT_MS = Number(process.env.ENSO_RATE_LIMIT_MS ?? "0");
 const ENSO_MAX_RETRIES = Number(process.env.ENSO_MAX_RETRIES ?? "4");
 let lastEnsoCallAt = 0;
 let ensoQueue: Promise<void> = Promise.resolve();

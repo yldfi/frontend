@@ -236,6 +236,34 @@ async function getTokenPrice(address: string): Promise<number | null> {
 }
 
 /**
+ * Batch fetch multiple token prices from Enso API
+ * Returns a Map of address -> price (null if not available)
+ * More efficient than multiple getTokenPrice calls
+ */
+async function getTokenPrices(addresses: string[]): Promise<Map<string, number | null>> {
+  const result = new Map<string, number | null>();
+  if (addresses.length === 0) return result;
+
+  try {
+    const prices = await fetchTokenPrices(addresses);
+    for (const p of prices) {
+      result.set(p.address.toLowerCase(), p.price);
+    }
+  } catch {
+    // On error, set all to null
+  }
+
+  // Ensure all requested addresses have an entry
+  for (const addr of addresses) {
+    if (!result.has(addr.toLowerCase())) {
+      result.set(addr.toLowerCase(), null);
+    }
+  }
+
+  return result;
+}
+
+/**
  * Get vault's assets per share (exchange rate)
  * Returns how many underlying tokens (cvxCRV) each share is worth
  */
@@ -343,14 +371,15 @@ export function useZapQuote({
         const targetVaultConfig = getVaultByAddress(outputToken.address);
         const targetUnderlyingToken = targetVaultConfig?.assetAddress || CVXCRV_ADDRESS;
 
-        // Fetch prices from Enso for consistency, fall back to passed underlyingTokenPrice for illiquid tokens
-        const [ensoSourcePrice, targetUnderlyingPrice, sourceAssetsPerShare, targetAssetsPerShare] = await Promise.all([
-          getTokenPrice(sourceUnderlyingToken),
-          getTokenPrice(targetUnderlyingToken),
+        // Fetch prices from Enso (batched for efficiency) and vault exchange rates in parallel
+        const [priceMap, sourceAssetsPerShare, targetAssetsPerShare] = await Promise.all([
+          getTokenPrices([sourceUnderlyingToken, targetUnderlyingToken]),
           getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
           getVaultAssetsPerShare(publicClient, outputToken.address as `0x${string}`),
         ]);
         // Prefer Enso price for consistency, fall back to passed price for illiquid tokens without Enso data
+        const ensoSourcePrice = priceMap.get(sourceUnderlyingToken.toLowerCase()) ?? null;
+        const targetUnderlyingPrice = priceMap.get(targetUnderlyingToken.toLowerCase()) ?? null;
         const sourceUnderlyingPrice = ensoSourcePrice ?? underlyingTokenPrice ?? null;
 
         const inputUnderlyingValue = sourceAssetsPerShare !== null ? inputNum * sourceAssetsPerShare : inputNum;
@@ -428,14 +457,15 @@ export function useZapQuote({
         const sourceUnderlyingToken = sourceVaultConfig?.assetAddress || CVXCRV_ADDRESS;
         const targetUnderlyingToken = underlyingToken || CVXCRV_ADDRESS;
 
-        // Fetch prices from Enso for consistency, fall back to passed underlyingTokenPrice for illiquid tokens
-        const [sourceUnderlyingPrice, ensoTargetPrice, sourceAssetsPerShare, targetAssetsPerShare] = await Promise.all([
-          getTokenPrice(sourceUnderlyingToken),
-          getTokenPrice(targetUnderlyingToken),
+        // Fetch prices from Enso (batched for efficiency) and vault exchange rates in parallel
+        const [priceMap, sourceAssetsPerShare, targetAssetsPerShare] = await Promise.all([
+          getTokenPrices([sourceUnderlyingToken, targetUnderlyingToken]),
           getVaultAssetsPerShare(publicClient, inputToken.address as `0x${string}`),
           getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
         ]);
         // Prefer Enso price for consistency, fall back to passed price for illiquid tokens without Enso data
+        const sourceUnderlyingPrice = priceMap.get(sourceUnderlyingToken.toLowerCase()) ?? null;
+        const ensoTargetPrice = priceMap.get(targetUnderlyingToken.toLowerCase()) ?? null;
         const targetUnderlyingPrice = ensoTargetPrice ?? underlyingTokenPrice ?? null;
 
         const inputUnderlyingValue = sourceAssetsPerShare !== null ? inputNum * sourceAssetsPerShare : inputNum;
@@ -512,12 +542,13 @@ export function useZapQuote({
           const outputNum = Number(outputAmountFormatted);
           const exchangeRate = inputNum > 0 ? outputNum / inputNum : 0;
 
-          // Price impact calculation for cvgCVX
-          const [inputTokenPrice, cvgCvxPrice, assetsPerShare] = await Promise.all([
-            getTokenPrice(inputToken.address),
-            getTokenPrice(TOKENS.CVGCVX),
+          // Price impact calculation for cvgCVX (batched price fetch)
+          const [priceMap, assetsPerShare] = await Promise.all([
+            getTokenPrices([inputToken.address, TOKENS.CVGCVX]),
             getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
           ]);
+          const inputTokenPrice = priceMap.get(inputToken.address.toLowerCase()) ?? null;
+          const cvgCvxPrice = priceMap.get(TOKENS.CVGCVX.toLowerCase()) ?? null;
 
           const inputUsdValue = inputTokenPrice !== null ? inputNum * inputTokenPrice : null;
           const outputCvgCvxValue = assetsPerShare !== null ? outputNum * assetsPerShare : outputNum;
@@ -563,12 +594,13 @@ export function useZapQuote({
           const outputNum = Number(outputAmountFormatted);
           const exchangeRate = inputNum > 0 ? outputNum / inputNum : 0;
 
-          // Price impact calculation for cvgCVX
-          const [outputTokenPrice, cvgCvxPrice, assetsPerShare] = await Promise.all([
-            getTokenPrice(outputToken.address),
-            getTokenPrice(TOKENS.CVGCVX),
+          // Price impact calculation for cvgCVX (batched price fetch)
+          const [priceMap, assetsPerShare] = await Promise.all([
+            getTokenPrices([outputToken.address, TOKENS.CVGCVX]),
             getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
           ]);
+          const outputTokenPrice = priceMap.get(outputToken.address.toLowerCase()) ?? null;
+          const cvgCvxPrice = priceMap.get(TOKENS.CVGCVX.toLowerCase()) ?? null;
 
           const inputCvgCvxValue = assetsPerShare !== null ? inputNum * assetsPerShare : inputNum;
           const inputUsdValue = cvgCvxPrice !== null ? inputCvgCvxValue * cvgCvxPrice : null;
@@ -633,12 +665,13 @@ export function useZapQuote({
           const outputNum = Number(outputAmountFormatted);
           const exchangeRate = inputNum > 0 ? outputNum / inputNum : 0;
 
-          // Price impact calculation for pxCVX
-          const [inputTokenPrice, pxCvxPrice, assetsPerShare] = await Promise.all([
-            getTokenPrice(inputToken.address),
-            getTokenPrice(TOKENS.PXCVX),
+          // Price impact calculation for pxCVX (batched price fetch)
+          const [priceMap, assetsPerShare] = await Promise.all([
+            getTokenPrices([inputToken.address, TOKENS.PXCVX]),
             getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
           ]);
+          const inputTokenPrice = priceMap.get(inputToken.address.toLowerCase()) ?? null;
+          const pxCvxPrice = priceMap.get(TOKENS.PXCVX.toLowerCase()) ?? null;
 
           const inputUsdValue = inputTokenPrice !== null ? inputNum * inputTokenPrice : null;
           const outputPxCvxValue = assetsPerShare !== null ? outputNum * assetsPerShare : outputNum;
@@ -684,12 +717,13 @@ export function useZapQuote({
           const outputNum = Number(outputAmountFormatted);
           const exchangeRate = inputNum > 0 ? outputNum / inputNum : 0;
 
-          // Price impact calculation for pxCVX
-          const [outputTokenPrice, pxCvxPrice, assetsPerShare] = await Promise.all([
-            getTokenPrice(outputToken.address),
-            getTokenPrice(TOKENS.PXCVX),
+          // Price impact calculation for pxCVX (batched price fetch)
+          const [priceMap, assetsPerShare] = await Promise.all([
+            getTokenPrices([outputToken.address, TOKENS.PXCVX]),
             getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
           ]);
+          const outputTokenPrice = priceMap.get(outputToken.address.toLowerCase()) ?? null;
+          const pxCvxPrice = priceMap.get(TOKENS.PXCVX.toLowerCase()) ?? null;
 
           const inputPxCvxValue = assetsPerShare !== null ? inputNum * assetsPerShare : inputNum;
           const inputUsdValue = pxCvxPrice !== null ? inputPxCvxValue * pxCvxPrice : null;
@@ -758,12 +792,13 @@ export function useZapQuote({
 
         // Calculate real price impact from USD values
         // Input: vault shares × assetsPerShare × cvxCRV price
-        // Output: output token amount × output token price
-        const [outputTokenPrice, cvxCrvPrice, assetsPerShare] = await Promise.all([
-          getTokenPrice(outputToken.address),
-          getTokenPrice(CVXCRV_ADDRESS),
+        // Output: output token amount × output token price (batched price fetch)
+        const [priceMap, assetsPerShare] = await Promise.all([
+          getTokenPrices([outputToken.address, CVXCRV_ADDRESS]),
           getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
         ]);
+        const outputTokenPrice = priceMap.get(outputToken.address.toLowerCase()) ?? null;
+        const cvxCrvPrice = priceMap.get(CVXCRV_ADDRESS.toLowerCase()) ?? null;
 
         // Vault shares are worth (shares × assetsPerShare) in cvxCRV
         const inputCvxCrvValue = assetsPerShare !== null ? inputNum * assetsPerShare : inputNum;
@@ -832,12 +867,13 @@ export function useZapQuote({
 
         // Calculate real price impact from USD values
         // Input: input token amount × input token price
-        // Output: vault shares × assetsPerShare × cvxCRV price
-        const [inputTokenPrice, cvxCrvPrice, assetsPerShare] = await Promise.all([
-          getTokenPrice(inputToken.address),
-          getTokenPrice(CVXCRV_ADDRESS),
+        // Output: vault shares × assetsPerShare × cvxCRV price (batched price fetch)
+        const [priceMap, assetsPerShare] = await Promise.all([
+          getTokenPrices([inputToken.address, CVXCRV_ADDRESS]),
           getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
         ]);
+        const inputTokenPrice = priceMap.get(inputToken.address.toLowerCase()) ?? null;
+        const cvxCrvPrice = priceMap.get(CVXCRV_ADDRESS.toLowerCase()) ?? null;
 
         const inputUsdValue = inputTokenPrice !== null ? inputNum * inputTokenPrice : null;
         // Vault shares are worth (shares × assetsPerShare) in cvxCRV
