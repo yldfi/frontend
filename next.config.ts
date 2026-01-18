@@ -10,7 +10,7 @@ const nextConfig: NextConfig = {
   },
   // Optimize barrel file imports for faster dev boot and smaller bundles
   experimental: {
-    optimizePackageImports: ["lucide-react"],
+    optimizePackageImports: ["lucide-react", "@rainbow-me/rainbowkit"],
   },
   // Silence Turbopack warning about webpack config without turbopack config
   turbopack: {},
