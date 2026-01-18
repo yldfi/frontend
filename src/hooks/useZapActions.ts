@@ -10,9 +10,11 @@ import {
   usePublicClient,
 } from "wagmi";
 import { parseUnits, maxUint256 } from "viem";
+import type { Hash } from "viem";
 import { ETH_ADDRESS } from "@/lib/enso";
 import { ERC20_APPROVAL_ABI } from "@/lib/abis";
 import { useTenderly } from "@/contexts/TenderlyContext";
+import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
 import type { ZapQuote } from "@/types/enso";
 
 export type ZapStatus =
@@ -119,8 +121,11 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   const { address: userAddress, chainId } = useAccount();
   const publicClient = usePublicClient();
   const { isTenderlyVNet } = useTenderly();
+  const { isFlashbotsEnabled, isFlashbotsSupported, toggleFlashbots, sendViaFlashbots } = useFlashbotsProtect();
   const [actionState, setActionState] = useState<"idle" | "approving" | "simulating" | "zapping">("idle");
   const [simulationError, setSimulationError] = useState<string | null>(null);
+  const [flashbotsHash, setFlashbotsHash] = useState<Hash | undefined>(undefined);
+  const [flashbotsError, setFlashbotsError] = useState<Error | null>(null);
 
   const isEth =
     quote?.inputToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
@@ -165,9 +170,11 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     });
 
   // Wait for zap - poll every 1 second until confirmed
+  // Use either wagmi's zapHash or our flashbotsHash depending on which was used
+  const activeZapHash = zapHash || flashbotsHash;
   const { isLoading: isZapPending, isSuccess: isZapSuccess, data: zapReceipt } =
     useWaitForTransactionReceipt({
-      hash: zapHash,
+      hash: activeZapHash,
       pollingInterval: 1_000,
     });
 
@@ -208,7 +215,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     if (isZapSuccess) return "success";
     if (isApprovalSuccess) return "idle";
     // Error states for pre-send failures (wallet rejection, simulation failure, RPC errors)
-    if (approveError || zapError || simulationError) return "error";
+    if (approveError || zapError || flashbotsError || simulationError) return "error";
     // Pending transaction states
     if (isApprovalPending) return "waitingApproval";
     if (isZapPending) return "waitingTx";
@@ -231,13 +238,20 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
   // Check if approval needed
   const needsApproval = useCallback((): boolean => {
-    if (isEth || !quote) return false;
+    if (isEth || !quote) {
+      return false;
+    }
     try {
       const amountWei = parseUnits(
         quote.inputAmount,
         quote.inputToken.decimals
       );
-      return !allowance || (allowance as bigint) < amountWei;
+      // Check allowance - treat any falsy value as needing approval
+      // This handles undefined (query not run), null, 0n, and any other falsy values
+      if (!allowance) {
+        return true;
+      }
+      return (allowance as bigint) < amountWei;
     } catch {
       return true;
     }
@@ -384,13 +398,45 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
     // Simulation passed - send the actual transaction
     setActionState("zapping");
-    sendTransaction(txParams);
-  }, [quote, userAddress, publicClient, sendTransaction, chainId, isTenderlyVNet]);
+    console.log("[Zap] Simulation passed, sending tx", { isFlashbotsEnabled, isTenderlyVNet, chainId });
+
+    // Use Flashbots Protect for MEV protection (unless disabled or on VNet)
+    if (isFlashbotsEnabled && !isTenderlyVNet && chainId === 1) {
+      console.log("[Zap] Using Flashbots Protect");
+      try {
+        const hash = await sendViaFlashbots(txParams);
+        setFlashbotsHash(hash);
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        console.warn("[Zap] Flashbots error:", errorMsg);
+
+        // If wallet doesn't support eth_signTransaction, fall back to regular tx
+        // Frame, some hardware wallets, and older wallets don't support signing without broadcasting
+        const isUnsupportedMethod = errorMsg.includes("eth_signTransaction") &&
+          (errorMsg.includes("not supported") || errorMsg.includes("does not exist"));
+
+        if (isUnsupportedMethod) {
+          console.log("[Zap] Wallet doesn't support eth_signTransaction, falling back to regular tx");
+          sendTransaction(txParams);
+        } else {
+          // Other errors - don't fall back, show error to user
+          setFlashbotsError(err instanceof Error ? err : new Error(errorMsg));
+          setActionState("idle");
+        }
+      }
+    } else {
+      // Use wallet's default RPC (user preference or VNet/testnet)
+      console.log("[Zap] Using wallet sendTransaction");
+      sendTransaction(txParams);
+    }
+  }, [quote, userAddress, publicClient, sendTransaction, sendViaFlashbots, isFlashbotsEnabled, chainId, isTenderlyVNet]);
 
   // Reset state
   const reset = useCallback(() => {
     setActionState("idle");
     setSimulationError(null);
+    setFlashbotsHash(undefined);
+    setFlashbotsError(null);
     resetApprove();
     resetZap();
   }, [resetApprove, resetZap]);
@@ -405,7 +451,11 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     isLoading: status !== "idle" && status !== "success" && status !== "error" && status !== "reverted",
     isSuccess: status === "success",
     isReverted: status === "reverted",
-    zapHash,
+    zapHash: activeZapHash,
     refetchAllowance,
+    // Flashbots Protect settings
+    isFlashbotsEnabled,
+    isFlashbotsSupported,
+    toggleFlashbots,
   };
 }
