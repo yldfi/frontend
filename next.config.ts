@@ -8,6 +8,10 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
+  // Optimize barrel file imports for faster dev boot and smaller bundles
+  experimental: {
+    optimizePackageImports: ["lucide-react"],
+  },
   // Silence Turbopack warning about webpack config without turbopack config
   turbopack: {},
   webpack: (config) => {

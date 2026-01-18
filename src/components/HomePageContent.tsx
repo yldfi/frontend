@@ -485,27 +485,27 @@ export function HomePageContent() {
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
-                title="Documentation"
+                aria-label="Documentation"
               >
-                <BookOpen size={18} />
+                <BookOpen size={18} aria-hidden="true" />
               </a>
               <a
                 href="https://github.com/yldfi"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
-                title="GitHub"
+                aria-label="GitHub"
               >
-                <Github size={18} />
+                <Github size={18} aria-hidden="true" />
               </a>
               <a
                 href="https://t.me/yld_fi"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
-                title="Telegram"
+                aria-label="Telegram"
               >
-                <Send size={18} />
+                <Send size={18} aria-hidden="true" />
               </a>
             </div>
           </div>

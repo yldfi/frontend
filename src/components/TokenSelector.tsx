@@ -262,12 +262,14 @@ export function TokenSelector({
                 <button
                   onClick={() => setIsOpen(false)}
                   className="p-1 hover:bg-[var(--muted)] rounded transition-colors"
+                  aria-label="Close token selector"
                 >
                   <svg
                     className="w-5 h-5"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
+                    aria-hidden="true"
                   >
                     <path
                       strokeLinecap="round"
