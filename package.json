@@ -19,8 +19,7 @@
     "test:e2e:install": "playwright install chromium",
     "test:curve": "bun x tsx test-stableswap-exact.ts && bun x tsx test-cryptoswap-exact.ts",
     "compare:cvxcrv": "npx tsx scripts/compare-cvxcrv-routes.ts",
-    "prepare": "husky",
-    "postinstall": "node scripts/fix-next-jsonc.js"
+    "prepare": "husky"
   },
   "lint-staged": {
     "*.{ts,tsx}": [
