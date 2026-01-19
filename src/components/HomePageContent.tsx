@@ -1,8 +1,9 @@
 "use client";
 
+import { useState, useEffect, useRef } from "react";
 import { useAccount } from "wagmi";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
-import { ArrowUpRight, Github, BookOpen, Send } from "lucide-react";
+import { ArrowUpRight, Github, BookOpen, Send, ChevronDown } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import { cn, formatUsd } from "@/lib/utils";
@@ -33,8 +34,51 @@ const vaultConfigs = Object.values(VAULTS)
     logo: vault.logoSmall,
   }));
 
+type SortOption = "holdings" | "apy" | "tvl";
+
+const SORT_STORAGE_KEY = "yldfi-vault-sort";
+
+// Get initial sort value from localStorage (called once during component init)
+function getInitialSortValue(): SortOption {
+  if (typeof window === "undefined") return "holdings";
+  try {
+    const saved = localStorage.getItem(SORT_STORAGE_KEY);
+    if (saved && ["holdings", "apy", "tvl"].includes(saved)) {
+      return saved as SortOption;
+    }
+  } catch {
+    // localStorage not available
+  }
+  return "holdings";
+}
+
 export function HomePageContent() {
   const { isConnected } = useAccount();
+  const [sortBy, setSortBy] = useState<SortOption>(getInitialSortValue);
+  const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
+  const sortDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close sort dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (sortDropdownRef.current && !sortDropdownRef.current.contains(event.target as Node)) {
+        setSortDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Save sort preference to localStorage when it changes
+  const handleSortChange = (option: SortOption) => {
+    setSortBy(option);
+    setSortDropdownOpen(false);
+    try {
+      localStorage.setItem(SORT_STORAGE_KEY, option);
+    } catch {
+      // localStorage not available
+    }
+  };
 
   // Fetch cached vault data (fast, from edge)
   const { data: cacheData, isLoading: cacheLoading } = useVaultCache();
@@ -149,15 +193,30 @@ export function HomePageContent() {
     [VAULT_ADDRESSES.YSPXCVX.toLowerCase()]: balances[3],
   };
 
-  const vaults = vaultConfigs.map((config) => {
+  const vaultsUnsorted = vaultConfigs.map((config) => {
     const balance = balanceByAddress[config.contractAddress.toLowerCase()];
     return {
       ...config,
       tvl: getTvlForVault(config.id),
       apy: getApyForVault(config.id),
       holdings: balance?.formattedUsd ?? "$0",
+      holdingsUsd: balance?.usdValue ?? 0,
       hasHoldings: (balance?.usdValue ?? 0) > 0,
     };
+  });
+
+  // Sort vaults based on selected option (descending - highest first)
+  const vaults = [...vaultsUnsorted].sort((a, b) => {
+    switch (sortBy) {
+      case "apy":
+        return b.apy - a.apy;
+      case "tvl":
+        return b.tvl - a.tvl;
+      case "holdings":
+        return b.holdingsUsd - a.holdingsUsd;
+      default:
+        return 0;
+    }
   });
 
   // Total TVL across all vaults
@@ -272,6 +331,39 @@ export function HomePageContent() {
                 <h2 className="text-2xl md:text-3xl font-medium tracking-tight">
                   Select a vault
                 </h2>
+              </div>
+              {/* Sort dropdown */}
+              <div ref={sortDropdownRef} className="relative">
+                <button
+                  onClick={() => setSortDropdownOpen(!sortDropdownOpen)}
+                  className="flex items-center gap-2 px-3 py-2 text-sm border border-[var(--border)] rounded-md hover:bg-[var(--muted)] transition-colors"
+                >
+                  <span className="text-[var(--muted-foreground)]">Sort by:</span>
+                  <span className="font-medium capitalize">{sortBy}</span>
+                  <ChevronDown
+                    size={16}
+                    className={cn(
+                      "text-[var(--muted-foreground)] transition-transform",
+                      sortDropdownOpen && "rotate-180"
+                    )}
+                  />
+                </button>
+                {sortDropdownOpen && (
+                  <div className="absolute top-full right-0 mt-2 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-lg z-50 min-w-[140px] py-1">
+                    {(["holdings", "apy", "tvl"] as const).map((option) => (
+                      <button
+                        key={option}
+                        onClick={() => handleSortChange(option)}
+                        className={cn(
+                          "w-full px-4 py-2 text-left text-sm hover:bg-[var(--muted)] transition-colors capitalize",
+                          sortBy === option && "bg-[var(--muted)] font-medium"
+                        )}
+                      >
+                        {option === "apy" ? "APY" : option === "tvl" ? "TVL" : "Holdings"}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
