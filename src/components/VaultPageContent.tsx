@@ -6,7 +6,7 @@ import { notFound, useRouter } from "next/navigation";
 import { useAccount, useBalance } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
-import { ArrowLeft, ArrowUpRight, ExternalLink, Loader2, Search, Route, RouteOff, Copy, ChevronDown } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, ExternalLink, Loader2, Search, Route, RouteOff, Copy, ChevronDown, Check } from "lucide-react";
 import { RouteDisplay } from "@/components/RouteDisplay";
 
 // Animated loading dots for quote fetching
@@ -750,37 +750,43 @@ export function VaultPageContent({ id }: { id: string }) {
                     </button>
                     {vaultSelectorOpen && (
                       <div className="absolute top-full left-0 mt-2 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-lg z-50 min-w-[200px] py-1 max-h-[300px] overflow-y-auto">
-                        {availableVaults.map((v) => (
-                          <button
-                            key={v.id}
-                            onClick={() => {
-                              setVaultSelectorOpen(false);
-                              if (v.id !== id) {
-                                router.push(`/vaults/${v.name}`);
-                              }
-                            }}
-                            className={cn(
-                              "w-full px-4 py-2 text-left flex items-center gap-3 hover:bg-[var(--muted)] transition-colors",
-                              v.id === id && "bg-[var(--muted)]"
-                            )}
-                          >
-                            {v.logo && (
-                              <Image
-                                src={v.logo}
-                                alt={v.name}
-                                width={24}
-                                height={24}
-                                className="rounded-full"
-                              />
-                            )}
-                            <span className={cn(
-                              "font-medium",
-                              v.id === id && "text-[var(--accent)]"
-                            )}>
-                              {v.name}
-                            </span>
-                          </button>
-                        ))}
+                        {availableVaults.map((v) => {
+                          const isSelected = v.id === id;
+                          return (
+                            <button
+                              key={v.id}
+                              onClick={() => {
+                                setVaultSelectorOpen(false);
+                                if (!isSelected) {
+                                  router.push(`/vaults/${v.name}`);
+                                }
+                              }}
+                              className={cn(
+                                "w-full px-4 py-2.5 text-left flex items-center gap-3 hover:bg-[var(--muted)] transition-colors",
+                                isSelected && "bg-[var(--accent)]/10"
+                              )}
+                            >
+                              {v.logo && (
+                                <Image
+                                  src={v.logo}
+                                  alt={v.name}
+                                  width={24}
+                                  height={24}
+                                  className="rounded-full"
+                                />
+                              )}
+                              <span className={cn(
+                                "font-medium flex-1",
+                                isSelected && "text-[var(--accent)]"
+                              )}>
+                                {v.name}
+                              </span>
+                              {isSelected && (
+                                <Check size={16} className="text-[var(--accent)]" />
+                              )}
+                            </button>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
