@@ -143,9 +143,12 @@ export function VaultPageContent({ id }: { id: string }) {
   const [vaultSelectorOpen, setVaultSelectorOpen] = useState(false);
   const vaultSelectorRef = useRef<HTMLDivElement>(null);
 
-  // Get all visible vaults for the selector
+  // Get all visible vaults for the selector (always include current vault)
+  const normalizedId = id.toLowerCase();
   const availableVaults = Object.values(VAULTS).filter(
-    (v) => !v.hidden && v.address !== "0x0000000000000000000000000000000000000000"
+    (v) =>
+      v.id === normalizedId ||
+      (!v.hidden && v.address !== "0x0000000000000000000000000000000000000000")
   );
 
   // Close vault selector when clicking outside
@@ -751,7 +754,7 @@ export function VaultPageContent({ id }: { id: string }) {
                     {vaultSelectorOpen && (
                       <div className="absolute top-full left-0 mt-2 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-lg z-50 min-w-[200px] py-1 max-h-[300px] overflow-y-auto">
                         {availableVaults.map((v) => {
-                          const isSelected = v.id === id;
+                          const isSelected = v.id === normalizedId;
                           return (
                             <button
                               key={v.id}
@@ -763,7 +766,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               }}
                               className={cn(
                                 "w-full px-4 py-2.5 text-left flex items-center gap-3 hover:bg-[var(--muted)] transition-colors",
-                                isSelected && "bg-[var(--accent)]/10"
+                                isSelected && "bg-[var(--muted)] border-l-2 border-l-[var(--accent)]"
                               )}
                             >
                               {v.logo && (
