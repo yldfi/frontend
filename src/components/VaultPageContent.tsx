@@ -73,10 +73,12 @@ function MaxButton({ balance, onSelect }: { balance: string; onSelect: (amount: 
       {/* Floating percentage options - stacked vertically above MAX */}
       <div
         className={cn(
-          "absolute bottom-full right-0 pb-1 flex flex-col gap-1 transition-all duration-150",
+          "absolute bottom-full right-0 pb-1 flex flex-col gap-1 transition-[opacity,transform] duration-200 ease-out",
           isHovered ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1 pointer-events-none"
         )}
       >
+        {/* Translucent backdrop layer */}
+        <div className="absolute inset-0 -m-1.5 rounded-lg bg-[var(--background)]/40" />
         {[25, 50, 75].map((percent) => (
           <button
             key={percent}
@@ -84,7 +86,7 @@ function MaxButton({ balance, onSelect }: { balance: string; onSelect: (amount: 
             tabIndex={-1}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => handlePercentage(percent)}
-            className="shrink-0 px-2 py-1 text-xs font-medium bg-[var(--background)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded transition-colors cursor-pointer"
+            className="relative shrink-0 px-2 py-1 text-xs font-medium bg-[var(--background)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded transition-colors cursor-pointer"
           >
             {percent}%
           </button>
@@ -121,7 +123,7 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS } from "@/lib/enso";
-import { getVault, getParentVault, TOKENS, VAULT_UNDERLYING_TOKENS, VAULTS } from "@/config/vaults";
+import { getVault, getParentVault, getVaultByAddress, TOKENS, VAULT_UNDERLYING_TOKENS, VAULTS } from "@/config/vaults";
 import type { EnsoToken, ZapDirection } from "@/types/enso";
 import {
   trackVaultView,
@@ -187,8 +189,8 @@ export function VaultPageContent({ id }: { id: string }) {
     }
   };
 
-  // Contract explorer state
-  const { isOpen: explorerOpen, address: explorerAddress, title: explorerTitle, lastUpdated: explorerLastUpdated, icon: explorerIcon, openExplorer, closeExplorer } = useContractExplorer();
+  // Contract explorer state (localStorage persisted)
+  const { isOpen: explorerOpen, address: explorerAddress, title: explorerTitle, lastUpdated: explorerLastUpdated, icon: explorerIcon, showFlowTab: explorerShowFlowTab, activeTab: explorerActiveTab, openExplorer, closeExplorer, setActiveTab: setExplorerActiveTab } = useContractExplorer();
   const [amount, setAmount] = useState("");
 
   // Reset amount when Tenderly network changes (mainnet <-> VNet)
@@ -852,7 +854,7 @@ export function VaultPageContent({ id }: { id: string }) {
                     </span>
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => openExplorer(vault.address, vault.name, vault.logo)}
+                        onClick={() => openExplorer(vault.address, vault.name, vault.logo, vault.type === "strategy")}
                         className="mono text-xs px-2 py-1 bg-[var(--muted)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] rounded flex items-center gap-1 transition-colors"
                       >
                         <Search size={10} />
@@ -872,7 +874,7 @@ export function VaultPageContent({ id }: { id: string }) {
                           navigator.clipboard.writeText(vault.address);
                           toast.success("Address copied to clipboard");
                         }}
-                        className="p-1 hover:bg-[var(--muted)] rounded transition-colors"
+                        className="hover:text-[var(--accent)] transition-colors"
                         aria-label="Copy vault address"
                       >
                         <Copy size={12} />
@@ -884,7 +886,15 @@ export function VaultPageContent({ id }: { id: string }) {
                       <span className="text-[var(--muted-foreground)]">Strategy</span>
                       <div className="flex items-center gap-2">
                         <button
-                          onClick={() => openExplorer(vault.underlyingStrategy!, "yscvxCRV Strategy", vault.logo)}
+                          onClick={() => {
+                            const strategyConfig = getVaultByAddress(vault.underlyingStrategy!);
+                            openExplorer(
+                              vault.underlyingStrategy!,
+                              strategyConfig?.name || `${vault.name} Strategy`,
+                              strategyConfig?.logo,
+                              true // Show Strategy Flow tab for strategy contracts
+                            );
+                          }}
                           className="mono text-xs px-2 py-1 bg-[var(--muted)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] rounded flex items-center gap-1 transition-colors"
                         >
                           <Search size={10} />
@@ -904,7 +914,7 @@ export function VaultPageContent({ id }: { id: string }) {
                             navigator.clipboard.writeText(vault.underlyingStrategy!);
                             toast.success("Address copied to clipboard");
                           }}
-                          className="p-1 hover:bg-[var(--muted)] rounded transition-colors"
+                          className="hover:text-[var(--accent)] transition-colors"
                           aria-label="Copy strategy address"
                         >
                           <Copy size={12} />
@@ -1682,6 +1692,9 @@ export function VaultPageContent({ id }: { id: string }) {
         title={explorerTitle}
         lastUpdated={explorerLastUpdated}
         icon={explorerIcon}
+        showFlowTab={explorerShowFlowTab}
+        activeTab={explorerActiveTab}
+        onTabChange={setExplorerActiveTab}
       />
     </div>
   );

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { ContractView } from "./ContractView";
+import { StrategyFlowViewer } from "./StrategyFlowViewer";
 
 // Hook to safely check if we're mounted on client
 function useIsMounted() {
@@ -13,6 +14,8 @@ function useIsMounted() {
   );
 }
 
+export type ExplorerTab = "state" | "flow";
+
 interface ContractExplorerProps {
   address: string;
   isOpen: boolean;
@@ -20,6 +23,12 @@ interface ContractExplorerProps {
   title?: string;
   lastUpdated?: Date;
   icon?: string;
+  /** Show strategy flow tab (default: true for strategy contracts) */
+  showFlowTab?: boolean;
+  /** Controlled active tab */
+  activeTab?: ExplorerTab;
+  /** Callback when tab changes */
+  onTabChange?: (tab: ExplorerTab) => void;
 }
 
 export function ContractExplorer({
@@ -29,8 +38,16 @@ export function ContractExplorer({
   title,
   lastUpdated,
   icon,
+  showFlowTab = true,
+  activeTab: controlledTab,
+  onTabChange,
 }: ContractExplorerProps) {
   const mounted = useIsMounted();
+  const [internalTab, setInternalTab] = useState<ExplorerTab>("state");
+
+  // Use controlled tab if provided, otherwise use internal state
+  const activeTab = controlledTab ?? internalTab;
+  const setActiveTab = onTabChange ?? setInternalTab;
 
   // Format the last updated timestamp
   const formatTimestamp = (date: Date) => {
@@ -125,9 +142,39 @@ export function ContractExplorer({
           </div>
         </div>
 
+        {/* Tabs */}
+        {showFlowTab && (
+          <div className="flex px-4 shrink-0 border-b border-[var(--border)]">
+            <button
+              onClick={() => setActiveTab("state")}
+              className="px-4 py-2 text-sm font-medium transition-colors border-b -mb-px"
+              style={{
+                color: activeTab === "state" ? "#f59e0b" : "var(--muted-foreground)",
+                borderBottomColor: activeTab === "state" ? "#f59e0b" : "var(--border)",
+              }}
+            >
+              Contract State
+            </button>
+            <button
+              onClick={() => setActiveTab("flow")}
+              className="px-4 py-2 text-sm font-medium transition-colors border-b -mb-px"
+              style={{
+                color: activeTab === "flow" ? "#f59e0b" : "var(--muted-foreground)",
+                borderBottomColor: activeTab === "flow" ? "#f59e0b" : "var(--border)",
+              }}
+            >
+              Strategy Flow
+            </button>
+          </div>
+        )}
+
         {/* Content - scrollable */}
         <div className="flex-1 overflow-y-auto p-4">
-          <ContractView address={address} />
+          {activeTab === "state" ? (
+            <ContractView address={address} />
+          ) : (
+            <StrategyFlowViewer address={address} />
+          )}
         </div>
       </div>
     </div>,
@@ -135,7 +182,49 @@ export function ContractExplorer({
   );
 }
 
-// Hook for managing explorer state
+const EXPLORER_STORAGE_KEY = "yldfi-explorer-state";
+
+interface ExplorerStorageState {
+  isOpen: boolean;
+  address: string;
+  title?: string;
+  icon?: string;
+  showFlowTab?: boolean;
+  activeTab?: ExplorerTab;
+}
+
+function loadExplorerState(): ExplorerStorageState {
+  if (typeof window === "undefined") {
+    return { isOpen: false, address: "" };
+  }
+  try {
+    const saved = localStorage.getItem(EXPLORER_STORAGE_KEY);
+    if (saved) {
+      return JSON.parse(saved);
+    }
+  } catch {
+    // localStorage unavailable or invalid JSON
+  }
+  return { isOpen: false, address: "" };
+}
+
+function saveExplorerState(state: ExplorerStorageState) {
+  try {
+    localStorage.setItem(EXPLORER_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // localStorage unavailable
+  }
+}
+
+function clearExplorerState() {
+  try {
+    localStorage.removeItem(EXPLORER_STORAGE_KEY);
+  } catch {
+    // localStorage unavailable
+  }
+}
+
+// Hook for managing explorer state with localStorage persistence
 export function useContractExplorer() {
   const [explorerState, setExplorerState] = useState<{
     isOpen: boolean;
@@ -143,22 +232,52 @@ export function useContractExplorer() {
     title?: string;
     lastUpdated?: Date;
     icon?: string;
-  }>({
-    isOpen: false,
-    address: "",
+    showFlowTab?: boolean;
+    activeTab?: ExplorerTab;
+  }>(() => {
+    const saved = loadExplorerState();
+    return {
+      ...saved,
+      lastUpdated: saved.isOpen ? new Date() : undefined,
+    };
   });
 
-  const openExplorer = useCallback((address: string, title?: string, icon?: string) => {
-    setExplorerState({
-      isOpen: true,
-      address,
-      title,
-      lastUpdated: new Date(),
-      icon,
+  const openExplorer = useCallback(
+    (address: string, title?: string, icon?: string, showFlowTab: boolean = true) => {
+      const newState = {
+        isOpen: true,
+        address,
+        title,
+        icon,
+        showFlowTab,
+        activeTab: "state" as ExplorerTab,
+      };
+      saveExplorerState(newState);
+      setExplorerState({
+        ...newState,
+        lastUpdated: new Date(),
+      });
+    },
+    []
+  );
+
+  const setActiveTab = useCallback((tab: ExplorerTab) => {
+    setExplorerState((prev) => {
+      const newState = { ...prev, activeTab: tab };
+      saveExplorerState({
+        isOpen: newState.isOpen,
+        address: newState.address,
+        title: newState.title,
+        icon: newState.icon,
+        showFlowTab: newState.showFlowTab,
+        activeTab: tab,
+      });
+      return newState;
     });
   }, []);
 
   const closeExplorer = useCallback(() => {
+    clearExplorerState();
     setExplorerState((prev) => ({
       ...prev,
       isOpen: false,
@@ -169,5 +288,6 @@ export function useContractExplorer() {
     ...explorerState,
     openExplorer,
     closeExplorer,
+    setActiveTab,
   };
 }

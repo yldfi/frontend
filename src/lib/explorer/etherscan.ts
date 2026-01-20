@@ -13,6 +13,13 @@ import type { ABIItem } from "@/types/explorer";
 const abiCache = new Map<string, ABIItem[]>();
 const nameCache = new Map<string, string | null>();
 const natspecCache = new Map<string, NatSpec>();
+const sourceCache = new Map<string, ContractSource>();
+
+export interface ContractSource {
+  source: string;
+  name: string | null;
+  compiler: string | null;
+}
 
 export interface FunctionDoc {
   notice?: string;
@@ -77,6 +84,20 @@ export async function getContractName(address: string, chainId: number = 1): Pro
     nameCache.set(cacheKey, null);
     return null;
   }
+}
+
+export async function getContractSource(address: string, chainId: number = 1): Promise<ContractSource> {
+  const normalizedAddress = address.toLowerCase();
+
+  // Check in-memory cache first
+  const cacheKey = `${chainId}_${normalizedAddress}`;
+  if (sourceCache.has(cacheKey)) {
+    return sourceCache.get(cacheKey)!;
+  }
+
+  const { result: source } = await fetchFromApi<ContractSource>("getSource", address, chainId);
+  sourceCache.set(cacheKey, source);
+  return source;
 }
 
 export async function getContractNatSpec(address: string, chainId: number = 1): Promise<NatSpec> {
