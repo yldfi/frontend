@@ -141,3 +141,24 @@ export interface RouteInfo {
 export interface CustomBundleResponse extends EnsoBundleResponse {
   routeInfo: RouteInfo;
 }
+
+// Simulation result types
+export interface SimulationAssetChange {
+  type: "send" | "receive";
+  symbol: string;
+  amount: string;       // Human readable
+  rawAmount: string;    // Wei/raw units
+  address: string;      // Token address
+  decimals: number;
+  logo?: string;
+  dollarValue?: string;
+}
+
+export interface SimulationResult {
+  success: boolean;
+  gasUsed: number | null;
+  errorMessage: string | null;
+  simulationId: string | null;
+  tenderlyUrl: string | null;
+  assetChanges: SimulationAssetChange[];
+}

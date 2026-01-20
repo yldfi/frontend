@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { encodeAbiParameters, keccak256, pad, parseAbiParameters, toHex } from "viem";
-import { TOKENS } from "@/config/vaults";
+import { createPublicClient, encodeAbiParameters, http, keccak256, pad, parseAbiParameters, toHex } from "viem";
+import { mainnet } from "viem/chains";
+import { TOKENS, getVaultByAddress } from "@/config/vaults";
+import { fetchTokenPrices } from "@/lib/enso";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +13,23 @@ const CVX_ALLOWANCE_SLOT = 1n;
 const MAX_UINT256 = (1n << 256n) - 1n;
 const MAX_REQUESTS_PER_MINUTE = 8;
 const RATE_LIMIT_WINDOW_MS = 60_000;
+
+// ERC4626 ABI for convertToAssets
+const ERC4626_ABI = [
+  {
+    inputs: [{ name: "shares", type: "uint256" }],
+    name: "convertToAssets",
+    outputs: [{ name: "assets", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+] as const;
+
+// Create public client for RPC calls
+const publicClient = createPublicClient({
+  chain: mainnet,
+  transport: http(),
+});
 
 const requestLog = new Map<string, number[]>();
 
@@ -90,6 +109,133 @@ function computeERC20AllowanceSlot(
 
 function toStorageValue(value: bigint): `0x${string}` {
   return pad(toHex(value), { size: 32 });
+}
+
+// Asset change from Tenderly response
+interface TenderlyAssetChange {
+  token_info: {
+    symbol: string;
+    decimals: number;
+    standard: string;
+    contract_address: string;
+    logo?: string;
+  };
+  from: string;
+  to: string;
+  amount: string;
+  raw_amount: string;
+  dollar_value?: string;
+}
+
+// Processed asset change for our response
+interface AssetChange {
+  type: "send" | "receive";
+  symbol: string;
+  amount: string;
+  rawAmount: string;
+  address: string;
+  decimals: number;
+  logo?: string;
+  dollarValue?: string;
+}
+
+function processAssetChanges(
+  assetChanges: TenderlyAssetChange[] | undefined,
+  userAddress: string
+): AssetChange[] {
+  if (!assetChanges || !Array.isArray(assetChanges)) return [];
+
+  const normalizedUser = userAddress.toLowerCase();
+  const result: AssetChange[] = [];
+
+  for (const change of assetChanges) {
+    const isUserSending = change.from?.toLowerCase() === normalizedUser;
+    const isUserReceiving = change.to?.toLowerCase() === normalizedUser;
+
+    // Only include changes where user is sender or receiver
+    if (!isUserSending && !isUserReceiving) continue;
+
+    result.push({
+      type: isUserSending ? "send" : "receive",
+      symbol: change.token_info?.symbol ?? "???",
+      amount: change.amount ?? "0",
+      rawAmount: change.raw_amount ?? "0",
+      address: change.token_info?.contract_address ?? "",
+      decimals: change.token_info?.decimals ?? 18,
+      logo: change.token_info?.logo,
+      dollarValue: change.dollar_value,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Enriches vault token prices by calculating USD value using pricePerShare × underlying price.
+ * Tenderly doesn't have prices for our vault tokens (yscvgCVX, yscvxCRV, yspxCVX), so we calculate them.
+ */
+async function enrichVaultTokenPrices(assetChanges: AssetChange[]): Promise<AssetChange[]> {
+  try {
+    // Find vault tokens without prices
+    const vaultTokensToPrice = assetChanges.filter((change) => {
+      if (change.dollarValue && parseFloat(change.dollarValue) > 0) return false;
+      return getVaultByAddress(change.address) !== undefined;
+    });
+
+    if (vaultTokensToPrice.length === 0) return assetChanges;
+
+    // Get unique underlying token addresses
+    const underlyingAddresses = new Set<string>();
+    for (const change of vaultTokensToPrice) {
+      const vault = getVaultByAddress(change.address);
+      if (vault) {
+        underlyingAddresses.add(vault.assetAddress.toLowerCase());
+      }
+    }
+
+    // Fetch underlying token prices from Enso
+    const priceData = await fetchTokenPrices([...underlyingAddresses]);
+    const priceMap = new Map(priceData.map((p) => [p.address.toLowerCase(), p.price]));
+
+    // Calculate vault token values
+    const enrichedChanges = await Promise.all(
+      assetChanges.map(async (change): Promise<AssetChange> => {
+        // Skip if already has a price
+        if (change.dollarValue && parseFloat(change.dollarValue) > 0) return change;
+
+        const vault = getVaultByAddress(change.address);
+        if (!vault) return change;
+
+        try {
+          // Get underlying amount via convertToAssets
+          const underlyingAmount = await publicClient.readContract({
+            address: change.address as `0x${string}`,
+            abi: ERC4626_ABI,
+            functionName: "convertToAssets",
+            args: [BigInt(change.rawAmount)],
+          });
+
+          // Get underlying price from Enso
+          const underlyingPrice = priceMap.get(vault.assetAddress.toLowerCase());
+          if (underlyingPrice === undefined) return change;
+
+          // Calculate USD value: underlyingAmount / 10^decimals × price
+          const underlyingValue = Number(underlyingAmount) / 10 ** vault.assetDecimals;
+          const dollarValue = (underlyingValue * underlyingPrice).toString();
+
+          return { ...change, dollarValue };
+        } catch {
+          // If RPC call fails, return unchanged
+          return change;
+        }
+      })
+    );
+
+    return enrichedChanges;
+  } catch {
+    // If price enrichment fails entirely, return original asset changes
+    return assetChanges;
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -250,8 +396,10 @@ export async function POST(request: NextRequest) {
   const gasUsed = simulation?.gas_used ?? transaction?.gas_used ?? null;
   const payloadSimulation = payload?.simulation as Record<string, unknown> | undefined;
   const simulationId = simulation?.id ?? payloadSimulation?.id ?? null;
+
+  // Return a link to our share endpoint which will share and redirect to Tenderly
   const tenderlyUrl = simulationId
-    ? `https://dashboard.tenderly.co/${accountSlug}/${projectSlug}/simulator/${simulationId}`
+    ? `/api/simulate/share/${simulationId}`
     : null;
   const payloadError = payload?.error as Record<string, unknown> | undefined;
   const errorMessage =
@@ -261,6 +409,15 @@ export async function POST(request: NextRequest) {
     (response.ok ? null : "Tenderly simulation failed");
   const retryable = !response.ok;
 
+  // Extract asset changes from Tenderly response
+  // Full simulation response structure: transaction.transaction_info.asset_changes
+  const transactionInfo = transaction?.transaction_info as Record<string, unknown> | undefined;
+  const rawAssetChanges = transactionInfo?.asset_changes as TenderlyAssetChange[] | undefined;
+  const processedChanges = processAssetChanges(rawAssetChanges, body.from);
+
+  // Enrich vault token prices (Tenderly doesn't have prices for our vault tokens)
+  const assetChanges = await enrichVaultTokenPrices(processedChanges);
+
   // Log for debugging (dev only)
   if (isDev) {
     console.log("[Tenderly Simulation]", {
@@ -269,6 +426,7 @@ export async function POST(request: NextRequest) {
       tenderlyUrl,
       gasUsed,
       errorMessage,
+      assetChangesCount: assetChanges.length,
     });
   }
 
@@ -279,7 +437,10 @@ export async function POST(request: NextRequest) {
       gasUsed,
       errorMessage,
       retryable,
-      ...(isDev && { simulationId, tenderlyUrl }),
+      // Always return simulation details (not just in dev mode)
+      simulationId,
+      tenderlyUrl,
+      assetChanges,
     },
     { status: response.ok ? 200 : 502 }
   );

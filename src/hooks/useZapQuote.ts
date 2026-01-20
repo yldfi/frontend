@@ -205,6 +205,7 @@ interface UseZapQuoteParams {
   underlyingToken?: string; // Vault's underlying token address
   slippage?: string; // basis points, default "100" = 1%
   underlyingTokenPrice?: number; // For illiquid tokens like cvgCVX
+  paused?: boolean; // Pause quote fetching (e.g., when modals are open)
 }
 
 /**
@@ -223,7 +224,7 @@ function calculatePriceImpact(inputUsd: number | null, outputUsd: number | null)
  * Fetch token price from Enso API
  * Returns price in USD, or null if not available
  */
-async function getTokenPrice(address: string): Promise<number | null> {
+async function _getTokenPrice(address: string): Promise<number | null> {
   try {
     const prices = await fetchTokenPrices([address]);
     if (prices.length > 0) {
@@ -295,6 +296,7 @@ export function useZapQuote({
   underlyingToken,
   slippage = "100",
   underlyingTokenPrice,
+  paused = false,
 }: UseZapQuoteParams) {
   const { address: userAddress } = useAccount();
   const publicClient = usePublicClient();
@@ -323,6 +325,7 @@ export function useZapQuote({
   }
 
   const enabled =
+    !paused &&
     !!userAddress &&
     !!tokenIn &&
     !!tokenOut &&
