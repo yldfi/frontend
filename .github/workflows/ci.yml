@@ -109,8 +109,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run integration tests with coverage
-        run: pnpm test:integration --coverage
+      - name: Run all tests with coverage
+        run: pnpm test:coverage
         env:
           NEXT_PUBLIC_ENSO_API_KEY: ${{ secrets.NEXT_PUBLIC_ENSO_API_KEY }}
           TOKEN_HOLDER_API_KEY: ${{ secrets.TOKEN_HOLDER_API_KEY }}
