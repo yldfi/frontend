@@ -81,18 +81,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run unit tests with coverage
-        run: pnpm test:unit --coverage
-
-      - name: Upload coverage reports
-        uses: codecov/codecov-action@v5
-        if: always()
-        with:
-          files: ./coverage/lcov.info
-          fail_ci_if_error: false
-          verbose: true
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      - name: Run unit tests
+        run: pnpm test:unit
 
   test-integration:
     name: Integration Tests
@@ -119,8 +109,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run integration tests
-        run: pnpm test:integration
+      - name: Run integration tests with coverage
+        run: pnpm test:integration --coverage
         env:
           NEXT_PUBLIC_ENSO_API_KEY: ${{ secrets.NEXT_PUBLIC_ENSO_API_KEY }}
           TOKEN_HOLDER_API_KEY: ${{ secrets.TOKEN_HOLDER_API_KEY }}
@@ -128,6 +118,16 @@ jobs:
           MORALIS_API_KEY: ${{ secrets.MORALIS_API_KEY }}
           DEBUG_RPC_URL: ${{ secrets.DEBUG_RPC_URL }}
           DEBUG_RPC_AUTH: ${{ secrets.DEBUG_RPC_AUTH }}
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v5
+        if: always()
+        with:
+          files: ./coverage/lcov.info
+          fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Upload integration test results
         uses: actions/upload-artifact@v6
