@@ -40,7 +40,7 @@ import { VAULT_ADDRESSES, TOKENS } from "@/config/vaults";
 // Test wallet address (vitalik.eth - has no special permissions, just for API calls)
 const TEST_WALLET = "0xd8da6bf26964af9d7eed9e03e53415d37aa96045";
 
-// Helper to check if error is a transient RPC failure (rate limiting, network issues)
+// Helper to check if error is a transient RPC failure (rate limiting, network issues, slippage)
 function isTransientRpcError(e: unknown): boolean {
   const errorMsg = e instanceof Error ? e.message : String(e);
   const errorStr = JSON.stringify(e);
@@ -49,9 +49,17 @@ function isTransientRpcError(e: unknown): boolean {
     errorMsg.includes("429") ||
     errorStr.includes("429") ||
     errorMsg.includes("RPC request failed") ||
-    errorMsg.includes("get_dy after retries")
+    errorMsg.includes("get_dy after retries") ||
+    errorMsg.includes("slippage") ||
+    errorStr.includes("slippage") ||
+    errorMsg.includes("Minimum amount") ||
+    errorStr.includes("minimum-amount-out")
   );
 }
+
+// Default slippage for integration tests (3% = 300 bps) - higher than UI default (1%)
+// to handle market volatility during CI runs
+const TEST_SLIPPAGE = "300";
 
 // Test amounts
 const ONE_ETH = "1000000000000000000"; // 1 ETH
@@ -70,6 +78,7 @@ describe("Enso Live API Integration", () => {
           tokenIn: ETH_ADDRESS,
           tokenOut: TOKENS.CVXCRV,
           amountIn: ONE_ETH,
+          slippage: TEST_SLIPPAGE,
         });
 
         expect(result.amountOut).toBeDefined();
@@ -89,6 +98,7 @@ describe("Enso Live API Integration", () => {
           tokenIn: ETH_ADDRESS,
           tokenOut: TOKENS.CVX,
           amountIn: ONE_ETH,
+          slippage: TEST_SLIPPAGE,
         });
 
         expect(result.amountOut).toBeDefined();
@@ -107,6 +117,7 @@ describe("Enso Live API Integration", () => {
           vaultAddress: VAULT_ADDRESSES.YCVXCRV,
           inputToken: ETH_ADDRESS,
           amountIn: ONE_ETH,
+          slippage: TEST_SLIPPAGE,
         });
 
         expect(result.amountsOut).toBeDefined();
@@ -128,6 +139,7 @@ describe("Enso Live API Integration", () => {
           vaultAddress: VAULT_ADDRESSES.YSCVXCRV,
           inputToken: ETH_ADDRESS,
           amountIn: ONE_ETH,
+          slippage: TEST_SLIPPAGE,
         });
 
         expect(result.amountsOut).toBeDefined();
@@ -150,6 +162,7 @@ describe("Enso Live API Integration", () => {
           vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
           inputToken: ETH_ADDRESS,
           amountIn: ONE_ETH,
+          slippage: TEST_SLIPPAGE,
         });
 
         expect(result.amountsOut).toBeDefined();
@@ -173,6 +186,7 @@ describe("Enso Live API Integration", () => {
             vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
             inputToken: TOKENS.CVX,
             amountIn: "100000000000000000000", // 100 CVX
+            slippage: TEST_SLIPPAGE,
           });
         } catch (e) {
           // Handle Enso simulation error when test wallet has insufficient balance
@@ -205,6 +219,7 @@ describe("Enso Live API Integration", () => {
           vaultAddress: VAULT_ADDRESSES.YSPXCVX,
           inputToken: ETH_ADDRESS,
           amountIn: ONE_ETH,
+          slippage: TEST_SLIPPAGE,
         });
 
         expect(result.amountsOut).toBeDefined();
@@ -228,6 +243,7 @@ describe("Enso Live API Integration", () => {
           vaultAddress: VAULT_ADDRESSES.YCVXCRV,
           outputToken: ETH_ADDRESS,
           amountIn: TEN_VAULT_SHARES,
+          slippage: TEST_SLIPPAGE,
         });
 
         expect(result.amountsOut).toBeDefined();
@@ -250,6 +266,7 @@ describe("Enso Live API Integration", () => {
           vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
           outputToken: ETH_ADDRESS,
           amountIn: TEN_VAULT_SHARES,
+          slippage: TEST_SLIPPAGE,
         });
 
         expect(result.amountsOut).toBeDefined();
@@ -274,6 +291,7 @@ describe("Enso Live API Integration", () => {
             vaultAddress: VAULT_ADDRESSES.YSPXCVX,
             outputToken: ETH_ADDRESS,
             amountIn: TEN_VAULT_SHARES,
+            slippage: TEST_SLIPPAGE,
           });
         } catch (e) {
           // Handle transient RPC failures gracefully in CI
@@ -305,6 +323,7 @@ describe("Enso Live API Integration", () => {
           sourceVault: VAULT_ADDRESSES.YCVXCRV,
           targetVault: VAULT_ADDRESSES.YSCVXCRV,
           amountIn: TEN_VAULT_SHARES,
+          slippage: TEST_SLIPPAGE,
         });
 
         expect(result.amountsOut).toBeDefined();
@@ -326,6 +345,7 @@ describe("Enso Live API Integration", () => {
           sourceVault: VAULT_ADDRESSES.YSCVXCRV,
           targetVault: VAULT_ADDRESSES.YCVXCRV,
           amountIn: TEN_VAULT_SHARES,
+          slippage: TEST_SLIPPAGE,
         });
 
         expect(result.amountsOut).toBeDefined();
@@ -346,6 +366,7 @@ describe("Enso Live API Integration", () => {
           sourceVault: VAULT_ADDRESSES.YCVXCRV,
           targetVault: VAULT_ADDRESSES.YSCVGCVX,
           amountIn: TEN_VAULT_SHARES,
+          slippage: TEST_SLIPPAGE,
         });
 
         expect(result.amountsOut).toBeDefined();
@@ -369,6 +390,7 @@ describe("Enso Live API Integration", () => {
             sourceVault: VAULT_ADDRESSES.YSCVGCVX,
             targetVault: VAULT_ADDRESSES.YCVXCRV,
             amountIn: TEN_VAULT_SHARES,
+            slippage: TEST_SLIPPAGE,
           });
         } catch (e) {
           // Handle transient RPC failures gracefully in CI
@@ -401,6 +423,7 @@ describe("Enso Live API Integration", () => {
             sourceVault: VAULT_ADDRESSES.YSPXCVX,
             targetVault: VAULT_ADDRESSES.YCVXCRV,
             amountIn: TEN_VAULT_SHARES,
+            slippage: TEST_SLIPPAGE,
           });
         } catch (e) {
           // Handle transient RPC failures gracefully in CI
@@ -432,6 +455,7 @@ describe("Enso Live API Integration", () => {
             sourceVault: VAULT_ADDRESSES.YSPXCVX,
             targetVault: VAULT_ADDRESSES.YSCVGCVX,
             amountIn: TEN_VAULT_SHARES,
+            slippage: TEST_SLIPPAGE,
           });
         } catch (e) {
           if (isTransientRpcError(e)) {
@@ -461,6 +485,7 @@ describe("Enso Live API Integration", () => {
             sourceVault: VAULT_ADDRESSES.YSCVGCVX,
             targetVault: VAULT_ADDRESSES.YSPXCVX,
             amountIn: TEN_VAULT_SHARES,
+            slippage: TEST_SLIPPAGE,
           });
         } catch (e) {
           if (isTransientRpcError(e)) {
@@ -490,6 +515,7 @@ describe("Enso Live API Integration", () => {
             sourceVault: VAULT_ADDRESSES.YCVXCRV,
             targetVault: VAULT_ADDRESSES.YSPXCVX,
             amountIn: TEN_VAULT_SHARES,
+            slippage: TEST_SLIPPAGE,
           });
         } catch (e) {
           if (isTransientRpcError(e)) {
@@ -519,6 +545,7 @@ describe("Enso Live API Integration", () => {
             sourceVault: VAULT_ADDRESSES.YSCVXCRV,
             targetVault: VAULT_ADDRESSES.YSCVGCVX,
             amountIn: TEN_VAULT_SHARES,
+            slippage: TEST_SLIPPAGE,
           });
         } catch (e) {
           if (isTransientRpcError(e)) {
@@ -548,6 +575,7 @@ describe("Enso Live API Integration", () => {
             sourceVault: VAULT_ADDRESSES.YSCVXCRV,
             targetVault: VAULT_ADDRESSES.YSPXCVX,
             amountIn: TEN_VAULT_SHARES,
+            slippage: TEST_SLIPPAGE,
           });
         } catch (e) {
           if (isTransientRpcError(e)) {
@@ -577,6 +605,7 @@ describe("Enso Live API Integration", () => {
             sourceVault: VAULT_ADDRESSES.YSCVGCVX,
             targetVault: VAULT_ADDRESSES.YSCVXCRV,
             amountIn: TEN_VAULT_SHARES,
+            slippage: TEST_SLIPPAGE,
           });
         } catch (e) {
           if (isTransientRpcError(e)) {
@@ -606,6 +635,7 @@ describe("Enso Live API Integration", () => {
             sourceVault: VAULT_ADDRESSES.YSPXCVX,
             targetVault: VAULT_ADDRESSES.YSCVXCRV,
             amountIn: TEN_VAULT_SHARES,
+            slippage: TEST_SLIPPAGE,
           });
         } catch (e) {
           if (isTransientRpcError(e)) {
