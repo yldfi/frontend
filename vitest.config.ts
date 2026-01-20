@@ -41,7 +41,6 @@ export default defineConfig({
       include: ["src/**/*.{ts,tsx}"],
       thresholds: {
         // Global coverage thresholds - reasonable targets for a DeFi app
-        // Temporarily lowered from 30% to 29% due to new code without tests
         lines: 29,
         functions: 30,
         branches: 20,
