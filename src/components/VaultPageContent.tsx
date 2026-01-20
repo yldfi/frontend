@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { notFound, useRouter } from "next/navigation";
-import { useAccount, useBalance } from "wagmi";
+import { useAccount, useBalance, useGasPrice, usePublicClient } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
 import { ArrowLeft, ArrowUpRight, ExternalLink, Loader2, Search, Route, RouteOff, Copy, ChevronDown, Check } from "lucide-react";
@@ -343,6 +343,38 @@ export function VaultPageContent({ id }: { id: string }) {
     }
   };
 
+  // Simulation preview toggle with localStorage persistence
+  const [showSimulationPreview, setShowSimulationPreviewState] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return localStorage.getItem("yldfi-show-simulation") === "true";
+    } catch {
+      return false;
+    }
+  });
+  const setShowSimulationPreview = (value: boolean) => {
+    setShowSimulationPreviewState(value);
+    try {
+      localStorage.setItem("yldfi-show-simulation", String(value));
+    } catch {
+      // localStorage unavailable
+    }
+  };
+
+  // Simulation modal state
+  const [showSimulationModal, setShowSimulationModal] = useState(false);
+  const [pendingSimulationPreview, setPendingSimulationPreview] = useState(false);
+  const [ethPrice, setEthPrice] = useState<number | null>(null);
+  // Track if we should skip simulation (already ran from preview mode)
+  const [skipSimulationOnConfirm, setSkipSimulationOnConfirm] = useState(false);
+
+  // Get current gas price for gas cost calculation
+  const { data: gasPrice } = useGasPrice();
+  const publicClient = usePublicClient();
+
+  // Chainlink ETH/USD price feed address on mainnet
+  const CHAINLINK_ETH_USD = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419" as const;
+
   // Handle token selection
   // Zap in: changing input token resets amount (you're changing what you send)
   // Zap out: changing output token does NOT reset amount (you're just changing what you receive)
@@ -471,6 +503,7 @@ export function VaultPageContent({ id }: { id: string }) {
   } = useVaultActions(vaultAddressTyped, vault?.assetAddress ?? TOKENS.CVXCRV, vault?.assetDecimals ?? 18);
 
   // Zap quote - fetch route from Enso (debounced to prevent rate limiting)
+  // Pause quote fetching when simulation/price impact modals are open
   const { quote: zapQuote, isLoading: zapQuoteLoading, error: zapQuoteError } = useZapQuote({
     inputToken: zapDirection === "in" ? zapInputToken : null,
     outputToken: zapDirection === "out" ? zapOutputToken : null,
@@ -480,6 +513,7 @@ export function VaultPageContent({ id }: { id: string }) {
     underlyingToken: vault?.assetAddress ?? "",
     slippage: zapSlippage,
     underlyingTokenPrice: underlyingPrice, // For illiquid tokens like cvgCVX
+    paused: showSimulationModal || showPriceImpactModal,
   });
 
   // Zap actions (approve + execute)
@@ -497,7 +531,52 @@ export function VaultPageContent({ id }: { id: string }) {
     isFlashbotsEnabled,
     isFlashbotsSupported,
     toggleFlashbots,
+    simulationResult,
   } = useZapActions(zapQuote);
+
+  // Watch for simulation result when in preview mode
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (pendingSimulationPreview && simulationResult && zapStatus === "idle") {
+      // Simulation completed (previewOnly stops at idle), show modal
+      setPendingSimulationPreview(false);
+      setShowSimulationModal(true);
+
+      // Fetch ETH price for gas cost display
+      if (publicClient) {
+        publicClient.readContract({
+          address: CHAINLINK_ETH_USD,
+          abi: [{
+            name: "latestRoundData",
+            type: "function",
+            stateMutability: "view",
+            inputs: [],
+            outputs: [
+              { name: "roundId", type: "uint80" },
+              { name: "answer", type: "int256" },
+              { name: "startedAt", type: "uint256" },
+              { name: "updatedAt", type: "uint256" },
+              { name: "answeredInRound", type: "uint80" },
+            ],
+          }],
+          functionName: "latestRoundData",
+        }).then(result => {
+          const answer = result[1] as bigint;
+          setEthPrice(Number(answer) / 1e8);
+        }).catch(() => {});
+      }
+    }
+  }, [pendingSimulationPreview, simulationResult, zapStatus, publicClient, CHAINLINK_ETH_USD]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  // Run simulation for preview mode
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
+  const runSimulationPreview = useCallback(async () => {
+    if (!zapQuote) return;
+    setPendingSimulationPreview(true);
+    // Run simulation but don't send tx
+    await executeZap({ previewOnly: true });
+  }, [zapQuote, executeZap]);
 
   const inputAmount = parseFloat(amount) || 0;
   const outputAmount = activeTab === "deposit"
@@ -1387,6 +1466,9 @@ export function VaultPageContent({ id }: { id: string }) {
                           onClick={() => {
                             if (zapNeedsApproval()) {
                               zapApprove();
+                            } else if (showSimulationPreview) {
+                              // Preview mode - run simulation first
+                              runSimulationPreview();
                             } else if ((zapQuote?.priceImpact ?? 0) >= PRICE_IMPACT_CONFIRM_THRESHOLD) {
                               // High price impact - show confirmation modal
                               setPriceImpactConfirmText("");
@@ -1395,7 +1477,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               executeZap();
                             }
                           }}
-                          disabled={!zapQuote || zapIsLoading || zapQuoteLoading || (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance)}
+                          disabled={!zapQuote || zapIsLoading || zapQuoteLoading || pendingSimulationPreview || (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance)}
                           className={cn(
                             "w-full py-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-base",
                             !zapQuote || zapQuoteLoading || (zapAmount && (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance))
@@ -1403,7 +1485,12 @@ export function VaultPageContent({ id }: { id: string }) {
                               : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer"
                           )}
                         >
-                          {zapIsLoading ? (
+                          {pendingSimulationPreview ? (
+                            <>
+                              <Loader2 size={18} className="animate-spin" />
+                              Simulating...
+                            </>
+                          ) : zapIsLoading ? (
                             <>
                               <Loader2 size={18} className="animate-spin" />
                               {zapStatus === "approving" || zapStatus === "waitingApproval"
@@ -1519,42 +1606,6 @@ export function VaultPageContent({ id }: { id: string }) {
               </button>
             </div>
 
-            {/* Flashbots Protect Toggle - only show on mainnet when wallet supports it */}
-            {chainId === 1 && isFlashbotsSupported && (
-              <>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src="https://docs.flashbots.net/img/brand-assets/flashbots_icon.svg"
-                      alt="Flashbots"
-                      width={20}
-                      height={20}
-                    />
-                    <span className="text-sm font-medium">Flashbots Protect</span>
-                  </div>
-                  <button
-                    onClick={() => toggleFlashbots(!isFlashbotsEnabled)}
-                    className={cn(
-                      "relative w-11 h-6 rounded-full transition-colors",
-                      isFlashbotsEnabled ? "bg-[#FFA800]" : "bg-[var(--muted)]"
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        "absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform",
-                        isFlashbotsEnabled && "translate-x-5"
-                      )}
-                    />
-                  </button>
-                </div>
-                <p className="text-xs text-[var(--muted-foreground)]">
-                  Protects transactions from frontrunning and sandwich attacks via private mempool.
-                </p>
-                <div className="border-t border-[var(--border)]" />
-              </>
-            )}
-
             {/* Slippage Section */}
             <div>
               <h4 className="text-sm font-medium mb-2">Slippage Tolerance</h4>
@@ -1612,6 +1663,74 @@ export function VaultPageContent({ id }: { id: string }) {
                 </p>
               )}
             </div>
+
+            <div className="border-t border-[var(--border)]" />
+
+            {/* Preview Simulation Toggle */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="https://docs.tenderly.co/logos/tenderly/tenderly-symbol.svg"
+                  alt="Tenderly"
+                  width={20}
+                  height={20}
+                />
+                <span className="text-sm font-medium">Tenderly Simulation</span>
+              </div>
+              <button
+                onClick={() => setShowSimulationPreview(!showSimulationPreview)}
+                className={cn(
+                  "relative w-11 h-6 rounded-full transition-colors",
+                  showSimulationPreview ? "bg-[var(--accent)]" : "bg-[var(--muted)]"
+                )}
+              >
+                <span
+                  className={cn(
+                    "absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform",
+                    showSimulationPreview && "translate-x-5"
+                  )}
+                />
+              </button>
+            </div>
+            <p className="text-xs text-[var(--muted-foreground)]">
+              Preview transaction results before executing.
+            </p>
+
+            {/* Flashbots Protect Toggle - only show on mainnet when wallet supports it */}
+            {chainId === 1 && isFlashbotsSupported && (
+              <>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src="https://docs.flashbots.net/img/brand-assets/flashbots_icon.svg"
+                      alt="Flashbots"
+                      width={20}
+                      height={20}
+                    />
+                    <span className="text-sm font-medium">Flashbots Protect</span>
+                  </div>
+                  <button
+                    onClick={() => toggleFlashbots(!isFlashbotsEnabled)}
+                    className={cn(
+                      "relative w-11 h-6 rounded-full transition-colors",
+                      isFlashbotsEnabled ? "bg-[#FFA800]" : "bg-[var(--muted)]"
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform",
+                        isFlashbotsEnabled && "translate-x-5"
+                      )}
+                    />
+                  </button>
+                </div>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  Protects transactions from frontrunning and sandwich attacks via private mempool.
+                </p>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -1667,7 +1786,12 @@ export function VaultPageContent({ id }: { id: string }) {
                 onClick={() => {
                   setShowPriceImpactModal(false);
                   setPriceImpactConfirmText("");
-                  executeZap();
+                  if (skipSimulationOnConfirm) {
+                    setSkipSimulationOnConfirm(false);
+                    executeZap({ skipSimulation: true });
+                  } else {
+                    executeZap();
+                  }
                 }}
                 disabled={priceImpactConfirmText !== "CONFIRM"}
                 className={cn(
@@ -1678,6 +1802,242 @@ export function VaultPageContent({ id }: { id: string }) {
                 )}
               >
                 Zap {zapDirection === "in" ? "In" : "Out"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Simulation Modal */}
+      {showSimulationModal && simulationResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => setShowSimulationModal(false)}
+          />
+          <div className="relative bg-[var(--background)] border border-[var(--border)] rounded-xl w-full max-w-sm p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1">
+                <span className="font-medium">Simulation by</span>
+                <a
+                  href="https://tenderly.co"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="opacity-90 hover:opacity-100 transition-opacity"
+                >
+                  <img
+                    src="https://storage.googleapis.com/tenderly-public-assets/tenderly-logo-purple.png"
+                    alt="Tenderly"
+                    className="h-8 -translate-x-[5px] translate-y-[1px]"
+                  />
+                </a>
+              </div>
+              <button
+                onClick={() => setShowSimulationModal(false)}
+                className="p-1 hover:bg-[var(--muted)] rounded transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Status indicator */}
+            {simulationResult.success ? (
+              <div className="flex items-center gap-2">
+                <svg className="w-5 h-5 text-green-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="text-sm font-medium">Simulation Success</span>
+                {simulationResult.tenderlyUrl && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        const res = await fetch(simulationResult.tenderlyUrl!);
+                        const data = await res.json() as { url?: string };
+                        if (data.url) window.open(data.url, "_blank");
+                      } catch {
+                        // Fallback: open the endpoint directly
+                        window.open(simulationResult.tenderlyUrl!, "_blank");
+                      }
+                    }}
+                    className="text-xs text-[var(--foreground)] hover:text-[var(--accent)] flex items-center gap-1 ml-auto transition-colors"
+                  >
+                    View trace
+                    <ExternalLink size={10} />
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <svg className="w-5 h-5 text-[var(--destructive)] shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="text-sm font-medium text-[var(--destructive)]">Simulation Failed</span>
+                {simulationResult.tenderlyUrl && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        const res = await fetch(simulationResult.tenderlyUrl!);
+                        const data = await res.json() as { url?: string };
+                        if (data.url) window.open(data.url, "_blank");
+                      } catch {
+                        // Fallback: open the endpoint directly
+                        window.open(simulationResult.tenderlyUrl!, "_blank");
+                      }
+                    }}
+                    className="text-xs text-[var(--foreground)] hover:text-[var(--accent)] flex items-center gap-1 ml-auto transition-colors"
+                  >
+                    View trace
+                    <ExternalLink size={10} />
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Error message for failed simulation */}
+            {!simulationResult.success && simulationResult.errorMessage && (
+              <div className="text-sm text-[var(--destructive)] bg-[var(--destructive)]/5 rounded-lg p-3">
+                {simulationResult.errorMessage}
+              </div>
+            )}
+
+            {/* Asset changes */}
+            {simulationResult.success && simulationResult.assetChanges.length > 0 && (
+              <div className="space-y-3">
+                {/* Sent assets */}
+                {simulationResult.assetChanges.filter(c => c.type === "send").length > 0 && (
+                  <div>
+                    <div className="text-xs text-[var(--muted-foreground)] mb-2">You Send</div>
+                    <div className="space-y-2">
+                      {simulationResult.assetChanges
+                        .filter(c => c.type === "send")
+                        .map((change, i) => {
+                          // Get token logo from Tenderly or our vault config
+                          const tokenLogo = change.logo
+                            || VAULTS[change.symbol.toLowerCase() as keyof typeof VAULTS]?.logo
+                            || (change.symbol === "ETH" ? "https://assets.coingecko.com/coins/images/279/thumb/ethereum.png" : undefined);
+                          return (
+                            <div key={`send-${i}`} className="flex items-center gap-3 bg-[var(--muted)] rounded-lg p-3">
+                              {tokenLogo ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={tokenLogo} alt={change.symbol} width={24} height={24} className="rounded-full shrink-0" />
+                              ) : (
+                                <div className="w-6 h-6 rounded-full bg-[var(--muted)] shrink-0" />
+                              )}
+                              <span className="mono text-sm flex-1">
+                                {Number(change.amount).toLocaleString(undefined, { maximumFractionDigits: 6 })} {change.symbol}
+                              </span>
+                              <span className="text-sm text-[var(--muted-foreground)]">
+                                ~${change.dollarValue ? Number(change.dollarValue).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}
+                              </span>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Received assets */}
+                {simulationResult.assetChanges.filter(c => c.type === "receive").length > 0 && (
+                  <div>
+                    <div className="text-xs text-[var(--muted-foreground)] mb-2">You Receive</div>
+                    <div className="space-y-2">
+                      {simulationResult.assetChanges
+                        .filter(c => c.type === "receive")
+                        .map((change, i) => {
+                          // Get token logo from Tenderly or our vault config
+                          const tokenLogo = change.logo
+                            || VAULTS[change.symbol.toLowerCase() as keyof typeof VAULTS]?.logo
+                            || (change.symbol === "ETH" ? "https://assets.coingecko.com/coins/images/279/thumb/ethereum.png" : undefined);
+                          return (
+                            <div key={`receive-${i}`} className="flex items-center gap-3 bg-[var(--muted)] rounded-lg p-3">
+                              {tokenLogo ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={tokenLogo} alt={change.symbol} width={24} height={24} className="rounded-full shrink-0" />
+                              ) : (
+                                <div className="w-6 h-6 rounded-full bg-[var(--muted)] shrink-0" />
+                              )}
+                              <span className="mono text-sm flex-1">
+                                {Number(change.amount).toLocaleString(undefined, { maximumFractionDigits: 6 })} {change.symbol}
+                              </span>
+                              <span className="text-sm text-[var(--muted-foreground)]">
+                                ~${change.dollarValue ? Number(change.dollarValue).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}
+                              </span>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* No asset changes fallback */}
+            {simulationResult.success && simulationResult.assetChanges.length === 0 && (
+              <div className="text-sm text-[var(--muted-foreground)] text-center py-4">
+                No asset changes detected
+              </div>
+            )}
+
+            {/* Gas estimate with ETH and USD cost */}
+            {simulationResult.gasUsed && (
+              <div className="border-t border-[var(--border)] pt-3 space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-[var(--muted-foreground)]">Est. Gas</span>
+                  <span className="mono">{simulationResult.gasUsed.toLocaleString()}</span>
+                </div>
+                {gasPrice && (
+                  <>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-[var(--muted-foreground)]">Cost (ETH)</span>
+                      <span className="mono">
+                        {(Number(simulationResult.gasUsed) * Number(gasPrice) / 1e18).toFixed(6)} ETH
+                      </span>
+                    </div>
+                    {ethPrice && (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-[var(--muted-foreground)]">Cost (USD)</span>
+                        <span className="mono">
+                          ${(Number(simulationResult.gasUsed) * Number(gasPrice) / 1e18 * ethPrice).toFixed(2)}
+                        </span>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setShowSimulationModal(false)}
+                className="flex-1 py-3 rounded-lg font-medium transition-all bg-[var(--muted)] text-[var(--foreground)] hover:bg-[var(--muted)]/80"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setShowSimulationModal(false);
+                  // Check price impact before executing
+                  if ((zapQuote?.priceImpact ?? 0) >= PRICE_IMPACT_CONFIRM_THRESHOLD) {
+                    setPriceImpactConfirmText("");
+                    setSkipSimulationOnConfirm(true); // We already ran simulation
+                    setShowPriceImpactModal(true);
+                  } else {
+                    // Skip simulation since we just ran it
+                    executeZap({ skipSimulation: true });
+                  }
+                }}
+                disabled={!simulationResult.success}
+                className={cn(
+                  "flex-1 py-3 rounded-lg font-medium transition-all",
+                  simulationResult.success
+                    ? "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                )}
+              >
+                Confirm Zap
               </button>
             </div>
           </div>

@@ -15,7 +15,7 @@ import { ETH_ADDRESS } from "@/lib/enso";
 import { ERC20_APPROVAL_ABI } from "@/lib/abis";
 import { useTenderly } from "@/contexts/TenderlyContext";
 import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
-import type { ZapQuote } from "@/types/enso";
+import type { ZapQuote, SimulationResult } from "@/types/enso";
 
 export type ZapStatus =
   | "idle"
@@ -124,6 +124,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   const { isFlashbotsEnabled, isFlashbotsSupported, toggleFlashbots, sendViaFlashbots } = useFlashbotsProtect();
   const [actionState, setActionState] = useState<"idle" | "approving" | "simulating" | "zapping">("idle");
   const [simulationError, setSimulationError] = useState<string | null>(null);
+  const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
   const [flashbotsHash, setFlashbotsHash] = useState<Hash | undefined>(undefined);
   const [flashbotsError, setFlashbotsError] = useState<Error | null>(null);
 
@@ -278,11 +279,15 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   }, [userAddress, isEth, tokenAddress, routerAddress, writeApprove]);
 
   // Execute zap transaction with pre-flight simulation
-  const executeZap = useCallback(async () => {
+  // Options:
+  //   - skipSimulation: skip simulation and send tx directly (used after preview confirmation)
+  //   - previewOnly: run simulation but don't send tx (for preview mode)
+  const executeZap = useCallback(async (options?: { skipSimulation?: boolean; previewOnly?: boolean }) => {
     if (!quote || !userAddress || !publicClient) return;
 
     // Clear any previous simulation error
     setSimulationError(null);
+    setSimulationResult(null);
     setActionState("simulating");
 
     const txParams = {
@@ -291,9 +296,33 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       value: BigInt(quote.tx.value || "0"),
     };
 
+    // If skipSimulation is true, go straight to sending (used after preview mode confirmation)
+    if (options?.skipSimulation && simulationResult?.success) {
+      setActionState("zapping");
+      if (isFlashbotsEnabled && !isTenderlyVNet && chainId === 1) {
+        try {
+          const hash = await sendViaFlashbots(txParams);
+          setFlashbotsHash(hash);
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          const isUnsupportedMethod = errorMsg.includes("eth_signTransaction") &&
+            (errorMsg.includes("not supported") || errorMsg.includes("does not exist"));
+          if (isUnsupportedMethod) {
+            sendTransaction(txParams);
+          } else {
+            setFlashbotsError(err instanceof Error ? err : new Error(errorMsg));
+            setActionState("idle");
+          }
+        }
+      } else {
+        sendTransaction(txParams);
+      }
+      return;
+    }
+
     // Skip Tenderly simulation on VNet - it simulates against mainnet, not VNet state
     const tenderlyPromise = (isTenderlyVNet || chainId === 1337)
-      ? Promise.resolve({ ok: true as const })
+      ? Promise.resolve({ ok: true as const, result: null })
       : (async () => {
           try {
             const nonceResponse = await fetch("/api/simulate/nonce", {
@@ -330,14 +359,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
               }),
             });
 
-            const result = (await response.json()) as {
-              success: boolean;
-              errorMessage?: string | null;
-              retryable?: boolean;
-              simulationId?: string;
-              tenderlyUrl?: string;
-              gasUsed?: number;
-            };
+            const result = (await response.json()) as SimulationResult & { retryable?: boolean };
 
             // Log simulation result to browser console in dev
             if (process.env.NODE_ENV === "development") {
@@ -347,18 +369,21 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
                 tenderlyUrl: result.tenderlyUrl,
                 gasUsed: result.gasUsed,
                 errorMessage: result.errorMessage,
+                assetChanges: result.assetChanges?.length ?? 0,
               });
             }
 
-            if (result.success) return { ok: true as const };
+            if (result.success) return { ok: true as const, result };
             return {
               ok: false as const,
+              result,
               errorMessage: result.errorMessage ?? "Tenderly simulation failed",
               retryable: Boolean(result.retryable),
             };
           } catch (error) {
             return {
               ok: false as const,
+              result: null,
               errorMessage: error instanceof Error ? error.message : "Tenderly simulation failed",
               retryable: true,
             };
@@ -385,6 +410,11 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       ethCallPromise,
     ]);
 
+    // Store the simulation result for preview mode
+    if (tenderlyResult.result) {
+      setSimulationResult(tenderlyResult.result);
+    }
+
     if (!tenderlyResult.ok && !ethCallResult.ok) {
       const errorMsg = tenderlyResult.retryable
         ? ethCallResult.errorMessage ?? tenderlyResult.errorMessage
@@ -392,6 +422,12 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       setSimulationError(
         parseErrorMessage(new Error(errorMsg), "Transaction would fail")
       );
+      setActionState("idle");
+      return;
+    }
+
+    // If previewOnly mode, stop here without sending tx
+    if (options?.previewOnly) {
       setActionState("idle");
       return;
     }
@@ -429,12 +465,13 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       console.log("[Zap] Using wallet sendTransaction");
       sendTransaction(txParams);
     }
-  }, [quote, userAddress, publicClient, sendTransaction, sendViaFlashbots, isFlashbotsEnabled, chainId, isTenderlyVNet]);
+  }, [quote, userAddress, publicClient, sendTransaction, sendViaFlashbots, isFlashbotsEnabled, chainId, isTenderlyVNet, simulationResult]);
 
   // Reset state
   const reset = useCallback(() => {
     setActionState("idle");
     setSimulationError(null);
+    setSimulationResult(null);
     setFlashbotsHash(undefined);
     setFlashbotsError(null);
     resetApprove();
@@ -457,5 +494,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     isFlashbotsEnabled,
     isFlashbotsSupported,
     toggleFlashbots,
+    // Simulation result for preview mode
+    simulationResult,
   };
 }
