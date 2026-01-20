@@ -1,406 +1,553 @@
-import { describe, it, expect } from "vitest";
-import { isAddress } from "viem";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { renderHook } from "@testing-library/react";
+import { useReadContracts, useAccount } from "wagmi";
+import { useTokenMetadata } from "@/hooks/useTokenMetadata";
 
-// Test the useTokenMetadata business logic directly
-// We test address validation and token creation from contract results
+// Get the mocked functions
+const mockUseReadContracts = vi.mocked(useReadContracts);
+const mockUseAccount = vi.mocked(useAccount);
 
-describe("useTokenMetadata logic", () => {
+describe("useTokenMetadata", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseAccount.mockReturnValue({
+      address: "0x1234567890123456789012345678901234567890" as `0x${string}`,
+      isConnected: true,
+      isConnecting: false,
+      isDisconnected: false,
+      isReconnecting: false,
+      status: "connected",
+      addresses: ["0x1234567890123456789012345678901234567890" as `0x${string}`],
+      chain: { id: 1, name: "mainnet" },
+      chainId: 1,
+      connector: undefined,
+    } as any);
+  });
+
   describe("address validation", () => {
-    function isValidAddress(address: string | undefined): boolean {
-      return !!address && isAddress(address);
-    }
+    it("returns isValidAddress true for valid address", () => {
+      mockUseReadContracts.mockReturnValue({
+        data: undefined,
+        isLoading: false,
+        error: null,
+        isError: false,
+        isPending: false,
+        isSuccess: false,
+        status: "pending",
+        dataUpdatedAt: 0,
+        errorUpdatedAt: 0,
+        failureCount: 0,
+        failureReason: null,
+        errorUpdateCount: 0,
+        isFetched: false,
+        isFetchedAfterMount: false,
+        isFetching: false,
+        isInitialLoading: false,
+        isLoadingError: false,
+        isPaused: false,
+        isPlaceholderData: false,
+        isRefetchError: false,
+        isRefetching: false,
+        isStale: false,
+        fetchStatus: "idle",
+        refetch: vi.fn(),
+      } as any);
 
-    describe("valid addresses", () => {
-      it("validates standard Ethereum address", () => {
-        expect(isValidAddress("0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86")).toBe(true);
-      });
+      const { result } = renderHook(() =>
+        useTokenMetadata("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+      );
 
-      it("validates lowercase address", () => {
-        expect(isValidAddress("0x95f19b19aff698169a1a0bbc28a2e47b14cb9a86")).toBe(true);
-      });
-
-      it("rejects fully uppercase address (not valid checksum)", () => {
-        // viem's isAddress requires proper checksumming, fully uppercase is invalid
-        expect(isValidAddress("0x95F19B19AFF698169A1A0BBC28A2E47B14CB9A86")).toBe(false);
-      });
-
-      it("validates zero address", () => {
-        expect(isValidAddress("0x0000000000000000000000000000000000000000")).toBe(true);
-      });
-
-      it("validates checksum address", () => {
-        expect(isValidAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")).toBe(true);
-      });
+      expect(result.current.isValidAddress).toBe(true);
     });
 
-    describe("invalid addresses", () => {
-      it("rejects undefined", () => {
-        expect(isValidAddress(undefined)).toBe(false);
-      });
+    it("returns isValidAddress false for invalid address", () => {
+      mockUseReadContracts.mockReturnValue({
+        data: undefined,
+        isLoading: false,
+        error: null,
+        isError: false,
+        isPending: false,
+        isSuccess: false,
+        status: "pending",
+        dataUpdatedAt: 0,
+        errorUpdatedAt: 0,
+        failureCount: 0,
+        failureReason: null,
+        errorUpdateCount: 0,
+        isFetched: false,
+        isFetchedAfterMount: false,
+        isFetching: false,
+        isInitialLoading: false,
+        isLoadingError: false,
+        isPaused: false,
+        isPlaceholderData: false,
+        isRefetchError: false,
+        isRefetching: false,
+        isStale: false,
+        fetchStatus: "idle",
+        refetch: vi.fn(),
+      } as any);
 
-      it("rejects empty string", () => {
-        expect(isValidAddress("")).toBe(false);
-      });
+      const { result } = renderHook(() => useTokenMetadata("not-an-address"));
 
-      it("rejects short address", () => {
-        expect(isValidAddress("0x95f19B19aff698169a1a0bbc28a2e47b")).toBe(false);
-      });
+      expect(result.current.isValidAddress).toBe(false);
+      expect(result.current.token).toBeNull();
+    });
 
-      it("rejects long address", () => {
-        expect(isValidAddress("0x95f19B19aff698169a1a0bbc28a2e47b14cb9a86aa")).toBe(false);
-      });
+    it("returns isValidAddress false for undefined address", () => {
+      mockUseReadContracts.mockReturnValue({
+        data: undefined,
+        isLoading: false,
+        error: null,
+        isError: false,
+        isPending: false,
+        isSuccess: false,
+        status: "pending",
+        dataUpdatedAt: 0,
+        errorUpdatedAt: 0,
+        failureCount: 0,
+        failureReason: null,
+        errorUpdateCount: 0,
+        isFetched: false,
+        isFetchedAfterMount: false,
+        isFetching: false,
+        isInitialLoading: false,
+        isLoadingError: false,
+        isPaused: false,
+        isPlaceholderData: false,
+        isRefetchError: false,
+        isRefetching: false,
+        isStale: false,
+        fetchStatus: "idle",
+        refetch: vi.fn(),
+      } as any);
 
-      it("rejects address without 0x prefix", () => {
-        expect(isValidAddress("95f19B19aff698169a1a0bbc28a2e47b14cb9a86")).toBe(false);
-      });
+      const { result } = renderHook(() => useTokenMetadata(undefined));
 
-      it("rejects non-hex characters", () => {
-        expect(isValidAddress("0xGHIJKL19aff698169a1a0bbc28a2e47b14cb9a86")).toBe(false);
-      });
+      expect(result.current.isValidAddress).toBe(false);
+      expect(result.current.token).toBeNull();
+    });
 
-      it("rejects random string", () => {
-        expect(isValidAddress("not-an-address")).toBe(false);
-      });
+    it("returns isValidAddress false for empty string", () => {
+      mockUseReadContracts.mockReturnValue({
+        data: undefined,
+        isLoading: false,
+        error: null,
+        isError: false,
+        isPending: false,
+        isSuccess: false,
+        status: "pending",
+        dataUpdatedAt: 0,
+        errorUpdatedAt: 0,
+        failureCount: 0,
+        failureReason: null,
+        errorUpdateCount: 0,
+        isFetched: false,
+        isFetchedAfterMount: false,
+        isFetching: false,
+        isInitialLoading: false,
+        isLoadingError: false,
+        isPaused: false,
+        isPlaceholderData: false,
+        isRefetchError: false,
+        isRefetching: false,
+        isStale: false,
+        fetchStatus: "idle",
+        refetch: vi.fn(),
+      } as any);
+
+      const { result } = renderHook(() => useTokenMetadata(""));
+
+      expect(result.current.isValidAddress).toBe(false);
     });
   });
 
-  describe("token creation from contract results", () => {
-    interface ContractResult {
-      status: "success" | "failure";
-      result?: string | number;
-    }
+  describe("loading state", () => {
+    it("returns isLoading true when fetching", () => {
+      mockUseReadContracts.mockReturnValue({
+        data: undefined,
+        isLoading: true,
+        error: null,
+        isError: false,
+        isPending: true,
+        isSuccess: false,
+        status: "pending",
+        dataUpdatedAt: 0,
+        errorUpdatedAt: 0,
+        failureCount: 0,
+        failureReason: null,
+        errorUpdateCount: 0,
+        isFetched: false,
+        isFetchedAfterMount: false,
+        isFetching: true,
+        isInitialLoading: true,
+        isLoadingError: false,
+        isPaused: false,
+        isPlaceholderData: false,
+        isRefetchError: false,
+        isRefetching: false,
+        isStale: false,
+        fetchStatus: "fetching",
+        refetch: vi.fn(),
+      } as any);
 
-    interface EnsoToken {
-      address: string;
-      chainId: number;
-      name: string;
-      symbol: string;
-      decimals: number;
-      type: "base" | "defi";
-    }
+      const { result } = renderHook(() =>
+        useTokenMetadata("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+      );
 
-    function createTokenFromResults(
-      tokenAddress: string | undefined,
-      data: ContractResult[] | undefined
-    ): EnsoToken | null {
-      if (!tokenAddress || !data) return null;
+      expect(result.current.isLoading).toBe(true);
+      expect(result.current.token).toBeNull();
+    });
+  });
 
-      const [nameResult, symbolResult, decimalsResult] = data;
-
-      // Check if all calls succeeded
-      if (
-        nameResult.status !== "success" ||
-        symbolResult.status !== "success" ||
-        decimalsResult.status !== "success"
-      ) {
-        return null;
-      }
-
-      return {
-        address: tokenAddress,
-        chainId: 1,
-        name: nameResult.result as string,
-        symbol: symbolResult.result as string,
-        decimals: decimalsResult.result as number,
-        type: "base",
-      };
-    }
-
+  describe("successful token fetch", () => {
     it("creates token from successful contract calls", () => {
-      const data: ContractResult[] = [
-        { status: "success", result: "USD Coin" },
-        { status: "success", result: "USDC" },
-        { status: "success", result: 6 },
-      ];
+      mockUseReadContracts.mockReturnValue({
+        data: [
+          { result: "USD Coin", status: "success" },
+          { result: "USDC", status: "success" },
+          { result: 6, status: "success" },
+        ],
+        isLoading: false,
+        error: null,
+        isError: false,
+        isPending: false,
+        isSuccess: true,
+        status: "success",
+        dataUpdatedAt: Date.now(),
+        errorUpdatedAt: 0,
+        failureCount: 0,
+        failureReason: null,
+        errorUpdateCount: 0,
+        isFetched: true,
+        isFetchedAfterMount: true,
+        isFetching: false,
+        isInitialLoading: false,
+        isLoadingError: false,
+        isPaused: false,
+        isPlaceholderData: false,
+        isRefetchError: false,
+        isRefetching: false,
+        isStale: false,
+        fetchStatus: "idle",
+        refetch: vi.fn(),
+      } as any);
 
-      const token = createTokenFromResults("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", data);
+      const { result } = renderHook(() =>
+        useTokenMetadata("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+      );
 
-      expect(token).not.toBeNull();
-      expect(token?.name).toBe("USD Coin");
-      expect(token?.symbol).toBe("USDC");
-      expect(token?.decimals).toBe(6);
-      expect(token?.chainId).toBe(1);
-      expect(token?.type).toBe("base");
+      expect(result.current.token).not.toBeNull();
+      expect(result.current.token?.name).toBe("USD Coin");
+      expect(result.current.token?.symbol).toBe("USDC");
+      expect(result.current.token?.decimals).toBe(6);
+      expect(result.current.token?.chainId).toBe(1);
+      expect(result.current.token?.type).toBe("base");
+      expect(result.current.token?.address).toBe("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
     });
 
-    it("returns null when name call fails", () => {
-      const data: ContractResult[] = [
-        { status: "failure" },
-        { status: "success", result: "USDC" },
-        { status: "success", result: 6 },
-      ];
+    it("creates token with 18 decimals", () => {
+      mockUseReadContracts.mockReturnValue({
+        data: [
+          { result: "Wrapped Ether", status: "success" },
+          { result: "WETH", status: "success" },
+          { result: 18, status: "success" },
+        ],
+        isLoading: false,
+        error: null,
+        isError: false,
+        isPending: false,
+        isSuccess: true,
+        status: "success",
+        dataUpdatedAt: Date.now(),
+        errorUpdatedAt: 0,
+        failureCount: 0,
+        failureReason: null,
+        errorUpdateCount: 0,
+        isFetched: true,
+        isFetchedAfterMount: true,
+        isFetching: false,
+        isInitialLoading: false,
+        isLoadingError: false,
+        isPaused: false,
+        isPlaceholderData: false,
+        isRefetchError: false,
+        isRefetching: false,
+        isStale: false,
+        fetchStatus: "idle",
+        refetch: vi.fn(),
+      } as any);
 
-      expect(createTokenFromResults("0x123", data)).toBeNull();
-    });
+      const { result } = renderHook(() =>
+        useTokenMetadata("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")
+      );
 
-    it("returns null when symbol call fails", () => {
-      const data: ContractResult[] = [
-        { status: "success", result: "USD Coin" },
-        { status: "failure" },
-        { status: "success", result: 6 },
-      ];
-
-      expect(createTokenFromResults("0x123", data)).toBeNull();
-    });
-
-    it("returns null when decimals call fails", () => {
-      const data: ContractResult[] = [
-        { status: "success", result: "USD Coin" },
-        { status: "success", result: "USDC" },
-        { status: "failure" },
-      ];
-
-      expect(createTokenFromResults("0x123", data)).toBeNull();
-    });
-
-    it("returns null when all calls fail", () => {
-      const data: ContractResult[] = [
-        { status: "failure" },
-        { status: "failure" },
-        { status: "failure" },
-      ];
-
-      expect(createTokenFromResults("0x123", data)).toBeNull();
-    });
-
-    it("returns null when data is undefined", () => {
-      expect(createTokenFromResults("0x123", undefined)).toBeNull();
-    });
-
-    it("returns null when address is undefined", () => {
-      const data: ContractResult[] = [
-        { status: "success", result: "Token" },
-        { status: "success", result: "TKN" },
-        { status: "success", result: 18 },
-      ];
-
-      expect(createTokenFromResults(undefined, data)).toBeNull();
-    });
-  });
-
-  describe("query enablement", () => {
-    function shouldEnableQuery(tokenAddress: string | undefined): boolean {
-      return !!tokenAddress;
-    }
-
-    it("enables query when address provided", () => {
-      expect(shouldEnableQuery("0x123")).toBe(true);
-    });
-
-    it("disables query when address is undefined", () => {
-      expect(shouldEnableQuery(undefined)).toBe(false);
-    });
-
-    it("disables query when address is empty", () => {
-      expect(shouldEnableQuery("")).toBe(false);
+      expect(result.current.token?.decimals).toBe(18);
     });
   });
 
-  describe("return value structure", () => {
-    interface UseTokenMetadataResult {
-      token: object | null;
-      isLoading: boolean;
-      error: Error | null;
-      isValidAddress: boolean;
-    }
+  describe("failed contract calls", () => {
+    it("returns null token when name call fails", () => {
+      mockUseReadContracts.mockReturnValue({
+        data: [
+          { result: undefined, status: "failure" },
+          { result: "USDC", status: "success" },
+          { result: 6, status: "success" },
+        ],
+        isLoading: false,
+        error: null,
+        isError: false,
+        isPending: false,
+        isSuccess: true,
+        status: "success",
+        dataUpdatedAt: Date.now(),
+        errorUpdatedAt: 0,
+        failureCount: 0,
+        failureReason: null,
+        errorUpdateCount: 0,
+        isFetched: true,
+        isFetchedAfterMount: true,
+        isFetching: false,
+        isInitialLoading: false,
+        isLoadingError: false,
+        isPaused: false,
+        isPlaceholderData: false,
+        isRefetchError: false,
+        isRefetching: false,
+        isStale: false,
+        fetchStatus: "idle",
+        refetch: vi.fn(),
+      } as any);
 
-    function createResult(
-      isValidAddress: boolean,
-      hasToken: boolean,
-      isLoading: boolean = false,
-      error: Error | null = null
-    ): UseTokenMetadataResult {
-      return {
-        token: hasToken ? { name: "Token", symbol: "TKN", decimals: 18 } : null,
-        isLoading,
-        error,
-        isValidAddress,
-      };
-    }
+      const { result } = renderHook(() =>
+        useTokenMetadata("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+      );
 
-    it("returns token when valid address and successful calls", () => {
-      const result = createResult(true, true);
-      expect(result.token).not.toBeNull();
-      expect(result.isValidAddress).toBe(true);
+      expect(result.current.token).toBeNull();
     });
 
-    it("returns null token when invalid address", () => {
-      const result = createResult(false, false);
-      expect(result.token).toBeNull();
-      expect(result.isValidAddress).toBe(false);
+    it("returns null token when symbol call fails", () => {
+      mockUseReadContracts.mockReturnValue({
+        data: [
+          { result: "USD Coin", status: "success" },
+          { result: undefined, status: "failure" },
+          { result: 6, status: "success" },
+        ],
+        isLoading: false,
+        error: null,
+        isError: false,
+        isPending: false,
+        isSuccess: true,
+        status: "success",
+        dataUpdatedAt: Date.now(),
+        errorUpdatedAt: 0,
+        failureCount: 0,
+        failureReason: null,
+        errorUpdateCount: 0,
+        isFetched: true,
+        isFetchedAfterMount: true,
+        isFetching: false,
+        isInitialLoading: false,
+        isLoadingError: false,
+        isPaused: false,
+        isPlaceholderData: false,
+        isRefetchError: false,
+        isRefetching: false,
+        isStale: false,
+        fetchStatus: "idle",
+        refetch: vi.fn(),
+      } as any);
+
+      const { result } = renderHook(() =>
+        useTokenMetadata("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+      );
+
+      expect(result.current.token).toBeNull();
     });
 
-    it("returns loading state", () => {
-      const result = createResult(true, false, true);
-      expect(result.isLoading).toBe(true);
-    });
+    it("returns null token when decimals call fails", () => {
+      mockUseReadContracts.mockReturnValue({
+        data: [
+          { result: "USD Coin", status: "success" },
+          { result: "USDC", status: "success" },
+          { result: undefined, status: "failure" },
+        ],
+        isLoading: false,
+        error: null,
+        isError: false,
+        isPending: false,
+        isSuccess: true,
+        status: "success",
+        dataUpdatedAt: Date.now(),
+        errorUpdatedAt: 0,
+        failureCount: 0,
+        failureReason: null,
+        errorUpdateCount: 0,
+        isFetched: true,
+        isFetchedAfterMount: true,
+        isFetching: false,
+        isInitialLoading: false,
+        isLoadingError: false,
+        isPaused: false,
+        isPlaceholderData: false,
+        isRefetchError: false,
+        isRefetching: false,
+        isStale: false,
+        fetchStatus: "idle",
+        refetch: vi.fn(),
+      } as any);
 
-    it("returns error state", () => {
-      const error = new Error("Contract call failed");
-      const result = createResult(true, false, false, error);
-      expect(result.error).toBe(error);
+      const { result } = renderHook(() =>
+        useTokenMetadata("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+      );
+
+      expect(result.current.token).toBeNull();
     });
   });
 
-  describe("contracts array construction", () => {
-    function buildContractsArray(tokenAddress: string | undefined) {
-      if (!tokenAddress) return undefined;
+  describe("error handling", () => {
+    it("returns error when contract call errors", () => {
+      const testError = new Error("Contract call failed");
+      mockUseReadContracts.mockReturnValue({
+        data: undefined,
+        isLoading: false,
+        error: testError,
+        isError: true,
+        isPending: false,
+        isSuccess: false,
+        status: "error",
+        dataUpdatedAt: 0,
+        errorUpdatedAt: Date.now(),
+        failureCount: 1,
+        failureReason: testError,
+        errorUpdateCount: 1,
+        isFetched: true,
+        isFetchedAfterMount: true,
+        isFetching: false,
+        isInitialLoading: false,
+        isLoadingError: true,
+        isPaused: false,
+        isPlaceholderData: false,
+        isRefetchError: false,
+        isRefetching: false,
+        isStale: false,
+        fetchStatus: "idle",
+        refetch: vi.fn(),
+      } as any);
 
-      return [
-        { address: tokenAddress, functionName: "name" },
-        { address: tokenAddress, functionName: "symbol" },
-        { address: tokenAddress, functionName: "decimals" },
-      ];
-    }
+      const { result } = renderHook(() =>
+        useTokenMetadata("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+      );
 
-    it("builds contracts array for valid address", () => {
-      const contracts = buildContractsArray("0x123");
-      expect(contracts).toHaveLength(3);
-      expect(contracts?.[0].functionName).toBe("name");
-      expect(contracts?.[1].functionName).toBe("symbol");
-      expect(contracts?.[2].functionName).toBe("decimals");
-    });
-
-    it("returns undefined for undefined address", () => {
-      expect(buildContractsArray(undefined)).toBeUndefined();
-    });
-
-    it("all contracts have same address", () => {
-      const contracts = buildContractsArray("0xABC");
-      contracts?.forEach((c) => {
-        expect(c.address).toBe("0xABC");
-      });
-    });
-  });
-
-  describe("common token metadata", () => {
-    interface TokenMetadata {
-      name: string;
-      symbol: string;
-      decimals: number;
-    }
-
-    const COMMON_TOKENS: Record<string, TokenMetadata> = {
-      USDC: { name: "USD Coin", symbol: "USDC", decimals: 6 },
-      USDT: { name: "Tether USD", symbol: "USDT", decimals: 6 },
-      DAI: { name: "Dai Stablecoin", symbol: "DAI", decimals: 18 },
-      WETH: { name: "Wrapped Ether", symbol: "WETH", decimals: 18 },
-      WBTC: { name: "Wrapped BTC", symbol: "WBTC", decimals: 8 },
-      cvxCRV: { name: "Convex CRV", symbol: "cvxCRV", decimals: 18 },
-    };
-
-    it("USDC has 6 decimals", () => {
-      expect(COMMON_TOKENS.USDC.decimals).toBe(6);
-    });
-
-    it("USDT has 6 decimals", () => {
-      expect(COMMON_TOKENS.USDT.decimals).toBe(6);
-    });
-
-    it("DAI has 18 decimals", () => {
-      expect(COMMON_TOKENS.DAI.decimals).toBe(18);
-    });
-
-    it("WETH has 18 decimals", () => {
-      expect(COMMON_TOKENS.WETH.decimals).toBe(18);
-    });
-
-    it("WBTC has 8 decimals", () => {
-      expect(COMMON_TOKENS.WBTC.decimals).toBe(8);
-    });
-
-    it("cvxCRV has 18 decimals", () => {
-      expect(COMMON_TOKENS.cvxCRV.decimals).toBe(18);
+      expect(result.current.error).toBe(testError);
+      expect(result.current.token).toBeNull();
     });
   });
 
   describe("chainId handling", () => {
-    const MAINNET_CHAIN_ID = 1;
+    it("uses connected chainId for token", () => {
+      mockUseAccount.mockReturnValue({
+        address: "0x1234567890123456789012345678901234567890" as `0x${string}`,
+        isConnected: true,
+        isConnecting: false,
+        isDisconnected: false,
+        isReconnecting: false,
+        status: "connected",
+        addresses: ["0x1234567890123456789012345678901234567890" as `0x${string}`],
+        chain: { id: 42161, name: "arbitrum" },
+        chainId: 42161,
+        connector: undefined,
+      } as any);
 
-    function createTokenWithChainId(chainId: number) {
-      return {
-        address: "0x123",
-        chainId,
-        name: "Token",
-        symbol: "TKN",
-        decimals: 18,
-        type: "base" as const,
-      };
-    }
+      mockUseReadContracts.mockReturnValue({
+        data: [
+          { result: "Arbitrum Token", status: "success" },
+          { result: "ARB", status: "success" },
+          { result: 18, status: "success" },
+        ],
+        isLoading: false,
+        error: null,
+        isError: false,
+        isPending: false,
+        isSuccess: true,
+        status: "success",
+        dataUpdatedAt: Date.now(),
+        errorUpdatedAt: 0,
+        failureCount: 0,
+        failureReason: null,
+        errorUpdateCount: 0,
+        isFetched: true,
+        isFetchedAfterMount: true,
+        isFetching: false,
+        isInitialLoading: false,
+        isLoadingError: false,
+        isPaused: false,
+        isPlaceholderData: false,
+        isRefetchError: false,
+        isRefetching: false,
+        isStale: false,
+        fetchStatus: "idle",
+        refetch: vi.fn(),
+      } as any);
 
-    it("defaults to mainnet (chainId 1)", () => {
-      const token = createTokenWithChainId(MAINNET_CHAIN_ID);
-      expect(token.chainId).toBe(1);
+      const { result } = renderHook(() =>
+        useTokenMetadata("0x912ce59144191c1204e64559fe8253a0e49e6548")
+      );
+
+      expect(result.current.token?.chainId).toBe(42161);
     });
 
-    it("can create token for different chains", () => {
-      const arbitrumToken = createTokenWithChainId(42161);
-      expect(arbitrumToken.chainId).toBe(42161);
-    });
-  });
+    it("defaults to chainId 1 when undefined", () => {
+      mockUseAccount.mockReturnValue({
+        address: undefined,
+        isConnected: false,
+        isConnecting: false,
+        isDisconnected: true,
+        isReconnecting: false,
+        status: "disconnected",
+        addresses: undefined,
+        chain: undefined,
+        chainId: undefined,
+        connector: undefined,
+      } as any);
 
-  describe("type field", () => {
-    it("imported tokens are base type", () => {
-      const token = {
-        address: "0x123",
-        chainId: 1,
-        name: "Custom Token",
-        symbol: "CUSTOM",
-        decimals: 18,
-        type: "base" as const,
-      };
-      expect(token.type).toBe("base");
-    });
-  });
+      mockUseReadContracts.mockReturnValue({
+        data: [
+          { result: "Test Token", status: "success" },
+          { result: "TEST", status: "success" },
+          { result: 18, status: "success" },
+        ],
+        isLoading: false,
+        error: null,
+        isError: false,
+        isPending: false,
+        isSuccess: true,
+        status: "success",
+        dataUpdatedAt: Date.now(),
+        errorUpdatedAt: 0,
+        failureCount: 0,
+        failureReason: null,
+        errorUpdateCount: 0,
+        isFetched: true,
+        isFetchedAfterMount: true,
+        isFetching: false,
+        isInitialLoading: false,
+        isLoadingError: false,
+        isPaused: false,
+        isPlaceholderData: false,
+        isRefetchError: false,
+        isRefetching: false,
+        isStale: false,
+        fetchStatus: "idle",
+        refetch: vi.fn(),
+      } as any);
 
-  describe("edge cases", () => {
-    it("handles token with empty name", () => {
-      const token = {
-        address: "0x123",
-        chainId: 1,
-        name: "",
-        symbol: "TKN",
-        decimals: 18,
-        type: "base" as const,
-      };
-      expect(token.name).toBe("");
-    });
+      const { result } = renderHook(() =>
+        useTokenMetadata("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+      );
 
-    it("handles token with unicode name", () => {
-      const token = {
-        address: "0x123",
-        chainId: 1,
-        name: "Token 🚀",
-        symbol: "TKN",
-        decimals: 18,
-        type: "base" as const,
-      };
-      expect(token.name).toBe("Token 🚀");
-    });
-
-    it("handles token with 0 decimals", () => {
-      const token = {
-        address: "0x123",
-        chainId: 1,
-        name: "No Decimals Token",
-        symbol: "NDT",
-        decimals: 0,
-        type: "base" as const,
-      };
-      expect(token.decimals).toBe(0);
-    });
-
-    it("handles token with unusual decimals", () => {
-      // Some tokens have unusual decimal values
-      const token = {
-        address: "0x123",
-        chainId: 1,
-        name: "Unusual Token",
-        symbol: "UNU",
-        decimals: 2, // Like some share tokens
-        type: "base" as const,
-      };
-      expect(token.decimals).toBe(2);
+      expect(result.current.token?.chainId).toBe(1);
     });
   });
 });
