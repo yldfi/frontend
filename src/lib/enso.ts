@@ -3883,27 +3883,45 @@ export async function fetchCvgCvxZapOutRoute(params: {
   });
 
   // Manually calculate expected output since skipQuote may not return the final output token
-  // CVX → ETH estimate via Curve CVX/ETH pool (Enso may route differently but this is close)
   // Use expectedCvx1Output (CVX1 → CVX is 1:1) or fall back to expectedCvgCvxOutput
   const estimatedCvxAmount = expectedCvx1Output?.toString() ?? expectedCvgCvxOutput;
   const outputTokenKey = params.outputToken.toLowerCase();
   const hasOutputAmount = bundleResult.amountsOut[outputTokenKey] || bundleResult.amountsOut[ETH_ADDRESS.toLowerCase()];
+
   if (estimatedCvxAmount && !hasOutputAmount) {
     try {
-      const expectedEthOutput = await estimateCryptoSwapOffchain(
-        CURVE_CVX_ETH_POOL,
-        1, // CVX index
-        0, // WETH index (ETH)
-        estimatedCvxAmount
-      );
-      if (expectedEthOutput) {
-        bundleResult.amountsOut = {
-          [params.outputToken.toLowerCase()]: expectedEthOutput.toString(),
-          [ETH_ADDRESS.toLowerCase()]: expectedEthOutput.toString(),
-        };
+      // For ETH output: use Curve CVX/ETH pool estimate (fast, no API call)
+      if (outputTokenKey === ETH_ADDRESS.toLowerCase() || outputTokenKey === WETH_ADDRESS.toLowerCase()) {
+        const expectedEthOutput = await estimateCryptoSwapOffchain(
+          CURVE_CVX_ETH_POOL,
+          1, // CVX index
+          0, // WETH index (ETH)
+          estimatedCvxAmount
+        );
+        if (expectedEthOutput) {
+          bundleResult.amountsOut = {
+            [outputTokenKey]: expectedEthOutput.toString(),
+            [ETH_ADDRESS.toLowerCase()]: expectedEthOutput.toString(),
+          };
+        }
+      } else {
+        // For other tokens (USDC, etc.): query Enso route for CVX → output token
+        // This gives us proper output amount with correct decimals
+        const routeQuote = await fetchRoute({
+          fromAddress: params.fromAddress,
+          tokenIn: TOKENS.CVX,
+          tokenOut: params.outputToken,
+          amountIn: estimatedCvxAmount,
+          slippage: params.slippage ?? "100",
+        });
+        if (routeQuote.amountOut) {
+          bundleResult.amountsOut = {
+            [outputTokenKey]: routeQuote.amountOut,
+          };
+        }
       }
     } catch (err) {
-      console.error("[Enso ZapOut] estimate error:", err);
+      console.error("[Enso cvgCVX ZapOut] estimate error:", err);
       // Fallback: no estimate available
     }
   }
