@@ -202,6 +202,13 @@ export function VaultPageContent({ id }: { id: string }) {
     return () => window.removeEventListener("tenderly-network-change", handleNetworkChange);
   }, []);
 
+  // Reset tab to deposit when navigating to a different vault
+  useEffect(() => {
+    setActiveTabState("deposit");
+    setAmount("");
+    setZapAmount("");
+  }, [id]);
+
   // Zap state with localStorage persistence (scoped per vault)
   const [zapDirection, setZapDirectionState] = useState<ZapDirection>(() => {
     if (typeof window === "undefined") return "in";
