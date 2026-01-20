@@ -239,15 +239,27 @@ function extractYieldSource(source: string, contractBody: string): YieldSourceIn
   const withdrawFnMatch = freeFunds.match(/(\w+)\.(withdraw|unstake|redeem|remove)\s*\(/);
   const withdrawFn = withdrawFnMatch ? withdrawFnMatch[2] : "withdraw";
 
-  // Look for claim function in _harvestAndReport or _claimRewards
-  const harvestAndReport = extractFunction(source, "_harvestAndReport") || "";
-  const claimRewards = extractFunction(source, "_claimRewards") || "";
-  const combined = harvestAndReport + claimRewards;
-
-  const claimFnMatch = combined.match(
-    /(\w+)\.(getReward|claimReward|claim|harvest|claimCvgCvxRewards|claimAll|claimVotiumRewards)\s*\(/
+  // Look for claim function in _harvestAndReport, _claimRewards, or helper functions
+  // Search the entire source since claim logic may be in helper functions like _claimEpochRewards
+  const claimFnMatch = source.match(
+    /(\w+)\.(getReward|claimReward|claim|harvest|claimCvgCvxRewards|claimAll|claimVotiumRewards|redeemSnapshotRewards)\s*\(/
   );
   const claimFn = claimFnMatch ? claimFnMatch[2] : null;
+  const claimContractName = claimFnMatch ? claimFnMatch[1] : null;
+
+  // For pass-through strategies, use the claim function's target contract address
+  // (e.g., PIREX_CVX for redeemSnapshotRewards) instead of the first constant found
+  let claimContractAddress: string | null = null;
+  if (isPassThrough && claimContractName) {
+    const addrPattern = new RegExp(
+      claimContractName + "\\s*[=:]\\s*[^(]*\\(?(0x[a-fA-F0-9]{40})\\)?",
+      "i"
+    );
+    const addrMatch = source.match(addrPattern);
+    if (addrMatch) {
+      claimContractAddress = addrMatch[1];
+    }
+  }
 
   // Determine balance function
   const balanceFn = "balanceOf";
@@ -255,7 +267,7 @@ function extractYieldSource(source: string, contractBody: string): YieldSourceIn
   return {
     name: isPassThrough ? "Direct Holding" : yieldSourceName,
     contractName: null, // Will be fetched separately if needed
-    address: yieldSourceAddress,
+    address: isPassThrough && claimContractAddress ? claimContractAddress : yieldSourceAddress,
     depositFn: isPassThrough ? "hold" : depositFn,
     withdrawFn: isPassThrough ? "transfer" : withdrawFn,
     claimFn,

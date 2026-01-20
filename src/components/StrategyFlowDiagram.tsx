@@ -629,6 +629,7 @@ interface CombinedNodeData extends NodeData {
   isWithdrawAnimating?: boolean; // Whether to animate withdraw flow
   isKickAnimating?: boolean; // Whether to animate reward tokens (kick hover)
   isDirectCompounding?: boolean; // Whether rewards are same as asset (show purple compound line)
+  isPassThrough?: boolean; // Whether strategy is pass-through (holds asset directly, no staking)
 }
 
 function CombinedStrategyNode({ data }: { data: CombinedNodeData }) {
@@ -852,7 +853,7 @@ function CombinedStrategyNode({ data }: { data: CombinedNodeData }) {
             {/* Nested wrapper box */}
             {data.wrapperTitle && (
               <div
-                className="rounded-lg border p-2"
+                className={`rounded-lg border p-2 ${!data.wrapperDepositFn ? "mt-3" : ""}`}
                 style={{
                   background: "var(--background)",
                   borderColor: wrapperColors.border,
@@ -917,9 +918,9 @@ function CombinedStrategyNode({ data }: { data: CombinedNodeData }) {
 
                 {/* Connector line to getReward() */}
                 {data.wrapperFunction && !data.wrapperDepositFn && (
-                  <div className="flex items-center pl-2 py-1">
+                  <div className="flex items-center pl-2 py-2">
                     <div
-                      className="w-0.5 h-3"
+                      className="w-0.5 h-4"
                       style={{
                         background: data.isAnimating
                           ? "repeating-linear-gradient(180deg, #06b6d4 0px, #06b6d4 5px, transparent 5px, transparent 10px)"
@@ -931,11 +932,11 @@ function CombinedStrategyNode({ data }: { data: CombinedNodeData }) {
                   </div>
                 )}
 
-                {/* getReward() node - right aligned, slightly more than half width */}
+                {/* Claim function node - full width for longer function names */}
                 {data.wrapperFunction && (
-                  <div className="flex justify-end w-full">
+                  <div className="w-full">
                     <div
-                      className="px-2 py-1 rounded text-[9px] font-mono border w-[55%] text-center"
+                      className="px-2 py-1 rounded text-[9px] font-mono border w-full text-center"
                       style={{
                         background: "var(--muted)",
                         color: "#06b6d4",
@@ -951,9 +952,9 @@ function CombinedStrategyNode({ data }: { data: CombinedNodeData }) {
                 {/* Rewards output from getReward() */}
                 {data.wrapperFunction && data.rewardTokens && (
                   <>
-                    {/* Line right-aligned under claimRewards button */}
-                    <div className="flex justify-end w-full">
-                      <div className="flex items-center py-1 w-[55%] justify-center">
+                    {/* Connector line centered under claim button */}
+                    <div className="flex justify-center w-full">
+                      <div className="flex items-center py-1 justify-center">
                         <div
                           className="w-0.5 h-3"
                           style={{
@@ -1246,9 +1247,10 @@ function StrategyFlowDiagramInner({ config }: StrategyFlowDiagramProps) {
     // Determine claim function
     const claimFn = config.yieldSource.claimFn || "getReward";
 
-    // 2. Strategy node (combined with wrapper if not passthrough)
-    if (!isPassThrough) {
-      // Combined strategy + wrapper node
+    // 2. Strategy node (combined with wrapper/yield source info)
+    // Use combined node for all strategies that have rewards or auctions
+    if (!isPassThrough || hasAuction || rewardTokens.length > 0) {
+      // Combined strategy + yield source node
       nodes.push({
         id: "strategy",
         type: "combinedStrategy",
@@ -1261,24 +1263,27 @@ function StrategyFlowDiagramInner({ config }: StrategyFlowDiagramProps) {
           icon: <Database className="h-4 w-4" />,
           strategyLogo,
           strategyFunction: "report()",
-          // Nested wrapper data
-          wrapperTitle: wrapperContractName
-            ? `${yieldSourceName} (${wrapperContractName})`
-            : yieldSourceName,
+          // Nested wrapper/yield source data
+          wrapperTitle: isPassThrough
+            ? "Pirex CVX (Votium Snapshots)"
+            : wrapperContractName
+              ? `${yieldSourceName} (${wrapperContractName})`
+              : yieldSourceName,
           wrapperAddress: config.yieldSource.address,
-          wrapperDepositFn: `${config.yieldSource.depositFn || "stake"}()`,
-          wrapperWithdrawFn: `${config.yieldSource.withdrawFn || "unstake"}()`,
+          wrapperDepositFn: isPassThrough ? undefined : `${config.yieldSource.depositFn || "stake"}()`,
+          wrapperWithdrawFn: isPassThrough ? undefined : `${config.yieldSource.withdrawFn || "unstake"}()`,
           wrapperFunction: `${claimFn}()`,
-          wrapperLogo,
+          wrapperLogo: isPassThrough ? "/tokens/pxcvx.png" : wrapperLogo,
           rewardTokens,
           assetSymbol,
           isDirectCompounding: isDirect, // Only show purple compound line for direct compounding (reward = asset)
+          isPassThrough, // Pass through for styling differences
         },
       });
 
       yPos += ySpacing + 100; // Account for taller combined node with function and rewards
     } else {
-      // Simple strategy node without wrapper
+      // Simple strategy node without wrapper (truly simple strategies)
       nodes.push({
         id: "strategy",
         type: "strategy",
