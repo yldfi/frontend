@@ -945,7 +945,7 @@ export function VaultPageContent({ id }: { id: string }) {
                       <button
                         onClick={() => {
                           navigator.clipboard.writeText(vault.address);
-                          toast.success("Address copied to clipboard");
+                          toast.success("Address copied to clipboard", { id: "copy-address" });
                         }}
                         className="hover:text-[var(--accent)] transition-colors"
                         aria-label="Copy vault address"
@@ -985,7 +985,7 @@ export function VaultPageContent({ id }: { id: string }) {
                         <button
                           onClick={() => {
                             navigator.clipboard.writeText(vault.underlyingStrategy!);
-                            toast.success("Address copied to clipboard");
+                            toast.success("Address copied to clipboard", { id: "copy-address" });
                           }}
                           className="hover:text-[var(--accent)] transition-colors"
                           aria-label="Copy strategy address"
