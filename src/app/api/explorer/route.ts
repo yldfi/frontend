@@ -150,6 +150,61 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ result: name, cached: false }, { headers: cacheHeaders });
       }
 
+      case "getSource": {
+        const cacheKey = `source_${chainId}_${normalizedAddress}`;
+
+        // Check KV cache first (contract source never changes, cache indefinitely)
+        if (kv) {
+          const cached = await kv.get(cacheKey);
+          if (cached) {
+            return NextResponse.json({ result: JSON.parse(cached), cached: true }, { headers: cacheHeaders });
+          }
+        }
+
+        // Fetch from Etherscan
+        const url = `${ETHERSCAN_API_BASE}?chainid=${chainId}&module=contract&action=getsourcecode&address=${address}&apikey=${apiKey}`;
+        const response = await rateLimitedFetch(url);
+        const data = (await response.json()) as EtherscanResponse;
+
+        if (data.status !== "1" || !Array.isArray(data.result) || !data.result[0]?.SourceCode) {
+          return NextResponse.json({ error: "Contract source not found or not verified" }, { status: 404 });
+        }
+
+        const sourceResult = data.result[0];
+        let sourceCode = sourceResult.SourceCode;
+
+        // Handle JSON-wrapped source (multi-file contracts from Etherscan)
+        if (sourceCode.startsWith("{")) {
+          try {
+            // Double-wrapped JSON: {{...}}
+            if (sourceCode.startsWith("{{")) {
+              sourceCode = sourceCode.slice(1, -1);
+            }
+            const parsed = JSON.parse(sourceCode);
+            const sources = parsed.sources || parsed;
+            // Concatenate all source files
+            sourceCode = Object.values(sources)
+              .map((s: unknown) => (s as { content?: string }).content || s)
+              .join("\n\n// --- Next File ---\n\n");
+          } catch {
+            // Not JSON, use as-is
+          }
+        }
+
+        const result = {
+          source: sourceCode,
+          name: sourceResult.ContractName || null,
+          compiler: sourceResult.CompilerVersion || null,
+        };
+
+        // Cache in KV (contract source never changes)
+        if (kv) {
+          await kv.put(cacheKey, JSON.stringify(result), { expirationTtl: CACHE_TTL * 365 }); // Cache for a year
+        }
+
+        return NextResponse.json({ result, cached: false }, { headers: cacheHeaders });
+      }
+
       case "getNatSpec": {
         const cacheKey = `natspec_${chainId}_${normalizedAddress}`;
 

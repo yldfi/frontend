@@ -299,7 +299,11 @@ export function ContractView({
     const isShowingRaw = showRawValues.has(name);
 
     if (isAddressArray) {
-      const addresses = value as string[];
+      const rawAddresses = value as unknown[];
+      // Filter to only valid string addresses
+      const addresses = rawAddresses.filter(
+        (addr): addr is string => typeof addr === "string" && isValidAddress(addr)
+      );
       if (addresses.length === 0) {
         return <span className="text-[var(--muted-foreground)]">[]</span>;
       }
@@ -348,6 +352,10 @@ export function ContractView({
 
   // Render an address value with expand capability
   const renderAddressButton = (addr: string) => {
+    // Guard against non-string values
+    if (typeof addr !== "string") {
+      return <span className="text-[var(--muted-foreground)]">{String(addr)}</span>;
+    }
     const normalized = addr.toLowerCase();
     const isZero = isZeroAddress(addr);
     const isExpanded = expandedAddresses.has(normalized);
