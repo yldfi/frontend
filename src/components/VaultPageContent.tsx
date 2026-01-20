@@ -363,7 +363,7 @@ export function VaultPageContent({ id }: { id: string }) {
 
   // Simulation modal state
   const [showSimulationModal, setShowSimulationModal] = useState(false);
-  const [pendingSimulationPreview, setPendingSimulationPreview] = useState(false);
+  const [isSimulatingPreview, setIsSimulatingPreview] = useState(false);
   const [ethPrice, setEthPrice] = useState<number | null>(null);
   // Track if we should skip simulation (already ran from preview mode)
   const [skipSimulationOnConfirm, setSkipSimulationOnConfirm] = useState(false);
@@ -534,49 +534,43 @@ export function VaultPageContent({ id }: { id: string }) {
     simulationResult,
   } = useZapActions(zapQuote);
 
-  // Watch for simulation result when in preview mode
-  /* eslint-disable react-hooks/set-state-in-effect */
-  useEffect(() => {
-    if (pendingSimulationPreview && simulationResult && zapStatus === "idle") {
-      // Simulation completed (previewOnly stops at idle), show modal
-      setPendingSimulationPreview(false);
-      setShowSimulationModal(true);
-
-      // Fetch ETH price for gas cost display
-      if (publicClient) {
-        publicClient.readContract({
-          address: CHAINLINK_ETH_USD,
-          abi: [{
-            name: "latestRoundData",
-            type: "function",
-            stateMutability: "view",
-            inputs: [],
-            outputs: [
-              { name: "roundId", type: "uint80" },
-              { name: "answer", type: "int256" },
-              { name: "startedAt", type: "uint256" },
-              { name: "updatedAt", type: "uint256" },
-              { name: "answeredInRound", type: "uint80" },
-            ],
-          }],
-          functionName: "latestRoundData",
-        }).then(result => {
-          const answer = result[1] as bigint;
-          setEthPrice(Number(answer) / 1e8);
-        }).catch(() => {});
-      }
-    }
-  }, [pendingSimulationPreview, simulationResult, zapStatus, publicClient, CHAINLINK_ETH_USD]);
-  /* eslint-enable react-hooks/set-state-in-effect */
-
-  // Run simulation for preview mode
-  // eslint-disable-next-line react-hooks/preserve-manual-memoization
+  // Run simulation for preview mode and show modal with result
   const runSimulationPreview = useCallback(async () => {
     if (!zapQuote) return;
-    setPendingSimulationPreview(true);
-    // Run simulation but don't send tx
-    await executeZap({ previewOnly: true });
-  }, [zapQuote, executeZap]);
+    setIsSimulatingPreview(true);
+    try {
+      // Run simulation but don't send tx - executeZap returns the result directly
+      const result = await executeZap({ previewOnly: true });
+      if (result) {
+        setShowSimulationModal(true);
+        // Fetch ETH price for gas cost display
+        if (publicClient) {
+          publicClient.readContract({
+            address: CHAINLINK_ETH_USD,
+            abi: [{
+              name: "latestRoundData",
+              type: "function",
+              stateMutability: "view",
+              inputs: [],
+              outputs: [
+                { name: "roundId", type: "uint80" },
+                { name: "answer", type: "int256" },
+                { name: "startedAt", type: "uint256" },
+                { name: "updatedAt", type: "uint256" },
+                { name: "answeredInRound", type: "uint80" },
+              ],
+            }],
+            functionName: "latestRoundData",
+          }).then(resultData => {
+            const answer = resultData[1] as bigint;
+            setEthPrice(Number(answer) / 1e8);
+          }).catch(() => {});
+        }
+      }
+    } finally {
+      setIsSimulatingPreview(false);
+    }
+  }, [zapQuote, executeZap, publicClient, CHAINLINK_ETH_USD]);
 
   const inputAmount = parseFloat(amount) || 0;
   const outputAmount = activeTab === "deposit"
@@ -1477,7 +1471,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               executeZap();
                             }
                           }}
-                          disabled={!zapQuote || zapIsLoading || zapQuoteLoading || pendingSimulationPreview || (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance)}
+                          disabled={!zapQuote || zapIsLoading || zapQuoteLoading || isSimulatingPreview || (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance)}
                           className={cn(
                             "w-full py-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-base",
                             !zapQuote || zapQuoteLoading || (zapAmount && (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance))
@@ -1485,7 +1479,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer"
                           )}
                         >
-                          {pendingSimulationPreview ? (
+                          {isSimulatingPreview ? (
                             <>
                               <Loader2 size={18} className="animate-spin" />
                               Simulating...

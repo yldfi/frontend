@@ -282,8 +282,9 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   // Options:
   //   - skipSimulation: skip simulation and send tx directly (used after preview confirmation)
   //   - previewOnly: run simulation but don't send tx (for preview mode)
-  const executeZap = useCallback(async (options?: { skipSimulation?: boolean; previewOnly?: boolean }) => {
-    if (!quote || !userAddress || !publicClient) return;
+  // Returns the simulation result when previewOnly is true, otherwise returns null
+  const executeZap = useCallback(async (options?: { skipSimulation?: boolean; previewOnly?: boolean }): Promise<SimulationResult | null> => {
+    if (!quote || !userAddress || !publicClient) return null;
 
     // Clear any previous simulation error
     setSimulationError(null);
@@ -317,7 +318,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       } else {
         sendTransaction(txParams);
       }
-      return;
+      return null;
     }
 
     // Skip Tenderly simulation on VNet - it simulates against mainnet, not VNet state
@@ -423,13 +424,13 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
         parseErrorMessage(new Error(errorMsg), "Transaction would fail")
       );
       setActionState("idle");
-      return;
+      return tenderlyResult.result ?? null;
     }
 
-    // If previewOnly mode, stop here without sending tx
+    // If previewOnly mode, stop here without sending tx and return simulation result
     if (options?.previewOnly) {
       setActionState("idle");
-      return;
+      return tenderlyResult.result ?? null;
     }
 
     // Simulation passed - send the actual transaction
@@ -465,6 +466,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       console.log("[Zap] Using wallet sendTransaction");
       sendTransaction(txParams);
     }
+    return null;
   }, [quote, userAddress, publicClient, sendTransaction, sendViaFlashbots, isFlashbotsEnabled, chainId, isTenderlyVNet, simulationResult]);
 
   // Reset state
