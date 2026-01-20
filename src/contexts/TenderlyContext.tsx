@@ -124,16 +124,20 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
           const errorCode = error?.code || error?.error?.code;
 
           if (!cancelled) {
-            if (errorCode === ERROR_ACCESS_FORBIDDEN) {
-              // -32004 = "Access forbidden" = Tenderly Public RPC
+            const errorMsg = (err as { message?: string })?.message?.toLowerCase() || "";
+
+            if (errorCode === ERROR_ACCESS_FORBIDDEN && errorMsg.includes("forbidden")) {
+              // -32004 with "Access forbidden" = Tenderly Public RPC
+              // Note: Some wallets (1inch) return -32004 with "Method not supported" - that's NOT Tenderly
               setIsTenderlyVNet((prev) => {
                 if (!prev) console.log("[Tenderly] Detected via evm_snapshot error -32004 (Public RPC)");
                 return true;
               });
-            } else if (errorCode === ERROR_METHOD_NOT_FOUND) {
+            } else if (errorCode === ERROR_METHOD_NOT_FOUND || errorCode === ERROR_ACCESS_FORBIDDEN) {
               // -32601 = "Method not found" = Real mainnet
+              // -32004 without "forbidden" = wallet doesn't support method (also mainnet)
               setIsTenderlyVNet((prev) => {
-                if (prev) console.log("[Tenderly] Not detected - mainnet (error -32601)");
+                if (prev) console.log("[Tenderly] Not detected - mainnet (error code:", errorCode, ")");
                 return false;
               });
             } else if ((err as Error)?.message === "timeout") {
