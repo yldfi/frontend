@@ -303,7 +303,7 @@ export function TokenSelector({
                       : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                   )}
                 >
-                  yld.fi Vaults
+                  yld_fi Vaults
                 </button>
               </div>
 
