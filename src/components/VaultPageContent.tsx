@@ -202,12 +202,8 @@ export function VaultPageContent({ id }: { id: string }) {
     return () => window.removeEventListener("tenderly-network-change", handleNetworkChange);
   }, []);
 
-  // Reset tab to deposit when navigating to a different vault
-  useEffect(() => {
-    setActiveTabState("deposit");
-    setAmount("");
-    setZapAmount("");
-  }, [id]);
+  // Track previous vault id to detect navigation vs refresh
+  const prevIdRef = useRef<string | null>(null);
 
   // Zap state with localStorage persistence (scoped per vault)
   const [zapDirection, setZapDirectionState] = useState<ZapDirection>(() => {
@@ -290,6 +286,18 @@ export function VaultPageContent({ id }: { id: string }) {
     }
   }, [id]);
 
+  // Reset state when navigating to a different vault (not on refresh)
+  useEffect(() => {
+    if (prevIdRef.current !== null && prevIdRef.current !== id) {
+      // Navigation to different vault - reset to deposit and zap in
+      setActiveTabState("deposit");
+      setZapDirectionState("in");
+      setAmount("");
+      setZapAmountState("");
+    }
+    prevIdRef.current = id;
+  }, [id]);
+
   // Clear zap amount when navigating away (but not on refresh)
   // On refresh: beforeunload fires, sets flag, cleanup sees flag and skips clear
   // On navigation: cleanup runs without flag, clears the amount
@@ -330,6 +338,7 @@ export function VaultPageContent({ id }: { id: string }) {
   });
   const [showSlippageModal, setShowSlippageModal] = useState(false);
   const [showPriceImpactModal, setShowPriceImpactModal] = useState(false);
+  const [zapInProgress, setZapInProgress] = useState(false);
   const [priceImpactConfirmText, setPriceImpactConfirmText] = useState("");
   // Route display toggle with localStorage persistence
   const [showRoute, setShowRoute] = useState(() => {
@@ -520,7 +529,7 @@ export function VaultPageContent({ id }: { id: string }) {
     underlyingToken: vault?.assetAddress ?? "",
     slippage: zapSlippage,
     underlyingTokenPrice: underlyingPrice, // For illiquid tokens like cvgCVX
-    paused: showSimulationModal || showPriceImpactModal || explorerOpen,
+    paused: showSimulationModal || showPriceImpactModal || explorerOpen || zapInProgress,
   });
 
   // Zap actions (approve + execute)
@@ -540,6 +549,11 @@ export function VaultPageContent({ id }: { id: string }) {
     toggleFlashbots,
     simulationResult,
   } = useZapActions(zapQuote);
+
+  // Sync zapInProgress with zapIsLoading to pause quote fetching during transaction
+  useEffect(() => {
+    setZapInProgress(zapIsLoading);
+  }, [zapIsLoading]);
 
   // Run simulation for preview mode and show modal with result
   const runSimulationPreview = useCallback(async () => {
@@ -1481,7 +1495,7 @@ export function VaultPageContent({ id }: { id: string }) {
                           disabled={!zapQuote || zapIsLoading || zapQuoteLoading || isSimulatingPreview || (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance)}
                           className={cn(
                             "w-full py-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-base",
-                            !zapQuote || zapQuoteLoading || (zapAmount && (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance))
+                            !zapQuote || zapIsLoading || zapQuoteLoading || (zapAmount && (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance))
                               ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
                               : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer"
                           )}
