@@ -510,7 +510,7 @@ export function VaultPageContent({ id }: { id: string }) {
   } = useVaultActions(vaultAddressTyped, vault?.assetAddress ?? TOKENS.CVXCRV, vault?.assetDecimals ?? 18);
 
   // Zap quote - fetch route from Enso (debounced to prevent rate limiting)
-  // Pause quote fetching when simulation/price impact modals are open
+  // Pause quote fetching when simulation/price impact modals are open, or when contract explorer is open
   const { quote: zapQuote, isLoading: zapQuoteLoading, error: zapQuoteError } = useZapQuote({
     inputToken: zapDirection === "in" ? zapInputToken : null,
     outputToken: zapDirection === "out" ? zapOutputToken : null,
@@ -520,7 +520,7 @@ export function VaultPageContent({ id }: { id: string }) {
     underlyingToken: vault?.assetAddress ?? "",
     slippage: zapSlippage,
     underlyingTokenPrice: underlyingPrice, // For illiquid tokens like cvgCVX
-    paused: showSimulationModal || showPriceImpactModal,
+    paused: showSimulationModal || showPriceImpactModal || explorerOpen,
   });
 
   // Zap actions (approve + execute)
