@@ -38,6 +38,9 @@ scripts/
 .env*
 !.env.example
 
+# Cloudflare Worker local secrets
+workers/.dev.vars
+
 # vercel
 .vercel
 
