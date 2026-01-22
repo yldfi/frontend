@@ -317,6 +317,8 @@ export function VaultPageContent({ id }: { id: string }) {
         // Only clear if not a refresh (SPA navigation)
         if (!sessionStorage.getItem("yldfi-is-refresh")) {
           localStorage.removeItem(`yldfi-zap-amount-${id}`);
+          localStorage.removeItem(`yldfi-zap-direction-${id}`);
+          localStorage.removeItem("yldfi-active-tab");
         }
         sessionStorage.removeItem("yldfi-is-refresh");
       } catch {
