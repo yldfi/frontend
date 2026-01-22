@@ -33,12 +33,26 @@ const PROTOCOL_LOGOS: Record<string, string> = {
   aave: "https://assets.coingecko.com/coins/images/12645/thumb/aave-token-round.png",
   compound: "https://assets.coingecko.com/coins/images/10775/thumb/COMP.png",
   curve: "https://assets.coingecko.com/coins/images/12124/thumb/Curve.png",
+  liquidboost: "/tokens/liquidboost.png",
 };
 
 // Get logo for a yield source based on name
-function getYieldSourceLogo(name: string): string | undefined {
+function getYieldSourceLogo(name: string, contractName?: string | null): string | undefined {
   const nameLower = name.toLowerCase();
-  if (nameLower.includes("convex") || nameLower.includes("cvx") || nameLower === "wrapper") {
+  const contractLower = contractName?.toLowerCase() || "";
+
+  // LiquidBoost / Tangent / CvgCvx staking (check first - more specific)
+  if (
+    nameLower.includes("liquidboost") ||
+    nameLower.includes("tangent") ||
+    contractLower.includes("cvgcvxstaking") ||
+    contractLower.includes("liquidboost")
+  ) {
+    return PROTOCOL_LOGOS.liquidboost;
+  }
+  // Convex (but not cvgCVX which is Convergence/Tangent)
+  if ((nameLower.includes("convex") || nameLower.includes("cvx") || nameLower === "wrapper") &&
+      !nameLower.includes("cvgcvx") && !contractLower.includes("cvgcvx")) {
     return PROTOCOL_LOGOS.convex;
   }
   if (nameLower.includes("yearn") || nameLower.includes("yvault")) {
@@ -1242,7 +1256,7 @@ function StrategyFlowDiagramInner({ config }: StrategyFlowDiagramProps) {
     const strategyLogo = vaultConfig?.logo;
 
     // Get yield source logo based on name
-    const wrapperLogo = getYieldSourceLogo(yieldSourceName);
+    const wrapperLogo = getYieldSourceLogo(yieldSourceName, wrapperContractName);
 
     // Determine claim function
     const claimFn = config.yieldSource.claimFn || "getReward";

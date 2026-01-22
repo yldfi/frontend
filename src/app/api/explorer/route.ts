@@ -172,7 +172,18 @@ export async function GET(request: NextRequest) {
           return NextResponse.json({ result: null, cached: false }, { headers: cacheHeaders });
         }
 
-        const name = data.result[0].ContractName || null;
+        let name = data.result[0].ContractName || null;
+
+        // If it's a proxy contract, try to get the implementation name
+        if (name && isProxyContract(name)) {
+          const implAddress = await getImplementationAddress(address, chainId, apiKey);
+          if (implAddress) {
+            const implName = await fetchContractName(implAddress, chainId, apiKey);
+            if (implName && !isProxyContract(implName)) {
+              name = implName;
+            }
+          }
+        }
 
         // Cache in KV (only if we got a name)
         if (kv && name) {
@@ -302,6 +313,78 @@ export async function GET(request: NextRequest) {
       { error: error instanceof Error ? error.message : "Internal server error" },
       { status: 500 }
     );
+  }
+}
+
+// Proxy contract detection and implementation lookup
+const PROXY_CONTRACT_NAMES = [
+  "TransparentUpgradeableProxy",
+  "ERC1967Proxy",
+  "AdminUpgradeabilityProxy",
+  "BeaconProxy",
+  "UUPSUpgradeable",
+];
+
+function isProxyContract(contractName: string): boolean {
+  return PROXY_CONTRACT_NAMES.some(
+    (proxy) => contractName.toLowerCase().includes(proxy.toLowerCase())
+  );
+}
+
+// EIP-1967 implementation slot
+const EIP1967_IMPLEMENTATION_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
+
+async function getImplementationAddress(
+  proxyAddress: string,
+  chainId: string,
+  apiKey: string
+): Promise<string | null> {
+  try {
+    // Use eth_getStorageAt to read the implementation slot
+    const rpcUrl = chainId === "1" ? "https://eth.llamarpc.com" : null;
+    if (!rpcUrl) return null;
+
+    const response = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "eth_getStorageAt",
+        params: [proxyAddress, EIP1967_IMPLEMENTATION_SLOT, "latest"],
+        id: 1,
+      }),
+    });
+
+    const data = (await response.json()) as { result?: string };
+    if (!data.result || data.result === "0x0000000000000000000000000000000000000000000000000000000000000000") {
+      return null;
+    }
+
+    // Extract address from 32-byte slot (last 20 bytes)
+    const implAddress = "0x" + data.result.slice(-40);
+    return implAddress.toLowerCase() !== proxyAddress.toLowerCase() ? implAddress : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchContractName(
+  address: string,
+  chainId: string,
+  apiKey: string
+): Promise<string | null> {
+  try {
+    const url = `${ETHERSCAN_API_BASE}?chainid=${chainId}&module=contract&action=getsourcecode&address=${address}&apikey=${apiKey}`;
+    const response = await rateLimitedFetch(url);
+    const data = (await response.json()) as EtherscanResponse;
+
+    if (data.status !== "1" || !Array.isArray(data.result) || !data.result[0]) {
+      return null;
+    }
+
+    return data.result[0].ContractName || null;
+  } catch {
+    return null;
   }
 }
 
