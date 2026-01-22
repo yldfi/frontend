@@ -195,6 +195,7 @@ describe("middleware geo-blocking logic", () => {
   const GEO_EXEMPT_API_PATHS = [
     "/api/token-holders",
     "/api/simulate",
+    "/api/vaults",
   ];
 
   describe("geo-exempt API paths", () => {
@@ -208,6 +209,10 @@ describe("middleware geo-blocking logic", () => {
 
     it("exempts /api/simulate", () => {
       expect(isGeoExempt("/api/simulate")).toBe(true);
+    });
+
+    it("exempts /api/vaults", () => {
+      expect(isGeoExempt("/api/vaults")).toBe(true);
     });
 
     it("does not exempt /api/avatar", () => {

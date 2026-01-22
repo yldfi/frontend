@@ -30,6 +30,7 @@ function bigIntToNumber18(value: bigint): number {
 
 interface Env {
   VAULT_CACHE: KVNamespace;
+  REFRESH_SECRET?: string;
 }
 
 /**
@@ -206,8 +207,17 @@ export default {
       });
     }
 
-    // POST /api/vaults/refresh - Manual refresh (for testing)
+    // POST /api/vaults/refresh - Manual refresh (requires secret)
     if (url.pathname === "/api/vaults/refresh" && request.method === "POST") {
+      // Require secret for refresh endpoint
+      const authHeader = request.headers.get("x-refresh-secret");
+      if (!env.REFRESH_SECRET || authHeader !== env.REFRESH_SECRET) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
       const data = await fetchVaultData();
       await env.VAULT_CACHE.put("vault-data", JSON.stringify(data), {
         expirationTtl: 600,

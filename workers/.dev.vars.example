@@ -1,0 +1,5 @@
+# Local development secrets for Cloudflare Worker
+# Copy to .dev.vars and fill in values
+# Generate with: openssl rand -base64 32
+
+REFRESH_SECRET=

@@ -35,7 +35,7 @@ interface EtherscanSourceCode {
   CompilerVersion: string;
 }
 
-// Rate limiting
+// Rate limiting for Etherscan API calls
 let lastApiCall = 0;
 const MIN_API_INTERVAL = 350;
 
@@ -47,6 +47,32 @@ async function rateLimitedFetch(url: string): Promise<Response> {
   }
   lastApiCall = Date.now();
   return fetch(url);
+}
+
+// Per-IP rate limiting: 30 requests per minute
+const MAX_REQUESTS_PER_MINUTE = 30;
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const requestLog = new Map<string, number[]>();
+
+function getClientIp(request: NextRequest): string {
+  return (
+    request.headers.get("cf-connecting-ip") ||
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    "unknown"
+  );
+}
+
+function isRateLimited(clientIp: string): boolean {
+  const now = Date.now();
+  const entries = requestLog.get(clientIp) ?? [];
+  const recent = entries.filter((timestamp) => now - timestamp < RATE_LIMIT_WINDOW_MS);
+  if (recent.length >= MAX_REQUESTS_PER_MINUTE) {
+    requestLog.set(clientIp, recent);
+    return true;
+  }
+  recent.push(now);
+  requestLog.set(clientIp, recent);
+  return false;
 }
 
 // Get KV namespace from Cloudflare context
@@ -62,6 +88,12 @@ function getKV(): KVNamespace | null {
 }
 
 export async function GET(request: NextRequest) {
+  // Per-IP rate limiting
+  const clientIp = getClientIp(request);
+  if (isRateLimited(clientIp)) {
+    return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
+  }
+
   const searchParams = request.nextUrl.searchParams;
   const action = searchParams.get("action");
   const address = searchParams.get("address");

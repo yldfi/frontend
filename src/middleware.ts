@@ -184,6 +184,7 @@ const blockedPageHtml = `<!DOCTYPE html>
 const GEO_EXEMPT_API_PATHS = [
   "/api/token-holders",
   "/api/simulate",
+  "/api/vaults", // DefiLlama adapter
 ];
 
 export function middleware(request: NextRequest) {
