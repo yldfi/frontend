@@ -3091,10 +3091,10 @@ async function buildHybridBundle(
       const actions: EnsoBundleAction[] = [
         {
           protocol: "erc20",
-          action: "transfer",
+          action: "approve",
           args: {
             token: TOKENS.CVX,
-            receiver: CVX_HYBRID_ZAPPER,
+            spender: CVX_HYBRID_ZAPPER,
             amount: params.amountIn,
           },
         },
@@ -3103,8 +3103,8 @@ async function buildHybridBundle(
           action: "call",
           args: {
             address: CVX_HYBRID_ZAPPER,
-            method: "zapCvxToCvgCvxWithParamsFromBalance",
-            abi: "function zapCvxToCvgCvxWithParamsFromBalance(uint256 amountIn, uint256 swapAmount, uint256 minDy, uint256 minTotalOut, address receiver, uint256 deadline) returns (uint256)",
+            method: "zapCvxToCvgCvxWithParams",
+            abi: "function zapCvxToCvgCvxWithParams(uint256 amountIn, uint256 swapAmount, uint256 minDy, uint256 minTotalOut, address receiver, uint256 deadline) returns (uint256)",
             args: [
               params.amountIn,
               swapAmount.toString(),
@@ -4347,10 +4347,10 @@ export async function fetchPxCvxZapInRoute(params: {
       const actions: EnsoBundleAction[] = [
         {
           protocol: "erc20",
-          action: "transfer",
+          action: "approve",
           args: {
             token: TOKENS.CVX,
-            receiver: CVX_HYBRID_ZAPPER,
+            spender: CVX_HYBRID_ZAPPER,
             amount: params.amountIn,
           },
         },
@@ -4359,8 +4359,8 @@ export async function fetchPxCvxZapInRoute(params: {
         action: "call",
         args: {
           address: CVX_HYBRID_ZAPPER,
-          method: "zapCvxToPxCvxWithParamsFromBalance",
-          abi: "function zapCvxToPxCvxWithParamsFromBalance(uint256 amountIn, uint256 swapAmount, uint256 minDy, uint256 minTotalOut, address receiver, uint256 deadline) returns (uint256)",
+          method: "zapCvxToPxCvxWithParams",
+          abi: "function zapCvxToPxCvxWithParams(uint256 amountIn, uint256 swapAmount, uint256 minDy, uint256 minTotalOut, address receiver, uint256 deadline) returns (uint256)",
           args: [
             params.amountIn,
             swapAmount.toString(),
