@@ -196,6 +196,16 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
     logoURI: "/tokens/beefy.png",
     type: "defi",
   },
+  // Asymmetry Finance vault token - ERC4626 vault for CVX (3% withdrawal fee)
+  {
+    address: "0x8668a15b7b023Dc77B372a740FCb8939E15257Cf",
+    chainId: 1,
+    name: "Asymmetry Finance CVX",
+    symbol: "afCVX",
+    decimals: 18,
+    logoURI: "/tokens/afcvx.png",
+    type: "defi",
+  },
   // Pirex tokens - pxCVX and lpxCVX (lpxCVX wraps pxCVX for Curve liquidity)
   {
     address: "0xBCe0Cf87F513102F22232436CCa2ca49e815C3aC",
@@ -248,6 +258,8 @@ export const POPULAR_TOKENS = [
   // Beefy Finance vault tokens
   "0x4115150523599D1F6C6Fa27F5A4C27D578Fd8ce5", // mooCvxCRV
   "0xf12DD69a5ab0cfbf41758052D871B881DC0fC8e0", // mooCvxCVX
+  // Asymmetry Finance vault token
+  "0x8668a15b7b023Dc77B372a740FCb8939E15257Cf", // afCVX
   // Pirex tokens
   "0xBCe0Cf87F513102F22232436CCa2ca49e815C3aC", // pxCVX
   "0x389fB29230D02e67eB963C1F5A00f2b16f95BEb7", // lpxCVX
@@ -297,6 +309,8 @@ const TOKEN_SYMBOLS: Record<string, string> = {
   // Beefy Finance vault tokens
   "0x4115150523599d1f6c6fa27f5a4c27d578fd8ce5": "mooCvxCRV",
   "0xf12dd69a5ab0cfbf41758052d871b881dc0fc8e0": "mooCvxCVX",
+  // Asymmetry Finance vault token
+  "0x8668a15b7b023dc77b372a740fcb8939e15257cf": "afCVX",
   // Pirex tokens
   "0x389fb29230d02e67eb963c1f5a00f2b16f95beb7": "lpxCVX",
 };
