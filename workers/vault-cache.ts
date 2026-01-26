@@ -7,8 +7,10 @@ const RPC_URL = "https://eth.llamarpc.com";
 const YCVXCRV_VAULT = "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86";
 const YSCVXCRV_VAULT = "0xCa960E6DF1150100586c51382f619efCCcF72706";
 const YSCVGCVX_VAULT = "0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359";
+const YSPXCVX_VAULT = "0xB246DB2A73EEE3ee026153660c74657C123f8E42";
 const CVXCRV_TOKEN = "0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7";
 const CVGCVX_TOKEN = "0x2191DF768ad71140F9F3E96c1e4407A4aA31d082";
+const PXCVX_TOKEN = "0xBCe0Cf87F513102F22232436CCa2ca49e815C3aC";
 
 // Function selectors
 const TOTAL_ASSETS = "0x01e1d114"; // totalAssets()
@@ -136,13 +138,33 @@ async function getCvgCvxPrice(): Promise<number> {
   return 0;
 }
 
+async function getPxCvxPrice(): Promise<number> {
+  // Fetch from Curve prices API with retry
+  try {
+    const response = await fetchWithRetry(
+      `https://prices.curve.fi/v1/usd_price/ethereum/${PXCVX_TOKEN}`,
+      undefined,
+      2
+    );
+    if (response.ok) {
+      const data = (await response.json()) as { data: { usd_price: number } };
+      return data.data?.usd_price || 0;
+    }
+  } catch (e) {
+    console.error("Curve price API error for pxCVX:", e);
+  }
+  return 0;
+}
+
 async function fetchVaultData() {
-  const [ycvxcrvData, yscvxcrvData, yscvgcvxData, cvxCrvPrice, cvgCvxPrice] = await Promise.all([
+  const [ycvxcrvData, yscvxcrvData, yscvgcvxData, yspxcvxData, cvxCrvPrice, cvgCvxPrice, pxCvxPrice] = await Promise.all([
     getVaultData(YCVXCRV_VAULT),
     getVaultData(YSCVXCRV_VAULT),
     getVaultData(YSCVGCVX_VAULT),
+    getVaultData(YSPXCVX_VAULT),
     getCvxCrvPrice(),
     getCvgCvxPrice(),
+    getPxCvxPrice(),
   ]);
 
   return {
@@ -161,8 +183,14 @@ async function fetchVaultData() {
       ...yscvgcvxData,
       tvlUsd: yscvgcvxData.tvl * cvgCvxPrice,
     },
+    yspxcvx: {
+      address: YSPXCVX_VAULT,
+      ...yspxcvxData,
+      tvlUsd: yspxcvxData.tvl * pxCvxPrice,
+    },
     cvxCrvPrice,
     cvgCvxPrice,
+    pxCvxPrice,
     lastUpdated: new Date().toISOString(),
   };
 }
