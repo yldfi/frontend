@@ -775,6 +775,12 @@ export function VaultPageContent({ id }: { id: string }) {
 
   // Show toast for quote errors (with friendly message and deduplication)
   const lastQuoteErrorRef = useRef<string | null>(null);
+
+  // Clear error ref when inputs change (so new inputs can show the same error again)
+  useEffect(() => {
+    lastQuoteErrorRef.current = null;
+  }, [zapInputToken?.address, zapOutputToken?.address, debouncedZapAmount, zapDirection]);
+
   useEffect(() => {
     if (zapQuoteError) {
       const friendlyMessage = parseQuoteError(zapQuoteError);
@@ -784,10 +790,8 @@ export function VaultPageContent({ id }: { id: string }) {
         lastQuoteErrorRef.current = friendlyMessage;
         toast.error(friendlyMessage);
       }
-    } else {
-      // Clear the ref when there's no error (quote succeeded)
-      lastQuoteErrorRef.current = null;
     }
+    // Don't clear ref on success - prevents duplicate toasts when same error recurs during retries
   }, [zapQuoteError]);
 
   return (
