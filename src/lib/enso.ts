@@ -143,7 +143,7 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
   {
     address: "0x8659Fc767cad6005de79AF65dAfE4249C57927AF",
     chainId: 1,
-    name: "Union CVX",
+    name: "Union Pirex",
     symbol: "uCVX",
     decimals: 18,
     logoURI: "/tokens/llama-airforce.png",
@@ -152,7 +152,7 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
   {
     address: "0xde2bEF0A01845257b4aEF2A2EAa48f6EAeAfa8B7",
     chainId: 1,
-    name: "Union CRV",
+    name: "Unionized Convex CRV",
     symbol: "uCRV",
     decimals: 18,
     logoURI: "/tokens/llama-airforce.png",
@@ -171,7 +171,7 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
   {
     address: "0x2b95A1Dcc3D405535f9ed33c219ab38E8d7e0884",
     chainId: 1,
-    name: "Aladdin CRV",
+    name: "Aladdin cvxCRV",
     symbol: "aCRV",
     decimals: 18,
     logoURI: "/tokens/aladdin-crv.png",
@@ -200,7 +200,7 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
   {
     address: "0x8668a15b7b023Dc77B372a740FCb8939E15257Cf",
     chainId: 1,
-    name: "Asymmetry Finance CVX",
+    name: "Asymmetry Finance afCVX",
     symbol: "afCVX",
     decimals: 18,
     logoURI: "/tokens/afcvx.png",
