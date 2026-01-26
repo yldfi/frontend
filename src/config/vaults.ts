@@ -113,6 +113,13 @@ export const BEEFY = {
   MOO_CVX_CVX_UNDERLYING: "0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B" as const, // CVX
 } as const;
 
+// Asymmetry Finance vaults - ERC4626 compliant with withdrawal fee
+export const ASYMMETRY = {
+  // afCVX - ERC4626 vault for CVX (has 3% withdrawal fee)
+  AFCVX: "0x8668a15b7b023Dc77B372a740FCb8939E15257Cf" as const,
+  AFCVX_UNDERLYING: "0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B" as const, // CVX
+} as const;
+
 // All external vaults that can be used as zap input sources
 export const EXTERNAL_VAULT_TOKENS = [
   // Llama Airforce
@@ -124,6 +131,8 @@ export const EXTERNAL_VAULT_TOKENS = [
   // Beefy
   BEEFY.MOO_CVX_CRV,
   BEEFY.MOO_CVX_CVX,
+  // Asymmetry
+  ASYMMETRY.AFCVX,
 ] as const;
 
 // External vault interface types
@@ -191,6 +200,15 @@ export const EXTERNAL_VAULT_CONFIG: Record<string, ExternalVaultConfig> = {
     symbol: "mooCvxCVX",
     name: "Moo Convex CVX",
     protocol: "Beefy",
+  },
+  // Asymmetry
+  [ASYMMETRY.AFCVX.toLowerCase()]: {
+    address: ASYMMETRY.AFCVX,
+    underlying: ASYMMETRY.AFCVX_UNDERLYING,
+    interface: "erc4626",
+    symbol: "afCVX",
+    name: "Asymmetry Finance CVX",
+    protocol: "Asymmetry",
   },
 };
 

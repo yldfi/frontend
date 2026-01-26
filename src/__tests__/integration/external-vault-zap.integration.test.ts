@@ -37,6 +37,7 @@ import {
   LLAMA_AIRFORCE,
   CONCENTRATOR,
   BEEFY,
+  ASYMMETRY,
   getExternalVaultConfig,
 } from "@/config/vaults";
 
@@ -348,6 +349,72 @@ describe("External Vault Zap Integration", () => {
   });
 
   // ============================================
+  // Asymmetry Finance Vaults
+  // ============================================
+
+  describe("Asymmetry - afCVX Zap In", () => {
+    it(
+      "afCVX → yscvgCVX (CVX → cvgCVX route)",
+      async () => {
+        try {
+          const result = await fetchExternalVaultZapInRoute({
+            fromAddress: TEST_WALLET,
+            vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+            externalVaultAddress: ASYMMETRY.AFCVX,
+            amountIn: TEN_SHARES,
+            slippage: TEST_SLIPPAGE,
+          });
+
+          expect(result.amountsOut).toBeDefined();
+          const vaultOutput =
+            result.amountsOut[VAULT_ADDRESSES.YSCVGCVX.toLowerCase()] ||
+            result.amountsOut[VAULT_ADDRESSES.YSCVGCVX];
+          expect(vaultOutput).toBeDefined();
+          expect(BigInt(vaultOutput)).toBeGreaterThan(0n);
+          expect(result.tx).toBeDefined();
+        } catch (e) {
+          if (isExpectedError(e)) {
+            console.log("Note: Expected error (test wallet has no afCVX or rate limited)");
+            return;
+          }
+          throw e;
+        }
+      },
+      API_TIMEOUT
+    );
+
+    it(
+      "afCVX → ycvxCRV (CVX → cvxCRV route)",
+      async () => {
+        try {
+          const result = await fetchExternalVaultZapInRoute({
+            fromAddress: TEST_WALLET,
+            vaultAddress: VAULT_ADDRESSES.YCVXCRV,
+            externalVaultAddress: ASYMMETRY.AFCVX,
+            amountIn: TEN_SHARES,
+            slippage: TEST_SLIPPAGE,
+          });
+
+          expect(result.amountsOut).toBeDefined();
+          const vaultOutput =
+            result.amountsOut[VAULT_ADDRESSES.YCVXCRV.toLowerCase()] ||
+            result.amountsOut[VAULT_ADDRESSES.YCVXCRV];
+          expect(vaultOutput).toBeDefined();
+          expect(BigInt(vaultOutput)).toBeGreaterThan(0n);
+          expect(result.tx).toBeDefined();
+        } catch (e) {
+          if (isExpectedError(e)) {
+            console.log("Note: Expected error (test wallet has no afCVX or rate limited)");
+            return;
+          }
+          throw e;
+        }
+      },
+      API_TIMEOUT
+    );
+  });
+
+  // ============================================
   // Pirex Tokens (pxCVX / lpxCVX)
   // ============================================
 
@@ -543,6 +610,31 @@ describe("External Vault Zap Integration", () => {
         } catch (e) {
           if (isExpectedError(e)) {
             console.log("Note: Expected error (test wallet has no mooCvxCRV or rate limited)");
+            return;
+          }
+          throw e;
+        }
+      },
+      API_TIMEOUT
+    );
+
+    it(
+      "dispatches afCVX correctly",
+      async () => {
+        try {
+          const result = await fetchExternalVaultZapInRoute({
+            fromAddress: TEST_WALLET,
+            vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+            externalVaultAddress: ASYMMETRY.AFCVX,
+            amountIn: TEN_SHARES,
+            slippage: TEST_SLIPPAGE,
+          });
+
+          expect(result.amountsOut).toBeDefined();
+          expect(result.tx).toBeDefined();
+        } catch (e) {
+          if (isExpectedError(e)) {
+            console.log("Note: Expected error (test wallet has no afCVX or rate limited)");
             return;
           }
           throw e;
