@@ -13,6 +13,7 @@ import { useYearnVault, formatYearnVaultData } from "@/hooks/useYearnVault";
 import { useMultipleVaultBalances } from "@/hooks/useVaultBalance";
 import { useMultiplePricePerShare } from "@/hooks/usePricePerShare";
 import { useVaultCache } from "@/hooks/useVaultCache";
+import { useCvxCrvPrice } from "@/hooks/useCvxCrvPrice";
 import { VAULTS, VAULT_ADDRESSES } from "@/config/vaults";
 
 // Build vault configs from centralized config
@@ -94,8 +95,11 @@ export function HomePageContent() {
   const yscvgcvxVault = formatYearnVaultData(yscvgcvxData?.vault, yscvgcvxData?.vaultStrategies);
   const yspxcvxVault = formatYearnVaultData(yspxcvxData?.vault, yspxcvxData?.vaultStrategies);
 
-  // Use cached token prices (falls back to 0 if cache not ready)
-  const cvxCrvPrice = cacheData?.cvxCrvPrice ?? 0;
+  // Use on-chain cvxCRV price (like vault detail page) to avoid $0 on cache miss
+  const { price: cvxCrvPriceOnChain } = useCvxCrvPrice();
+  // Fall back to cache only if on-chain price not available yet
+  const cvxCrvPrice = cvxCrvPriceOnChain || cacheData?.cvxCrvPrice || 0;
+  // cvgCVX and pxCVX still use cache (no on-chain oracle hooks yet)
   const cvgCvxPrice = cacheData?.cvgCvxPrice ?? 0;
   const pxCvxPrice = cacheData?.pxCvxPrice ?? 0;
 
