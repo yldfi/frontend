@@ -15,6 +15,7 @@ export const TOKENS = {
   STKCVXCRV: "0xaa0C3f5F7DFD688C6E646F66CD2a6B66ACdbE434" as const,
   CVGCVX: "0x2191DF768ad71140F9F3E96c1e4407A4aA31d082" as const,
   PXCVX: "0xBCe0Cf87F513102F22232436CCa2ca49e815C3aC" as const,
+  LPXCVX: "0x389fB29230D02e67eB963C1F5A00f2b16f95BEb7" as const, // Wrapped pxCVX for Curve swap
   CVX1: "0x6C9815826FdF8c7a45cCfEd2064dbaB33a078712" as const, // CVX wrapper for Convergence
 } as const;
 
@@ -72,6 +73,142 @@ export const PIREX = {
     LPXCVX: 1,
   } as const,
 } as const;
+
+// ============================================================================
+// External Vault Infrastructure (Llama Airforce, Concentrator, Beefy)
+// Users holding these tokens can zap directly into yld_fi vaults
+// ============================================================================
+
+// Llama Airforce (Union) vaults
+export const LLAMA_AIRFORCE = {
+  // uCVX - ERC4626 vault for pxCVX
+  UCVX: "0x8659Fc767cad6005de79AF65dAfE4249C57927AF" as const,
+  UCVX_UNDERLYING: "0xBCe0Cf87F513102F22232436CCa2ca49e815C3aC" as const, // pxCVX
+
+  // uCRV - Custom vault for cvxCRV (NOT ERC4626!)
+  // Uses withdraw(_to, _shares) instead of redeem(shares, receiver, owner)
+  UCRV: "0xde2bEF0A01845257b4aEF2A2EAa48f6EAeAfa8B7" as const,
+  UCRV_UNDERLYING: "0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7" as const, // cvxCRV
+} as const;
+
+// Concentrator (Aladdin) vaults - both are ERC4626 compliant
+export const CONCENTRATOR = {
+  // aCVX - ERC4626 vault for CVX
+  ACVX: "0xb0903Ab70a7467eE5756074b31ac88aEBb8fB777" as const,
+  ACVX_UNDERLYING: "0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B" as const, // CVX
+
+  // aCRV - ERC4626 vault for cvxCRV
+  ACRV: "0x2b95A1Dcc3D405535f9ed33c219ab38E8d7e0884" as const,
+  ACRV_UNDERLYING: "0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7" as const, // cvxCRV
+} as const;
+
+// Beefy Finance vaults - uses withdraw(shares) interface (not ERC4626)
+export const BEEFY = {
+  // mooCvxCRV - Beefy vault for cvxCRV
+  MOO_CVX_CRV: "0x4115150523599D1F6C6Fa27F5A4C27D578Fd8ce5" as const,
+  MOO_CVX_CRV_UNDERLYING: "0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7" as const, // cvxCRV
+
+  // mooCvxCVX - Beefy vault for CVX
+  MOO_CVX_CVX: "0xf12DD69a5ab0cfbf41758052D871B881DC0fC8e0" as const,
+  MOO_CVX_CVX_UNDERLYING: "0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B" as const, // CVX
+} as const;
+
+// All external vaults that can be used as zap input sources
+export const EXTERNAL_VAULT_TOKENS = [
+  // Llama Airforce
+  LLAMA_AIRFORCE.UCVX,
+  LLAMA_AIRFORCE.UCRV,
+  // Concentrator
+  CONCENTRATOR.ACVX,
+  CONCENTRATOR.ACRV,
+  // Beefy
+  BEEFY.MOO_CVX_CRV,
+  BEEFY.MOO_CVX_CVX,
+] as const;
+
+// External vault interface types
+export type ExternalVaultInterface = "erc4626" | "ucrv" | "beefy";
+
+// External vault config for routing
+export interface ExternalVaultConfig {
+  address: string;
+  underlying: string;
+  interface: ExternalVaultInterface;
+  symbol: string;
+  name: string;
+  protocol: string;
+}
+
+// Map of external vault addresses to their configurations
+export const EXTERNAL_VAULT_CONFIG: Record<string, ExternalVaultConfig> = {
+  // Llama Airforce
+  [LLAMA_AIRFORCE.UCVX.toLowerCase()]: {
+    address: LLAMA_AIRFORCE.UCVX,
+    underlying: LLAMA_AIRFORCE.UCVX_UNDERLYING,
+    interface: "erc4626",
+    symbol: "uCVX",
+    name: "Union CVX",
+    protocol: "Llama Airforce",
+  },
+  [LLAMA_AIRFORCE.UCRV.toLowerCase()]: {
+    address: LLAMA_AIRFORCE.UCRV,
+    underlying: LLAMA_AIRFORCE.UCRV_UNDERLYING,
+    interface: "ucrv", // Custom interface: withdraw(_to, _shares)
+    symbol: "uCRV",
+    name: "Union CRV",
+    protocol: "Llama Airforce",
+  },
+  // Concentrator
+  [CONCENTRATOR.ACVX.toLowerCase()]: {
+    address: CONCENTRATOR.ACVX,
+    underlying: CONCENTRATOR.ACVX_UNDERLYING,
+    interface: "erc4626",
+    symbol: "aCVX",
+    name: "Aladdin CVX",
+    protocol: "Concentrator",
+  },
+  [CONCENTRATOR.ACRV.toLowerCase()]: {
+    address: CONCENTRATOR.ACRV,
+    underlying: CONCENTRATOR.ACRV_UNDERLYING,
+    interface: "erc4626",
+    symbol: "aCRV",
+    name: "Aladdin CRV",
+    protocol: "Concentrator",
+  },
+  // Beefy
+  [BEEFY.MOO_CVX_CRV.toLowerCase()]: {
+    address: BEEFY.MOO_CVX_CRV,
+    underlying: BEEFY.MOO_CVX_CRV_UNDERLYING,
+    interface: "beefy", // Custom interface: withdraw(_shares)
+    symbol: "mooCvxCRV",
+    name: "Moo Convex CRV",
+    protocol: "Beefy",
+  },
+  [BEEFY.MOO_CVX_CVX.toLowerCase()]: {
+    address: BEEFY.MOO_CVX_CVX,
+    underlying: BEEFY.MOO_CVX_CVX_UNDERLYING,
+    interface: "beefy",
+    symbol: "mooCvxCVX",
+    name: "Moo Convex CVX",
+    protocol: "Beefy",
+  },
+};
+
+// Check if address is an external vault token
+export function isExternalVaultToken(address: string): boolean {
+  return address.toLowerCase() in EXTERNAL_VAULT_CONFIG;
+}
+
+// Get external vault config
+export function getExternalVaultConfig(address: string): ExternalVaultConfig | undefined {
+  return EXTERNAL_VAULT_CONFIG[address.toLowerCase()];
+}
+
+// Get the underlying token for an external vault
+export function getExternalVaultUnderlying(address: string): string | undefined {
+  const config = getExternalVaultConfig(address);
+  return config?.underlying;
+}
 
 // Vault addresses
 export const VAULT_ADDRESSES = {

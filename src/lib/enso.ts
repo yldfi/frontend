@@ -139,6 +139,82 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
     logoURI: "https://assets.coingecko.com/coins/images/30118/thumb/crvusd.jpeg",
     type: "base",
   },
+  // Llama Airforce (Union) vault tokens - external vaults users can zap FROM
+  {
+    address: "0x8659Fc767cad6005de79AF65dAfE4249C57927AF",
+    chainId: 1,
+    name: "Union CVX",
+    symbol: "uCVX",
+    decimals: 18,
+    logoURI: "/tokens/llama-airforce.png",
+    type: "defi",
+  },
+  {
+    address: "0xde2bEF0A01845257b4aEF2A2EAa48f6EAeAfa8B7",
+    chainId: 1,
+    name: "Union CRV",
+    symbol: "uCRV",
+    decimals: 18,
+    logoURI: "/tokens/llama-airforce.png",
+    type: "defi",
+  },
+  // Concentrator (Aladdin) vault tokens - external vaults users can zap FROM
+  {
+    address: "0xb0903Ab70a7467eE5756074b31ac88aEBb8fB777",
+    chainId: 1,
+    name: "Aladdin CVX",
+    symbol: "aCVX",
+    decimals: 18,
+    logoURI: "/tokens/aladdin-cvx.png",
+    type: "defi",
+  },
+  {
+    address: "0x2b95A1Dcc3D405535f9ed33c219ab38E8d7e0884",
+    chainId: 1,
+    name: "Aladdin CRV",
+    symbol: "aCRV",
+    decimals: 18,
+    logoURI: "/tokens/aladdin-crv.png",
+    type: "defi",
+  },
+  // Beefy Finance vault tokens - external vaults users can zap FROM
+  {
+    address: "0x4115150523599D1F6C6Fa27F5A4C27D578Fd8ce5",
+    chainId: 1,
+    name: "Moo Convex CRV",
+    symbol: "mooCvxCRV",
+    decimals: 18,
+    logoURI: "/tokens/beefy.png",
+    type: "defi",
+  },
+  {
+    address: "0xf12DD69a5ab0cfbf41758052D871B881DC0fC8e0",
+    chainId: 1,
+    name: "Moo Convex CVX",
+    symbol: "mooCvxCVX",
+    decimals: 18,
+    logoURI: "/tokens/beefy.png",
+    type: "defi",
+  },
+  // Pirex tokens - pxCVX and lpxCVX (lpxCVX wraps pxCVX for Curve liquidity)
+  {
+    address: "0xBCe0Cf87F513102F22232436CCa2ca49e815C3aC",
+    chainId: 1,
+    name: "Pirex CVX",
+    symbol: "pxCVX",
+    decimals: 18,
+    logoURI: "/tokens/pxcvx.png",
+    type: "defi",
+  },
+  {
+    address: "0x389fB29230D02e67eB963C1F5A00f2b16f95BEb7",
+    chainId: 1,
+    name: "Liquid Pirex CVX",
+    symbol: "lpxCVX",
+    decimals: 18,
+    logoURI: "/tokens/pxcvx.png",
+    type: "defi",
+  },
   // yld_fi vault tokens - from centralized config
   ...Object.values(VAULTS).map((vault) => ({
     address: vault.address,
@@ -163,6 +239,18 @@ export const POPULAR_TOKENS = [
   "0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B", // CVX
   CVXCRV_ADDRESS, // cvxCRV
   "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E", // crvUSD
+  // Llama Airforce (Union) vault tokens
+  "0x8659Fc767cad6005de79AF65dAfE4249C57927AF", // uCVX
+  "0xde2bEF0A01845257b4aEF2A2EAa48f6EAeAfa8B7", // uCRV
+  // Concentrator (Aladdin) vault tokens
+  "0xb0903Ab70a7467eE5756074b31ac88aEBb8fB777", // aCVX
+  "0x2b95A1Dcc3D405535f9ed33c219ab38E8d7e0884", // aCRV
+  // Beefy Finance vault tokens
+  "0x4115150523599D1F6C6Fa27F5A4C27D578Fd8ce5", // mooCvxCRV
+  "0xf12DD69a5ab0cfbf41758052D871B881DC0fC8e0", // mooCvxCVX
+  // Pirex tokens
+  "0xBCe0Cf87F513102F22232436CCa2ca49e815C3aC", // pxCVX
+  "0x389fB29230D02e67eB963C1F5A00f2b16f95BEb7", // lpxCVX
   ...Object.values(VAULT_ADDRESSES), // yld_fi vaults
 ];
 
@@ -200,6 +288,17 @@ const TOKEN_SYMBOLS: Record<string, string> = {
   "0x6b175474e89094c44da98b954eedcdecb5be4dBf": "DAI",
   "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": "WETH",
   "0xd533a949740bb3306d119cc777fa900ba034cd52": "CRV",
+  // Llama Airforce (Union) vault tokens
+  "0x8659fc767cad6005de79af65dafe4249c57927af": "uCVX",
+  "0xde2bef0a01845257b4aef2a2eaa48f6eaeafa8b7": "uCRV",
+  // Concentrator (Aladdin) vault tokens
+  "0xb0903ab70a7467ee5756074b31ac88aebb8fb777": "aCVX",
+  "0x2b95a1dcc3d405535f9ed33c219ab38e8d7e0884": "aCRV",
+  // Beefy Finance vault tokens
+  "0x4115150523599d1f6c6fa27f5a4c27d578fd8ce5": "mooCvxCRV",
+  "0xf12dd69a5ab0cfbf41758052d871b881dc0fc8e0": "mooCvxCVX",
+  // Pirex tokens
+  "0x389fb29230d02e67eb963c1f5a00f2b16f95beb7": "lpxCVX",
 };
 
 /**
@@ -4729,6 +4828,1086 @@ export async function fetchPxCvxZapInRoute(params: {
       swapProtocol: "Curve",
       mintProtocol: "Pirex",
     },
+  };
+
+  return { ...bundleResult, routeInfo };
+}
+
+// ============================================================================
+// Llama Airforce (Union) External Vault Zap Functions
+// ============================================================================
+
+/**
+ * Preview uCRV withdraw - estimates cvxCRV output for given shares
+ * uCRV uses a non-standard interface (not ERC4626)
+ * Formula: shares * totalUnderlying / totalSupply
+ */
+async function previewUCrvWithdraw(shares: string): Promise<string> {
+  const { LLAMA_AIRFORCE } = await import("@/config/vaults");
+  const { PUBLIC_RPC_URLS } = await import("@/config/rpc");
+
+  // Batch RPC calls: totalUnderlying() and totalSupply()
+  const batch = [
+    { jsonrpc: "2.0", id: 0, method: "eth_call", params: [{ to: LLAMA_AIRFORCE.UCRV, data: "0x7bbd8ce4" }, "latest"] }, // totalUnderlying()
+    { jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: LLAMA_AIRFORCE.UCRV, data: "0x18160ddd" }, "latest"] }, // totalSupply()
+  ];
+
+  const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(batch),
+  });
+
+  const results = (await response.json()) as Array<{ id: number; result?: string }>;
+  results.sort((a, b) => a.id - b.id);
+
+  const totalUnderlying = BigInt(results[0].result || "0");
+  const totalSupply = BigInt(results[1].result || "1"); // Avoid division by zero
+
+  if (totalSupply === 0n) return "0";
+
+  // shares * totalUnderlying / totalSupply
+  const cvxCrvOutput = (BigInt(shares) * totalUnderlying) / totalSupply;
+  return cvxCrvOutput.toString();
+}
+
+/**
+ * Zap from uCRV (Llama Airforce) into any yld_fi vault
+ *
+ * Route: uCRV → withdraw → cvxCRV → route to target underlying → deposit
+ *
+ * CRITICAL: uCRV uses non-standard withdraw(_to, _shares) signature!
+ * - NOT ERC4626 redeem(shares, receiver, owner)
+ * - Tokens go to ENSO_SHORTCUTS (msg.sender when Enso calls external contracts)
+ */
+export async function fetchUCrvZapInRoute(params: {
+  fromAddress: string;
+  vaultAddress: string;
+  amountIn: string;
+  slippage?: string;
+}): Promise<CustomBundleResponse> {
+  const { LLAMA_AIRFORCE, getVaultByAddress } = await import("@/config/vaults");
+  const slippageBps = validateSlippage(params.slippage);
+
+  // Get target vault's underlying token
+  const targetVault = getVaultByAddress(params.vaultAddress);
+  if (!targetVault) {
+    throw new Error(`Unknown target vault: ${params.vaultAddress}`);
+  }
+  const targetUnderlying = targetVault.assetAddress;
+  const vaultSymbol = targetVault.symbol;
+
+  // Estimate cvxCRV output from uCRV withdraw
+  const expectedCvxCrvOutput = await previewUCrvWithdraw(params.amountIn);
+  const conservativeCvxCrv = applySlippageBuffer(BigInt(expectedCvxCrvOutput), slippageBps);
+
+  // Check if target vault accepts cvxCRV directly
+  const targetIsCvxCrv = targetUnderlying.toLowerCase() === LLAMA_AIRFORCE.UCRV_UNDERLYING.toLowerCase();
+
+  const actions: EnsoBundleAction[] = [
+    // Action 0: Withdraw uCRV → cvxCRV using custom call (non-ERC4626)
+    {
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: LLAMA_AIRFORCE.UCRV,
+        method: "withdraw",
+        abi: "function withdraw(address _to, uint256 _shares) returns (uint256)",
+        args: [
+          ENSO_SHORTCUTS, // cvxCRV goes to Enso Shortcuts for downstream actions
+          params.amountIn,
+        ],
+      },
+    },
+  ];
+
+  if (targetIsCvxCrv) {
+    // Direct deposit - target accepts cvxCRV
+    actions.push({
+      protocol: "erc4626",
+      action: "deposit",
+      args: {
+        tokenIn: LLAMA_AIRFORCE.UCRV_UNDERLYING,
+        tokenOut: params.vaultAddress,
+        amountIn: { useOutputOfCallAt: 0 },
+        primaryAddress: params.vaultAddress,
+      },
+    });
+  } else {
+    // Route cvxCRV → target underlying via Enso
+    actions.push({
+      protocol: "enso",
+      action: "route",
+      args: {
+        tokenIn: LLAMA_AIRFORCE.UCRV_UNDERLYING,
+        tokenOut: targetUnderlying,
+        amountIn: { useOutputOfCallAt: 0 },
+        slippage: params.slippage ?? "100",
+      },
+    });
+    // Then deposit to vault
+    actions.push({
+      protocol: "erc4626",
+      action: "deposit",
+      args: {
+        tokenIn: targetUnderlying,
+        tokenOut: params.vaultAddress,
+        amountIn: { useOutputOfCallAt: 1 }, // Output of route
+        primaryAddress: params.vaultAddress,
+      },
+    });
+  }
+
+  const bundleResult = await fetchBundle({
+    fromAddress: params.fromAddress,
+    actions,
+    routingStrategy: "router",
+  });
+
+  // Build routeInfo
+  const targetUnderlyingSymbol = getTokenSymbol(targetUnderlying);
+  const steps: RouteStep[] = [
+    { tokenSymbol: "uCRV", action: "Exit", description: "uCRV for cvxCRV", protocol: "Llama Airforce" },
+  ];
+
+  if (targetIsCvxCrv) {
+    steps.push({ tokenSymbol: "cvxCRV", action: "Deposit", description: `cvxCRV into ${vaultSymbol}`, protocol: "yld_fi" });
+  } else {
+    steps.push({ tokenSymbol: "cvxCRV", action: "Swap", description: `cvxCRV for ${targetUnderlyingSymbol}`, protocol: "Enso", amount: conservativeCvxCrv });
+    steps.push({ tokenSymbol: targetUnderlyingSymbol, action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld_fi" });
+  }
+
+  steps.push({ tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld_fi" });
+
+  const routeInfo: RouteInfo = {
+    steps,
+    tokens: targetIsCvxCrv ? ["uCRV", "cvxCRV", vaultSymbol] : ["uCRV", "cvxCRV", targetUnderlyingSymbol, vaultSymbol],
+    protocols: targetIsCvxCrv ? ["Llama Airforce", "yld_fi"] : ["Llama Airforce", "Enso", "yld_fi"],
+  };
+
+  return { ...bundleResult, routeInfo };
+}
+
+/**
+ * Zap from uCVX (Llama Airforce) into any yld_fi vault
+ *
+ * Route: uCVX → redeem → pxCVX → route to target underlying → deposit
+ *
+ * uCVX is a standard ERC4626 vault for pxCVX
+ */
+export async function fetchUCvxZapInRoute(params: {
+  fromAddress: string;
+  vaultAddress: string;
+  amountIn: string;
+  slippage?: string;
+}): Promise<CustomBundleResponse> {
+  const { LLAMA_AIRFORCE, getVaultByAddress } = await import("@/config/vaults");
+  const slippageBps = validateSlippage(params.slippage);
+
+  // Get target vault's underlying token
+  const targetVault = getVaultByAddress(params.vaultAddress);
+  if (!targetVault) {
+    throw new Error(`Unknown target vault: ${params.vaultAddress}`);
+  }
+  const targetUnderlying = targetVault.assetAddress;
+  const vaultSymbol = targetVault.symbol;
+
+  // Estimate pxCVX output from uCVX redeem using standard previewRedeem
+  const expectedPxCvxOutput = await previewRedeem(LLAMA_AIRFORCE.UCVX, params.amountIn);
+  const conservativePxCvx = applySlippageBuffer(BigInt(expectedPxCvxOutput), slippageBps);
+
+  // Check if target vault accepts pxCVX directly (yspxCVX)
+  const targetIsPxCvx = targetUnderlying.toLowerCase() === LLAMA_AIRFORCE.UCVX_UNDERLYING.toLowerCase();
+
+  const actions: EnsoBundleAction[] = [
+    // Action 0: Redeem uCVX → pxCVX using standard ERC4626
+    {
+      protocol: "erc4626",
+      action: "redeem",
+      args: {
+        tokenIn: LLAMA_AIRFORCE.UCVX,
+        tokenOut: LLAMA_AIRFORCE.UCVX_UNDERLYING, // pxCVX
+        amountIn: params.amountIn,
+        primaryAddress: LLAMA_AIRFORCE.UCVX,
+      },
+    },
+  ];
+
+  if (targetIsPxCvx) {
+    // Direct deposit - target accepts pxCVX
+    actions.push({
+      protocol: "erc4626",
+      action: "deposit",
+      args: {
+        tokenIn: LLAMA_AIRFORCE.UCVX_UNDERLYING,
+        tokenOut: params.vaultAddress,
+        amountIn: { useOutputOfCallAt: 0 },
+        primaryAddress: params.vaultAddress,
+      },
+    });
+  } else {
+    // pxCVX has no direct DEX liquidity - need to route via CVX
+    // pxCVX → lpxCVX (1:1 wrap) → CVX (Curve) → target underlying
+
+    // Use the existing pxCVX out routing infrastructure
+    // First, we need to exit pxCVX to CVX, then route CVX to target underlying
+    const { PIREX } = await import("@/config/vaults");
+
+    // Calculate expected CVX output from lpxCVX → CVX swap
+    const expectedCvxOutput = await getLpxCvxToCvxSwapRate(conservativePxCvx);
+    if (expectedCvxOutput === 0n) {
+      throw new Error("Failed to estimate Curve lpxCVX→CVX swap output");
+    }
+    const minDy = calculateMinDy(expectedCvxOutput, slippageBps);
+
+    // Action 1: Approve pxCVX to lpxCVX contract for wrapping
+    actions.push({
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: LLAMA_AIRFORCE.UCVX_UNDERLYING, // pxCVX
+        spender: PIREX.LPXCVX,
+        amount: { useOutputOfCallAt: 0 },
+      },
+    });
+
+    // Action 2: Wrap pxCVX → lpxCVX (1:1 ratio)
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: PIREX.LPXCVX,
+        method: "wrap",
+        abi: "function wrap(uint256 amount)",
+        args: [{ useOutputOfCallAt: 0 }],
+      },
+    });
+
+    // Action 3: Approve lpxCVX to Curve pool
+    actions.push({
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: PIREX.LPXCVX,
+        spender: PIREX.LPXCVX_CVX_POOL,
+        amount: { useOutputOfCallAt: 0 }, // Same as pxCVX (1:1 wrap)
+      },
+    });
+
+    // Action 4: Exchange lpxCVX → CVX on Curve pool
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: PIREX.LPXCVX_CVX_POOL,
+        method: "exchange",
+        abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)",
+        args: [
+          String(PIREX.POOL_INDEX.LPXCVX), // i = 1 (lpxCVX)
+          String(PIREX.POOL_INDEX.CVX), // j = 0 (CVX)
+          { useOutputOfCallAt: 0 }, // dx = same as pxCVX (1:1 wrap)
+          minDy, // min_dy with slippage
+        ],
+      },
+    });
+
+    // Check if target accepts CVX directly
+    const targetIsCvx = targetUnderlying.toLowerCase() === TOKENS.CVX.toLowerCase();
+
+    if (targetIsCvx) {
+      // Direct deposit CVX
+      actions.push({
+        protocol: "erc4626",
+        action: "deposit",
+        args: {
+          tokenIn: TOKENS.CVX,
+          tokenOut: params.vaultAddress,
+          amountIn: { useOutputOfCallAt: 4 }, // CVX from Curve exchange
+          primaryAddress: params.vaultAddress,
+        },
+      });
+    } else {
+      // Route CVX → target underlying via Enso
+      actions.push({
+        protocol: "enso",
+        action: "route",
+        args: {
+          tokenIn: TOKENS.CVX,
+          tokenOut: targetUnderlying,
+          amountIn: { useOutputOfCallAt: 4 }, // CVX from Curve exchange
+          slippage: params.slippage ?? "100",
+        },
+      });
+      // Then deposit to vault
+      actions.push({
+        protocol: "erc4626",
+        action: "deposit",
+        args: {
+          tokenIn: targetUnderlying,
+          tokenOut: params.vaultAddress,
+          amountIn: { useOutputOfCallAt: 5 }, // Output of route
+          primaryAddress: params.vaultAddress,
+        },
+      });
+    }
+  }
+
+  const bundleResult = await fetchBundle({
+    fromAddress: params.fromAddress,
+    actions,
+    routingStrategy: "router",
+  });
+
+  // Build routeInfo
+  const targetUnderlyingSymbol = getTokenSymbol(targetUnderlying);
+  const steps: RouteStep[] = [
+    { tokenSymbol: "uCVX", action: "Exit", description: "uCVX for pxCVX", protocol: "Llama Airforce" },
+  ];
+
+  if (targetIsPxCvx) {
+    steps.push({ tokenSymbol: "pxCVX", action: "Deposit", description: `pxCVX into ${vaultSymbol}`, protocol: "yld_fi" });
+  } else {
+    steps.push({ tokenSymbol: "pxCVX", action: "Swap", description: "pxCVX for CVX", protocol: "Curve" });
+
+    const targetIsCvx = targetUnderlying.toLowerCase() === TOKENS.CVX.toLowerCase();
+    if (targetIsCvx) {
+      steps.push({ tokenSymbol: "CVX", action: "Deposit", description: `CVX into ${vaultSymbol}`, protocol: "yld_fi" });
+    } else {
+      steps.push({ tokenSymbol: "CVX", action: "Swap", description: `CVX for ${targetUnderlyingSymbol}`, protocol: "Enso" });
+      steps.push({ tokenSymbol: targetUnderlyingSymbol, action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld_fi" });
+    }
+  }
+
+  steps.push({ tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld_fi" });
+
+  // Build token path based on actual route
+  let tokens: string[];
+  let protocols: string[];
+  if (targetIsPxCvx) {
+    tokens = ["uCVX", "pxCVX", vaultSymbol];
+    protocols = ["Llama Airforce", "yld_fi"];
+  } else {
+    const targetIsCvx = targetUnderlying.toLowerCase() === TOKENS.CVX.toLowerCase();
+    if (targetIsCvx) {
+      tokens = ["uCVX", "pxCVX", "CVX", vaultSymbol];
+      protocols = ["Llama Airforce", "Curve", "yld_fi"];
+    } else {
+      tokens = ["uCVX", "pxCVX", "CVX", targetUnderlyingSymbol, vaultSymbol];
+      protocols = ["Llama Airforce", "Curve", "Enso", "yld_fi"];
+    }
+  }
+
+  const routeInfo: RouteInfo = { steps, tokens, protocols };
+
+  return { ...bundleResult, routeInfo };
+}
+
+/**
+ * Preview Beefy vault withdraw - estimates underlying output for given shares
+ * Beefy vaults use pricePerFullShare() to calculate conversion
+ * Formula: shares * pricePerFullShare / 1e18
+ */
+async function previewBeefyWithdraw(vaultAddress: string, shares: string): Promise<string> {
+  const { PUBLIC_RPC_URLS } = await import("@/config/rpc");
+
+  // pricePerFullShare() selector: 0x77c7b8fc
+  const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      method: "eth_call",
+      params: [{ to: vaultAddress, data: "0x77c7b8fc" }, "latest"],
+      id: 1,
+    }),
+  });
+
+  const result = (await response.json()) as { result?: string };
+  const pricePerFullShare = BigInt(result.result || "1000000000000000000"); // Default 1:1
+
+  // shares * pricePerFullShare / 1e18
+  const underlyingOutput = (BigInt(shares) * pricePerFullShare) / BigInt(1e18);
+  return underlyingOutput.toString();
+}
+
+/**
+ * Generic zap from external ERC4626 vault into any yld_fi vault
+ * Works for: aCVX, aCRV (Concentrator)
+ *
+ * Route: externalVault → redeem → underlying → route to target underlying → deposit
+ */
+export async function fetchErc4626ExternalVaultZapInRoute(params: {
+  fromAddress: string;
+  vaultAddress: string;
+  externalVaultAddress: string;
+  externalVaultUnderlying: string;
+  externalVaultSymbol: string;
+  externalVaultProtocol: string;
+  amountIn: string;
+  slippage?: string;
+}): Promise<CustomBundleResponse> {
+  const { getVaultByAddress } = await import("@/config/vaults");
+  const slippageBps = validateSlippage(params.slippage);
+
+  // Get target vault's underlying token
+  const targetVault = getVaultByAddress(params.vaultAddress);
+  if (!targetVault) {
+    throw new Error(`Unknown target vault: ${params.vaultAddress}`);
+  }
+  const targetUnderlying = targetVault.assetAddress;
+  const vaultSymbol = targetVault.symbol;
+
+  // Estimate underlying output from ERC4626 redeem
+  const expectedUnderlyingOutput = await previewRedeem(params.externalVaultAddress, params.amountIn);
+  const conservativeUnderlying = applySlippageBuffer(BigInt(expectedUnderlyingOutput), slippageBps);
+
+  // Check if target vault accepts the same underlying directly
+  const sameUnderlying = targetUnderlying.toLowerCase() === params.externalVaultUnderlying.toLowerCase();
+
+  const actions: EnsoBundleAction[] = [
+    // Action 0: Redeem external vault → underlying using standard ERC4626
+    {
+      protocol: "erc4626",
+      action: "redeem",
+      args: {
+        tokenIn: params.externalVaultAddress,
+        tokenOut: params.externalVaultUnderlying,
+        amountIn: params.amountIn,
+        primaryAddress: params.externalVaultAddress,
+      },
+    },
+  ];
+
+  if (sameUnderlying) {
+    // Direct deposit - target accepts same underlying
+    actions.push({
+      protocol: "erc4626",
+      action: "deposit",
+      args: {
+        tokenIn: params.externalVaultUnderlying,
+        tokenOut: params.vaultAddress,
+        amountIn: { useOutputOfCallAt: 0 },
+        primaryAddress: params.vaultAddress,
+      },
+    });
+  } else {
+    // Route underlying → target underlying via Enso
+    actions.push({
+      protocol: "enso",
+      action: "route",
+      args: {
+        tokenIn: params.externalVaultUnderlying,
+        tokenOut: targetUnderlying,
+        amountIn: { useOutputOfCallAt: 0 },
+        slippage: params.slippage ?? "100",
+      },
+    });
+    // Then deposit to vault
+    actions.push({
+      protocol: "erc4626",
+      action: "deposit",
+      args: {
+        tokenIn: targetUnderlying,
+        tokenOut: params.vaultAddress,
+        amountIn: { useOutputOfCallAt: 1 }, // Output of route
+        primaryAddress: params.vaultAddress,
+      },
+    });
+  }
+
+  const bundleResult = await fetchBundle({
+    fromAddress: params.fromAddress,
+    actions,
+    routingStrategy: "router",
+  });
+
+  // Build routeInfo
+  const externalUnderlyingSymbol = getTokenSymbol(params.externalVaultUnderlying);
+  const targetUnderlyingSymbol = getTokenSymbol(targetUnderlying);
+  const steps: RouteStep[] = [
+    { tokenSymbol: params.externalVaultSymbol, action: "Exit", description: `${params.externalVaultSymbol} for ${externalUnderlyingSymbol}`, protocol: params.externalVaultProtocol },
+  ];
+
+  if (sameUnderlying) {
+    steps.push({ tokenSymbol: externalUnderlyingSymbol, action: "Deposit", description: `${externalUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld_fi" });
+  } else {
+    steps.push({ tokenSymbol: externalUnderlyingSymbol, action: "Swap", description: `${externalUnderlyingSymbol} for ${targetUnderlyingSymbol}`, protocol: "Enso", amount: conservativeUnderlying });
+    steps.push({ tokenSymbol: targetUnderlyingSymbol, action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld_fi" });
+  }
+
+  steps.push({ tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld_fi" });
+
+  const routeInfo: RouteInfo = {
+    steps,
+    tokens: sameUnderlying
+      ? [params.externalVaultSymbol, externalUnderlyingSymbol, vaultSymbol]
+      : [params.externalVaultSymbol, externalUnderlyingSymbol, targetUnderlyingSymbol, vaultSymbol],
+    protocols: sameUnderlying
+      ? [params.externalVaultProtocol, "yld_fi"]
+      : [params.externalVaultProtocol, "Enso", "yld_fi"],
+  };
+
+  return { ...bundleResult, routeInfo };
+}
+
+/**
+ * Generic zap from Beefy vault into any yld_fi vault
+ * Works for: mooCvxCRV, mooCvxCVX
+ *
+ * Route: beefyVault → withdraw → underlying → route to target underlying → deposit
+ *
+ * CRITICAL: Beefy uses withdraw(shares) which returns to msg.sender (ENSO_SHORTCUTS)
+ */
+export async function fetchBeefyZapInRoute(params: {
+  fromAddress: string;
+  vaultAddress: string;
+  beefyVaultAddress: string;
+  beefyVaultUnderlying: string;
+  beefyVaultSymbol: string;
+  amountIn: string;
+  slippage?: string;
+}): Promise<CustomBundleResponse> {
+  const { getVaultByAddress } = await import("@/config/vaults");
+  const slippageBps = validateSlippage(params.slippage);
+
+  // Get target vault's underlying token
+  const targetVault = getVaultByAddress(params.vaultAddress);
+  if (!targetVault) {
+    throw new Error(`Unknown target vault: ${params.vaultAddress}`);
+  }
+  const targetUnderlying = targetVault.assetAddress;
+  const vaultSymbol = targetVault.symbol;
+
+  // Estimate underlying output from Beefy withdraw
+  const expectedUnderlyingOutput = await previewBeefyWithdraw(params.beefyVaultAddress, params.amountIn);
+  const conservativeUnderlying = applySlippageBuffer(BigInt(expectedUnderlyingOutput), slippageBps);
+
+  // Check if target vault accepts the same underlying directly
+  const sameUnderlying = targetUnderlying.toLowerCase() === params.beefyVaultUnderlying.toLowerCase();
+
+  const actions: EnsoBundleAction[] = [
+    // Action 0: Withdraw Beefy vault → underlying using custom call
+    {
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: params.beefyVaultAddress,
+        method: "withdraw",
+        abi: "function withdraw(uint256 _shares)",
+        args: [params.amountIn],
+      },
+    },
+    // Action 1: Get balance of underlying (withdraw doesn't return amount)
+    {
+      protocol: "enso",
+      action: "balance",
+      args: {
+        token: params.beefyVaultUnderlying,
+      },
+    },
+  ];
+
+  if (sameUnderlying) {
+    // Direct deposit - target accepts same underlying
+    actions.push({
+      protocol: "erc4626",
+      action: "deposit",
+      args: {
+        tokenIn: params.beefyVaultUnderlying,
+        tokenOut: params.vaultAddress,
+        amountIn: { useOutputOfCallAt: 1 }, // Balance after withdraw
+        primaryAddress: params.vaultAddress,
+      },
+    });
+  } else {
+    // Route underlying → target underlying via Enso
+    actions.push({
+      protocol: "enso",
+      action: "route",
+      args: {
+        tokenIn: params.beefyVaultUnderlying,
+        tokenOut: targetUnderlying,
+        amountIn: { useOutputOfCallAt: 1 }, // Balance after withdraw
+        slippage: params.slippage ?? "100",
+      },
+    });
+    // Then deposit to vault
+    actions.push({
+      protocol: "erc4626",
+      action: "deposit",
+      args: {
+        tokenIn: targetUnderlying,
+        tokenOut: params.vaultAddress,
+        amountIn: { useOutputOfCallAt: 2 }, // Output of route
+        primaryAddress: params.vaultAddress,
+      },
+    });
+  }
+
+  const bundleResult = await fetchBundle({
+    fromAddress: params.fromAddress,
+    actions,
+    routingStrategy: "router",
+  });
+
+  // Build routeInfo
+  const beefyUnderlyingSymbol = getTokenSymbol(params.beefyVaultUnderlying);
+  const targetUnderlyingSymbol = getTokenSymbol(targetUnderlying);
+  const steps: RouteStep[] = [
+    { tokenSymbol: params.beefyVaultSymbol, action: "Exit", description: `${params.beefyVaultSymbol} for ${beefyUnderlyingSymbol}`, protocol: "Beefy" },
+  ];
+
+  if (sameUnderlying) {
+    steps.push({ tokenSymbol: beefyUnderlyingSymbol, action: "Deposit", description: `${beefyUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld_fi" });
+  } else {
+    steps.push({ tokenSymbol: beefyUnderlyingSymbol, action: "Swap", description: `${beefyUnderlyingSymbol} for ${targetUnderlyingSymbol}`, protocol: "Enso", amount: conservativeUnderlying });
+    steps.push({ tokenSymbol: targetUnderlyingSymbol, action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld_fi" });
+  }
+
+  steps.push({ tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld_fi" });
+
+  const routeInfo: RouteInfo = {
+    steps,
+    tokens: sameUnderlying
+      ? [params.beefyVaultSymbol, beefyUnderlyingSymbol, vaultSymbol]
+      : [params.beefyVaultSymbol, beefyUnderlyingSymbol, targetUnderlyingSymbol, vaultSymbol],
+    protocols: sameUnderlying
+      ? ["Beefy", "yld_fi"]
+      : ["Beefy", "Enso", "yld_fi"],
+  };
+
+  return { ...bundleResult, routeInfo };
+}
+
+/**
+ * Master function to zap from any external vault into any yld_fi vault
+ * Dispatches to the appropriate routing function based on external vault type
+ */
+export async function fetchExternalVaultZapInRoute(params: {
+  fromAddress: string;
+  vaultAddress: string;
+  externalVaultAddress: string;
+  amountIn: string;
+  slippage?: string;
+}): Promise<CustomBundleResponse> {
+  const { getExternalVaultConfig, LLAMA_AIRFORCE } = await import("@/config/vaults");
+
+  const config = getExternalVaultConfig(params.externalVaultAddress);
+  if (!config) {
+    throw new Error(`Unknown external vault: ${params.externalVaultAddress}`);
+  }
+
+  // Dispatch to appropriate routing function based on interface type
+  switch (config.interface) {
+    case "ucrv":
+      // Llama Airforce uCRV - special withdraw(_to, _shares) interface
+      return fetchUCrvZapInRoute({
+        fromAddress: params.fromAddress,
+        vaultAddress: params.vaultAddress,
+        amountIn: params.amountIn,
+        slippage: params.slippage,
+      });
+
+    case "beefy":
+      // Beefy vaults - withdraw(shares) interface
+      return fetchBeefyZapInRoute({
+        fromAddress: params.fromAddress,
+        vaultAddress: params.vaultAddress,
+        beefyVaultAddress: config.address,
+        beefyVaultUnderlying: config.underlying,
+        beefyVaultSymbol: config.symbol,
+        amountIn: params.amountIn,
+        slippage: params.slippage,
+      });
+
+    case "erc4626":
+    default:
+      // Check if it's uCVX (special pxCVX routing needed)
+      if (config.address.toLowerCase() === LLAMA_AIRFORCE.UCVX.toLowerCase()) {
+        return fetchUCvxZapInRoute({
+          fromAddress: params.fromAddress,
+          vaultAddress: params.vaultAddress,
+          amountIn: params.amountIn,
+          slippage: params.slippage,
+        });
+      }
+
+      // Standard ERC4626 external vaults (aCVX, aCRV)
+      return fetchErc4626ExternalVaultZapInRoute({
+        fromAddress: params.fromAddress,
+        vaultAddress: params.vaultAddress,
+        externalVaultAddress: config.address,
+        externalVaultUnderlying: config.underlying,
+        externalVaultSymbol: config.symbol,
+        externalVaultProtocol: config.protocol,
+        amountIn: params.amountIn,
+        slippage: params.slippage,
+      });
+  }
+}
+
+// ============================================================================
+// Pirex Token Zap Functions (pxCVX, lpxCVX)
+// ============================================================================
+
+// Pirex token addresses
+const PIREX_PXCVX = "0xBCe0Cf87F513102F22232436CCa2ca49e815C3aC";
+const PIREX_LPXCVX = "0x389fB29230D02e67eB963C1F5A00f2b16f95BEb7";
+
+/**
+ * Check if token is pxCVX
+ */
+export function isPxCvxToken(address: string): boolean {
+  return address.toLowerCase() === PIREX_PXCVX.toLowerCase();
+}
+
+/**
+ * Check if token is lpxCVX
+ */
+export function isLpxCvxToken(address: string): boolean {
+  return address.toLowerCase() === PIREX_LPXCVX.toLowerCase();
+}
+
+/**
+ * Zap from lpxCVX into any yld_fi vault
+ *
+ * Routes:
+ * - lpxCVX → yspxCVX: unwrap to pxCVX → deposit
+ * - lpxCVX → other vaults: swap to CVX (Curve) → route to target underlying → deposit
+ */
+export async function fetchLpxCvxZapInRoute(params: {
+  fromAddress: string;
+  vaultAddress: string;
+  amountIn: string;
+  slippage?: string;
+}): Promise<CustomBundleResponse> {
+  const { PIREX, getVaultByAddress, VAULT_ADDRESSES } = await import("@/config/vaults");
+  const slippageBps = validateSlippage(params.slippage);
+
+  // Get target vault's underlying token
+  const targetVault = getVaultByAddress(params.vaultAddress);
+  if (!targetVault) {
+    throw new Error(`Unknown target vault: ${params.vaultAddress}`);
+  }
+  const targetUnderlying = targetVault.assetAddress;
+  const vaultSymbol = targetVault.symbol;
+
+  // Check if target is yspxCVX (accepts pxCVX)
+  const targetIsPxCvx = targetUnderlying.toLowerCase() === PIREX_PXCVX.toLowerCase();
+
+  const actions: EnsoBundleAction[] = [];
+
+  if (targetIsPxCvx) {
+    // lpxCVX → pxCVX (unwrap 1:1) → deposit to yspxCVX
+    // Action 0: Unwrap lpxCVX → pxCVX
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: PIREX.LPXCVX,
+        method: "unwrap",
+        abi: "function unwrap(uint256 amount) returns (uint256)",
+        args: [params.amountIn],
+      },
+    });
+    // Action 1: Deposit pxCVX → yspxCVX
+    actions.push({
+      protocol: "erc4626",
+      action: "deposit",
+      args: {
+        tokenIn: PIREX_PXCVX,
+        tokenOut: params.vaultAddress,
+        amountIn: { useOutputOfCallAt: 0 },
+        primaryAddress: params.vaultAddress,
+      },
+    });
+
+    const bundleResult = await fetchBundle({
+      fromAddress: params.fromAddress,
+      actions,
+      routingStrategy: "router",
+    });
+
+    const routeInfo: RouteInfo = {
+      steps: [
+        { tokenSymbol: "lpxCVX", action: "Unwrap", description: "lpxCVX for pxCVX", protocol: "Pirex" },
+        { tokenSymbol: "pxCVX", action: "Deposit", description: `pxCVX into ${vaultSymbol}`, protocol: "yld_fi" },
+        { tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld_fi" },
+      ],
+      tokens: ["lpxCVX", "pxCVX", vaultSymbol],
+      protocols: ["Pirex", "yld_fi"],
+    };
+
+    return { ...bundleResult, routeInfo };
+  }
+
+  // lpxCVX → CVX (Curve swap) → route to target underlying → deposit
+  // Estimate CVX output from lpxCVX → CVX swap
+  const expectedCvxOutput = await getLpxCvxToCvxSwapRate(params.amountIn);
+  if (expectedCvxOutput === 0n) {
+    throw new Error("Failed to estimate Curve lpxCVX→CVX swap output");
+  }
+  const minDy = calculateMinDy(expectedCvxOutput, slippageBps);
+
+  // Action 0: Approve lpxCVX to Curve pool
+  actions.push({
+    protocol: "erc20",
+    action: "approve",
+    args: {
+      token: PIREX.LPXCVX,
+      spender: PIREX.LPXCVX_CVX_POOL,
+      amount: params.amountIn,
+    },
+  });
+
+  // Action 1: Exchange lpxCVX → CVX on Curve pool
+  actions.push({
+    protocol: "enso",
+    action: "call",
+    args: {
+      address: PIREX.LPXCVX_CVX_POOL,
+      method: "exchange",
+      abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)",
+      args: [
+        String(PIREX.POOL_INDEX.LPXCVX), // i = 1 (lpxCVX)
+        String(PIREX.POOL_INDEX.CVX), // j = 0 (CVX)
+        params.amountIn,
+        minDy,
+      ],
+    },
+  });
+
+  // Check if target accepts CVX directly
+  const targetIsCvx = targetUnderlying.toLowerCase() === TOKENS.CVX.toLowerCase();
+
+  if (targetIsCvx) {
+    // Direct deposit CVX
+    actions.push({
+      protocol: "erc4626",
+      action: "deposit",
+      args: {
+        tokenIn: TOKENS.CVX,
+        tokenOut: params.vaultAddress,
+        amountIn: { useOutputOfCallAt: 1 },
+        primaryAddress: params.vaultAddress,
+      },
+    });
+  } else {
+    // Route CVX → target underlying via Enso
+    actions.push({
+      protocol: "enso",
+      action: "route",
+      args: {
+        tokenIn: TOKENS.CVX,
+        tokenOut: targetUnderlying,
+        amountIn: { useOutputOfCallAt: 1 },
+        slippage: params.slippage ?? "100",
+      },
+    });
+    // Then deposit to vault
+    actions.push({
+      protocol: "erc4626",
+      action: "deposit",
+      args: {
+        tokenIn: targetUnderlying,
+        tokenOut: params.vaultAddress,
+        amountIn: { useOutputOfCallAt: 2 },
+        primaryAddress: params.vaultAddress,
+      },
+    });
+  }
+
+  const bundleResult = await fetchBundle({
+    fromAddress: params.fromAddress,
+    actions,
+    routingStrategy: "router",
+  });
+
+  // Build routeInfo
+  const targetUnderlyingSymbol = getTokenSymbol(targetUnderlying);
+  const steps: RouteStep[] = [
+    { tokenSymbol: "lpxCVX", action: "Swap", description: "lpxCVX for CVX", protocol: "Curve" },
+  ];
+
+  if (targetIsCvx) {
+    steps.push({ tokenSymbol: "CVX", action: "Deposit", description: `CVX into ${vaultSymbol}`, protocol: "yld_fi" });
+  } else {
+    steps.push({ tokenSymbol: "CVX", action: "Swap", description: `CVX for ${targetUnderlyingSymbol}`, protocol: "Enso" });
+    steps.push({ tokenSymbol: targetUnderlyingSymbol, action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld_fi" });
+  }
+
+  steps.push({ tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld_fi" });
+
+  const routeInfo: RouteInfo = {
+    steps,
+    tokens: targetIsCvx
+      ? ["lpxCVX", "CVX", vaultSymbol]
+      : ["lpxCVX", "CVX", targetUnderlyingSymbol, vaultSymbol],
+    protocols: targetIsCvx
+      ? ["Curve", "yld_fi"]
+      : ["Curve", "Enso", "yld_fi"],
+  };
+
+  return { ...bundleResult, routeInfo };
+}
+
+/**
+ * Zap from pxCVX into any yld_fi vault (except yspxCVX where it's the underlying)
+ *
+ * Route: pxCVX → wrap to lpxCVX → swap to CVX (Curve) → route to target underlying → deposit
+ *
+ * Note: This should NOT be called for yspxCVX - users should use the Deposit tab instead
+ */
+export async function fetchPxCvxTokenZapInRoute(params: {
+  fromAddress: string;
+  vaultAddress: string;
+  amountIn: string;
+  slippage?: string;
+}): Promise<CustomBundleResponse> {
+  const { PIREX, getVaultByAddress, VAULT_ADDRESSES } = await import("@/config/vaults");
+  const slippageBps = validateSlippage(params.slippage);
+
+  // Get target vault's underlying token
+  const targetVault = getVaultByAddress(params.vaultAddress);
+  if (!targetVault) {
+    throw new Error(`Unknown target vault: ${params.vaultAddress}`);
+  }
+  const targetUnderlying = targetVault.assetAddress;
+  const vaultSymbol = targetVault.symbol;
+
+  // Should not be called for yspxCVX - pxCVX is the underlying
+  if (targetUnderlying.toLowerCase() === PIREX_PXCVX.toLowerCase()) {
+    throw new Error("pxCVX is the underlying for this vault - use Deposit tab instead");
+  }
+
+  // pxCVX → lpxCVX (wrap 1:1) → CVX (Curve swap) → route to target underlying → deposit
+  // Estimate CVX output from lpxCVX → CVX swap (pxCVX wraps 1:1 to lpxCVX)
+  const expectedCvxOutput = await getLpxCvxToCvxSwapRate(params.amountIn);
+  if (expectedCvxOutput === 0n) {
+    throw new Error("Failed to estimate Curve lpxCVX→CVX swap output");
+  }
+  const minDy = calculateMinDy(expectedCvxOutput, slippageBps);
+
+  const actions: EnsoBundleAction[] = [
+    // Action 0: Approve pxCVX to lpxCVX contract for wrapping
+    {
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: PIREX_PXCVX,
+        spender: PIREX.LPXCVX,
+        amount: params.amountIn,
+      },
+    },
+    // Action 1: Wrap pxCVX → lpxCVX (1:1 ratio)
+    {
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: PIREX.LPXCVX,
+        method: "wrap",
+        abi: "function wrap(uint256 amount)",
+        args: [params.amountIn],
+      },
+    },
+    // Action 2: Approve lpxCVX to Curve pool
+    {
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: PIREX.LPXCVX,
+        spender: PIREX.LPXCVX_CVX_POOL,
+        amount: params.amountIn, // Same amount (1:1 wrap)
+      },
+    },
+    // Action 3: Exchange lpxCVX → CVX on Curve pool
+    {
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: PIREX.LPXCVX_CVX_POOL,
+        method: "exchange",
+        abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)",
+        args: [
+          String(PIREX.POOL_INDEX.LPXCVX), // i = 1 (lpxCVX)
+          String(PIREX.POOL_INDEX.CVX), // j = 0 (CVX)
+          params.amountIn, // Same amount (1:1 wrap)
+          minDy,
+        ],
+      },
+    },
+  ];
+
+  // Check if target accepts CVX directly
+  const targetIsCvx = targetUnderlying.toLowerCase() === TOKENS.CVX.toLowerCase();
+
+  if (targetIsCvx) {
+    // Direct deposit CVX
+    actions.push({
+      protocol: "erc4626",
+      action: "deposit",
+      args: {
+        tokenIn: TOKENS.CVX,
+        tokenOut: params.vaultAddress,
+        amountIn: { useOutputOfCallAt: 3 }, // CVX from Curve exchange
+        primaryAddress: params.vaultAddress,
+      },
+    });
+  } else {
+    // Route CVX → target underlying via Enso
+    actions.push({
+      protocol: "enso",
+      action: "route",
+      args: {
+        tokenIn: TOKENS.CVX,
+        tokenOut: targetUnderlying,
+        amountIn: { useOutputOfCallAt: 3 }, // CVX from Curve exchange
+        slippage: params.slippage ?? "100",
+      },
+    });
+    // Then deposit to vault
+    actions.push({
+      protocol: "erc4626",
+      action: "deposit",
+      args: {
+        tokenIn: targetUnderlying,
+        tokenOut: params.vaultAddress,
+        amountIn: { useOutputOfCallAt: 4 }, // Output of route
+        primaryAddress: params.vaultAddress,
+      },
+    });
+  }
+
+  const bundleResult = await fetchBundle({
+    fromAddress: params.fromAddress,
+    actions,
+    routingStrategy: "router",
+  });
+
+  // Build routeInfo
+  const targetUnderlyingSymbol = getTokenSymbol(targetUnderlying);
+  const steps: RouteStep[] = [
+    { tokenSymbol: "pxCVX", action: "Wrap", description: "pxCVX to lpxCVX", protocol: "Pirex" },
+    { tokenSymbol: "lpxCVX", action: "Swap", description: "lpxCVX for CVX", protocol: "Curve" },
+  ];
+
+  if (targetIsCvx) {
+    steps.push({ tokenSymbol: "CVX", action: "Deposit", description: `CVX into ${vaultSymbol}`, protocol: "yld_fi" });
+  } else {
+    steps.push({ tokenSymbol: "CVX", action: "Swap", description: `CVX for ${targetUnderlyingSymbol}`, protocol: "Enso" });
+    steps.push({ tokenSymbol: targetUnderlyingSymbol, action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld_fi" });
+  }
+
+  steps.push({ tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld_fi" });
+
+  const routeInfo: RouteInfo = {
+    steps,
+    tokens: targetIsCvx
+      ? ["pxCVX", "lpxCVX", "CVX", vaultSymbol]
+      : ["pxCVX", "lpxCVX", "CVX", targetUnderlyingSymbol, vaultSymbol],
+    protocols: targetIsCvx
+      ? ["Pirex", "Curve", "yld_fi"]
+      : ["Pirex", "Curve", "Enso", "yld_fi"],
   };
 
   return { ...bundleResult, routeInfo };

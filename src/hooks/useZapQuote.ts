@@ -4,8 +4,8 @@ import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAccount, usePublicClient } from "wagmi";
 import { parseUnits, formatUnits } from "viem";
-import { fetchZapInRoute, fetchZapOutRoute, fetchVaultToVaultRoute, fetchCvgCvxZapInRoute, fetchCvgCvxZapOutRoute, fetchPxCvxZapInRoute, fetchPxCvxZapOutRoute, fetchTokenPrices, CVXCRV_ADDRESS, isYldfiVault, getTokenSymbol } from "@/lib/enso";
-import { TOKENS, getVaultByAddress } from "@/config/vaults";
+import { fetchZapInRoute, fetchZapOutRoute, fetchVaultToVaultRoute, fetchCvgCvxZapInRoute, fetchCvgCvxZapOutRoute, fetchPxCvxZapInRoute, fetchPxCvxZapOutRoute, fetchExternalVaultZapInRoute, fetchLpxCvxZapInRoute, fetchPxCvxTokenZapInRoute, isPxCvxToken, isLpxCvxToken, fetchTokenPrices, CVXCRV_ADDRESS, isYldfiVault, getTokenSymbol } from "@/lib/enso";
+import { TOKENS, getVaultByAddress, isExternalVaultToken, getExternalVaultConfig } from "@/config/vaults";
 import { useTenderly } from "@/contexts/TenderlyContext";
 import type { EnsoToken, ZapQuote, ZapDirection, RouteInfo, RouteStep } from "@/types/enso";
 
@@ -340,7 +340,7 @@ export function useZapQuote({
   const isVaultToVault = isVaultToVaultOut || isVaultToVaultIn;
 
   const { data, isLoading, error, refetch, isFetching } = useQuery({
-    queryKey: ["zap-quote", tokenIn, tokenOut, amountInWei, slippage, userAddress, isVaultToVault, vaultAddress, inputToken?.address, isCvgCvxVault, isPxCvxVault],
+    queryKey: ["zap-quote", tokenIn, tokenOut, amountInWei, slippage, userAddress, isVaultToVault, vaultAddress, inputToken?.address, isCvgCvxVault, isPxCvxVault, inputToken?.address ? isExternalVaultToken(inputToken.address) : false],
     queryFn: async (): Promise<ZapQuote | null> => {
       if (!userAddress || !tokenIn || !tokenOut) return null;
 
@@ -521,6 +521,182 @@ export function useZapQuote({
               targetUnderlyingAmount
             );
           })(),
+        };
+      }
+
+      // External vault input (Llama Airforce, Concentrator, Beefy)
+      // These are external vaults users may hold that we can zap FROM into yld_fi vaults
+      if (direction === "in" && inputToken && isExternalVaultToken(inputToken.address)) {
+        const externalConfig = getExternalVaultConfig(inputToken.address);
+        if (!externalConfig) {
+          throw new Error(`Unknown external vault: ${inputToken.address}`);
+        }
+
+        const bundle = await fetchExternalVaultZapInRoute({
+          fromAddress: userAddress,
+          vaultAddress,
+          externalVaultAddress: inputToken.address,
+          amountIn: amountInWei,
+          slippage,
+        });
+
+        const outputAmountRaw = bundle.amountsOut[vaultAddress.toLowerCase()]
+          || bundle.amountsOut[vaultAddress]
+          || "0";
+        const outputAmountFormatted = formatUnits(BigInt(outputAmountRaw), 18);
+
+        const inputNum = Number(inputAmount);
+        const outputNum = Number(outputAmountFormatted);
+        const exchangeRate = inputNum > 0 ? outputNum / inputNum : 0;
+
+        // Price impact calculation for external vault zap
+        // Input: external vault shares → underlying value
+        // Output: yld_fi vault shares → underlying value
+        const [priceMap, targetAssetsPerShare] = await Promise.all([
+          getTokenPrices([externalConfig.underlying, underlyingToken || CVXCRV_ADDRESS]),
+          getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
+        ]);
+
+        const externalUnderlyingPrice = priceMap.get(externalConfig.underlying.toLowerCase()) ?? null;
+        const targetUnderlyingPrice = priceMap.get((underlyingToken || CVXCRV_ADDRESS).toLowerCase()) ?? null;
+
+        // For external vaults, estimate input value from bundle (we don't have direct price for vault token)
+        // Use output value as proxy since the bundle does the conversion
+        const outputUnderlyingValue = targetAssetsPerShare !== null ? outputNum * targetAssetsPerShare : outputNum;
+        const outputUsdValue = targetUnderlyingPrice !== null ? outputUnderlyingValue * targetUnderlyingPrice : null;
+
+        // Estimate input USD value (rough approximation using external underlying price)
+        // This is an approximation since we don't have exact price for external vault token
+        const inputUsdValue = externalUnderlyingPrice !== null && outputUsdValue !== null
+          ? outputUsdValue * 1.02 // Assume ~2% exit cost for external vault
+          : null;
+
+        const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
+
+        return {
+          inputToken,
+          inputAmount,
+          outputAmount: outputAmountRaw,
+          outputAmountFormatted,
+          exchangeRate,
+          inputUsdValue,
+          outputUsdValue,
+          priceImpact,
+          gasEstimate: bundle.gas,
+          tx: {
+            to: bundle.tx.to,
+            data: bundle.tx.data,
+            value: bundle.tx.value,
+          },
+          route: [],
+          routeInfo: bundle.routeInfo,
+        };
+      }
+
+      // lpxCVX input token → any yld_fi vault
+      // Route: lpxCVX → unwrap to pxCVX (for yspxCVX) or → swap via Curve to CVX → route to target
+      if (direction === "in" && inputToken && isLpxCvxToken(inputToken.address)) {
+        const bundle = await fetchLpxCvxZapInRoute({
+          fromAddress: userAddress,
+          vaultAddress,
+          amountIn: amountInWei,
+          slippage,
+        });
+
+        const outputAmountRaw = bundle.amountsOut[vaultAddress.toLowerCase()]
+          || bundle.amountsOut[vaultAddress]
+          || "0";
+        const outputAmountFormatted = formatUnits(BigInt(outputAmountRaw), 18);
+
+        const inputNum = Number(inputAmount);
+        const outputNum = Number(outputAmountFormatted);
+        const exchangeRate = inputNum > 0 ? outputNum / inputNum : 0;
+
+        // Price impact calculation for lpxCVX zap
+        const [priceMap, targetAssetsPerShare] = await Promise.all([
+          getTokenPrices([TOKENS.LPXCVX, underlyingToken || CVXCRV_ADDRESS]),
+          getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
+        ]);
+
+        const lpxCvxPrice = priceMap.get(TOKENS.LPXCVX.toLowerCase()) ?? null;
+        const targetUnderlyingPrice = priceMap.get((underlyingToken || CVXCRV_ADDRESS).toLowerCase()) ?? null;
+
+        const inputUsdValue = lpxCvxPrice !== null ? inputNum * lpxCvxPrice : null;
+        const outputUnderlyingValue = targetAssetsPerShare !== null ? outputNum * targetAssetsPerShare : outputNum;
+        const outputUsdValue = targetUnderlyingPrice !== null ? outputUnderlyingValue * targetUnderlyingPrice : null;
+        const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
+
+        return {
+          inputToken,
+          inputAmount,
+          outputAmount: outputAmountRaw,
+          outputAmountFormatted,
+          exchangeRate,
+          inputUsdValue,
+          outputUsdValue,
+          priceImpact,
+          gasEstimate: bundle.gas,
+          tx: {
+            to: bundle.tx.to,
+            data: bundle.tx.data,
+            value: bundle.tx.value,
+          },
+          route: [],
+          routeInfo: bundle.routeInfo,
+        };
+      }
+
+      // pxCVX input token → non-pxCVX yld_fi vault (pxCVX → yspxCVX is direct deposit, handled by standard zap)
+      // Route: pxCVX → wrap to lpxCVX → swap via Curve to CVX → route to target underlying → deposit
+      // Note: pxCVX → yspxCVX is handled by standard zap since pxCVX is the underlying
+      if (direction === "in" && inputToken && isPxCvxToken(inputToken.address) && !isPxCvxVault) {
+        const bundle = await fetchPxCvxTokenZapInRoute({
+          fromAddress: userAddress,
+          vaultAddress,
+          amountIn: amountInWei,
+          slippage,
+        });
+
+        const outputAmountRaw = bundle.amountsOut[vaultAddress.toLowerCase()]
+          || bundle.amountsOut[vaultAddress]
+          || "0";
+        const outputAmountFormatted = formatUnits(BigInt(outputAmountRaw), 18);
+
+        const inputNum = Number(inputAmount);
+        const outputNum = Number(outputAmountFormatted);
+        const exchangeRate = inputNum > 0 ? outputNum / inputNum : 0;
+
+        // Price impact calculation for pxCVX token zap
+        const [priceMap, targetAssetsPerShare] = await Promise.all([
+          getTokenPrices([TOKENS.PXCVX, underlyingToken || CVXCRV_ADDRESS]),
+          getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
+        ]);
+
+        const pxCvxPrice = priceMap.get(TOKENS.PXCVX.toLowerCase()) ?? null;
+        const targetUnderlyingPrice = priceMap.get((underlyingToken || CVXCRV_ADDRESS).toLowerCase()) ?? null;
+
+        const inputUsdValue = pxCvxPrice !== null ? inputNum * pxCvxPrice : null;
+        const outputUnderlyingValue = targetAssetsPerShare !== null ? outputNum * targetAssetsPerShare : outputNum;
+        const outputUsdValue = targetUnderlyingPrice !== null ? outputUnderlyingValue * targetUnderlyingPrice : null;
+        const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
+
+        return {
+          inputToken,
+          inputAmount,
+          outputAmount: outputAmountRaw,
+          outputAmountFormatted,
+          exchangeRate,
+          inputUsdValue,
+          outputUsdValue,
+          priceImpact,
+          gasEstimate: bundle.gas,
+          tx: {
+            to: bundle.tx.to,
+            data: bundle.tx.data,
+            value: bundle.tx.value,
+          },
+          route: [],
+          routeInfo: bundle.routeInfo,
         };
       }
 
