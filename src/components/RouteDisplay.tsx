@@ -31,6 +31,7 @@ const TOKEN_LOGOS: Record<string, string> = {
   crv: "/tokens/crv.png",
   cvgcvx: "/tokens/cvgcvx.png",
   pxcvx: "/tokens/pxcvx.png",
+  lpxcvx: "/tokens/pxcvx.png", // Pirex logo for lpxCVX
   usdc: "/tokens/usdc.png",
   usdt: "/tokens/usdt.png",
   dai: "/tokens/dai.png",
