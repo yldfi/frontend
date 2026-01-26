@@ -123,7 +123,7 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS } from "@/lib/enso";
-import { getVault, getParentVault, getVaultByAddress, TOKENS, VAULT_UNDERLYING_TOKENS, VAULTS } from "@/config/vaults";
+import { getVault, getParentVault, getVaultByAddress, TOKENS, VAULT_UNDERLYING_TOKENS, VAULTS, EXTERNAL_VAULT_TOKENS } from "@/config/vaults";
 import type { EnsoToken, ZapDirection } from "@/types/enso";
 import {
   trackVaultView,
@@ -1423,7 +1423,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               <TokenSelector
                                 selectedToken={zapOutputToken}
                                 onSelect={handleZapOutputTokenChange}
-                                excludeTokens={[...VAULT_UNDERLYING_TOKENS, vault?.address ?? ""]} // Exclude underlying tokens + current vault
+                                excludeTokens={[...VAULT_UNDERLYING_TOKENS, ...EXTERNAL_VAULT_TOKENS, vault?.address ?? ""]} // Exclude underlying tokens, external vaults (no zap out support), and current vault
                               />
                             </div>
                           </div>
