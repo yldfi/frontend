@@ -1140,12 +1140,12 @@ export function VaultPageContent({ id }: { id: string }) {
                   </div>
                 )}
 
-                {/* Tabs */}
+                {/* Tabs - hidden for non-deployed vaults and during pending/success states */}
+                {isVaultDeployed && txStatus !== "waitingTx" && zapStatus !== "waitingTx" && !showTxSuccess?.show && (
                 <div className="p-5 pb-0">
                   <div className="flex border-b border-[var(--border)]">
                     {(["deposit", "withdraw", "zap"] as const).map((tab) => {
-                      // Disable all tabs for non-deployed vaults
-                      const isDisabled = !isVaultDeployed;
+                      const isDisabled = false;
                       return (
                         <button
                           key={tab}
@@ -1180,6 +1180,7 @@ export function VaultPageContent({ id }: { id: string }) {
                     })}
                   </div>
                 </div>
+                )}
 
                 {/* Form - min-height prevents layout shift when switching tabs */}
                 <div className="p-5 space-y-5 min-h-[622px]">
