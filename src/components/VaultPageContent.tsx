@@ -412,6 +412,13 @@ export function VaultPageContent({ id }: { id: string }) {
     type: "deposit" | "withdraw" | "zap";
   } | null>(null);
 
+  // Transaction success animation state - shows green tick briefly after confirmation
+  const [showTxSuccess, setShowTxSuccess] = useState<{
+    show: boolean;
+    type: "deposit" | "withdraw" | "zap";
+    hash: string;
+  } | null>(null);
+
   // Price impact threshold for confirmation (5%)
   const PRICE_IMPACT_CONFIRM_THRESHOLD = 5;
 
@@ -695,10 +702,21 @@ export function VaultPageContent({ id }: { id: string }) {
       setTimeout(() => {
         setLastTxResult(txResult);
         setAmount("");
-        resetVaultActions();
 
         // Show toast notification
         if (isSuccess) {
+          // Show success animation in form
+          setShowTxSuccess({
+            show: true,
+            type: depositHash ? "deposit" : "withdraw",
+            hash: currentHash,
+          });
+          // Clear success animation after 2 seconds
+          setTimeout(() => {
+            setShowTxSuccess(null);
+            resetVaultActions();
+          }, 2000);
+
           toast.success(`${depositHash ? "Deposit" : "Withdrawal"} successful!`, {
             action: {
               label: "View Tx",
@@ -706,6 +724,7 @@ export function VaultPageContent({ id }: { id: string }) {
             },
           });
         } else if (isReverted) {
+          resetVaultActions();
           toast.error(`${depositHash ? "Deposit" : "Withdrawal"} failed - transaction reverted`, {
             action: {
               label: "View Tx",
@@ -736,10 +755,21 @@ export function VaultPageContent({ id }: { id: string }) {
       setTimeout(() => {
         setLastTxResult(txResult);
         setZapAmount("");
-        resetZapActions();
 
         // Show toast notification
         if (zapIsSuccess) {
+          // Show success animation in form
+          setShowTxSuccess({
+            show: true,
+            type: "zap",
+            hash: zapHash,
+          });
+          // Clear success animation after 2 seconds
+          setTimeout(() => {
+            setShowTxSuccess(null);
+            resetZapActions();
+          }, 2000);
+
           toast.success("Zap successful!", {
             action: {
               label: "View Tx",
@@ -747,6 +777,7 @@ export function VaultPageContent({ id }: { id: string }) {
             },
           });
         } else if (zapIsReverted) {
+          resetZapActions();
           toast.error("Zap failed - transaction reverted", {
             action: {
               label: "View Tx",
@@ -1167,8 +1198,54 @@ export function VaultPageContent({ id }: { id: string }) {
                     </div>
                   )}
 
-                  {/* Deposit/Withdraw Form */}
-                  {isVaultDeployed && activeTab !== "zap" && (
+                  {/* Transaction Pending State - Deposit/Withdraw */}
+                  {isVaultDeployed && activeTab !== "zap" && txStatus === "waitingTx" && (depositHash || withdrawHash) && (
+                    <div className="flex flex-col items-center justify-center py-16 text-center animate-in fade-in duration-300">
+                      <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
+                        <Loader2 className="w-8 h-8 text-[var(--foreground)] animate-spin" />
+                      </div>
+                      <h3 className="text-lg font-medium mb-2">Awaiting Confirmation</h3>
+                      <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
+                        Your {activeTab} transaction is being confirmed on-chain.
+                      </p>
+                      <a
+                        href={`https://etherscan.io/tx/${depositHash || withdrawHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:opacity-70 transition-opacity mono"
+                      >
+                        View on Etherscan
+                        <ExternalLink size={14} />
+                      </a>
+                    </div>
+                  )}
+
+                  {/* Transaction Success State - Deposit/Withdraw */}
+                  {isVaultDeployed && activeTab !== "zap" && showTxSuccess?.show && (showTxSuccess.type === "deposit" || showTxSuccess.type === "withdraw") && (
+                    <div className="flex flex-col items-center justify-center py-16 text-center animate-in fade-in zoom-in-95 duration-300">
+                      <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center mb-4">
+                        <Check className="w-8 h-8 text-green-500" />
+                      </div>
+                      <h3 className="text-lg font-medium mb-2 text-green-500">
+                        {showTxSuccess.type === "deposit" ? "Deposit" : "Withdrawal"} Successful
+                      </h3>
+                      <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
+                        Your transaction has been confirmed.
+                      </p>
+                      <a
+                        href={`https://etherscan.io/tx/${showTxSuccess.hash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:opacity-70 transition-opacity mono"
+                      >
+                        View on Etherscan
+                        <ExternalLink size={14} />
+                      </a>
+                    </div>
+                  )}
+
+                  {/* Deposit/Withdraw Form - hidden during pending/success states */}
+                  {isVaultDeployed && activeTab !== "zap" && txStatus !== "waitingTx" && !(showTxSuccess?.show && (showTxSuccess.type === "deposit" || showTxSuccess.type === "withdraw")) && (
                     <>
                       {/* Input */}
                       <div>
@@ -1291,8 +1368,52 @@ export function VaultPageContent({ id }: { id: string }) {
                     </>
                   )}
 
-                  {/* Zap Form */}
-                  {isVaultDeployed && activeTab === "zap" && (
+                  {/* Transaction Pending State - Zap */}
+                  {isVaultDeployed && activeTab === "zap" && zapStatus === "waitingTx" && zapHash && (
+                    <div className="flex flex-col items-center justify-center py-16 text-center animate-in fade-in duration-300">
+                      <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
+                        <Loader2 className="w-8 h-8 text-[var(--foreground)] animate-spin" />
+                      </div>
+                      <h3 className="text-lg font-medium mb-2">Awaiting Confirmation</h3>
+                      <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
+                        Your zap {zapDirection === "in" ? "in" : "out"} transaction is being confirmed on-chain.
+                      </p>
+                      <a
+                        href={`https://etherscan.io/tx/${zapHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:opacity-70 transition-opacity mono"
+                      >
+                        View on Etherscan
+                        <ExternalLink size={14} />
+                      </a>
+                    </div>
+                  )}
+
+                  {/* Transaction Success State - Zap */}
+                  {isVaultDeployed && activeTab === "zap" && showTxSuccess?.show && showTxSuccess.type === "zap" && (
+                    <div className="flex flex-col items-center justify-center py-16 text-center animate-in fade-in zoom-in-95 duration-300">
+                      <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center mb-4">
+                        <Check className="w-8 h-8 text-green-500" />
+                      </div>
+                      <h3 className="text-lg font-medium mb-2 text-green-500">Zap Successful</h3>
+                      <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
+                        Your transaction has been confirmed.
+                      </p>
+                      <a
+                        href={`https://etherscan.io/tx/${showTxSuccess.hash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:opacity-70 transition-opacity mono"
+                      >
+                        View on Etherscan
+                        <ExternalLink size={14} />
+                      </a>
+                    </div>
+                  )}
+
+                  {/* Zap Form - hidden during pending/success states */}
+                  {isVaultDeployed && activeTab === "zap" && zapStatus !== "waitingTx" && !(showTxSuccess?.show && showTxSuccess.type === "zap") && (
                     <>
                       {/* Direction Toggle + Settings */}
                       <div className="flex gap-2">
