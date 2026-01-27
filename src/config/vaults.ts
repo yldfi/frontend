@@ -133,6 +133,8 @@ export const EXTERNAL_VAULT_TOKENS = [
   BEEFY.MOO_CVX_CVX,
   // Asymmetry
   ASYMMETRY.AFCVX,
+  // Pirex (lpxCVX is a liquidity wrapper, not useful as zap out target)
+  PIREX.LPXCVX,
 ] as const;
 
 // External vault interface types
