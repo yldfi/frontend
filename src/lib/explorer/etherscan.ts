@@ -95,7 +95,24 @@ export async function getContractSource(address: string, chainId: number = 1): P
     return sourceCache.get(cacheKey)!;
   }
 
-  const { result: source } = await fetchFromApi<ContractSource>("getSource", address, chainId);
+  // API returns files array, we need to combine into single source string
+  interface ApiSourceResult {
+    files: Array<{ name: string; content: string }>;
+    name: string | null;
+    compiler: string | null;
+    isProxy?: boolean;
+    implementationAddress?: string | null;
+  }
+
+  const { result } = await fetchFromApi<ApiSourceResult>("getSource", address, chainId);
+
+  // Combine all files into a single source string for the parser
+  const source: ContractSource = {
+    source: result.files.map(f => f.content).join("\n\n"),
+    name: result.name,
+    compiler: result.compiler,
+  };
+
   sourceCache.set(cacheKey, source);
   return source;
 }

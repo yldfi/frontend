@@ -1,9 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback, useSyncExternalStore } from "react";
+import { useState, useEffect, useCallback, useSyncExternalStore, useRef } from "react";
 import { createPortal } from "react-dom";
 import { ContractView } from "./ContractView";
 import { StrategyFlowViewer } from "./StrategyFlowViewer";
+import { ContractSourceViewer } from "./ContractSourceViewer";
+import { ChevronDown } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 // Hook to safely check if we're mounted on client
 function useIsMounted() {
@@ -14,7 +17,14 @@ function useIsMounted() {
   );
 }
 
-export type ExplorerTab = "state" | "flow";
+export type ExplorerTab = "state" | "flow" | "source";
+
+export interface ExplorerContract {
+  address: string;
+  title: string;
+  icon?: string;
+  showFlowTab?: boolean;
+}
 
 interface ContractExplorerProps {
   address: string;
@@ -29,6 +39,10 @@ interface ContractExplorerProps {
   activeTab?: ExplorerTab;
   /** Callback when tab changes */
   onTabChange?: (tab: ExplorerTab) => void;
+  /** List of available contracts to switch between */
+  availableContracts?: ExplorerContract[];
+  /** Callback when a different contract is selected */
+  onContractChange?: (contract: ExplorerContract) => void;
 }
 
 export function ContractExplorer({
@@ -41,9 +55,13 @@ export function ContractExplorer({
   showFlowTab = true,
   activeTab: controlledTab,
   onTabChange,
+  availableContracts,
+  onContractChange,
 }: ContractExplorerProps) {
   const mounted = useIsMounted();
   const [internalTab, setInternalTab] = useState<ExplorerTab>("state");
+  const [selectorOpen, setSelectorOpen] = useState(false);
+  const selectorRef = useRef<HTMLDivElement>(null);
 
   // Use controlled tab if provided, otherwise use internal state
   const activeTab = controlledTab ?? internalTab;
@@ -64,7 +82,11 @@ export function ContractExplorer({
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onClose();
+        if (selectorOpen) {
+          setSelectorOpen(false);
+        } else {
+          onClose();
+        }
       }
     };
 
@@ -78,7 +100,20 @@ export function ContractExplorer({
       document.removeEventListener("keydown", handleEscape);
       document.body.style.overflow = "";
     };
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, selectorOpen]);
+
+  // Close selector when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (selectorRef.current && !selectorRef.current.contains(event.target as Node)) {
+        setSelectorOpen(false);
+      }
+    }
+    if (selectorOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [selectorOpen]);
 
   if (!isOpen || !mounted) return null;
 
@@ -96,12 +131,60 @@ export function ContractExplorer({
         <div className="flex items-center justify-between p-4 border-b border-[var(--border)] shrink-0">
           <div className="flex items-center gap-3">
             {/* eslint-disable-next-line @next/next/no-img-element -- External token icons from various sources */}
-            {icon && <img src={icon} alt="" className="w-6 h-6" />}
+            {icon && <img src={icon} alt="" className="w-6 h-6 rounded-full" />}
             {!icon && <div className="w-2 h-2 rounded-full bg-[var(--success)] animate-pulse" />}
             <div>
-              <h2 className="font-medium text-lg">
-                {title ? `${title} Contract Explorer` : "Contract Explorer"}
-              </h2>
+              {availableContracts && availableContracts.length > 1 && onContractChange ? (
+                <div className="relative" ref={selectorRef}>
+                  <button
+                    onClick={() => setSelectorOpen(!selectorOpen)}
+                    className="flex items-center gap-2 font-medium text-lg hover:text-[var(--accent)] transition-colors"
+                  >
+                    {title ? `${title}` : "Contract"} Explorer
+                    <ChevronDown
+                      size={18}
+                      className={cn(
+                        "transition-transform text-[var(--muted-foreground)]",
+                        selectorOpen && "rotate-180"
+                      )}
+                    />
+                  </button>
+                  {selectorOpen && (
+                    <div className="absolute top-full left-0 mt-2 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-lg z-50 min-w-[220px] py-1 max-h-[300px] overflow-y-auto">
+                      {availableContracts.map((contract) => {
+                        const isSelected = contract.address.toLowerCase() === address.toLowerCase();
+                        return (
+                          <button
+                            key={contract.address}
+                            onClick={() => {
+                              setSelectorOpen(false);
+                              if (!isSelected) {
+                                onContractChange(contract);
+                              }
+                            }}
+                            className={cn(
+                              "w-full px-4 py-2.5 text-left flex items-center gap-3 hover:bg-[var(--muted)] transition-colors",
+                              isSelected && "bg-[var(--muted)] border-l-2 border-l-[var(--accent)]"
+                            )}
+                          >
+                            {contract.icon && (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={contract.icon} alt="" className="w-5 h-5 rounded-full" />
+                            )}
+                            <span className={cn("text-sm", isSelected && "font-medium")}>
+                              {contract.title}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <h2 className="font-medium text-lg">
+                  {title ? `${title} Contract Explorer` : "Contract Explorer"}
+                </h2>
+              )}
               {lastUpdated && (
                 <p className="text-xs text-[var(--muted-foreground)]">
                   last updated: {formatTimestamp(lastUpdated)}
@@ -115,7 +198,7 @@ export function ContractExplorer({
               href={`https://etherscan.io/address/${address}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="mono text-xs px-2 py-1 bg-[var(--muted)] rounded hover:text-[var(--accent)] transition-colors"
+              className="mono text-xs px-2 py-1 bg-[var(--muted)] rounded text-[var(--foreground)] hover:text-[var(--accent)] transition-colors"
             >
               {address.slice(0, 6)}...{address.slice(-4)}
             </a>
@@ -142,39 +225,47 @@ export function ContractExplorer({
           </div>
         </div>
 
-        {/* Tabs */}
-        {showFlowTab && (
-          <div className="flex px-4 shrink-0 border-b border-[var(--border)]">
-            <button
-              onClick={() => setActiveTab("state")}
-              className="px-4 py-2 text-sm font-medium transition-colors border-b -mb-px"
-              style={{
-                color: activeTab === "state" ? "#f59e0b" : "var(--muted-foreground)",
-                borderBottomColor: activeTab === "state" ? "#f59e0b" : "var(--border)",
-              }}
-            >
-              Contract State
-            </button>
+        {/* Tabs - Contract State, Contract Source, then Strategy Flow (if applicable) */}
+        <div className="flex px-4 shrink-0 border-b border-[var(--border)]">
+          <button
+            onClick={() => setActiveTab("state")}
+            className="px-4 py-2 text-sm font-medium transition-colors border-b -mb-px"
+            style={{
+              color: activeTab === "state" ? "var(--accent)" : "var(--muted-foreground)",
+              borderBottomColor: activeTab === "state" ? "var(--accent)" : "transparent",
+            }}
+          >
+            Contract State
+          </button>
+          <button
+            onClick={() => setActiveTab("source")}
+            className="px-4 py-2 text-sm font-medium transition-colors border-b -mb-px"
+            style={{
+              color: activeTab === "source" ? "var(--accent)" : "var(--muted-foreground)",
+              borderBottomColor: activeTab === "source" ? "var(--accent)" : "transparent",
+            }}
+          >
+            Contract Source
+          </button>
+          {showFlowTab && (
             <button
               onClick={() => setActiveTab("flow")}
               className="px-4 py-2 text-sm font-medium transition-colors border-b -mb-px"
               style={{
-                color: activeTab === "flow" ? "#f59e0b" : "var(--muted-foreground)",
-                borderBottomColor: activeTab === "flow" ? "#f59e0b" : "var(--border)",
+                color: activeTab === "flow" ? "var(--accent)" : "var(--muted-foreground)",
+                borderBottomColor: activeTab === "flow" ? "var(--accent)" : "transparent",
               }}
             >
               Strategy Flow
             </button>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Content - scrollable */}
         <div className="flex-1 overflow-y-auto p-4">
-          {activeTab === "state" ? (
-            <ContractView address={address} />
-          ) : (
-            <StrategyFlowViewer address={address} />
-          )}
+          {activeTab === "state" && <ContractView address={address} />}
+          {activeTab === "flow" && <StrategyFlowViewer address={address} />}
+          {activeTab === "source" && <ContractSourceViewer address={address} />}
         </div>
       </div>
     </div>,
@@ -261,6 +352,32 @@ export function useContractExplorer() {
     []
   );
 
+  // Switch to a different contract while preserving the current tab
+  const switchContract = useCallback(
+    (address: string, title?: string, icon?: string, showFlowTab: boolean = true) => {
+      setExplorerState((prev) => {
+        // If switching to a contract without flow tab and we're on flow tab, go to state
+        const currentTab = prev.activeTab || "state";
+        const newTab = (!showFlowTab && currentTab === "flow") ? "state" : currentTab;
+
+        const newState = {
+          isOpen: true,
+          address,
+          title,
+          icon,
+          showFlowTab,
+          activeTab: newTab,
+        };
+        saveExplorerState(newState);
+        return {
+          ...newState,
+          lastUpdated: new Date(),
+        };
+      });
+    },
+    []
+  );
+
   const setActiveTab = useCallback((tab: ExplorerTab) => {
     setExplorerState((prev) => {
       const newState = { ...prev, activeTab: tab };
@@ -287,6 +404,7 @@ export function useContractExplorer() {
   return {
     ...explorerState,
     openExplorer,
+    switchContract,
     closeExplorer,
     setActiveTab,
   };
