@@ -217,7 +217,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    // GET /api/vaults - Read cached data
+    // GET /api/vaults - Read cached data (with fallback to live fetch)
     if (url.pathname === "/api/vaults") {
       const cached = await env.VAULT_CACHE.get("vault-data");
       if (cached) {
@@ -229,10 +229,28 @@ export default {
           },
         });
       }
-      return new Response(JSON.stringify({ error: "No cached data" }), {
-        status: 503,
-        headers: { "Content-Type": "application/json" },
-      });
+
+      // Fallback: fetch fresh data if cache is empty
+      try {
+        const data = await fetchVaultData();
+        // Cache for next request
+        await env.VAULT_CACHE.put("vault-data", JSON.stringify(data), {
+          expirationTtl: 600,
+        });
+        return new Response(JSON.stringify(data), {
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "public, max-age=60",
+            "Access-Control-Allow-Origin": "*",
+          },
+        });
+      } catch (error) {
+        console.error("Failed to fetch vault data on demand:", error);
+        return new Response(JSON.stringify({ error: "Failed to fetch vault data" }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
     }
 
     // POST /api/vaults/refresh - Manual refresh (requires secret)
