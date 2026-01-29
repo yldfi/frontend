@@ -288,22 +288,24 @@ export function HomePageContent() {
       <main style={{ paddingTop: "calc(4rem + var(--test-banner-height))" }}>
         {/* Hero + Stats collapsible section */}
         <div className="relative">
-          {/* Hero */}
+          {/* Hero - uses grid for collapse to preserve canvas dimensions */}
           <section
             className={cn(
-              "border-b border-[var(--border)] relative overflow-hidden transition-all duration-500 ease-in-out",
-              heroCollapsed && "border-b-0"
+              "border-b border-[var(--border)] relative overflow-hidden transition-all duration-500 ease-in-out grid",
+              heroCollapsed ? "grid-rows-[0fr] border-b-0" : "grid-rows-[1fr]"
             )}
           >
-            <div className="absolute inset-0">
-              <PixelAnimation />
-            </div>
-            <div
-              className={cn(
-                "max-w-6xl mx-auto px-6 relative z-10 transition-all duration-500 ease-in-out overflow-hidden",
-                heroCollapsed ? "max-h-0 py-0 opacity-0" : "max-h-[600px] py-24 md:py-32 opacity-100"
-              )}
-            >
+            <div className="min-h-0 overflow-hidden">
+              <div className="relative">
+                <div className="absolute inset-0">
+                  <PixelAnimation />
+                </div>
+                <div
+                  className={cn(
+                    "max-w-6xl mx-auto px-6 relative z-10 py-24 md:py-32 transition-opacity duration-500",
+                    heroCollapsed ? "opacity-0" : "opacity-100"
+                  )}
+                >
               <div className="max-w-3xl">
                 <p className="mono text-sm text-[var(--muted-foreground)] mb-4 animate-fade-in">
                   [001] yld_fi
@@ -334,7 +336,9 @@ export function HomePageContent() {
                   >
                     Read Docs <ArrowUpRight size={14} />
                   </a>
+                  </div>
                 </div>
+              </div>
               </div>
             </div>
           </section>
@@ -369,8 +373,8 @@ export function HomePageContent() {
 
         {/* Toggle button - separate element for proper positioning */}
         <div className={cn(
-          "flex justify-center relative z-20 transition-all duration-500",
-          heroCollapsed ? "mt-2 mb-2" : "-mt-4 mb-4"
+          "flex justify-center relative transition-all duration-500",
+          heroCollapsed ? "-mt-[19px] mb-0 z-[60]" : "-mt-[19px] mb-0 z-20"
         )}>
           <button
             onClick={toggleHeroCollapsed}
