@@ -16,6 +16,7 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 const ETHERSCAN_API_BASE = "https://api.etherscan.io/v2/api";
 const CACHE_TTL = 24 * 60 * 60; // 24 hours in seconds (KV cache)
 const BROWSER_CACHE_TTL = 60 * 60; // 1 hour in seconds (browser cache)
+const CACHE_VERSION = "v2"; // Bump to invalidate old cached data
 
 // Cache headers for successful responses
 const cacheHeaders = {
@@ -120,7 +121,7 @@ export async function GET(request: NextRequest) {
   try {
     switch (action) {
       case "getABI": {
-        const cacheKey = `abi_${chainId}_${normalizedAddress}`;
+        const cacheKey = `${CACHE_VERSION}_abi_${chainId}_${normalizedAddress}`;
 
         // Check KV cache first
         if (kv) {
@@ -153,7 +154,7 @@ export async function GET(request: NextRequest) {
       }
 
       case "getName": {
-        const cacheKey = `name_${chainId}_${normalizedAddress}`;
+        const cacheKey = `${CACHE_VERSION}_name_${chainId}_${normalizedAddress}`;
 
         // Check KV cache first
         if (kv) {
@@ -194,7 +195,7 @@ export async function GET(request: NextRequest) {
       }
 
       case "getSource": {
-        const cacheKey = `source_${chainId}_${normalizedAddress}`;
+        const cacheKey = `${CACHE_VERSION}_source_${chainId}_${normalizedAddress}`;
 
         // Check KV cache first (contract source never changes, cache indefinitely)
         if (kv) {
@@ -209,14 +210,41 @@ export async function GET(request: NextRequest) {
         const response = await rateLimitedFetch(url);
         const data = (await response.json()) as EtherscanResponse;
 
-        if (data.status !== "1" || !Array.isArray(data.result) || !data.result[0]?.SourceCode) {
+        if (data.status !== "1" || !Array.isArray(data.result) || !data.result[0]) {
           return NextResponse.json({ error: "Contract source not found or not verified" }, { status: 404 });
         }
 
-        const sourceResult = data.result[0];
+        let sourceResult = data.result[0];
+        let sourceAddress = address;
+        let isProxy = false;
+
+        // Check if this is a proxy contract - try to get implementation source
+        const isLikelyProxy = !sourceResult.SourceCode || isProxyContract(sourceResult.ContractName);
+        if (isLikelyProxy) {
+          const implAddress = await getImplementationAddress(address, chainId, apiKey);
+          if (implAddress) {
+            // Fetch implementation source
+            const implUrl = `${ETHERSCAN_API_BASE}?chainid=${chainId}&module=contract&action=getsourcecode&address=${implAddress}&apikey=${apiKey}`;
+            const implResponse = await rateLimitedFetch(implUrl);
+            const implData = (await implResponse.json()) as EtherscanResponse;
+
+            if (implData.status === "1" && Array.isArray(implData.result) && implData.result[0]?.SourceCode) {
+              sourceResult = implData.result[0];
+              sourceAddress = implAddress;
+              isProxy = true;
+            }
+          }
+        }
+
+        if (!sourceResult.SourceCode) {
+          return NextResponse.json({ error: "Contract source not found or not verified" }, { status: 404 });
+        }
+
         let sourceCode = sourceResult.SourceCode;
 
         // Handle JSON-wrapped source (multi-file contracts from Etherscan)
+        let files: Array<{ name: string; content: string }> = [];
+
         if (sourceCode.startsWith("{")) {
           try {
             // Double-wrapped JSON: {{...}}
@@ -225,19 +253,34 @@ export async function GET(request: NextRequest) {
             }
             const parsed = JSON.parse(sourceCode);
             const sources = parsed.sources || parsed;
-            // Concatenate all source files
-            sourceCode = Object.values(sources)
-              .map((s: unknown) => (s as { content?: string }).content || s)
-              .join("\n\n// --- Next File ---\n\n");
+            // Extract files with names
+            files = Object.entries(sources).map(([name, source]: [string, unknown]) => ({
+              name: name.split("/").pop() || name, // Get just the filename
+              content: (source as { content?: string }).content || (source as string),
+            }));
           } catch {
-            // Not JSON, use as-is
+            // Not JSON, treat as single file
+            files = [{ name: `${sourceResult.ContractName || "Contract"}.sol`, content: sourceCode }];
           }
+        } else {
+          // Single file source
+          files = [{ name: `${sourceResult.ContractName || "Contract"}.sol`, content: sourceCode }];
         }
 
+        // Sort files - main contract first
+        const mainContractName = sourceResult.ContractName?.toLowerCase() || "";
+        files.sort((a, b) => {
+          if (a.name.toLowerCase().includes(mainContractName)) return -1;
+          if (b.name.toLowerCase().includes(mainContractName)) return 1;
+          return a.name.localeCompare(b.name);
+        });
+
         const result = {
-          source: sourceCode,
+          files,
           name: sourceResult.ContractName || null,
           compiler: sourceResult.CompilerVersion || null,
+          isProxy,
+          implementationAddress: isProxy ? sourceAddress : null,
         };
 
         // Cache in KV (contract source never changes)
@@ -249,7 +292,7 @@ export async function GET(request: NextRequest) {
       }
 
       case "getNatSpec": {
-        const cacheKey = `natspec_${chainId}_${normalizedAddress}`;
+        const cacheKey = `${CACHE_VERSION}_natspec_${chainId}_${normalizedAddress}`;
 
         // Check KV cache first
         if (kv) {
@@ -323,6 +366,11 @@ const PROXY_CONTRACT_NAMES = [
   "AdminUpgradeabilityProxy",
   "BeaconProxy",
   "UUPSUpgradeable",
+  "Proxy",
+  "FiatTokenProxy",
+  "InitializableAdminUpgradeabilityProxy",
+  "OwnedUpgradeabilityProxy",
+  "UpgradeabilityProxy",
 ];
 
 function isProxyContract(contractName: string): boolean {
@@ -331,8 +379,17 @@ function isProxyContract(contractName: string): boolean {
   );
 }
 
-// EIP-1967 implementation slot
-const EIP1967_IMPLEMENTATION_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
+// Common proxy implementation storage slots
+const IMPLEMENTATION_SLOTS = [
+  // EIP-1967 implementation slot
+  "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
+  // OpenZeppelin's older implementation slot
+  "0x7050c9e0f4ca769c69bd3a8ef740bc37934f8e2c036e5a723fd8ee048ed3f8c3",
+  // EIP-1822 (UUPS) logic slot
+  "0xc5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7",
+  // Custom slots used by some protocols
+  "0x0000000000000000000000000000000000000000000000000000000000000000", // slot 0
+];
 
 async function getImplementationAddress(
   proxyAddress: string,
@@ -340,29 +397,37 @@ async function getImplementationAddress(
   apiKey: string
 ): Promise<string | null> {
   try {
-    // Use eth_getStorageAt to read the implementation slot
     const rpcUrl = chainId === "1" ? "https://eth.llamarpc.com" : null;
     if (!rpcUrl) return null;
 
-    const response = await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "eth_getStorageAt",
-        params: [proxyAddress, EIP1967_IMPLEMENTATION_SLOT, "latest"],
-        id: 1,
-      }),
-    });
+    // Try each known implementation slot
+    for (const slot of IMPLEMENTATION_SLOTS) {
+      const response = await fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "eth_getStorageAt",
+          params: [proxyAddress, slot, "latest"],
+          id: 1,
+        }),
+      });
 
-    const data = (await response.json()) as { result?: string };
-    if (!data.result || data.result === "0x0000000000000000000000000000000000000000000000000000000000000000") {
-      return null;
+      const data = (await response.json()) as { result?: string };
+      if (data.result && data.result !== "0x0000000000000000000000000000000000000000000000000000000000000000") {
+        // Extract address from 32-byte slot (last 20 bytes)
+        const implAddress = "0x" + data.result.slice(-40);
+        // Validate it's a different address and looks like a valid address
+        if (
+          implAddress.toLowerCase() !== proxyAddress.toLowerCase() &&
+          implAddress !== "0x0000000000000000000000000000000000000000"
+        ) {
+          return implAddress;
+        }
+      }
     }
 
-    // Extract address from 32-byte slot (last 20 bytes)
-    const implAddress = "0x" + data.result.slice(-40);
-    return implAddress.toLowerCase() !== proxyAddress.toLowerCase() ? implAddress : null;
+    return null;
   } catch {
     return null;
   }

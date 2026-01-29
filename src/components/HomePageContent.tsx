@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useAccount } from "wagmi";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
-import { ArrowUpRight, Github, BookOpen, Send, ChevronDown } from "lucide-react";
+import { ArrowUpRight, Github, BookOpen, Send, ChevronDown, ChevronUp } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import { cn, formatUsd } from "@/lib/utils";
@@ -38,6 +38,7 @@ const vaultConfigs = Object.values(VAULTS)
 type SortOption = "holdings" | "apy" | "tvl";
 
 const SORT_STORAGE_KEY = "yldfi-vault-sort";
+const HERO_COLLAPSED_KEY = "yldfi-hero-collapsed";
 
 // Get initial sort value from localStorage (called once during component init)
 function getInitialSortValue(): SortOption {
@@ -53,11 +54,35 @@ function getInitialSortValue(): SortOption {
   return "holdings";
 }
 
+// Get initial hero collapsed state from localStorage
+function getInitialHeroCollapsed(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const saved = localStorage.getItem(HERO_COLLAPSED_KEY);
+    return saved === "true";
+  } catch {
+    // localStorage not available
+  }
+  return false;
+}
+
 export function HomePageContent() {
   const { isConnected } = useAccount();
   const [sortBy, setSortBy] = useState<SortOption>(getInitialSortValue);
   const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
   const sortDropdownRef = useRef<HTMLDivElement>(null);
+  const [heroCollapsed, setHeroCollapsed] = useState(getInitialHeroCollapsed);
+
+  // Toggle hero collapsed state with persistence
+  const toggleHeroCollapsed = () => {
+    const newValue = !heroCollapsed;
+    setHeroCollapsed(newValue);
+    try {
+      localStorage.setItem(HERO_COLLAPSED_KEY, String(newValue));
+    } catch {
+      // localStorage not available
+    }
+  };
 
   // Close sort dropdown when clicking outside
   useEffect(() => {
@@ -261,72 +286,111 @@ export function HomePageContent() {
       </header>
 
       <main style={{ paddingTop: "calc(4rem + var(--test-banner-height))" }}>
-        {/* Hero */}
-        <section className="border-b border-[var(--border)] relative overflow-hidden">
-          <div className="absolute inset-0">
-            <PixelAnimation />
-          </div>
-          <div className="max-w-6xl mx-auto px-6 py-24 md:py-32 relative z-10">
-            <div className="max-w-3xl">
-              <p className="mono text-sm text-[var(--muted-foreground)] mb-4 animate-fade-in">
-                [001] yld_fi
-              </p>
-              <h1 className="text-4xl md:text-5xl lg:text-6xl font-medium tracking-tight leading-[1.1] mb-6 animate-fade-in-up opacity-0 delay-100">
-                Deposit
-                <br />
-                Compound
-                <br />
-                <span className="text-[var(--muted-foreground)]">Earn</span>
-              </h1>
-              <p className="text-lg text-[var(--muted-foreground)] max-w-xl mb-8 animate-fade-in-up opacity-0 delay-200">
-                Deposit into ERC-4626 vaults built on Yearn V3 architecture.
-                Auto-compounding strategies that optimize your returns.
-              </p>
-              <div className="flex items-center gap-4 animate-fade-in-up opacity-0 delay-300">
-                <a
-                  href="#vaults"
-                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-[var(--foreground)] text-[var(--background)] text-sm font-medium rounded-md hover:opacity-90 transition-opacity"
-                >
-                  View Vaults
-                </a>
-                <a
-                  href="https://yldfi.gitbook.io/docs"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 px-5 py-2.5 border border-[var(--border)] text-sm font-medium rounded-md hover:bg-[var(--muted)] transition-colors"
-                >
-                  Read Docs <ArrowUpRight size={14} />
-                </a>
+        {/* Hero + Stats collapsible section */}
+        <div className="relative">
+          {/* Hero */}
+          <section
+            className={cn(
+              "border-b border-[var(--border)] relative overflow-hidden transition-all duration-500 ease-in-out",
+              heroCollapsed && "border-b-0"
+            )}
+          >
+            <div className="absolute inset-0">
+              <PixelAnimation />
+            </div>
+            <div
+              className={cn(
+                "max-w-6xl mx-auto px-6 relative z-10 transition-all duration-500 ease-in-out overflow-hidden",
+                heroCollapsed ? "max-h-0 py-0 opacity-0" : "max-h-[600px] py-24 md:py-32 opacity-100"
+              )}
+            >
+              <div className="max-w-3xl">
+                <p className="mono text-sm text-[var(--muted-foreground)] mb-4 animate-fade-in">
+                  [001] yld_fi
+                </p>
+                <h1 className="text-4xl md:text-5xl lg:text-6xl font-medium tracking-tight leading-[1.1] mb-6 animate-fade-in-up opacity-0 delay-100">
+                  Deposit
+                  <br />
+                  Compound
+                  <br />
+                  <span className="text-[var(--muted-foreground)]">Earn</span>
+                </h1>
+                <p className="text-lg text-[var(--muted-foreground)] max-w-xl mb-8 animate-fade-in-up opacity-0 delay-200">
+                  Deposit into ERC-4626 vaults built on Yearn V3 architecture.
+                  Auto-compounding strategies that optimize your returns.
+                </p>
+                <div className="flex items-center gap-4 animate-fade-in-up opacity-0 delay-300">
+                  <a
+                    href="#vaults"
+                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-[var(--foreground)] text-[var(--background)] text-sm font-medium rounded-md hover:opacity-90 transition-opacity"
+                  >
+                    View Vaults
+                  </a>
+                  <a
+                    href="https://yldfi.gitbook.io/docs"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-5 py-2.5 border border-[var(--border)] text-sm font-medium rounded-md hover:bg-[var(--muted)] transition-colors"
+                  >
+                    Read Docs <ArrowUpRight size={14} />
+                  </a>
+                </div>
               </div>
             </div>
-          </div>
-        </section>
+          </section>
 
-        {/* Stats */}
-        <section className="border-b border-[var(--border)]">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6">
-            <div className="grid grid-cols-3 divide-x divide-[var(--border)]">
-              {stats.map((stat, i) => (
-                <div
-                  key={stat.label}
-                  className="py-6 sm:py-8 md:py-12 px-2 sm:px-4 first:pl-0 last:pr-0 animate-fade-in-up opacity-0"
-                  style={{ animationDelay: `${i * 100}ms` }}
-                >
-                  <p className="mono text-lg sm:text-2xl md:text-3xl font-medium mb-1">
-                    {stat.value}
-                  </p>
-                  <p className="text-xs sm:text-sm text-[var(--muted-foreground)]">
-                    {stat.label}
-                  </p>
-                </div>
-              ))}
+          {/* Stats - hidden when hero is collapsed */}
+          <section
+            className={cn(
+              "border-b border-[var(--border)] transition-all duration-500 ease-in-out overflow-hidden",
+              heroCollapsed ? "max-h-0 border-b-0 opacity-0" : "max-h-[200px] opacity-100"
+            )}
+          >
+            <div className="max-w-6xl mx-auto px-4 sm:px-6">
+              <div className="grid grid-cols-3 divide-x divide-[var(--border)]">
+                {stats.map((stat, i) => (
+                  <div
+                    key={stat.label}
+                    className="py-6 sm:py-8 md:py-12 px-2 sm:px-4 first:pl-0 last:pr-0 animate-fade-in-up opacity-0"
+                    style={{ animationDelay: `${i * 100}ms` }}
+                  >
+                    <p className="mono text-lg sm:text-2xl md:text-3xl font-medium mb-1">
+                      {stat.value}
+                    </p>
+                    <p className="text-xs sm:text-sm text-[var(--muted-foreground)]">
+                      {stat.label}
+                    </p>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        </div>
+
+        {/* Toggle button - separate element for proper positioning */}
+        <div className={cn(
+          "flex justify-center relative z-20 transition-all duration-500",
+          heroCollapsed ? "mt-2 mb-2" : "-mt-4 mb-4"
+        )}>
+          <button
+            onClick={toggleHeroCollapsed}
+            className="p-2 bg-[var(--muted)] border border-[var(--border)] rounded-full hover:bg-[var(--border)] hover:border-[var(--border-hover)] transition-all shadow-md"
+            aria-label={heroCollapsed ? "Expand hero section" : "Collapse hero section"}
+          >
+            {heroCollapsed ? (
+              <ChevronDown size={18} className="text-[var(--foreground)]" />
+            ) : (
+              <ChevronUp size={18} className="text-[var(--foreground)]" />
+            )}
+          </button>
+        </div>
 
         {/* Vaults */}
         <section id="vaults" className="scroll-mt-16">
-          <div className="max-w-6xl mx-auto px-6 py-16 md:py-24">
+          <div className={cn(
+            "max-w-6xl mx-auto px-6 transition-all duration-500",
+            heroCollapsed ? "py-6 md:py-8" : "py-16 md:py-24"
+          )}>
             <div className="flex items-end justify-between mb-12">
               <div>
                 <p className="mono text-sm text-[var(--muted-foreground)] mb-2">

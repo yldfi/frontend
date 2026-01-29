@@ -6,7 +6,7 @@ import { notFound, useRouter } from "next/navigation";
 import { useAccount, useBalance, useGasPrice, usePublicClient } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
-import { ArrowLeft, ArrowUpRight, ExternalLink, Loader2, Search, Route, RouteOff, Copy, ChevronDown, Check } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, ExternalLink, Loader2, Search, Route, RouteOff, Copy, ChevronDown, Check, X, Clock } from "lucide-react";
 import { RouteDisplay } from "@/components/RouteDisplay";
 
 // Animated loading dots for quote fetching
@@ -105,7 +105,7 @@ function MaxButton({ balance, onSelect }: { balance: string; onSelect: (amount: 
     </div>
   );
 }
-import { ContractExplorer, useContractExplorer } from "@/components/ContractExplorer";
+import { ContractExplorer, useContractExplorer, type ExplorerContract } from "@/components/ContractExplorer";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
@@ -153,6 +153,14 @@ export function VaultPageContent({ id }: { id: string }) {
       (!v.hidden && v.address !== "0x0000000000000000000000000000000000000000")
   );
 
+  // Create explorer contracts list for the contract explorer dropdown
+  const explorerContracts: ExplorerContract[] = availableVaults.map((v) => ({
+    address: v.address,
+    title: v.name,
+    icon: v.logo,
+    showFlowTab: v.type === "strategy",
+  }));
+
   // Close vault selector when clicking outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -166,6 +174,144 @@ export function VaultPageContent({ id }: { id: string }) {
 
   // Check if vault is deployed (has non-zero address)
   const isVaultDeployed = vault?.address && vault.address !== "0x0000000000000000000000000000000000000000";
+
+  // DEBUG: Preview transaction states with granular control
+  type DebugTxState = "none" | "deposit-pending" | "deposit-success" | "deposit-reverted" | "withdraw-pending" | "withdraw-success" | "withdraw-reverted" | "zap-in-pending" | "zap-in-success" | "zap-in-reverted" | "zap-out-pending" | "zap-out-success" | "zap-out-reverted";
+  const [debugTxState, setDebugTxState] = useState<DebugTxState>("none");
+  const debugHash = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+  const [debugSimulationResult, setDebugSimulationResult] = useState<{
+    success: boolean;
+    gasUsed?: number;
+    errorMessage?: string;
+    tenderlyUrl?: string;
+    assetChanges: { type: "send" | "receive"; symbol: string; amount: string; logo?: string; dollarValue?: number }[];
+  } | null>(null);
+
+  // DEBUG: Draggable panel position (persisted to localStorage)
+  const [debugPanelPos, setDebugPanelPos] = useState<{ x: number; y: number } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragOffset = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Load saved position on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("yldfi-debug-panel-pos");
+      if (saved) {
+        setDebugPanelPos(JSON.parse(saved));
+      }
+    } catch {
+      // localStorage unavailable
+    }
+  }, []);
+
+  // Drag handlers for debug panel
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    const panel = (e.target as HTMLElement).closest("[data-debug-panel]") as HTMLElement;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    dragOffset.current = {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    };
+    setIsDragging(true);
+  }, []);
+
+  const handleDrag = useCallback((e: MouseEvent) => {
+    if (!isDragging) return;
+    const newX = e.clientX - dragOffset.current.x;
+    const newY = e.clientY - dragOffset.current.y;
+    setDebugPanelPos({ x: newX, y: newY });
+  }, [isDragging]);
+
+  const handleDragEnd = useCallback(() => {
+    if (!isDragging) return;
+    setIsDragging(false);
+    // Save position to localStorage
+    if (debugPanelPos) {
+      try {
+        localStorage.setItem("yldfi-debug-panel-pos", JSON.stringify(debugPanelPos));
+      } catch {
+        // localStorage unavailable
+      }
+    }
+  }, [isDragging, debugPanelPos]);
+
+  // Add/remove global mouse listeners for dragging
+  useEffect(() => {
+    if (isDragging) {
+      window.addEventListener("mousemove", handleDrag);
+      window.addEventListener("mouseup", handleDragEnd);
+      return () => {
+        window.removeEventListener("mousemove", handleDrag);
+        window.removeEventListener("mouseup", handleDragEnd);
+      };
+    }
+  }, [isDragging, handleDrag, handleDragEnd]);
+  // Helper to check debug state categories
+  const isDebugPending = debugTxState.endsWith("-pending");
+  const isDebugSuccess = debugTxState.endsWith("-success");
+  const isDebugReverted = debugTxState.endsWith("-reverted");
+  const isDebugDeposit = debugTxState.startsWith("deposit-");
+  const isDebugWithdraw = debugTxState.startsWith("withdraw-");
+  const isDebugZap = debugTxState.startsWith("zap-");
+  const isDebugZapIn = debugTxState.startsWith("zap-in-");
+  const isDebugZapOut = debugTxState.startsWith("zap-out-");
+  // Sample debug tx details (changes based on debug state)
+  const debugTxDetails = vault ? (() => {
+    if (isDebugDeposit) {
+      return {
+        fromAmount: "142.24",
+        fromSymbol: vault.assetSymbol,
+        fromLogo: `/tokens/${vault.assetSymbol.toLowerCase()}.png`,
+        toAmount: "138.91",
+        toSymbol: vault.symbol,
+        toLogo: vault.logo,
+      };
+    } else if (isDebugWithdraw) {
+      return {
+        fromAmount: "138.91",
+        fromSymbol: vault.symbol,
+        fromLogo: vault.logo,
+        toAmount: "142.24",
+        toSymbol: vault.assetSymbol,
+        toLogo: `/tokens/${vault.assetSymbol.toLowerCase()}.png`,
+      };
+    } else if (isDebugZapIn) {
+      return {
+        fromAmount: "1.5",
+        fromSymbol: "ETH",
+        fromLogo: "/tokens/eth.png",
+        toAmount: "523.18",
+        toSymbol: vault.symbol,
+        toLogo: vault.logo,
+      };
+    } else if (isDebugZapOut) {
+      return {
+        fromAmount: "523.18",
+        fromSymbol: vault.symbol,
+        fromLogo: vault.logo,
+        toAmount: "1.48",
+        toSymbol: "ETH",
+        toLogo: "/tokens/eth.png",
+      };
+    }
+    return null;
+  })() : null;
+  // DEBUG: Auto-cycle through states
+  const [debugAutoCycle, setDebugAutoCycle] = useState(false);
+  const [debugCycleSpeed, setDebugCycleSpeed] = useState(1500); // ms between transitions
+  const debugAllStates: DebugTxState[] = ["none", "deposit-pending", "deposit-success", "deposit-reverted", "withdraw-pending", "withdraw-success", "withdraw-reverted", "zap-in-pending", "zap-in-success", "zap-in-reverted", "zap-out-pending", "zap-out-success", "zap-out-reverted"];
+  useEffect(() => {
+    if (!debugAutoCycle) return;
+    const interval = setInterval(() => {
+      setDebugTxState(prev => {
+        const currentIndex = debugAllStates.indexOf(prev);
+        const nextIndex = (currentIndex + 1) % debugAllStates.length;
+        return debugAllStates[nextIndex];
+      });
+    }, debugCycleSpeed);
+    return () => clearInterval(interval);
+  }, [debugAutoCycle, debugCycleSpeed]);
 
   const { isConnected, address: userAddress, chainId } = useAccount();
   const { openConnectModal } = useConnectModal();
@@ -190,7 +336,7 @@ export function VaultPageContent({ id }: { id: string }) {
   };
 
   // Contract explorer state (localStorage persisted)
-  const { isOpen: explorerOpen, address: explorerAddress, title: explorerTitle, lastUpdated: explorerLastUpdated, icon: explorerIcon, showFlowTab: explorerShowFlowTab, activeTab: explorerActiveTab, openExplorer, closeExplorer, setActiveTab: setExplorerActiveTab } = useContractExplorer();
+  const { isOpen: explorerOpen, address: explorerAddress, title: explorerTitle, lastUpdated: explorerLastUpdated, icon: explorerIcon, showFlowTab: explorerShowFlowTab, activeTab: explorerActiveTab, openExplorer, switchContract, closeExplorer, setActiveTab: setExplorerActiveTab } = useContractExplorer();
   const [amount, setAmount] = useState("");
 
   // Reset amount when Tenderly network changes (mainnet <-> VNet)
@@ -419,6 +565,56 @@ export function VaultPageContent({ id }: { id: string }) {
     hash: string;
   } | null>(null);
 
+  // Transaction reverted state for visual feedback
+  const [showTxReverted, setShowTxReverted] = useState<{
+    show: boolean;
+    type: "deposit" | "withdraw" | "zap";
+    hash: string;
+  } | null>(null);
+
+  // Pending transaction details for display
+  const [pendingTxDetails, setPendingTxDetails] = useState<{
+    fromAmount: string;
+    fromSymbol: string;
+    fromLogo: string;
+    toAmount: string;
+    toSymbol: string;
+    toLogo: string;
+  } | null>(null);
+
+  // Helper to set pending tx details for zap transactions
+  const setZapPendingDetails = () => {
+    if (!zapQuote || !vault) return;
+    if (zapDirection === "in") {
+      setPendingTxDetails({
+        fromAmount: zapAmount ? Number(zapAmount).toFixed(4) : "0",
+        fromSymbol: zapInputToken?.symbol ?? "Token",
+        fromLogo: zapInputToken?.logoURI ?? "/tokens/unknown.png",
+        toAmount: Number(zapQuote.outputAmountFormatted).toFixed(4),
+        toSymbol: vault.symbol,
+        toLogo: vault.logo,
+      });
+    } else {
+      setPendingTxDetails({
+        fromAmount: zapAmount ? Number(zapAmount).toFixed(4) : "0",
+        fromSymbol: vault.symbol,
+        fromLogo: vault.logo,
+        toAmount: Number(zapQuote.outputAmountFormatted).toFixed(4),
+        toSymbol: zapOutputToken?.symbol ?? "Token",
+        toLogo: zapOutputToken?.logoURI ?? "/tokens/unknown.png",
+      });
+    }
+  };
+
+  // Multi-step transaction state - tracks when approval + deposit/zap should chain automatically
+  // When set, shows the multi-step pending UI and auto-executes the next step after approval
+  const [pendingMultiStep, setPendingMultiStep] = useState<{
+    type: "deposit" | "zap";  // Which flow this is for
+    step: 1 | 2;  // 1 = approval, 2 = deposit/swap
+    approvalToken: string;  // Token symbol being approved
+    spenderName: string;    // Name of spender (e.g., "Enso", "ycvxCRV")
+  } | null>(null);
+
   // Price impact threshold for confirmation (5%)
   const PRICE_IMPACT_CONFIRM_THRESHOLD = 5;
 
@@ -609,6 +805,9 @@ export function VaultPageContent({ id }: { id: string }) {
   const maxAmount = activeTab === "deposit" ? tokenBalance : vaultBalance;
   const hasInsufficientBalance = inputAmount > maxAmount;
 
+  // Use debug simulation result as fallback for testing
+  const effectiveSimulationResult = simulationResult || debugSimulationResult;
+
   // Track vault view on mount
   const hasTrackedView = useRef(false);
   useEffect(() => {
@@ -666,13 +865,49 @@ export function VaultPageContent({ id }: { id: string }) {
     if (activeTab === "deposit") {
       if (requiresApproval) {
         trackApprovalInitiated(vault.assetSymbol, id);
+        // Set multi-step state for approval + deposit
+        const outputAmt = pricePerShare ? (inputAmount / pricePerShare).toFixed(4) : inputAmount.toFixed(4);
+        setPendingTxDetails({
+          fromAmount: inputAmount.toFixed(4),
+          fromSymbol: vault.assetSymbol,
+          fromLogo: `/tokens/${vault.assetSymbol.toLowerCase()}.png`,
+          toAmount: outputAmt,
+          toSymbol: vault.symbol,
+          toLogo: vault.logo,
+        });
+        setPendingMultiStep({
+          type: "deposit",
+          step: 1,
+          approvalToken: vault.assetSymbol,
+          spenderName: vault.symbol,
+        });
         approve();
       } else {
         trackDepositInitiated(id, amount, vault.assetSymbol);
+        // Set pending tx details for display
+        const outputAmt = pricePerShare ? (inputAmount / pricePerShare).toFixed(4) : inputAmount.toFixed(4);
+        setPendingTxDetails({
+          fromAmount: inputAmount.toFixed(4),
+          fromSymbol: vault.assetSymbol,
+          fromLogo: `/tokens/${vault.assetSymbol.toLowerCase()}.png`,
+          toAmount: outputAmt,
+          toSymbol: vault.symbol,
+          toLogo: vault.logo,
+        });
         deposit(amount);
       }
     } else {
       trackWithdrawInitiated(id, amount, vault.assetSymbol);
+      // Set pending tx details for display
+      const outputAmt = pricePerShare ? (inputAmount * pricePerShare).toFixed(4) : inputAmount.toFixed(4);
+      setPendingTxDetails({
+        fromAmount: inputAmount.toFixed(4),
+        fromSymbol: vault.symbol,
+        fromLogo: vault.logo,
+        toAmount: outputAmt,
+        toSymbol: vault.assetSymbol,
+        toLogo: `/tokens/${vault.assetSymbol.toLowerCase()}.png`,
+      });
       withdraw(amount);
     }
   };
@@ -714,6 +949,8 @@ export function VaultPageContent({ id }: { id: string }) {
           // Clear success animation after 2 seconds
           setTimeout(() => {
             setShowTxSuccess(null);
+            setPendingTxDetails(null);
+            setPendingMultiStep(null);
             resetVaultActions();
           }, 2000);
 
@@ -724,7 +961,20 @@ export function VaultPageContent({ id }: { id: string }) {
             },
           });
         } else if (isReverted) {
-          resetVaultActions();
+          // Show reverted animation in form
+          setShowTxReverted({
+            show: true,
+            type: depositHash ? "deposit" : "withdraw",
+            hash: currentHash,
+          });
+          // Clear reverted animation after 3 seconds and reset
+          setTimeout(() => {
+            setShowTxReverted(null);
+            setPendingTxDetails(null);
+            setPendingMultiStep(null);
+            resetVaultActions();
+          }, 3000);
+
           toast.error(`${depositHash ? "Deposit" : "Withdrawal"} failed - transaction reverted`, {
             action: {
               label: "View Tx",
@@ -735,6 +985,66 @@ export function VaultPageContent({ id }: { id: string }) {
       }, 0);
     }
   }, [isSuccess, isReverted, depositHash, withdrawHash, refetchTokenBalance, refetchVaultBalance, resetVaultActions]);
+
+  // Auto-execute zap after approval succeeds (for multi-step transactions)
+  // When zapStatus goes from "waitingApproval" to "idle" with pendingMultiStep active, execute zap
+  const prevZapStatus = useRef<string | null>(null);
+  useEffect(() => {
+    // Check if we just completed approval (status transitioned from waitingApproval to idle)
+    if (
+      pendingMultiStep?.type === "zap" &&
+      pendingMultiStep.step === 1 &&
+      prevZapStatus.current === "waitingApproval" &&
+      zapStatus === "idle"
+    ) {
+      // Approval succeeded - auto-execute the zap
+      setPendingMultiStep(prev => prev ? { ...prev, step: 2 } : null);
+      // Small delay to ensure allowance is refetched
+      setTimeout(() => {
+        executeZap();
+      }, 100);
+    }
+    prevZapStatus.current = zapStatus;
+  }, [zapStatus, pendingMultiStep, executeZap]);
+
+  // Clear multi-step state on error or user cancellation (zap)
+  useEffect(() => {
+    if (pendingMultiStep && (zapStatus === "error" || zapActionError)) {
+      setPendingMultiStep(null);
+      setPendingTxDetails(null);
+    }
+  }, [zapStatus, zapActionError, pendingMultiStep]);
+
+  // Auto-execute deposit after vault approval succeeds (for multi-step transactions)
+  const prevTxStatusRef = useRef<string | null>(null);
+  useEffect(() => {
+    // Check if we just completed approval (status transitioned from waitingApproval to idle)
+    // and we're in a deposit multi-step flow
+    if (
+      pendingMultiStep?.type === "deposit" &&
+      pendingMultiStep.step === 1 &&
+      prevTxStatusRef.current === "waitingApproval" &&
+      txStatus === "idle"
+    ) {
+      // Approval succeeded - auto-execute the deposit
+      setPendingMultiStep(prev => prev ? { ...prev, step: 2 } : null);
+      // Small delay to ensure allowance is refetched
+      setTimeout(() => {
+        if (amount) {
+          deposit(amount);
+        }
+      }, 100);
+    }
+    prevTxStatusRef.current = txStatus;
+  }, [txStatus, pendingMultiStep, activeTab, amount, deposit]);
+
+  // Clear multi-step state on error or user cancellation (vault actions)
+  useEffect(() => {
+    if (pendingMultiStep?.type === "deposit" && (txStatus === "error" || txError)) {
+      setPendingMultiStep(null);
+      setPendingTxDetails(null);
+    }
+  }, [txStatus, txError, pendingMultiStep, activeTab]);
 
   // Handle zap completion (success or revert) - refetch balances and reset form
   useEffect(() => {
@@ -767,6 +1077,8 @@ export function VaultPageContent({ id }: { id: string }) {
           // Clear success animation after 2 seconds
           setTimeout(() => {
             setShowTxSuccess(null);
+            setPendingTxDetails(null);
+            setPendingMultiStep(null);
             resetZapActions();
           }, 2000);
 
@@ -777,7 +1089,20 @@ export function VaultPageContent({ id }: { id: string }) {
             },
           });
         } else if (zapIsReverted) {
-          resetZapActions();
+          // Show reverted animation in form
+          setShowTxReverted({
+            show: true,
+            type: "zap",
+            hash: zapHash,
+          });
+          // Clear reverted animation after 3 seconds and reset
+          setTimeout(() => {
+            setShowTxReverted(null);
+            setPendingTxDetails(null);
+            setPendingMultiStep(null);
+            resetZapActions();
+          }, 3000);
+
           toast.error("Zap failed - transaction reverted", {
             action: {
               label: "View Tx",
@@ -1140,8 +1465,8 @@ export function VaultPageContent({ id }: { id: string }) {
                   </div>
                 )}
 
-                {/* Tabs - hidden for non-deployed vaults and during pending/success states */}
-                {isVaultDeployed && txStatus !== "waitingTx" && zapStatus !== "waitingTx" && !showTxSuccess?.show && (
+                {/* Tabs - hidden for non-deployed vaults and during pending/success/reverted/approval states */}
+                {isVaultDeployed && debugTxState === "none" && !pendingMultiStep && txStatus === "idle" && zapStatus === "idle" && !showTxSuccess?.show && !showTxReverted?.show && (
                 <div className="p-5 pb-0">
                   <div className="flex border-b border-[var(--border)]">
                     {(["deposit", "withdraw", "zap"] as const).map((tab) => {
@@ -1199,21 +1524,125 @@ export function VaultPageContent({ id }: { id: string }) {
                     </div>
                   )}
 
-                  {/* Transaction Pending State - Deposit/Withdraw */}
-                  {isVaultDeployed && activeTab !== "zap" && txStatus === "waitingTx" && (depositHash || withdrawHash) && (
-                    <div className="flex flex-col items-center justify-center py-16 text-center animate-in fade-in duration-300">
+                  {/* Multi-Step Transaction Pending State - Approval + Deposit */}
+                  {isVaultDeployed && pendingMultiStep?.type === "deposit" && (txStatus === "approving" || txStatus === "waitingApproval" || (txStatus === "idle" && pendingMultiStep.step === 1)) && (
+                    <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
                       <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
-                        <Loader2 className="w-8 h-8 text-[var(--foreground)] animate-spin" />
+                        <Loader2 className="w-8 h-8 text-[var(--accent)] animate-spin" />
+                      </div>
+                      <h3 className="text-lg font-medium mb-4">Transaction in Progress</h3>
+                      {/* Multi-Step List */}
+                      <div className="flex flex-col gap-3 mb-4 w-full max-w-xs">
+                        {/* Step 1: Approval */}
+                        <div className={cn(
+                          "flex items-center gap-3 px-4 py-3 rounded-lg transition-colors",
+                          pendingMultiStep.step === 1
+                            ? "bg-[var(--accent)]/10 border border-[var(--accent)]/30"
+                            : "bg-[var(--muted)]"
+                        )}>
+                          <div className={cn(
+                            "w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold",
+                            pendingMultiStep.step === 1
+                              ? "bg-[var(--accent)] text-[var(--background)]"
+                              : "bg-green-500 text-white"
+                          )}>
+                            {pendingMultiStep.step === 1 ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Check className="w-4 h-4" />
+                            )}
+                          </div>
+                          <span className={cn(
+                            "text-sm",
+                            pendingMultiStep.step === 1 ? "text-[var(--foreground)]" : "text-[var(--muted-foreground)]"
+                          )}>
+                            Approve {pendingMultiStep.approvalToken} for {pendingMultiStep.spenderName}
+                          </span>
+                        </div>
+                        {/* Step 2: Deposit */}
+                        <div className={cn(
+                          "flex items-center gap-3 px-4 py-3 rounded-lg",
+                          "bg-[var(--muted)] opacity-60"
+                        )}>
+                          <div className="w-6 h-6 flex-shrink-0 rounded-full bg-[var(--border)] flex items-center justify-center text-[var(--muted-foreground)]">
+                            <Clock className="w-3.5 h-3.5" />
+                          </div>
+                          {pendingTxDetails && (
+                            <div className="flex items-center gap-1.5 text-sm text-[var(--muted-foreground)]">
+                              <span>Deposit</span>
+                              <img src={pendingTxDetails.fromLogo} alt={pendingTxDetails.fromSymbol} className="w-4 h-4 rounded-full" />
+                              <span className="mono">{pendingTxDetails.fromAmount} {pendingTxDetails.fromSymbol}</span>
+                              <span>→</span>
+                              <img src={pendingTxDetails.toLogo} alt={pendingTxDetails.toSymbol} className="w-4 h-4 rounded-full" />
+                              <span className="mono">{pendingTxDetails.toAmount} {pendingTxDetails.toSymbol}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <p className="text-sm text-[var(--muted-foreground)] max-w-xs">
+                        Confirm the approval in your wallet. The deposit will start automatically once approved.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Transaction Pending State - Deposit/Withdraw */}
+                  {isVaultDeployed && (((isDebugDeposit || isDebugWithdraw) && isDebugPending) || (txStatus === "waitingTx" && (depositHash || withdrawHash))) && (
+                    <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
+                      <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
+                        <Loader2 className="w-8 h-8 text-[var(--accent)] animate-spin" />
                       </div>
                       <h3 className="text-lg font-medium mb-2">Awaiting Confirmation</h3>
+                      {/* Multi-Step List (when in multi-step mode) */}
+                      {pendingMultiStep?.type === "deposit" && pendingMultiStep.step === 2 && pendingTxDetails && (
+                        <div className="flex flex-col gap-3 mb-4 w-full max-w-xs">
+                          {/* Step 1: Approval (completed) */}
+                          <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-[var(--muted)]">
+                            <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center">
+                              <Check className="w-4 h-4 text-white" />
+                            </div>
+                            <span className="text-sm text-[var(--muted-foreground)]">
+                              Approve {pendingMultiStep.approvalToken} for {pendingMultiStep.spenderName}
+                            </span>
+                          </div>
+                          {/* Step 2: Deposit (active) */}
+                          <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/30">
+                            <div className="w-6 h-6 flex-shrink-0 rounded-full bg-[var(--accent)] flex items-center justify-center text-[var(--background)]">
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            </div>
+                            <div className="flex items-center gap-1.5 text-sm">
+                              <span>Deposit</span>
+                              <img src={pendingTxDetails.fromLogo} alt={pendingTxDetails.fromSymbol} className="w-4 h-4 rounded-full" />
+                              <span className="mono">{pendingTxDetails.fromAmount} {pendingTxDetails.fromSymbol}</span>
+                              <span>→</span>
+                              <img src={pendingTxDetails.toLogo} alt={pendingTxDetails.toSymbol} className="w-4 h-4 rounded-full" />
+                              <span className="mono">{pendingTxDetails.toAmount} {pendingTxDetails.toSymbol}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {/* Single Transaction Details (when not in multi-step mode) */}
+                      {!pendingMultiStep && (() => {
+                        const details = (isDebugDeposit || isDebugWithdraw) ? debugTxDetails : pendingTxDetails;
+                        return details && (
+                          <div className="flex items-center gap-2 mb-3 px-4 py-2 bg-[var(--muted)] rounded-lg">
+                            <img src={details.fromLogo} alt={details.fromSymbol} className="w-5 h-5 rounded-full" />
+                            <span className="mono text-sm">{details.fromAmount} {details.fromSymbol}</span>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[var(--muted-foreground)]">
+                              <path d="M5 12h14M12 5l7 7-7 7"/>
+                            </svg>
+                            <img src={details.toLogo} alt={details.toSymbol} className="w-5 h-5 rounded-full" />
+                            <span className="mono text-sm">{details.toAmount} {details.toSymbol}</span>
+                          </div>
+                        );
+                      })()}
                       <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
-                        Your {activeTab} transaction is being confirmed on-chain.
+                        Your {isDebugDeposit ? "deposit" : isDebugWithdraw ? "withdraw" : activeTab} transaction is being confirmed on-chain.
                       </p>
                       <a
-                        href={`https://etherscan.io/tx/${depositHash || withdrawHash}`}
+                        href={`https://etherscan.io/tx/${depositHash || withdrawHash || debugHash}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:opacity-70 transition-opacity mono"
+                        className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
                       >
                         View on Etherscan
                         <ExternalLink size={14} />
@@ -1222,22 +1651,22 @@ export function VaultPageContent({ id }: { id: string }) {
                   )}
 
                   {/* Transaction Success State - Deposit/Withdraw */}
-                  {isVaultDeployed && activeTab !== "zap" && showTxSuccess?.show && (showTxSuccess.type === "deposit" || showTxSuccess.type === "withdraw") && (
+                  {isVaultDeployed && (((isDebugDeposit || isDebugWithdraw) && isDebugSuccess) || (showTxSuccess?.show && (showTxSuccess.type === "deposit" || showTxSuccess.type === "withdraw"))) && (
                     <div className="flex flex-col items-center justify-center py-16 text-center animate-in fade-in zoom-in-95 duration-300">
                       <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center mb-4">
                         <Check className="w-8 h-8 text-green-500" />
                       </div>
                       <h3 className="text-lg font-medium mb-2 text-green-500">
-                        {showTxSuccess.type === "deposit" ? "Deposit" : "Withdrawal"} Successful
+                        {isDebugDeposit ? "Deposit" : isDebugWithdraw ? "Withdrawal" : (showTxSuccess?.type === "deposit" ? "Deposit" : "Withdrawal")} Successful
                       </h3>
                       <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
                         Your transaction has been confirmed.
                       </p>
                       <a
-                        href={`https://etherscan.io/tx/${showTxSuccess.hash}`}
+                        href={`https://etherscan.io/tx/${showTxSuccess?.hash || debugHash}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:opacity-70 transition-opacity mono"
+                        className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
                       >
                         View on Etherscan
                         <ExternalLink size={14} />
@@ -1245,8 +1674,32 @@ export function VaultPageContent({ id }: { id: string }) {
                     </div>
                   )}
 
-                  {/* Deposit/Withdraw Form - hidden during pending/success states */}
-                  {isVaultDeployed && activeTab !== "zap" && txStatus !== "waitingTx" && !(showTxSuccess?.show && (showTxSuccess.type === "deposit" || showTxSuccess.type === "withdraw")) && (
+                  {/* Transaction Reverted State - Deposit/Withdraw */}
+                  {isVaultDeployed && (((isDebugDeposit || isDebugWithdraw) && isDebugReverted) || (showTxReverted?.show && (showTxReverted.type === "deposit" || showTxReverted.type === "withdraw"))) && (
+                    <div className="flex flex-col items-center justify-center py-16 text-center animate-in fade-in zoom-in-95 duration-300">
+                      <div className="w-16 h-16 rounded-full bg-[var(--destructive)]/20 flex items-center justify-center mb-4">
+                        <X className="w-8 h-8 text-[var(--destructive)]" />
+                      </div>
+                      <h3 className="text-lg font-medium mb-2 text-[var(--destructive)]">
+                        {isDebugDeposit ? "Deposit" : isDebugWithdraw ? "Withdrawal" : (showTxReverted?.type === "deposit" ? "Deposit" : "Withdrawal")} Failed
+                      </h3>
+                      <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
+                        Transaction reverted on-chain.
+                      </p>
+                      <a
+                        href={`https://etherscan.io/tx/${showTxReverted?.hash || debugHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
+                      >
+                        View on Etherscan
+                        <ExternalLink size={14} />
+                      </a>
+                    </div>
+                  )}
+
+                  {/* Deposit/Withdraw Form - hidden during pending/success/reverted states and multi-step approval */}
+                  {isVaultDeployed && activeTab !== "zap" && !isDebugDeposit && !isDebugWithdraw && !isDebugZap && txStatus !== "waitingTx" && !pendingMultiStep?.type && !(showTxSuccess?.show && (showTxSuccess.type === "deposit" || showTxSuccess.type === "withdraw")) && !(showTxReverted?.show && (showTxReverted.type === "deposit" || showTxReverted.type === "withdraw")) && (
                     <>
                       {/* Input */}
                       <div>
@@ -1369,21 +1822,125 @@ export function VaultPageContent({ id }: { id: string }) {
                     </>
                   )}
 
-                  {/* Transaction Pending State - Zap */}
-                  {isVaultDeployed && activeTab === "zap" && zapStatus === "waitingTx" && zapHash && (
-                    <div className="flex flex-col items-center justify-center py-16 text-center animate-in fade-in duration-300">
+                  {/* Multi-Step Transaction Pending State - Approval + Zap */}
+                  {isVaultDeployed && pendingMultiStep?.type === "zap" && (zapStatus === "approving" || zapStatus === "waitingApproval" || (zapStatus === "idle" && pendingMultiStep.step === 1)) && (
+                    <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
                       <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
-                        <Loader2 className="w-8 h-8 text-[var(--foreground)] animate-spin" />
+                        <Loader2 className="w-8 h-8 text-[var(--accent)] animate-spin" />
+                      </div>
+                      <h3 className="text-lg font-medium mb-4">Transaction in Progress</h3>
+                      {/* Multi-Step List */}
+                      <div className="flex flex-col gap-3 mb-4 w-full max-w-xs">
+                        {/* Step 1: Approval */}
+                        <div className={cn(
+                          "flex items-center gap-3 px-4 py-3 rounded-lg transition-colors",
+                          pendingMultiStep.step === 1
+                            ? "bg-[var(--accent)]/10 border border-[var(--accent)]/30"
+                            : "bg-[var(--muted)]"
+                        )}>
+                          <div className={cn(
+                            "w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold",
+                            pendingMultiStep.step === 1
+                              ? "bg-[var(--accent)] text-[var(--background)]"
+                              : "bg-green-500 text-white"
+                          )}>
+                            {pendingMultiStep.step === 1 ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Check className="w-4 h-4" />
+                            )}
+                          </div>
+                          <span className={cn(
+                            "text-sm",
+                            pendingMultiStep.step === 1 ? "text-[var(--foreground)]" : "text-[var(--muted-foreground)]"
+                          )}>
+                            Approve {pendingMultiStep.approvalToken} for {pendingMultiStep.spenderName}
+                          </span>
+                        </div>
+                        {/* Step 2: Swap */}
+                        <div className={cn(
+                          "flex items-center gap-3 px-4 py-3 rounded-lg",
+                          "bg-[var(--muted)] opacity-60"
+                        )}>
+                          <div className="w-6 h-6 flex-shrink-0 rounded-full bg-[var(--border)] flex items-center justify-center text-[var(--muted-foreground)]">
+                            <Clock className="w-3.5 h-3.5" />
+                          </div>
+                          {pendingTxDetails && (
+                            <div className="flex items-center gap-1.5 text-sm text-[var(--muted-foreground)]">
+                              <span>Swap</span>
+                              <img src={pendingTxDetails.fromLogo} alt={pendingTxDetails.fromSymbol} className="w-4 h-4 rounded-full" />
+                              <span className="mono">{pendingTxDetails.fromAmount} {pendingTxDetails.fromSymbol}</span>
+                              <span>→</span>
+                              <img src={pendingTxDetails.toLogo} alt={pendingTxDetails.toSymbol} className="w-4 h-4 rounded-full" />
+                              <span className="mono">{pendingTxDetails.toAmount} {pendingTxDetails.toSymbol}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <p className="text-sm text-[var(--muted-foreground)] max-w-xs">
+                        Confirm the approval in your wallet. The swap will start automatically once approved.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Transaction Pending State - Zap */}
+                  {isVaultDeployed && ((isDebugZap && isDebugPending) || (zapStatus === "waitingTx" && zapHash)) && (
+                    <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
+                      <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
+                        <Loader2 className="w-8 h-8 text-[var(--accent)] animate-spin" />
                       </div>
                       <h3 className="text-lg font-medium mb-2">Awaiting Confirmation</h3>
+                      {/* Multi-Step List (when in multi-step mode) */}
+                      {pendingMultiStep?.type === "zap" && pendingMultiStep.step === 2 && pendingTxDetails && (
+                        <div className="flex flex-col gap-3 mb-4 w-full max-w-xs">
+                          {/* Step 1: Approval (completed) */}
+                          <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-[var(--muted)]">
+                            <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center">
+                              <Check className="w-4 h-4 text-white" />
+                            </div>
+                            <span className="text-sm text-[var(--muted-foreground)]">
+                              Approve {pendingMultiStep.approvalToken} for {pendingMultiStep.spenderName}
+                            </span>
+                          </div>
+                          {/* Step 2: Swap (active) */}
+                          <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/30">
+                            <div className="w-6 h-6 flex-shrink-0 rounded-full bg-[var(--accent)] flex items-center justify-center text-[var(--background)]">
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            </div>
+                            <div className="flex items-center gap-1.5 text-sm">
+                              <span>Swap</span>
+                              <img src={pendingTxDetails.fromLogo} alt={pendingTxDetails.fromSymbol} className="w-4 h-4 rounded-full" />
+                              <span className="mono">{pendingTxDetails.fromAmount} {pendingTxDetails.fromSymbol}</span>
+                              <span>→</span>
+                              <img src={pendingTxDetails.toLogo} alt={pendingTxDetails.toSymbol} className="w-4 h-4 rounded-full" />
+                              <span className="mono">{pendingTxDetails.toAmount} {pendingTxDetails.toSymbol}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {/* Single Transaction Details (when not in multi-step mode) */}
+                      {!pendingMultiStep && (() => {
+                        const details = isDebugZap ? debugTxDetails : pendingTxDetails;
+                        return details && (
+                          <div className="flex items-center gap-2 mb-3 px-4 py-2 bg-[var(--muted)] rounded-lg">
+                            <img src={details.fromLogo} alt={details.fromSymbol} className="w-5 h-5 rounded-full" />
+                            <span className="mono text-sm">{details.fromAmount} {details.fromSymbol}</span>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[var(--muted-foreground)]">
+                              <path d="M5 12h14M12 5l7 7-7 7"/>
+                            </svg>
+                            <img src={details.toLogo} alt={details.toSymbol} className="w-5 h-5 rounded-full" />
+                            <span className="mono text-sm">{details.toAmount} {details.toSymbol}</span>
+                          </div>
+                        );
+                      })()}
                       <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
-                        Your zap {zapDirection === "in" ? "in" : "out"} transaction is being confirmed on-chain.
+                        Your zap {isDebugZapIn ? "in" : isDebugZapOut ? "out" : (zapDirection === "in" ? "in" : "out")} transaction is being confirmed on-chain.
                       </p>
                       <a
-                        href={`https://etherscan.io/tx/${zapHash}`}
+                        href={`https://etherscan.io/tx/${zapHash || debugHash}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:opacity-70 transition-opacity mono"
+                        className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
                       >
                         View on Etherscan
                         <ExternalLink size={14} />
@@ -1392,7 +1949,7 @@ export function VaultPageContent({ id }: { id: string }) {
                   )}
 
                   {/* Transaction Success State - Zap */}
-                  {isVaultDeployed && activeTab === "zap" && showTxSuccess?.show && showTxSuccess.type === "zap" && (
+                  {isVaultDeployed && ((isDebugZap && isDebugSuccess) || (showTxSuccess?.show && showTxSuccess.type === "zap")) && (
                     <div className="flex flex-col items-center justify-center py-16 text-center animate-in fade-in zoom-in-95 duration-300">
                       <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center mb-4">
                         <Check className="w-8 h-8 text-green-500" />
@@ -1402,10 +1959,10 @@ export function VaultPageContent({ id }: { id: string }) {
                         Your transaction has been confirmed.
                       </p>
                       <a
-                        href={`https://etherscan.io/tx/${showTxSuccess.hash}`}
+                        href={`https://etherscan.io/tx/${showTxSuccess?.hash || debugHash}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:opacity-70 transition-opacity mono"
+                        className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
                       >
                         View on Etherscan
                         <ExternalLink size={14} />
@@ -1413,8 +1970,30 @@ export function VaultPageContent({ id }: { id: string }) {
                     </div>
                   )}
 
-                  {/* Zap Form - hidden during pending/success states */}
-                  {isVaultDeployed && activeTab === "zap" && zapStatus !== "waitingTx" && !(showTxSuccess?.show && showTxSuccess.type === "zap") && (
+                  {/* Transaction Reverted State - Zap */}
+                  {isVaultDeployed && ((isDebugZap && isDebugReverted) || (showTxReverted?.show && showTxReverted.type === "zap")) && (
+                    <div className="flex flex-col items-center justify-center py-16 text-center animate-in fade-in zoom-in-95 duration-300">
+                      <div className="w-16 h-16 rounded-full bg-[var(--destructive)]/20 flex items-center justify-center mb-4">
+                        <X className="w-8 h-8 text-[var(--destructive)]" />
+                      </div>
+                      <h3 className="text-lg font-medium mb-2 text-[var(--destructive)]">Zap Failed</h3>
+                      <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
+                        Transaction reverted on-chain.
+                      </p>
+                      <a
+                        href={`https://etherscan.io/tx/${showTxReverted?.hash || debugHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
+                      >
+                        View on Etherscan
+                        <ExternalLink size={14} />
+                      </a>
+                    </div>
+                  )}
+
+                  {/* Zap Form - hidden during pending/success/reverted states and multi-step approval */}
+                  {isVaultDeployed && activeTab === "zap" && !isDebugZap && !isDebugDeposit && !isDebugWithdraw && zapStatus !== "waitingTx" && !pendingMultiStep?.type && !(showTxSuccess?.show && showTxSuccess.type === "zap") && !(showTxReverted?.show && showTxReverted.type === "zap") && (
                     <>
                       {/* Direction Toggle + Settings */}
                       <div className="flex gap-2">
@@ -1608,6 +2187,14 @@ export function VaultPageContent({ id }: { id: string }) {
                         <button
                           onClick={() => {
                             if (zapNeedsApproval()) {
+                              // Set multi-step state to show pending UI during approval
+                              setZapPendingDetails();
+                              setPendingMultiStep({
+                                type: "zap",
+                                step: 1,
+                                approvalToken: zapDirection === "in" ? (zapInputToken?.symbol ?? "Token") : vault.symbol,
+                                spenderName: "Enso",
+                              });
                               zapApprove();
                             } else if (showSimulationPreview) {
                               // Preview mode - run simulation first
@@ -1617,6 +2204,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               setPriceImpactConfirmText("");
                               setShowPriceImpactModal(true);
                             } else {
+                              setZapPendingDetails();
                               executeZap();
                             }
                           }}
@@ -1929,6 +2517,7 @@ export function VaultPageContent({ id }: { id: string }) {
                 onClick={() => {
                   setShowPriceImpactModal(false);
                   setPriceImpactConfirmText("");
+                  setZapPendingDetails();
                   if (skipSimulationOnConfirm) {
                     setSkipSimulationOnConfirm(false);
                     executeZap({ skipSimulation: true });
@@ -1952,7 +2541,7 @@ export function VaultPageContent({ id }: { id: string }) {
       )}
 
       {/* Simulation Modal */}
-      {showSimulationModal && simulationResult && (
+      {showSimulationModal && effectiveSimulationResult && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
@@ -1986,22 +2575,22 @@ export function VaultPageContent({ id }: { id: string }) {
             </div>
 
             {/* Status indicator */}
-            {simulationResult.success ? (
+            {effectiveSimulationResult.success ? (
               <div className="flex items-center gap-2">
                 <svg className="w-5 h-5 text-green-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 <span className="text-sm font-medium">Simulation Success</span>
-                {simulationResult.tenderlyUrl && (
+                {effectiveSimulationResult.tenderlyUrl && (
                   <button
                     onClick={async () => {
                       try {
-                        const res = await fetch(simulationResult.tenderlyUrl!);
+                        const res = await fetch(effectiveSimulationResult.tenderlyUrl!);
                         const data = await res.json() as { url?: string };
                         if (data.url) window.open(data.url, "_blank");
                       } catch {
                         // Fallback: open the endpoint directly
-                        window.open(simulationResult.tenderlyUrl!, "_blank");
+                        window.open(effectiveSimulationResult.tenderlyUrl!, "_blank");
                       }
                     }}
                     className="text-xs text-[var(--foreground)] hover:text-[var(--accent)] flex items-center gap-1 ml-auto transition-colors"
@@ -2017,16 +2606,16 @@ export function VaultPageContent({ id }: { id: string }) {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 <span className="text-sm font-medium text-[var(--destructive)]">Simulation Failed</span>
-                {simulationResult.tenderlyUrl && (
+                {effectiveSimulationResult.tenderlyUrl && (
                   <button
                     onClick={async () => {
                       try {
-                        const res = await fetch(simulationResult.tenderlyUrl!);
+                        const res = await fetch(effectiveSimulationResult.tenderlyUrl!);
                         const data = await res.json() as { url?: string };
                         if (data.url) window.open(data.url, "_blank");
                       } catch {
                         // Fallback: open the endpoint directly
-                        window.open(simulationResult.tenderlyUrl!, "_blank");
+                        window.open(effectiveSimulationResult.tenderlyUrl!, "_blank");
                       }
                     }}
                     className="text-xs text-[var(--foreground)] hover:text-[var(--accent)] flex items-center gap-1 ml-auto transition-colors"
@@ -2039,21 +2628,21 @@ export function VaultPageContent({ id }: { id: string }) {
             )}
 
             {/* Error message for failed simulation */}
-            {!simulationResult.success && simulationResult.errorMessage && (
+            {!effectiveSimulationResult.success && effectiveSimulationResult.errorMessage && (
               <div className="text-sm text-[var(--destructive)] bg-[var(--destructive)]/5 rounded-lg p-3">
-                {simulationResult.errorMessage}
+                {effectiveSimulationResult.errorMessage}
               </div>
             )}
 
             {/* Asset changes */}
-            {simulationResult.success && simulationResult.assetChanges.length > 0 && (
+            {effectiveSimulationResult.success && effectiveSimulationResult.assetChanges.length > 0 && (
               <div className="space-y-3">
                 {/* Sent assets */}
-                {simulationResult.assetChanges.filter(c => c.type === "send").length > 0 && (
+                {effectiveSimulationResult.assetChanges.filter(c => c.type === "send").length > 0 && (
                   <div>
                     <div className="text-xs text-[var(--muted-foreground)] mb-2">You Send</div>
                     <div className="space-y-2">
-                      {simulationResult.assetChanges
+                      {effectiveSimulationResult.assetChanges
                         .filter(c => c.type === "send")
                         .map((change, i) => {
                           // Get token logo from Tenderly or our vault config
@@ -2082,11 +2671,11 @@ export function VaultPageContent({ id }: { id: string }) {
                 )}
 
                 {/* Received assets */}
-                {simulationResult.assetChanges.filter(c => c.type === "receive").length > 0 && (
+                {effectiveSimulationResult.assetChanges.filter(c => c.type === "receive").length > 0 && (
                   <div>
                     <div className="text-xs text-[var(--muted-foreground)] mb-2">You Receive</div>
                     <div className="space-y-2">
-                      {simulationResult.assetChanges
+                      {effectiveSimulationResult.assetChanges
                         .filter(c => c.type === "receive")
                         .map((change, i) => {
                           // Get token logo from Tenderly or our vault config
@@ -2117,32 +2706,32 @@ export function VaultPageContent({ id }: { id: string }) {
             )}
 
             {/* No asset changes fallback */}
-            {simulationResult.success && simulationResult.assetChanges.length === 0 && (
+            {effectiveSimulationResult.success && effectiveSimulationResult.assetChanges.length === 0 && (
               <div className="text-sm text-[var(--muted-foreground)] text-center py-4">
                 No asset changes detected
               </div>
             )}
 
             {/* Gas estimate with ETH and USD cost */}
-            {simulationResult.gasUsed && (
+            {effectiveSimulationResult.gasUsed && (
               <div className="border-t border-[var(--border)] pt-3 space-y-1">
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-[var(--muted-foreground)]">Est. Gas</span>
-                  <span className="mono">{simulationResult.gasUsed.toLocaleString()}</span>
+                  <span className="mono">{effectiveSimulationResult.gasUsed.toLocaleString()}</span>
                 </div>
                 {gasPrice && (
                   <>
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-[var(--muted-foreground)]">Cost (ETH)</span>
                       <span className="mono">
-                        {(Number(simulationResult.gasUsed) * Number(gasPrice) / 1e18).toFixed(6)} ETH
+                        {(Number(effectiveSimulationResult.gasUsed) * Number(gasPrice) / 1e18).toFixed(6)} ETH
                       </span>
                     </div>
                     {ethPrice && (
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-[var(--muted-foreground)]">Cost (USD)</span>
                         <span className="mono">
-                          ${(Number(simulationResult.gasUsed) * Number(gasPrice) / 1e18 * ethPrice).toFixed(2)}
+                          ${(Number(effectiveSimulationResult.gasUsed) * Number(gasPrice) / 1e18 * ethPrice).toFixed(2)}
                         </span>
                       </div>
                     )}
@@ -2169,13 +2758,14 @@ export function VaultPageContent({ id }: { id: string }) {
                     setShowPriceImpactModal(true);
                   } else {
                     // Skip simulation since we just ran it
+                    setZapPendingDetails();
                     executeZap({ skipSimulation: true });
                   }
                 }}
-                disabled={!simulationResult.success}
+                disabled={!effectiveSimulationResult.success}
                 className={cn(
                   "flex-1 py-3 rounded-lg font-medium transition-all",
-                  simulationResult.success
+                  effectiveSimulationResult.success
                     ? "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer"
                     : "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
                 )}
@@ -2198,7 +2788,359 @@ export function VaultPageContent({ id }: { id: string }) {
         showFlowTab={explorerShowFlowTab}
         activeTab={explorerActiveTab}
         onTabChange={setExplorerActiveTab}
+        availableContracts={explorerContracts}
+        onContractChange={(contract) => switchContract(contract.address, contract.title, contract.icon, contract.showFlowTab)}
       />
+
+      {/* DEBUG: Transaction State Preview Panel - Only shows in development */}
+      {process.env.NODE_ENV === "development" && (
+      <div
+        data-debug-panel
+        className={cn(
+          "fixed z-50 bg-[var(--card)] border border-[var(--border)] rounded-lg p-3 shadow-lg max-w-xs",
+          isDragging && "cursor-grabbing"
+        )}
+        style={debugPanelPos ? {
+          left: debugPanelPos.x,
+          top: debugPanelPos.y,
+          bottom: "auto",
+          right: "auto",
+        } : {
+          bottom: 16,
+          right: 16,
+        }}
+      >
+        <div
+          className="text-xs text-[var(--muted-foreground)] mb-2 font-medium cursor-grab select-none"
+          onMouseDown={handleDragStart}
+        >
+          ⋮⋮ TX State Preview
+        </div>
+        <div className="space-y-2">
+          {/* Reset */}
+          <button
+            onClick={() => {
+              setDebugTxState("none");
+              setPendingMultiStep(null);
+              setPendingTxDetails(null);
+              setDebugSimulationResult(null);
+              setShowSimulationModal(false);
+              setShowSlippageModal(false);
+              setShowPriceImpactModal(false);
+              setPriceImpactConfirmText("");
+            }}
+            className={cn(
+              "w-full px-2 py-1 text-xs rounded transition-colors",
+              debugTxState === "none" && !pendingMultiStep && !showSimulationModal && !showSlippageModal && !showPriceImpactModal
+                ? "bg-[var(--foreground)] text-[var(--background)]"
+                : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            )}
+          >
+            Reset All
+          </button>
+          {/* Deposit */}
+          <div className="flex gap-1">
+            <span className="text-[10px] text-[var(--muted-foreground)] w-14 flex items-center">Deposit</span>
+            <button
+              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("deposit-pending"); }}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                debugTxState === "deposit-pending"
+                  ? "bg-[var(--accent)] text-[var(--background)]"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Pending
+            </button>
+            <button
+              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("deposit-success"); }}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                debugTxState === "deposit-success"
+                  ? "bg-green-500 text-white"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Success
+            </button>
+            <button
+              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("deposit-reverted"); }}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                debugTxState === "deposit-reverted"
+                  ? "bg-red-500 text-white"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Reverted
+            </button>
+          </div>
+          {/* Withdraw */}
+          <div className="flex gap-1">
+            <span className="text-[10px] text-[var(--muted-foreground)] w-14 flex items-center">Withdraw</span>
+            <button
+              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("withdraw-pending"); }}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                debugTxState === "withdraw-pending"
+                  ? "bg-[var(--accent)] text-[var(--background)]"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Pending
+            </button>
+            <button
+              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("withdraw-success"); }}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                debugTxState === "withdraw-success"
+                  ? "bg-green-500 text-white"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Success
+            </button>
+            <button
+              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("withdraw-reverted"); }}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                debugTxState === "withdraw-reverted"
+                  ? "bg-red-500 text-white"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Reverted
+            </button>
+          </div>
+          {/* Zap Approve (multi-step) */}
+          <div className="flex gap-1">
+            <span className="text-[10px] text-[var(--muted-foreground)] w-14 flex items-center">Approve</span>
+            <button
+              onClick={() => {
+                setDebugTxState("none");
+                setPendingMultiStep({
+                  type: "zap",
+                  step: 1,
+                  approvalToken: "USDC",
+                  spenderName: "Enso",
+                });
+                setPendingTxDetails({
+                  fromAmount: "123.31",
+                  fromSymbol: "USDC",
+                  fromLogo: "/tokens/usdc.png",
+                  toAmount: "144.55",
+                  toSymbol: vault?.symbol || "yspxCVX",
+                  toLogo: vault?.logo || "/tokens/unknown.png",
+                });
+              }}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                pendingMultiStep?.step === 1
+                  ? "bg-[var(--accent)] text-[var(--background)]"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Step 1
+            </button>
+            <button
+              onClick={() => {
+                setPendingMultiStep({
+                  type: "zap",
+                  step: 2,
+                  approvalToken: "USDC",
+                  spenderName: "Enso",
+                });
+                setPendingTxDetails({
+                  fromAmount: "123.31",
+                  fromSymbol: "USDC",
+                  fromLogo: "/tokens/usdc.png",
+                  toAmount: "144.55",
+                  toSymbol: vault?.symbol || "yspxCVX",
+                  toLogo: vault?.logo || "/tokens/unknown.png",
+                });
+                setDebugTxState("zap-in-pending");
+              }}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                pendingMultiStep?.step === 2
+                  ? "bg-[var(--accent)] text-[var(--background)]"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Step 2
+            </button>
+            <button
+              onClick={() => {
+                setDebugTxState("none");
+                setPendingMultiStep(null);
+                setPendingTxDetails(null);
+              }}
+              className="flex-1 px-2 py-1 text-xs rounded transition-colors bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            >
+              Clear
+            </button>
+          </div>
+          {/* Zap In */}
+          <div className="flex gap-1">
+            <span className="text-[10px] text-[var(--muted-foreground)] w-14 flex items-center">Zap In</span>
+            <button
+              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("zap-in-pending"); }}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                debugTxState === "zap-in-pending"
+                  ? "bg-[var(--accent)] text-[var(--background)]"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Pending
+            </button>
+            <button
+              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("zap-in-success"); }}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                debugTxState === "zap-in-success"
+                  ? "bg-green-500 text-white"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Success
+            </button>
+            <button
+              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("zap-in-reverted"); }}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                debugTxState === "zap-in-reverted"
+                  ? "bg-red-500 text-white"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Reverted
+            </button>
+          </div>
+          {/* Zap Out */}
+          <div className="flex gap-1">
+            <span className="text-[10px] text-[var(--muted-foreground)] w-14 flex items-center">Zap Out</span>
+            <button
+              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("zap-out-pending"); }}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                debugTxState === "zap-out-pending"
+                  ? "bg-[var(--accent)] text-[var(--background)]"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Pending
+            </button>
+            <button
+              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("zap-out-success"); }}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                debugTxState === "zap-out-success"
+                  ? "bg-green-500 text-white"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Success
+            </button>
+            <button
+              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("zap-out-reverted"); }}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                debugTxState === "zap-out-reverted"
+                  ? "bg-red-500 text-white"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Reverted
+            </button>
+          </div>
+          {/* Separator */}
+          <div className="border-t border-[var(--border)] my-2" />
+          {/* Modals */}
+          <div className="flex gap-1">
+            <span className="text-[10px] text-[var(--muted-foreground)] w-14 flex items-center">Modals</span>
+            <button
+              onClick={() => setShowSlippageModal(!showSlippageModal)}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                showSlippageModal
+                  ? "bg-[var(--accent)] text-[var(--background)]"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Slippage
+            </button>
+            <button
+              onClick={() => {
+                if (showSimulationModal) {
+                  setShowSimulationModal(false);
+                  setDebugSimulationResult(null);
+                } else {
+                  setDebugSimulationResult({
+                    success: true,
+                    gasUsed: 285000,
+                    tenderlyUrl: "https://dashboard.tenderly.co/shared/simulation/example",
+                    assetChanges: [
+                      { type: "send", symbol: "USDC", amount: "100.00", logo: "/tokens/usdc.png" },
+                      { type: "receive", symbol: vault?.symbol || "ycvxCRV", amount: "95.50", logo: vault?.logo },
+                    ],
+                  });
+                  setShowSimulationModal(true);
+                }
+              }}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                showSimulationModal
+                  ? "bg-[var(--accent)] text-[var(--background)]"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Simulate
+            </button>
+            <button
+              onClick={() => setShowPriceImpactModal(!showPriceImpactModal)}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                showPriceImpactModal
+                  ? "bg-red-500 text-white"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Impact
+            </button>
+          </div>
+          {/* Separator */}
+          <div className="border-t border-[var(--border)] my-2" />
+          {/* Auto Cycle Controls */}
+          <div className="space-y-2">
+            <button
+              onClick={() => setDebugAutoCycle(!debugAutoCycle)}
+              className={cn(
+                "w-full px-2 py-1 text-xs rounded transition-colors",
+                debugAutoCycle
+                  ? "bg-blue-500 text-white"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              {debugAutoCycle ? "⏸ Stop Auto-Cycle" : "▶ Auto-Cycle All"}
+            </button>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-[var(--muted-foreground)]">Speed</span>
+              <input
+                type="range"
+                min="500"
+                max="3000"
+                step="250"
+                value={debugCycleSpeed}
+                onChange={(e) => setDebugCycleSpeed(Number(e.target.value))}
+                className="flex-1 h-1 accent-[var(--accent)]"
+              />
+              <span className="text-[10px] text-[var(--muted-foreground)] w-10">{(debugCycleSpeed / 1000).toFixed(1)}s</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      )}
     </div>
   );
 }
