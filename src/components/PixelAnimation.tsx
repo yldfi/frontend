@@ -19,6 +19,7 @@ export function PixelAnimation() {
   const particlesRef = useRef<Particle[]>([]);
   const mouseRef = useRef({ x: 0, y: 0 });
   const dimensionsRef = useRef({ width: 0, height: 0 });
+  const fullDimensionsRef = useRef({ width: 0, height: 0 }); // Store full size for boundary checks
   const lastTimeRef = useRef<number>(0);
 
   useEffect(() => {
@@ -32,12 +33,24 @@ export function PixelAnimation() {
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
+
+      // Cache current dimensions for rendering
+      dimensionsRef.current = { width: rect.width, height: rect.height };
+
+      // Skip canvas resize if dimensions are too small (parent is collapsed/collapsing)
+      if (rect.width < 100 || rect.height < 100) return;
+
       canvas.width = rect.width * dpr;
       canvas.height = rect.height * dpr;
       ctx.scale(dpr, dpr);
-      // Cache dimensions for animation loop (avoids getBoundingClientRect on every frame)
-      dimensionsRef.current = { width: rect.width, height: rect.height };
-      initParticles();
+
+      // Store full dimensions for boundary calculations (prevents particle corruption during collapse)
+      fullDimensionsRef.current = { width: rect.width, height: rect.height };
+
+      // Only init particles on first load or if we had no particles
+      if (particlesRef.current.length === 0) {
+        initParticles();
+      }
     };
 
     // Rainbow colors from logo
@@ -90,11 +103,19 @@ export function PixelAnimation() {
 
     // Animation loop with time-based updates (prevents jump on iOS scroll)
     const animate = (currentTime: number) => {
+      const { width, height } = dimensionsRef.current;
+      const fullDims = fullDimensionsRef.current;
+
+      // Skip animation when canvas is collapsed (prevents particle position corruption)
+      if (width < 100 || height < 100 || fullDims.width === 0) {
+        animationRef.current = requestAnimationFrame(animate);
+        return;
+      }
+
       // Cap delta time to prevent large jumps after scroll pauses rAF
       const deltaTime = Math.min(currentTime - lastTimeRef.current, 50);
       lastTimeRef.current = currentTime;
 
-      const { width, height } = dimensionsRef.current;
       ctx.clearRect(0, 0, width, height);
 
       const particles = particlesRef.current;
@@ -108,11 +129,11 @@ export function PixelAnimation() {
         particle.x += particle.vx * speedFactor;
         particle.y += particle.vy * speedFactor;
 
-        // Boundary wrapping
-        if (particle.x < 0) particle.x = width;
-        if (particle.x > width) particle.x = 0;
-        if (particle.y < 0) particle.y = height;
-        if (particle.y > height) particle.y = 0;
+        // Boundary wrapping using full dimensions (not current collapsed size)
+        if (particle.x < 0) particle.x = fullDims.width;
+        if (particle.x > fullDims.width) particle.x = 0;
+        if (particle.y < 0) particle.y = fullDims.height;
+        if (particle.y > fullDims.height) particle.y = 0;
 
         // Smooth alpha transition
         particle.alpha += (particle.targetAlpha - particle.alpha) * 0.02 * speedFactor;
@@ -171,12 +192,20 @@ export function PixelAnimation() {
     resize();
     window.addEventListener("resize", resize);
     canvas.addEventListener("mousemove", handleMouseMove);
+
+    // Use ResizeObserver to detect parent container size changes (e.g., collapse/expand)
+    const resizeObserver = new ResizeObserver(() => {
+      resize();
+    });
+    resizeObserver.observe(canvas);
+
     lastTimeRef.current = performance.now();
     animationRef.current = requestAnimationFrame(animate);
 
     return () => {
       window.removeEventListener("resize", resize);
       canvas.removeEventListener("mousemove", handleMouseMove);
+      resizeObserver.disconnect();
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
       }
