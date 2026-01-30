@@ -8,7 +8,6 @@ import {
   fetchRemoveCollateralBundle,
   fetchBorrowMoreBundle,
   fetchRepayBundle,
-  fetchSequentialLeverageBundle,
 } from "@/lib/curve-lending";
 import type { EnsoBundleResponse } from "@/types/enso";
 
@@ -54,15 +53,6 @@ export interface UseCurveLendingActionsResult {
   repay: (
     vaultAddress: `0x${string}`,
     repayAmount: string
-  ) => Promise<void>;
-  sequentialLeverage: (
-    vaultAddress: `0x${string}`,
-    underlyingToken: `0x${string}`,
-    initialCollateral: string,
-    borrowAmount: string,
-    bands: number,
-    slippage: string,
-    isNewLoan: boolean
   ) => Promise<void>;
 
   // State
@@ -264,37 +254,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     );
   }, [address, executeBundle]);
 
-  const sequentialLeverage = useCallback(async (
-    vaultAddress: `0x${string}`,
-    underlyingToken: `0x${string}`,
-    initialCollateral: string,
-    borrowAmount: string,
-    bands: number,
-    slippage: string,
-    isNewLoan: boolean
-  ) => {
-    if (!address) return;
-    await executeBundle(() =>
-      fetchSequentialLeverageBundle({
-        fromAddress: address,
-        vaultAddress,
-        underlyingToken,
-        initialCollateral,
-        borrowAmount,
-        bands,
-        slippage,
-        isNewLoan,
-      })
-    );
-  }, [address, executeBundle]);
-
   return {
     createLoan,
     addCollateral,
     removeCollateral,
     borrowMore,
     repay,
-    sequentialLeverage,
     status,
     txHash,
     error,
