@@ -8,6 +8,7 @@ import type { VaultConfig } from "@/config/vaults";
 import { CURVE_CONTROLLERS } from "@/config/vaults";
 import { useCurveLendingPosition, formatHealth } from "@/hooks/useCurveLendingPosition";
 import { useCurveLendingActions } from "@/hooks/useCurveLendingActions";
+import { PriceChart } from "./PriceChart";
 import { cn } from "@/lib/utils";
 
 interface LendingInterfaceProps {
@@ -281,6 +282,18 @@ export function LendingInterface({
                 Position in soft-liquidation
               </div>
             )}
+
+            {/* Price Chart with liquidation bands */}
+            <div className="mt-4">
+              <PriceChart
+                symbol={vault.assetSymbol}
+                currentPrice={position.liquidationPriceUpper ? Number(formatUnits(position.liquidationPriceUpper, 18)) * 1.2 : undefined}
+                liquidationPriceUpper={Number(formatUnits(position.liquidationPriceUpper, 18))}
+                liquidationPriceLower={Number(formatUnits(position.liquidationPriceLower, 18))}
+                showLiquidationBands={true}
+                height={180}
+              />
+            </div>
           </div>
         )}
 
