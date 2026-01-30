@@ -2,6 +2,7 @@
 
 import { ArrowUpRight, X } from "lucide-react";
 import Image from "next/image";
+import { formatUnits } from "viem";
 import type { VaultConfig } from "@/config/vaults";
 
 interface CollateralModalProps {
@@ -44,7 +45,7 @@ export function CollateralModal({
             Your {vault.symbol} balance
           </div>
           <div className="text-xl font-semibold mono">
-            {parseFloat(userBalance).toLocaleString(undefined, {
+            {Number(formatUnits(BigInt(userBalance), vault.decimals)).toLocaleString(undefined, {
               maximumFractionDigits: 4,
             })}{" "}
             <span className="text-base text-[var(--muted-foreground)]">
