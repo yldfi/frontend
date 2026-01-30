@@ -123,7 +123,8 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS } from "@/lib/enso";
-import { getVault, getParentVault, getVaultByAddress, TOKENS, VAULT_UNDERLYING_TOKENS, VAULTS, EXTERNAL_VAULT_TOKENS } from "@/config/vaults";
+import { getVault, getParentVault, getVaultByAddress, TOKENS, VAULT_UNDERLYING_TOKENS, VAULTS, EXTERNAL_VAULT_TOKENS, CURVE_CONTROLLERS } from "@/config/vaults";
+import { CollateralModal, LendingInterface } from "@/components/lending";
 import type { EnsoToken, ZapDirection } from "@/types/enso";
 import {
   trackVaultView,
@@ -531,6 +532,10 @@ export function VaultPageContent({ id }: { id: string }) {
   const [ethPrice, setEthPrice] = useState<number | null>(null);
   // Track if we should skip simulation (already ran from preview mode)
   const [skipSimulationOnConfirm, setSkipSimulationOnConfirm] = useState(false);
+
+  // Lending interface modal state
+  const [showCollateralModal, setShowCollateralModal] = useState(false);
+  const [showLendingInterface, setShowLendingInterface] = useState(false);
 
   // Get current gas price for gas cost calculation
   const { data: gasPrice } = useGasPrice();
@@ -1446,12 +1451,10 @@ export function VaultPageContent({ id }: { id: string }) {
                           })()}
                         </div>
                       </div>
-                      {/* Collateral link - only for vault type with holdings */}
-                      {vault.type === "vault" && vault.links?.curve && (
-                        <a
-                          href={vault.links.curve}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                      {/* Collateral button - only for vault type with LlamaLend market */}
+                      {vault.type === "vault" && CURVE_CONTROLLERS[vault.address as keyof typeof CURVE_CONTROLLERS] && (
+                        <button
+                          onClick={() => setShowCollateralModal(true)}
                           className="collateral-link shrink-0"
                         >
                           <span className="whitespace-nowrap">
@@ -1459,7 +1462,7 @@ export function VaultPageContent({ id }: { id: string }) {
                             Use as Collateral
                             <ArrowUpRight size={12} />
                           </span>
-                        </a>
+                        </button>
                       )}
                     </div>
                   </div>
@@ -3140,6 +3143,28 @@ export function VaultPageContent({ id }: { id: string }) {
           </div>
         </div>
       </div>
+      )}
+
+      {/* Collateral Modal */}
+      {showCollateralModal && vault && (
+        <CollateralModal
+          vault={vault}
+          userBalance={vaultBalance?.toString() || "0"}
+          onClose={() => setShowCollateralModal(false)}
+          onSelectIntegrated={() => {
+            setShowCollateralModal(false);
+            setShowLendingInterface(true);
+          }}
+        />
+      )}
+
+      {/* Lending Interface */}
+      {showLendingInterface && vault && (
+        <LendingInterface
+          vault={vault}
+          userBalance={vaultBalance?.toString() || "0"}
+          onClose={() => setShowLendingInterface(false)}
+        />
       )}
     </div>
   );
