@@ -684,6 +684,7 @@ export function VaultPageContent({ id }: { id: string }) {
   // Fetch user balances
   const { formatted: tokenBalanceFormatted, isLoading: tokenBalanceLoading, refetch: refetchTokenBalance } = useTokenBalance(TOKENS.CVXCRV);
   const {
+    balance: vaultBalanceRaw,
     formatted: vaultBalanceFormatted,
     isLoading: vaultBalanceLoading,
     refetch: refetchVaultBalance,
@@ -3149,7 +3150,7 @@ export function VaultPageContent({ id }: { id: string }) {
       {showCollateralModal && vault && (
         <CollateralModal
           vault={vault}
-          userBalance={vaultBalance?.toString() || "0"}
+          userBalance={vaultBalanceRaw?.toString() || "0"}
           onClose={() => setShowCollateralModal(false)}
           onSelectIntegrated={() => {
             setShowCollateralModal(false);
@@ -3162,7 +3163,7 @@ export function VaultPageContent({ id }: { id: string }) {
       {showLendingInterface && vault && (
         <LendingInterface
           vault={vault}
-          userBalance={vaultBalance?.toString() || "0"}
+          userBalance={vaultBalanceRaw?.toString() || "0"}
           onClose={() => setShowLendingInterface(false)}
         />
       )}
