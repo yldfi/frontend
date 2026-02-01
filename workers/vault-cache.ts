@@ -102,56 +102,20 @@ async function getVaultData(vaultAddress: string) {
   };
 }
 
-async function getCvxCrvPrice(): Promise<number> {
-  // Fetch from Curve prices API with retry
+async function getTokenPrice(tokenAddress: string): Promise<number> {
+  // Fetch from Enso API (more reliable than Curve for these tokens)
   try {
     const response = await fetchWithRetry(
-      `https://prices.curve.fi/v1/usd_price/ethereum/${CVXCRV_TOKEN}`,
+      `https://api.enso.finance/api/v1/prices/${tokenAddress}?chainId=1`,
       undefined,
       2
     );
     if (response.ok) {
-      const data = (await response.json()) as { data: { usd_price: number } };
-      return data.data?.usd_price || 0;
+      const data = (await response.json()) as { price: number };
+      return data.price || 0;
     }
   } catch (e) {
-    console.error("Curve price API error:", e);
-  }
-  return 0;
-}
-
-async function getCvgCvxPrice(): Promise<number> {
-  // Fetch from Curve prices API with retry
-  try {
-    const response = await fetchWithRetry(
-      `https://prices.curve.fi/v1/usd_price/ethereum/${CVGCVX_TOKEN}`,
-      undefined,
-      2
-    );
-    if (response.ok) {
-      const data = (await response.json()) as { data: { usd_price: number } };
-      return data.data?.usd_price || 0;
-    }
-  } catch (e) {
-    console.error("Curve price API error for cvgCVX:", e);
-  }
-  return 0;
-}
-
-async function getPxCvxPrice(): Promise<number> {
-  // Fetch from Curve prices API with retry
-  try {
-    const response = await fetchWithRetry(
-      `https://prices.curve.fi/v1/usd_price/ethereum/${PXCVX_TOKEN}`,
-      undefined,
-      2
-    );
-    if (response.ok) {
-      const data = (await response.json()) as { data: { usd_price: number } };
-      return data.data?.usd_price || 0;
-    }
-  } catch (e) {
-    console.error("Curve price API error for pxCVX:", e);
+    console.error(`Enso price API error for ${tokenAddress}:`, e);
   }
   return 0;
 }
@@ -162,9 +126,9 @@ async function fetchVaultData() {
     getVaultData(YSCVXCRV_VAULT),
     getVaultData(YSCVGCVX_VAULT),
     getVaultData(YSPXCVX_VAULT),
-    getCvxCrvPrice(),
-    getCvgCvxPrice(),
-    getPxCvxPrice(),
+    getTokenPrice(CVXCRV_TOKEN),
+    getTokenPrice(CVGCVX_TOKEN),
+    getTokenPrice(PXCVX_TOKEN),
   ]);
 
   return {
