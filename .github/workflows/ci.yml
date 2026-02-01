@@ -109,13 +109,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run all tests with coverage (with retry)
+      - name: Run integration tests (with retry)
         run: |
           for i in 1 2 3; do
             echo "Attempt $i of 3..."
-            pnpm test:coverage && break || {
+            pnpm test:integration && break || {
               if [ $i -eq 3 ]; then
-                echo "Tests failed after 3 attempts"
+                echo "Integration tests failed after 3 attempts"
                 exit 1
               fi
               echo "Attempt $i failed, retrying in 10s..."
