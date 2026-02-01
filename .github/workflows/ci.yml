@@ -87,11 +87,8 @@ jobs:
   test-integration:
     name: Integration Tests
     runs-on: ubuntu-latest
-    # Run on schedule, manual trigger, or if explicitly requested
-    if: |
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    # Run nightly (2am UTC) or on manual trigger only - not on every push
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     # Don't fail the workflow if integration tests fail (they depend on external APIs)
     continue-on-error: true
     steps:
