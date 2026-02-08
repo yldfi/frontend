@@ -473,6 +473,13 @@ export async function fetchRoute(params: {
   slippage?: string; // basis points, e.g., "100" = 1%
   receiver?: string;
 }): Promise<EnsoRouteResponse> {
+  console.log("[Enso Route] Request:", {
+    tokenIn: params.tokenIn,
+    tokenOut: params.tokenOut,
+    amountIn: params.amountIn,
+    slippage: params.slippage ?? "100",
+  });
+
   const routeData = await enqueueEnsoCall(() => ensoClient.getRouteData({
     chainId: CHAIN_ID,
     fromAddress: params.fromAddress as `0x${string}`,
@@ -484,6 +491,13 @@ export async function fetchRoute(params: {
     referralCode: ENSO_REFERRAL_CODE,
     receiver: params.receiver as `0x${string}` | undefined,
   }));
+
+  console.log("[Enso Route] Response:", {
+    amountOut: String(routeData.amountOut),
+    gas: String(routeData.gas),
+    priceImpact: routeData.priceImpact,
+    route: routeData.route.map((hop) => `${hop.action} via ${hop.protocol}`),
+  });
 
   // Transform SDK response to match our expected type
   return {
@@ -690,18 +704,27 @@ export async function fetchBundle(params: {
 
   // Use SDK to call bundle API
   // Note: SDK BundleAction type is a complex union, we cast our actions
-  const bundleData = await enqueueEnsoCall(() => ensoClient.getBundleData(
-    {
-      chainId: CHAIN_ID,
-      fromAddress: params.fromAddress as `0x${string}`,
-      routingStrategy: params.routingStrategy ?? "router",
-      referralCode: ENSO_REFERRAL_CODE,
-      receiver: params.receiver as `0x${string}` | undefined,
-      skipQuote: params.skipQuote,
-    },
-    // Cast our generic actions to SDK's union type
-    params.actions as unknown as Parameters<typeof ensoClient.getBundleData>[1]
-  ));
+  let bundleData: Awaited<ReturnType<typeof ensoClient.getBundleData>>;
+  try {
+    bundleData = await enqueueEnsoCall(() => ensoClient.getBundleData(
+      {
+        chainId: CHAIN_ID,
+        fromAddress: params.fromAddress as `0x${string}`,
+        routingStrategy: params.routingStrategy ?? "router",
+        referralCode: ENSO_REFERRAL_CODE,
+        receiver: params.receiver as `0x${string}` | undefined,
+        skipQuote: params.skipQuote,
+      },
+      // Cast our generic actions to SDK's union type
+      params.actions as unknown as Parameters<typeof ensoClient.getBundleData>[1]
+    ));
+  } catch (error: unknown) {
+    if (isDev) {
+      const errData = (error as { response?: { data?: unknown } })?.response?.data;
+      console.error("[Enso Bundle] Error:", errData ?? error);
+    }
+    throw error;
+  }
 
   // Log response from Enso (dev only)
   if (isDev) {
@@ -713,6 +736,7 @@ export async function fetchBundle(params: {
       gas: bundleData.gas,
       amountsOut: bundleData.amountsOut,
       amountsIn: (bundleData as Record<string, unknown>).amountsIn ?? "(not returned)",
+      route: bundleData.route, // Check if route has hop amounts
     });
   }
 
@@ -2126,6 +2150,16 @@ export async function getCvgCvxSwapRate(amountIn: string): Promise<bigint> {
   // Note: Keep using direct RPC call here for backward compatibility with tests
   // Main optimization is in fetchCvgCvxVaultToVaultRoute which uses batchRedeemAndEstimateSwap
   const result = await getCurveGetDy(TANGENT.CVX1_CVGCVX_POOL, 0, 1, amountIn);
+  return result ?? 0n;
+}
+
+/**
+ * Get reverse swap rate: cvgCVX → CVX (via Curve CVX1/cvgCVX pool)
+ * Used for BorrowTab reverse quotes when user wants to borrow into a cvgCVX vault
+ */
+export async function getCvgCvxReverseSwapRate(amountIn: string): Promise<bigint> {
+  const { TANGENT } = await import("@/config/vaults");
+  const result = await getCurveGetDy(TANGENT.CVX1_CVGCVX_POOL, 1, 0, amountIn);
   return result ?? 0n;
 }
 
@@ -4222,7 +4256,7 @@ export async function getPxCvxSwapRate(amountIn: string): Promise<bigint> {
  * Uses off-chain math with cached pool parameters for reliability.
  * Falls back to on-chain RPC call if off-chain calculation fails.
  */
-async function getLpxCvxToCvxSwapRate(amountIn: string): Promise<bigint> {
+export async function getLpxCvxToCvxSwapRate(amountIn: string): Promise<bigint> {
   const { PIREX } = await import("@/config/vaults");
 
   try {
@@ -4856,13 +4890,13 @@ export async function fetchPxCvxZapInRoute(params: {
  * uCRV uses a non-standard interface (not ERC4626)
  * Formula: shares * totalUnderlying / totalSupply
  */
-async function previewUCrvWithdraw(shares: string): Promise<string> {
+export async function previewUCrvWithdraw(shares: string): Promise<string> {
   const { LLAMA_AIRFORCE } = await import("@/config/vaults");
   const { PUBLIC_RPC_URLS } = await import("@/config/rpc");
 
   // Batch RPC calls: totalUnderlying() and totalSupply()
   const batch = [
-    { jsonrpc: "2.0", id: 0, method: "eth_call", params: [{ to: LLAMA_AIRFORCE.UCRV, data: "0x7bbd8ce4" }, "latest"] }, // totalUnderlying()
+    { jsonrpc: "2.0", id: 0, method: "eth_call", params: [{ to: LLAMA_AIRFORCE.UCRV, data: "0xc70920bc" }, "latest"] }, // totalUnderlying()
     { jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: LLAMA_AIRFORCE.UCRV, data: "0x18160ddd" }, "latest"] }, // totalSupply()
   ];
 
@@ -5218,10 +5252,10 @@ export async function fetchUCvxZapInRoute(params: {
 
 /**
  * Preview Beefy vault withdraw - estimates underlying output for given shares
- * Beefy vaults use pricePerFullShare() to calculate conversion
+ * Beefy vaults use getPricePerFullShare() to calculate conversion
  * Formula: shares * pricePerFullShare / 1e18
  */
-async function previewBeefyWithdraw(vaultAddress: string, shares: string): Promise<string> {
+export async function previewBeefyWithdraw(vaultAddress: string, shares: string): Promise<string> {
   const { PUBLIC_RPC_URLS } = await import("@/config/rpc");
 
   // pricePerFullShare() selector: 0x77c7b8fc

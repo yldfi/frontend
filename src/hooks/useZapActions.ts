@@ -265,8 +265,8 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     }
   }, [isApprovalSuccess, refetchAllowance]);
 
-  // Approve max tokens
-  const approve = useCallback(() => {
+  // Approve tokens (exact amount or unlimited)
+  const approve = useCallback((exactAmount?: bigint) => {
     if (!userAddress || isEth || !tokenAddress || !routerAddress) return;
     setActionState("approving");
 
@@ -274,7 +274,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       address: tokenAddress,
       abi: ERC20_APPROVAL_ABI,
       functionName: "approve",
-      args: [routerAddress, maxUint256],
+      args: [routerAddress, exactAmount ?? maxUint256],
     });
   }, [userAddress, isEth, tokenAddress, routerAddress, writeApprove]);
 
@@ -417,9 +417,10 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     }
 
     if (!tenderlyResult.ok && !ethCallResult.ok) {
-      const errorMsg = tenderlyResult.retryable
+      const rawMsg = tenderlyResult.retryable
         ? ethCallResult.errorMessage ?? tenderlyResult.errorMessage
         : tenderlyResult.errorMessage;
+      const errorMsg = typeof rawMsg === "string" ? rawMsg : rawMsg?.message ?? "Simulation failed";
       setSimulationError(
         parseErrorMessage(new Error(errorMsg), "Transaction would fail")
       );

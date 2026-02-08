@@ -176,9 +176,10 @@ export function useCurveLendingPosition(
       const n2 = Number(n1n2 & BigInt("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"));
       const n1 = Number(n1n2 >> BigInt(128));
 
-      // Health is returned as percentage * 1e18
-      const healthPct = Number(health) / 1e18;
-      const healthFullPct = Number(healthFull) / 1e18;
+      // Health is returned as int256 with 1e18 precision where 1e16 = 1%
+      // So we divide by 1e16 to get percentage (e.g., 5e16 = 5%)
+      const healthPct = Number(health) / 1e16;
+      const healthFullPct = Number(healthFull) / 1e16;
 
       return {
         collateral: userState[0],
@@ -208,12 +209,18 @@ export function useCurveLendingPosition(
 }
 
 // Helper to format health for display
+// Based on Curve LlamaLend thresholds:
+// - health <= 0: hard liquidatable
+// - health < 4: liquidatable (danger)
+// - health < 15: warning (orange)
+// - health < 40: caution (yellow)
+// - health >= 40: healthy (green)
 export function formatHealth(health: number): {
   value: number;
   status: "healthy" | "warning" | "danger";
   color: string;
 } {
-  const status = health > 50 ? "healthy" : health > 20 ? "warning" : "danger";
+  const status = health >= 15 ? "healthy" : health >= 4 ? "warning" : "danger";
   const color =
     status === "healthy"
       ? "text-green-500"

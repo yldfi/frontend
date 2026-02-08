@@ -20,6 +20,12 @@ interface RouteDisplayProps {
   inputAmount?: string;
   outputAmount?: string;
   isLoading?: boolean;
+  // Closing loan details - when provided, adds extra steps at the end
+  closingLoan?: {
+    collateralReturned?: string;
+    collateralSymbol?: string;
+    crvUsdReturned?: string;
+  };
 }
 
 // Token logo paths (local files in /public/tokens/)
@@ -36,6 +42,9 @@ const TOKEN_LOGOS: Record<string, string> = {
   usdt: "/tokens/usdt.png",
   dai: "/tokens/dai.png",
   crvusd: "/tokens/crvusd.png",
+  // Union (Llama Airforce) vaults
+  ucvx: "/tokens/llama-airforce.png",
+  ucrv: "/tokens/llama-airforce.png",
 };
 
 // Get logo URL for a token symbol - checks TOKEN_LOGOS first, then VAULTS config
@@ -554,7 +563,7 @@ function LegacyRouteDisplay({ routeInfo }: { routeInfo: RouteInfo }) {
   );
 }
 
-export function RouteDisplay({ routeInfo, inputSymbol, outputSymbol, inputAmount, outputAmount, isLoading }: RouteDisplayProps) {
+export function RouteDisplay({ routeInfo, inputSymbol, outputSymbol, inputAmount, outputAmount, isLoading, closingLoan }: RouteDisplayProps) {
   // Only show skeleton if loading AND no existing data to display
   if (isLoading && !routeInfo) {
     return <LoadingSkeleton />;
@@ -577,15 +586,55 @@ export function RouteDisplay({ routeInfo, inputSymbol, outputSymbol, inputAmount
       return step;
     });
 
+    // Build closing loan steps if provided
+    const closingLoanSteps: RouteStep[] = [];
+    if (closingLoan) {
+      if (closingLoan.collateralReturned && closingLoan.collateralSymbol) {
+        closingLoanSteps.push({
+          tokenSymbol: closingLoan.collateralSymbol,
+          amount: closingLoan.collateralReturned,
+          action: "Collateral returned",
+          description: "to wallet",
+          protocol: "Curve",
+        });
+      }
+      if (closingLoan.crvUsdReturned && Number(closingLoan.crvUsdReturned) > 0) {
+        closingLoanSteps.push({
+          tokenSymbol: "crvUSD",
+          amount: `~${Number(closingLoan.crvUsdReturned).toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+          action: "Excess returned",
+          description: "to wallet",
+          protocol: "Curve",
+        });
+      }
+    }
+
+    const hasClosingLoan = closingLoanSteps.length > 0;
+
     return (
       <div className={`space-y-0 transition-opacity ${isLoading ? "opacity-50" : ""}`}>
         {stepsWithAmounts.map((step, index) => (
           <RouteStepRow
             key={index}
             step={step}
-            isLast={index === stepsWithAmounts.length - 1}
+            isLast={!hasClosingLoan && index === stepsWithAmounts.length - 1}
           />
         ))}
+        {closingLoanSteps.map((step, index) => (
+          <RouteStepRow
+            key={`closing-${index}`}
+            step={step}
+            isLast={index === closingLoanSteps.length - 1}
+          />
+        ))}
+        {hasClosingLoan && (
+          <div className="flex gap-2.5 pt-2">
+            <div className="w-2 flex-shrink-0" />
+            <div className="text-xs font-medium text-[var(--accent)]">
+              ✓ Loan closed
+            </div>
+          </div>
+        )}
       </div>
     );
   }

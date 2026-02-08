@@ -351,6 +351,7 @@ export function isUserRejection(error: Error | string | unknown): boolean {
     "user cancelled",
     "user canceled",
     "rejected transaction",
+    "transaction cancelled",
     "ACTION_REJECTED",
   ];
   return rejectionPhrases.some((phrase) =>

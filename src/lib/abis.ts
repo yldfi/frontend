@@ -69,6 +69,30 @@ export const ERC20_METADATA_ABI = [
   },
 ] as const;
 
+// Curve LlamaLend Controller approve - approve(address, bool) NOT ERC20 approve(address, uint256)
+export const CONTROLLER_APPROVE_ABI = [
+  {
+    name: "approve",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "approved", type: "bool" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "approval",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "spender", type: "address" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+] as const;
+
 // ERC4626 vault functions
 export const VAULT_ABI = [
   {

@@ -1,9 +1,37 @@
 "use client";
 
+import { useState } from "react";
+import { createPortal } from "react-dom";
 import { ArrowUpRight, X } from "lucide-react";
 import Image from "next/image";
 import { formatUnits } from "viem";
 import type { VaultConfig } from "@/config/vaults";
+
+// localStorage key for preference
+const COLLATERAL_UI_PREFERENCE_KEY = "yldfi-collateral-ui-preference";
+
+export type CollateralUIPreference = "curve" | "integrated" | null;
+
+export function getCollateralUIPreference(): CollateralUIPreference {
+  if (typeof window === "undefined") return null;
+  const stored = localStorage.getItem(COLLATERAL_UI_PREFERENCE_KEY);
+  if (stored === "curve" || stored === "integrated") return stored;
+  return null;
+}
+
+export function setCollateralUIPreference(preference: CollateralUIPreference) {
+  if (typeof window === "undefined") return;
+  if (preference) {
+    localStorage.setItem(COLLATERAL_UI_PREFERENCE_KEY, preference);
+  } else {
+    localStorage.removeItem(COLLATERAL_UI_PREFERENCE_KEY);
+  }
+}
+
+export function clearCollateralUIPreference() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(COLLATERAL_UI_PREFERENCE_KEY);
+}
 
 interface CollateralModalProps {
   vault: VaultConfig;
@@ -18,7 +46,23 @@ export function CollateralModal({
   onClose,
   onSelectIntegrated,
 }: CollateralModalProps) {
-  return (
+  const [rememberChoice, setRememberChoice] = useState(false);
+
+  const handleCurveClick = () => {
+    if (rememberChoice) {
+      setCollateralUIPreference("curve");
+    }
+    // Let the link navigate naturally
+  };
+
+  const handleIntegratedClick = () => {
+    if (rememberChoice) {
+      setCollateralUIPreference("integrated");
+    }
+    onSelectIntegrated();
+  };
+
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
       <div
@@ -61,6 +105,7 @@ export function CollateralModal({
             href={vault.links?.curve}
             target="_blank"
             rel="noopener noreferrer"
+            onClick={handleCurveClick}
             className="flex items-center gap-4 p-4 rounded-lg border border-[var(--border)] hover:border-[var(--foreground)]/30 hover:bg-[var(--muted)]/30 transition-all group"
           >
             <div className="w-10 h-10 rounded-full bg-[var(--muted)] flex items-center justify-center shrink-0">
@@ -87,23 +132,16 @@ export function CollateralModal({
 
           {/* Integrated UI option */}
           <button
-            onClick={onSelectIntegrated}
+            onClick={handleIntegratedClick}
             className="w-full flex items-center gap-4 p-4 rounded-lg border border-[var(--border)] hover:border-[var(--accent)]/50 hover:bg-[var(--accent)]/5 transition-all group text-left"
           >
-            <div className="w-10 h-10 rounded-full bg-[var(--accent)]/10 flex items-center justify-center shrink-0">
-              <svg
-                className="w-5 h-5 text-[var(--accent)]"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M13 10V3L4 14h7v7l9-11h-7z"
-                />
-              </svg>
+            <div className="w-10 h-10 rounded-full overflow-hidden shrink-0">
+              <Image
+                src="/logo-128.png"
+                alt="yld_fi"
+                width={40}
+                height={40}
+              />
             </div>
             <div className="flex-1 min-w-0">
               <div className="font-medium">Use integrated UI</div>
@@ -114,12 +152,26 @@ export function CollateralModal({
           </button>
         </div>
 
+        {/* Remember choice checkbox */}
+        <label className="flex items-center gap-2 cursor-pointer group">
+          <input
+            type="checkbox"
+            checked={rememberChoice}
+            onChange={(e) => setRememberChoice(e.target.checked)}
+            className="w-4 h-4 rounded border-[var(--border)] bg-transparent text-[var(--accent)] focus:ring-[var(--accent)] focus:ring-offset-0 cursor-pointer"
+          />
+          <span className="text-sm text-[var(--muted-foreground)] group-hover:text-[var(--foreground)] transition-colors">
+            Remember my choice
+          </span>
+        </label>
+
         {/* Info text */}
         <p className="text-xs text-[var(--muted-foreground)] text-center">
           Deposit {vault.symbol} as collateral on Curve LlamaLend to borrow
           crvUSD
         </p>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

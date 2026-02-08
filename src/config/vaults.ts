@@ -113,6 +113,12 @@ export const BEEFY = {
   MOO_CVX_CVX_UNDERLYING: "0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B" as const, // CVX
 } as const;
 
+// Curve Savings vault - ERC4626 vault for crvUSD
+export const CURVE_SAVINGS = {
+  SCRVUSD: "0x0655977FEb2f289A4aB78af67BAB0d17aAb84367" as const,
+  SCRVUSD_UNDERLYING: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E" as const, // crvUSD
+} as const;
+
 // Asymmetry Finance vaults - ERC4626 compliant with withdrawal fee
 export const ASYMMETRY = {
   // afCVX - ERC4626 vault for CVX (has 3% withdrawal fee)
@@ -133,6 +139,8 @@ export const EXTERNAL_VAULT_TOKENS = [
   BEEFY.MOO_CVX_CVX,
   // Asymmetry
   ASYMMETRY.AFCVX,
+  // Curve Savings
+  CURVE_SAVINGS.SCRVUSD,
   // Pirex (lpxCVX is a liquidity wrapper, not useful as zap out target)
   PIREX.LPXCVX,
 ] as const;
@@ -144,6 +152,7 @@ export type ExternalVaultInterface = "erc4626" | "ucrv" | "beefy";
 export interface ExternalVaultConfig {
   address: string;
   underlying: string;
+  underlyingSymbol: string;
   interface: ExternalVaultInterface;
   symbol: string;
   name: string;
@@ -156,6 +165,7 @@ export const EXTERNAL_VAULT_CONFIG: Record<string, ExternalVaultConfig> = {
   [LLAMA_AIRFORCE.UCVX.toLowerCase()]: {
     address: LLAMA_AIRFORCE.UCVX,
     underlying: LLAMA_AIRFORCE.UCVX_UNDERLYING,
+    underlyingSymbol: "pxCVX",
     interface: "erc4626",
     symbol: "uCVX",
     name: "Union CVX",
@@ -164,6 +174,7 @@ export const EXTERNAL_VAULT_CONFIG: Record<string, ExternalVaultConfig> = {
   [LLAMA_AIRFORCE.UCRV.toLowerCase()]: {
     address: LLAMA_AIRFORCE.UCRV,
     underlying: LLAMA_AIRFORCE.UCRV_UNDERLYING,
+    underlyingSymbol: "cvxCRV",
     interface: "ucrv", // Custom interface: withdraw(_to, _shares)
     symbol: "uCRV",
     name: "Union CRV",
@@ -173,6 +184,7 @@ export const EXTERNAL_VAULT_CONFIG: Record<string, ExternalVaultConfig> = {
   [CONCENTRATOR.ACVX.toLowerCase()]: {
     address: CONCENTRATOR.ACVX,
     underlying: CONCENTRATOR.ACVX_UNDERLYING,
+    underlyingSymbol: "CVX",
     interface: "erc4626",
     symbol: "aCVX",
     name: "Aladdin CVX",
@@ -181,6 +193,7 @@ export const EXTERNAL_VAULT_CONFIG: Record<string, ExternalVaultConfig> = {
   [CONCENTRATOR.ACRV.toLowerCase()]: {
     address: CONCENTRATOR.ACRV,
     underlying: CONCENTRATOR.ACRV_UNDERLYING,
+    underlyingSymbol: "cvxCRV",
     interface: "erc4626",
     symbol: "aCRV",
     name: "Aladdin CRV",
@@ -190,6 +203,7 @@ export const EXTERNAL_VAULT_CONFIG: Record<string, ExternalVaultConfig> = {
   [BEEFY.MOO_CVX_CRV.toLowerCase()]: {
     address: BEEFY.MOO_CVX_CRV,
     underlying: BEEFY.MOO_CVX_CRV_UNDERLYING,
+    underlyingSymbol: "cvxCRV",
     interface: "beefy", // Custom interface: withdraw(_shares)
     symbol: "mooCvxCRV",
     name: "Moo Convex CRV",
@@ -198,6 +212,7 @@ export const EXTERNAL_VAULT_CONFIG: Record<string, ExternalVaultConfig> = {
   [BEEFY.MOO_CVX_CVX.toLowerCase()]: {
     address: BEEFY.MOO_CVX_CVX,
     underlying: BEEFY.MOO_CVX_CVX_UNDERLYING,
+    underlyingSymbol: "CVX",
     interface: "beefy",
     symbol: "mooCvxCVX",
     name: "Moo Convex CVX",
@@ -207,10 +222,21 @@ export const EXTERNAL_VAULT_CONFIG: Record<string, ExternalVaultConfig> = {
   [ASYMMETRY.AFCVX.toLowerCase()]: {
     address: ASYMMETRY.AFCVX,
     underlying: ASYMMETRY.AFCVX_UNDERLYING,
+    underlyingSymbol: "CVX",
     interface: "erc4626",
     symbol: "afCVX",
     name: "Asymmetry Finance CVX",
     protocol: "Asymmetry",
+  },
+  // Curve Savings
+  [CURVE_SAVINGS.SCRVUSD.toLowerCase()]: {
+    address: CURVE_SAVINGS.SCRVUSD,
+    underlying: CURVE_SAVINGS.SCRVUSD_UNDERLYING,
+    underlyingSymbol: "crvUSD",
+    interface: "erc4626",
+    symbol: "scrvUSD",
+    name: "Savings crvUSD",
+    protocol: "Curve",
   },
 };
 

@@ -1,3 +1,10 @@
+export { BorrowTab } from "./BorrowTab";
 export { CollateralModal } from "./CollateralModal";
+export { CollateralTab } from "./CollateralTab";
 export { LendingInterface } from "./LendingInterface";
+export { LendingPageContent } from "./LendingPageContent";
+export { LeverageTab } from "./LeverageTab";
+export { MigrateSection } from "./MigrateSection";
+export { NewLoanTab } from "./NewLoanTab";
+export { RepayTab } from "./RepayTab";
 export { PriceChart } from "./PriceChart";
