@@ -261,6 +261,7 @@ export function LeverageTab({
     deleverage: deleverageAction,
     selfLiquidate: selfLiquidateAction,
     pendingApproval,
+    approvalProgress,
     approve,
     isApproving,
     isApprovalSuccess,
@@ -893,12 +894,44 @@ export function LeverageTab({
       {/* Approval Flow */}
       {pendingApproval && status === "needsApproval" && (
         <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-3">
-          <div className="text-sm font-medium">Approval Required</div>
-          <div className="text-sm text-[var(--muted-foreground)]">
-            {pendingApproval.type === "erc20"
-              ? `Approve ${pendingApproval.tokenSymbol} spending`
-              : "Approve Controller for Zapper"}
-          </div>
+          <div className="text-sm font-medium">Approvals Required</div>
+          {approvalProgress && (
+            <div className="space-y-2">
+              {approvalProgress.steps.map((s, i) => (
+                <div key={i} className="flex items-start gap-2">
+                  <div className="mt-0.5">
+                    {s.done ? (
+                      <Check size={14} className="text-green-500 shrink-0" />
+                    ) : i === approvalProgress.step - 1 ? (
+                      <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)] shrink-0" />
+                    ) : (
+                      <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)]/30 shrink-0" />
+                    )}
+                  </div>
+                  <div>
+                    <div className={cn(
+                      "text-sm",
+                      s.done
+                        ? "text-[var(--muted-foreground)] line-through"
+                        : i === approvalProgress.step - 1
+                          ? "text-[var(--foreground)] font-medium"
+                          : "text-[var(--muted-foreground)]"
+                    )}>
+                      {s.label}
+                    </div>
+                    <div className={cn(
+                      "text-xs",
+                      i === approvalProgress.step - 1
+                        ? "text-[var(--muted-foreground)]"
+                        : "text-[var(--muted-foreground)]/60"
+                    )}>
+                      {s.description}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           {pendingApproval.type === "erc20" && pendingApproval.amount ? (
             <div className="flex gap-2">
               <button
@@ -912,7 +945,7 @@ export function LeverageTab({
                 )}
               >
                 {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                {isApproving ? "Approving..." : `Exact (~${Number(formatUnits(pendingApproval.amount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })})`}
+                {isApproving ? "Approving..." : `Exact (${Number(formatUnits(pendingApproval.amount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })})`}
               </button>
               <button
                 onClick={() => approve(false)}
@@ -940,7 +973,11 @@ export function LeverageTab({
               )}
             >
               {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-              {isApproving ? "Approving..." : "Approve"}
+              {isApproving
+                ? "Approving..."
+                : pendingApproval.type === "controller"
+                  ? `Approve Lending Access${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`
+                  : `Approve ${pendingApproval.tokenSymbol}${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`}
             </button>
           )}
         </div>

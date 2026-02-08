@@ -838,7 +838,7 @@ export function CollateralTab({
                 )}
               >
                 {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                {isApproving ? "Approving..." : `Exact (~${Number(formatUnits(pendingApproval.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })})`}
+                {isApproving ? "Approving..." : `Exact (${Number(formatUnits(pendingApproval.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })})`}
               </button>
               <button
                 onClick={() => approve(false)}
