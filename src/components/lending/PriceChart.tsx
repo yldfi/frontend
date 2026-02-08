@@ -31,9 +31,6 @@ export function PriceChart({
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
 
-  // Loading state derived from priceData prop
-  const isLoading = !priceData || priceData.length === 0;
-
   // Initialize chart
   useEffect(() => {
     if (!containerRef.current) return;
@@ -210,12 +207,7 @@ export function PriceChart({
         style={{ height }}
       />
 
-      {/* Loading overlay */}
-      {isLoading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-[var(--background)]/50">
-          <div className="text-sm text-[var(--muted-foreground)]">Loading chart data...</div>
-        </div>
-      )}
+      {/* Note: Chart shows placeholder data when priceData is not provided */}
 
       {/* Price legend */}
       {currentPrice && (

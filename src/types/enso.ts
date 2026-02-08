@@ -144,7 +144,7 @@ export interface CustomBundleResponse extends EnsoBundleResponse {
 
 // Simulation result types
 export interface SimulationAssetChange {
-  type: "send" | "receive";
+  type: "send" | "receive" | "repay" | "borrow" | "deposit";
   symbol: string;
   amount: string;       // Human readable
   rawAmount: string;    // Wei/raw units
@@ -157,8 +157,11 @@ export interface SimulationAssetChange {
 export interface SimulationResult {
   success: boolean;
   gasUsed: number | null;
-  errorMessage: string | null;
+  errorMessage: string | { id?: string; slug?: string; message?: string } | null;
   simulationId: string | null;
   tenderlyUrl: string | null;
   assetChanges: SimulationAssetChange[];
+  // When Tenderly is unavailable but eth_call passed
+  simulationUnavailable?: boolean;
+  simulationUnavailableReason?: string;
 }

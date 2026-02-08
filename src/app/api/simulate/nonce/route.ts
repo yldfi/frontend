@@ -4,6 +4,24 @@ export const dynamic = "force-dynamic";
 
 const NONCE_TTL_MS = 30_000;
 
+// Allowed origins for CORS
+const ALLOWED_ORIGINS = [
+  "https://yldfi.co",
+  "https://www.yldfi.co",
+  "http://localhost:3000",
+];
+
+function getCorsHeaders(request: NextRequest): Record<string, string> {
+  const origin = request.headers.get("origin") ?? "";
+  const isAllowed = ALLOWED_ORIGINS.includes(origin);
+  return {
+    "Access-Control-Allow-Origin": isAllowed ? origin : ALLOWED_ORIGINS[0],
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Max-Age": "86400",
+  };
+}
+
 // Rate limiting: 20 requests per minute per IP
 const MAX_REQUESTS_PER_MINUTE = 20;
 const RATE_LIMIT_WINDOW_MS = 60_000;
@@ -51,13 +69,19 @@ async function signPayload(secret: string, payload: string): Promise<string> {
   return base64UrlEncode(new Uint8Array(signature));
 }
 
+export async function OPTIONS(request: NextRequest) {
+  return new NextResponse(null, { headers: getCorsHeaders(request) });
+}
+
 export async function GET(request: NextRequest) {
+  const corsHeaders = getCorsHeaders(request);
+
   // Rate limiting
   const clientIp = getClientIp(request);
   if (isRateLimited(clientIp)) {
     return NextResponse.json(
       { success: false, errorMessage: "Rate limit exceeded" },
-      { status: 429 }
+      { status: 429, headers: corsHeaders }
     );
   }
 
@@ -65,7 +89,7 @@ export async function GET(request: NextRequest) {
   if (!secret) {
     return NextResponse.json(
       { success: false, errorMessage: "Nonce secret not configured" },
-      { status: 500 }
+      { status: 500, headers: corsHeaders }
     );
   }
 
@@ -81,5 +105,5 @@ export async function GET(request: NextRequest) {
     nonce,
     expires,
     sig,
-  });
+  }, { headers: corsHeaders });
 }

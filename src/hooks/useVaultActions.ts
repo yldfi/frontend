@@ -1,9 +1,10 @@
 "use client";
 
 import { useReadContract, useWriteContract, useWaitForTransactionReceipt, useAccount, usePublicClient } from "wagmi";
-import { parseUnits, maxUint256 } from "viem";
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { parseUnits, maxUint256, encodeFunctionData } from "viem";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { ERC20_APPROVAL_ABI, VAULT_ABI } from "@/lib/abis";
+import type { SimulationResult } from "@/types/enso";
 
 export type TransactionStatus = "idle" | "approving" | "waitingApproval" | "depositing" | "withdrawing" | "waitingTx" | "success" | "reverted" | "error";
 
@@ -58,6 +59,13 @@ export function useVaultActions(
   const publicClient = usePublicClient();
   const [actionState, setActionState] = useState<"idle" | "approving" | "simulating" | "depositing" | "withdrawing">("idle");
   const [simulationError, setSimulationError] = useState<string | null>(null);
+  const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
+
+  // Stored pending tx for executeAfterPreview
+  const pendingTx = useRef<{
+    type: "deposit" | "withdraw";
+    args: readonly [bigint, `0x${string}`] | readonly [bigint, `0x${string}`, `0x${string}`];
+  } | null>(null);
 
   // Check allowance
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
@@ -170,8 +178,8 @@ export function useVaultActions(
     }
   }, [allowance, decimals]);
 
-  // Approve max
-  const approve = useCallback(() => {
+  // Approve (exact or unlimited)
+  const approve = useCallback((exactAmount?: bigint) => {
     if (!userAddress) return;
     setActionState("approving");
 
@@ -179,20 +187,144 @@ export function useVaultActions(
       address: tokenAddress,
       abi: ERC20_APPROVAL_ABI,
       functionName: "approve",
-      args: [vaultAddress, maxUint256],
+      args: [vaultAddress, exactAmount ?? maxUint256],
     });
   }, [userAddress, tokenAddress, vaultAddress, writeApprove]);
 
+  // Run Tenderly simulation + eth_call in parallel for a vault call
+  const runTenderlySimulation = useCallback(async (
+    calldata: `0x${string}`,
+    value: bigint = 0n,
+  ): Promise<SimulationResult | null> => {
+    if (!userAddress) return null;
+
+    // Run Tenderly and eth_call in parallel
+    const tenderlyPromise = (async () => {
+      try {
+        const nonceResponse = await fetch("/api/simulate/nonce");
+        const nonceResult = (await nonceResponse.json()) as {
+          success: boolean;
+          nonce?: string;
+          expires?: number;
+          sig?: string;
+        };
+
+        if (!nonceResult.success || !nonceResult.nonce || !nonceResult.expires || !nonceResult.sig) {
+          return { ok: false as const, errorMessage: "Failed to obtain simulation nonce", retryable: true };
+        }
+
+        const response = await fetch("/api/simulate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from: userAddress,
+            to: vaultAddress,
+            data: calldata,
+            value: value.toString(),
+            nonce: nonceResult.nonce,
+            expires: nonceResult.expires,
+            sig: nonceResult.sig,
+          }),
+        });
+
+        const result = (await response.json()) as SimulationResult & { retryable?: boolean };
+
+        if (process.env.NODE_ENV === "development") {
+          console.log("[Tenderly Vault Simulation]", {
+            success: result.success,
+            simulationId: result.simulationId,
+            gasUsed: result.gasUsed,
+            errorMessage: result.errorMessage,
+            assetChanges: result.assetChanges?.length ?? 0,
+          });
+        }
+
+        if (result.success) return { ok: true as const, result };
+        return {
+          ok: false as const,
+          result,
+          errorMessage: result.errorMessage ?? "Tenderly simulation failed",
+          retryable: Boolean(result.retryable),
+        };
+      } catch (err) {
+        return {
+          ok: false as const,
+          result: null,
+          errorMessage: err instanceof Error ? err.message : "Tenderly simulation failed",
+          retryable: true,
+        };
+      }
+    })();
+
+    const ethCallPromise = (async () => {
+      if (!publicClient) return { ok: false as const, errorMessage: "No public client" };
+      try {
+        await publicClient.call({
+          account: userAddress,
+          to: vaultAddress,
+          data: calldata,
+          value,
+        });
+        return { ok: true as const };
+      } catch (err) {
+        return {
+          ok: false as const,
+          errorMessage: err instanceof Error ? err.message : "Unknown error",
+        };
+      }
+    })();
+
+    const [tenderlyResult, ethCallResult] = await Promise.all([tenderlyPromise, ethCallPromise]);
+
+    // Store the simulation result
+    if (tenderlyResult.result) {
+      setSimulationResult(tenderlyResult.result);
+    }
+
+    if (!tenderlyResult.ok && !ethCallResult.ok) {
+      const rawMsg = tenderlyResult.retryable
+        ? ethCallResult.errorMessage ?? tenderlyResult.errorMessage
+        : tenderlyResult.errorMessage;
+      const errorMsg = typeof rawMsg === "string" ? rawMsg : (rawMsg as { message?: string })?.message ?? "Simulation failed";
+      setSimulationError(parseErrorMessage(new Error(errorMsg), "Transaction would fail"));
+      setActionState("idle");
+      return tenderlyResult.result ?? null;
+    }
+
+    return tenderlyResult.result ?? null;
+  }, [userAddress, vaultAddress, publicClient]);
+
   // Deposit with pre-flight simulation
-  const deposit = useCallback(async (amount: string) => {
-    if (!userAddress || !amount || !publicClient) return;
+  // Options: previewOnly — when true, run Tenderly simulation and return result without sending tx
+  const deposit = useCallback(async (amount: string, options?: { previewOnly?: boolean }): Promise<SimulationResult | null> => {
+    if (!userAddress || !amount || !publicClient) return null;
 
     setSimulationError(null);
+    setSimulationResult(null);
     setActionState("simulating");
 
     const amountWei = parseUnits(amount, decimals);
 
-    // Pre-flight simulation
+    if (options?.previewOnly) {
+      // Tenderly preview mode: encode calldata, run Tenderly + eth_call
+      const calldata = encodeFunctionData({
+        abi: VAULT_ABI,
+        functionName: "deposit",
+        args: [amountWei, userAddress],
+      });
+
+      // Store pending tx for executeAfterPreview
+      pendingTx.current = { type: "deposit", args: [amountWei, userAddress] };
+
+      const result = await runTenderlySimulation(calldata);
+      // If simulation succeeded (or was previewOnly), stay idle so modal can show
+      if (result) {
+        setActionState("idle");
+      }
+      return result;
+    }
+
+    // Standard path: viem simulateContract + send
     try {
       await publicClient.simulateContract({
         address: vaultAddress,
@@ -205,7 +337,7 @@ export function useVaultActions(
       const errorMsg = simError instanceof Error ? simError.message : "Unknown error";
       setSimulationError(parseErrorMessage(new Error(errorMsg), "Deposit would fail"));
       setActionState("idle");
-      return;
+      return null;
     }
 
     // Simulation passed - send transaction
@@ -216,18 +348,38 @@ export function useVaultActions(
       functionName: "deposit",
       args: [amountWei, userAddress],
     });
-  }, [userAddress, vaultAddress, decimals, publicClient, writeDeposit]);
+    return null;
+  }, [userAddress, vaultAddress, decimals, publicClient, writeDeposit, runTenderlySimulation]);
 
   // Withdraw with pre-flight simulation (using redeem for shares)
-  const withdraw = useCallback(async (shares: string) => {
-    if (!userAddress || !shares || !publicClient) return;
+  // Options: previewOnly — when true, run Tenderly simulation and return result without sending tx
+  const withdraw = useCallback(async (shares: string, options?: { previewOnly?: boolean }): Promise<SimulationResult | null> => {
+    if (!userAddress || !shares || !publicClient) return null;
 
     setSimulationError(null);
+    setSimulationResult(null);
     setActionState("simulating");
 
     const sharesWei = parseUnits(shares, decimals);
 
-    // Pre-flight simulation
+    if (options?.previewOnly) {
+      // Tenderly preview mode
+      const calldata = encodeFunctionData({
+        abi: VAULT_ABI,
+        functionName: "redeem",
+        args: [sharesWei, userAddress, userAddress],
+      });
+
+      pendingTx.current = { type: "withdraw", args: [sharesWei, userAddress, userAddress] };
+
+      const result = await runTenderlySimulation(calldata);
+      if (result) {
+        setActionState("idle");
+      }
+      return result;
+    }
+
+    // Standard path: viem simulateContract + send
     try {
       await publicClient.simulateContract({
         address: vaultAddress,
@@ -240,7 +392,7 @@ export function useVaultActions(
       const errorMsg = simError instanceof Error ? simError.message : "Unknown error";
       setSimulationError(parseErrorMessage(new Error(errorMsg), "Withdraw would fail"));
       setActionState("idle");
-      return;
+      return null;
     }
 
     // Simulation passed - send transaction
@@ -251,12 +403,41 @@ export function useVaultActions(
       functionName: "redeem",
       args: [sharesWei, userAddress, userAddress],
     });
-  }, [userAddress, vaultAddress, decimals, publicClient, writeWithdraw]);
+    return null;
+  }, [userAddress, vaultAddress, decimals, publicClient, writeWithdraw, runTenderlySimulation]);
+
+  // Execute stored pending tx after user confirms simulation preview
+  const executeAfterPreview = useCallback(() => {
+    if (!pendingTx.current) return;
+
+    const { type, args } = pendingTx.current;
+    pendingTx.current = null;
+
+    if (type === "deposit") {
+      setActionState("depositing");
+      writeDeposit({
+        address: vaultAddress,
+        abi: VAULT_ABI,
+        functionName: "deposit",
+        args: args as readonly [bigint, `0x${string}`],
+      });
+    } else {
+      setActionState("withdrawing");
+      writeWithdraw({
+        address: vaultAddress,
+        abi: VAULT_ABI,
+        functionName: "redeem",
+        args: args as readonly [bigint, `0x${string}`, `0x${string}`],
+      });
+    }
+  }, [vaultAddress, writeDeposit, writeWithdraw]);
 
   // Reset state
   const reset = useCallback(() => {
     setActionState("idle");
     setSimulationError(null);
+    setSimulationResult(null);
+    pendingTx.current = null;
     resetApprove();
     resetDeposit();
     resetWithdraw();
@@ -268,6 +449,7 @@ export function useVaultActions(
     approve,
     deposit,
     withdraw,
+    executeAfterPreview,
     reset,
     status,
     error,
@@ -278,5 +460,7 @@ export function useVaultActions(
     // Transaction hashes for tracking
     depositHash,
     withdrawHash,
+    // Simulation result for preview mode
+    simulationResult,
   };
 }

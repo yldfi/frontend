@@ -29,6 +29,7 @@ interface TokenSelectorProps {
   disabled?: boolean;
   excludeTokens?: string[]; // Addresses to exclude from list
   excludeDefiTokens?: boolean; // Exclude vault/strategy tokens (can't be swapped to)
+  priorityTokens?: EnsoToken[]; // Tokens to show at top of list regardless of balance
 }
 
 // Token logo with fallback
@@ -131,6 +132,7 @@ export function TokenSelector({
   disabled,
   excludeTokens,
   excludeDefiTokens,
+  priorityTokens,
 }: TokenSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"tokens" | "vaults">("tokens");
@@ -436,6 +438,40 @@ export function TokenSelector({
                       </div>
                     )}
 
+                    {/* Priority tokens (shown first, regardless of balance; filtered by search when searching) */}
+                    {priorityTokens && priorityTokens.length > 0 && (() => {
+                      const query = searchQuery.toLowerCase();
+                      const visible = priorityTokens.filter((t) => {
+                        if (excludeSet.has(t.address.toLowerCase())) return false;
+                        if (!query) return true;
+                        return (
+                          t.symbol.toLowerCase().includes(query) ||
+                          t.name.toLowerCase().includes(query) ||
+                          t.address.toLowerCase() === query
+                        );
+                      });
+                      if (visible.length === 0) return null;
+                      return (
+                        <>
+                          {visible.map((token) => (
+                            <TokenRow
+                              key={`priority-${token.address}`}
+                              token={token}
+                              onSelect={() => handleSelect(token)}
+                              isSelected={
+                                selectedToken?.address?.toLowerCase() ===
+                                token.address?.toLowerCase()
+                              }
+                              balance={balanceMap.get(token.address.toLowerCase())}
+                              price={priceMap.get(token.address.toLowerCase())}
+                            />
+                          ))}
+                          {/* Divider after priority tokens */}
+                          <div className="border-b border-[var(--border)] mx-3" />
+                        </>
+                      );
+                    })()}
+
                     {/* Regular token list */}
                     {sortedTokens.length === 0 && !isSearchAddress ? (
                       <div className="text-center py-8 text-[var(--muted-foreground)]">
@@ -443,7 +479,14 @@ export function TokenSelector({
                       </div>
                     ) : (
                       sortedTokens
-                        .filter((token) => token && token.address && token.symbol)
+                        .filter((token) => {
+                          if (!token || !token.address || !token.symbol) return false;
+                          // Exclude priority tokens from regular list to avoid duplicates
+                          if (priorityTokens?.some(p => p.address.toLowerCase() === token.address.toLowerCase())) {
+                            return false;
+                          }
+                          return true;
+                        })
                         .map((token) => (
                           <TokenRow
                             key={token.address}

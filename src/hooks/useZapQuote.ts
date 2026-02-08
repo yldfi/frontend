@@ -294,7 +294,7 @@ export function useZapQuote({
   direction,
   vaultAddress,
   underlyingToken,
-  slippage = "100",
+  slippage = "50",
   underlyingTokenPrice,
   paused = false,
 }: UseZapQuoteParams) {
