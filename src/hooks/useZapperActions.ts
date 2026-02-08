@@ -209,6 +209,11 @@ export interface UseZapperActionsResult {
 
   // Approval
   pendingApproval: PendingApproval | null;
+  approvalProgress: {
+    step: number;
+    total: number;
+    steps: { label: string; description: string; done: boolean }[];
+  } | null;
   approve: (exactAmount?: boolean) => void;
   isApproving: boolean;
   isApprovalSuccess: boolean;
@@ -235,6 +240,12 @@ export function useZapperActions(): UseZapperActionsResult {
   const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
   const [pendingTx, setPendingTx] = useState<PendingTx | null>(null);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+  const [approvalQueue, setApprovalQueue] = useState<PendingApproval[]>([]);
+  const [approvalProgress, setApprovalProgress] = useState<{
+    step: number;
+    total: number;
+    steps: { label: string; description: string; done: boolean }[];
+  } | null>(null);
 
   // Approval tx
   const {
@@ -264,6 +275,8 @@ export function useZapperActions(): UseZapperActionsResult {
     setSimulationResult(null);
     setPendingTx(null);
     setPendingApproval(null);
+    setApprovalQueue([]);
+    setApprovalProgress(null);
     resetApprove();
   }, [resetApprove]);
 
@@ -377,14 +390,33 @@ export function useZapperActions(): UseZapperActionsResult {
       setStatus("error");
       return;
     }
+
+    // If more approvals in queue, show the next one
+    if (approvalQueue.length > 0) {
+      const [next, ...rest] = approvalQueue;
+      setPendingApproval(next);
+      setApprovalQueue(rest);
+      // Update progress: mark current step done, advance to next
+      if (approvalProgress) {
+        const updatedSteps = approvalProgress.steps.map((s, i) =>
+          i < approvalProgress.step ? { ...s, done: true } : s
+        );
+        setApprovalProgress({ ...approvalProgress, step: approvalProgress.step + 1, steps: updatedSteps });
+      }
+      setStatus("needsApproval");
+      resetApprove();
+      return;
+    }
+
     setPendingApproval(null);
+    setApprovalProgress(null);
     try {
       await simulateAndExecute(pendingTx, false);
     } catch (err) {
       setError(parseErrorMessage(err));
       setStatus("error");
     }
-  }, [pendingTx, simulateAndExecute]);
+  }, [pendingTx, approvalQueue, approvalProgress, simulateAndExecute, resetApprove]);
 
   const executeAfterPreview = useCallback(async () => {
     if (!pendingTx || !publicClient) {
@@ -427,45 +459,63 @@ export function useZapperActions(): UseZapperActionsResult {
     controller: `0x${string}`,
     inputAmount: bigint,
     tokenSymbol: string
-  ): Promise<PendingApproval | null> => {
-    if (!publicClient || !address) return null;
+  ): Promise<PendingApproval[]> => {
+    if (!publicClient || !address) return [];
 
-    // Check ERC20 allowance first
+    // Check both approvals in parallel
+    const [erc20Allowance, controllerApproved] = await Promise.all([
+      inputAmount > 0n
+        ? checkAllowance(publicClient, address, collateralToken, ZAPPER_ADDRESS as `0x${string}`)
+        : Promise.resolve(inputAmount), // no check needed if 0
+      checkControllerApproval(publicClient, controller, address, ZAPPER_ADDRESS as `0x${string}`),
+    ]);
+
+    const erc20Needed = inputAmount > 0n && erc20Allowance < inputAmount;
+    const controllerNeeded = !controllerApproved;
+
+    // Build progress steps for all possible approvals
+    const allSteps: { approval: PendingApproval; needed: boolean; label: string; description: string }[] = [];
+
     if (inputAmount > 0n) {
-      const allowance = await checkAllowance(
-        publicClient,
-        address,
-        collateralToken,
-        ZAPPER_ADDRESS as `0x${string}`
-      );
-      if (allowance < inputAmount) {
-        return {
+      allSteps.push({
+        approval: {
           type: "erc20",
           token: collateralToken,
           tokenSymbol,
           spender: ZAPPER_ADDRESS as `0x${string}`,
           amount: inputAmount,
-        };
-      }
+        },
+        needed: erc20Needed,
+        label: tokenSymbol,
+        description: `Allow Zapper to spend ${tokenSymbol}`,
+      });
     }
 
-    // Check controller approval
-    const controllerApproved = await checkControllerApproval(
-      publicClient,
-      controller,
-      address,
-      ZAPPER_ADDRESS as `0x${string}`
-    );
-    if (!controllerApproved) {
-      return {
+    allSteps.push({
+      approval: {
         type: "controller",
         token: controller,
         tokenSymbol: "Controller",
         spender: ZAPPER_ADDRESS as `0x${string}`,
-      };
+      },
+      needed: controllerNeeded,
+      label: "Lending Access",
+      description: "Allow Zapper to manage your loan",
+    });
+
+    const missing = allSteps.filter((s) => s.needed).map((s) => s.approval);
+
+    // Set approval progress if any needed
+    if (missing.length > 0) {
+      const total = allSteps.length;
+      const steps = allSteps.map((s) => ({ label: s.label, description: s.description, done: !s.needed }));
+      const firstNeededIdx = allSteps.findIndex((s) => s.needed);
+      setApprovalProgress({ step: firstNeededIdx + 1, total, steps });
+    } else {
+      setApprovalProgress(null);
     }
 
-    return null;
+    return missing;
   }, [publicClient, address]);
 
   const createLeveragedLoan = useCallback(async (
@@ -525,10 +575,11 @@ export function useZapperActions(): UseZapperActionsResult {
       };
       setPendingTx(tx);
 
-      // Check approvals
-      const missingApproval = await checkApprovals(collateralToken, controller, userCollateral, "ycvxCRV");
-      if (missingApproval) {
-        setPendingApproval(missingApproval);
+      // Check approvals (may need ERC20 + controller)
+      const missingApprovals = await checkApprovals(collateralToken, controller, userCollateral, "ycvxCRV");
+      if (missingApprovals.length > 0) {
+        setPendingApproval(missingApprovals[0]);
+        setApprovalQueue(missingApprovals.slice(1));
         setStatus("needsApproval");
         return null;
       }
@@ -594,9 +645,10 @@ export function useZapperActions(): UseZapperActionsResult {
       };
       setPendingTx(tx);
 
-      const missingApproval = await checkApprovals(collateralToken, controller, additionalCollateral, "ycvxCRV");
-      if (missingApproval) {
-        setPendingApproval(missingApproval);
+      const missingApprovals = await checkApprovals(collateralToken, controller, additionalCollateral, "ycvxCRV");
+      if (missingApprovals.length > 0) {
+        setPendingApproval(missingApprovals[0]);
+        setApprovalQueue(missingApprovals.slice(1));
         setStatus("needsApproval");
         return null;
       }
@@ -776,6 +828,7 @@ export function useZapperActions(): UseZapperActionsResult {
     deleverage,
     selfLiquidate,
     pendingApproval,
+    approvalProgress,
     approve,
     isApproving,
     isApprovalSuccess,

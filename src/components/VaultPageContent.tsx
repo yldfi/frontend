@@ -1816,7 +1816,7 @@ export function VaultPageContent({ id }: { id: string }) {
                                     : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10 cursor-pointer"
                                 )}
                               >
-                                Exact (~{inputAmount ? inputAmount.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "0"})
+                                Exact ({inputAmount ? inputAmount.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "0"})
                               </button>
                               <button
                                 onClick={() => handleSubmit()}
@@ -2299,7 +2299,7 @@ export function VaultPageContent({ id }: { id: string }) {
                                     : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10 cursor-pointer"
                                 )}
                               >
-                                Exact (~{Number(zapAmount).toLocaleString(undefined, { maximumFractionDigits: 2 })})
+                                Exact ({Number(zapAmount).toLocaleString(undefined, { maximumFractionDigits: 2 })})
                               </button>
                               <button
                                 onClick={() => {
