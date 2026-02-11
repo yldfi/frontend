@@ -437,14 +437,10 @@ export async function POST(request: NextRequest) {
   }
 
   // Build allowlist of simulation targets: Enso router + all vault + controller addresses
-  // Inverse Finance FiRM cvxCRV market (for migration)
-  const INVERSE_FIRM_MARKET = "0x3474ad0e3a9775c9f68b415a7a9880b0cab9397a";
-
   const allowedTargets = new Set<string>([
     ENSO_ROUTER_EXECUTOR.toLowerCase(),
     ...Object.values(VAULT_ADDRESSES).map((a) => a.toLowerCase()),
     ...Object.values(CURVE_CONTROLLERS).map((a) => a.toLowerCase()),
-    INVERSE_FIRM_MARKET,
   ]);
 
   if (!allowedTargets.has(body.to.toLowerCase())) {

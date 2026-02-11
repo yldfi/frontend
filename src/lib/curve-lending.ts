@@ -1078,5 +1078,113 @@ export async function fetchRemoveCollateralAndSwapBundle(params: {
   });
 }
 
+/**
+ * Create a new loan and swap the borrowed crvUSD to any output token.
+ *
+ * After create_loan in router mode, crvUSD goes to msg.sender (ENSO_SHORTCUTS).
+ * We use the recursive routeMulti pattern to swap it without pulling from user.
+ *
+ * Supports two input modes:
+ * - tokenIn undefined: vaultToken is the input (direct collateral)
+ * - tokenIn specified: swap tokenIn → vaultToken first, then create loan
+ *
+ * The output swap route uses fromAddress=ZAPPER_ADDRESS, receiver=user so
+ * output tokens go directly to the user's wallet.
+ */
+export async function fetchCreateLoanWithOutputSwapBundle(params: {
+  fromAddress: string;
+  vaultAddress: `0x${string}`;
+  tokenIn?: string; // If different from vault, swap input first
+  amountIn: string; // Wei amount of tokenIn (or vault token)
+  debtAmount: string; // crvUSD to borrow (wei)
+  bands: number;
+  tokenOut: string; // Token to receive (swap crvUSD → this)
+  slippage?: number; // Basis points (default 100 = 1%)
+}): Promise<EnsoBundleResponse> {
+  const controllerAddress = CURVE_CONTROLLERS[params.vaultAddress as keyof typeof CURVE_CONTROLLERS];
+  if (!controllerAddress) {
+    throw new Error(`No controller found for vault ${params.vaultAddress}`);
+  }
+
+  const slippage = (params.slippage ?? 100).toString();
+  const actions: EnsoBundleAction[] = [];
+  const hasInputSwap = !!params.tokenIn;
+
+  if (hasInputSwap) {
+    // Step 1: Route input token → vault token
+    actions.push({
+      protocol: "enso",
+      action: "route",
+      args: {
+        tokenIn: params.tokenIn!,
+        tokenOut: params.vaultAddress,
+        amountIn: params.amountIn,
+        slippage,
+      },
+    });
+  }
+
+  // Approve vault tokens to controller
+  actions.push({
+    protocol: "erc20",
+    action: "approve",
+    args: {
+      token: params.vaultAddress,
+      spender: controllerAddress,
+      amount: hasInputSwap ? { useOutputOfCallAt: 0 } : params.amountIn,
+    },
+  });
+
+  // Create loan — crvUSD goes to msg.sender (ENSO_SHORTCUTS in router mode)
+  actions.push({
+    protocol: "enso",
+    action: "call",
+    args: {
+      address: controllerAddress.toLowerCase(),
+      method: "create_loan",
+      abi: CONTROLLER_CREATE_LOAN_ABI,
+      args: [
+        hasInputSwap ? { useOutputOfCallAt: 0 } : params.amountIn,
+        params.debtAmount,
+        params.bands,
+      ],
+    },
+  });
+
+  // Fetch route for crvUSD → tokenOut
+  // fromAddress=ZAPPER_ADDRESS (tokens are in ENSO_SHORTCUTS, same as zapper patterns)
+  // receiver=user so output goes directly to user
+  const route = await fetchRoute({
+    fromAddress: ZAPPER_ADDRESS,
+    tokenIn: CRVUSD,
+    tokenOut: params.tokenOut,
+    amountIn: params.debtAmount,
+    slippage,
+    receiver: params.fromAddress,
+  });
+
+  // Extract inner swap data from routeSingle response
+  const innerSwapData = extractInnerSwapData(route.tx.data);
+
+  // Recursive routeMulti: swap crvUSD (already in ENSO_SHORTCUTS) without pulling tokens
+  actions.push({
+    protocol: "enso",
+    action: "call",
+    args: {
+      address: ENSO_ROUTER_EXECUTOR.toLowerCase(),
+      method: "routeMulti",
+      abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)",
+      args: [[], innerSwapData],
+    },
+  });
+
+  return fetchBundle({
+    fromAddress: params.fromAddress,
+    actions,
+    routingStrategy: "router",
+    skipQuote: true, // routeMulti breaks Enso's simulation
+  });
+}
+
 // Export controller addresses for use in other modules
 export { CURVE_CONTROLLERS, CRVUSD };
