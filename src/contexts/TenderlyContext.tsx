@@ -1,16 +1,25 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, useMemo, useRef, type ReactNode } from "react";
-import { useAccount } from "wagmi";
+import { useAccount, usePublicClient } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
 
+type TestNetworkType = "anvil" | "tenderly" | null;
+
 interface TenderlyContextValue {
+  /** True when connected to any test network (Anvil fork, Tenderly VNet, chain 1337) */
+  isTestNetwork: boolean;
+  /** @deprecated Use isTestNetwork instead */
   isTenderlyVNet: boolean;
+  /** "anvil" | "tenderly" | null — only for display (banner label) */
+  testNetworkType: TestNetworkType;
   isDetecting: boolean;
 }
 
 const TenderlyContext = createContext<TenderlyContextValue>({
+  isTestNetwork: false,
   isTenderlyVNet: false,
+  testNetworkType: null,
   isDetecting: false,
 });
 
@@ -18,15 +27,12 @@ export function useTenderly() {
   return useContext(TenderlyContext);
 }
 
-// Why we need Tenderly VNet detection:
-// - Enso API requires chainId 1 for quotes/routing (won't work with 1337)
-// - We configure Tenderly VNet with chainId 1 so Enso works
-// - But this means we can't detect VNet by chainId alone
-// - Solution: probe evm_snapshot which returns different error codes:
-//   - Tenderly Public RPC: -32004 (Access forbidden)
-//   - Real mainnet nodes: -32601 (Method not found)
-// - This lets us show TEST MODE banner and skip Tenderly simulation API
-//   (which simulates against mainnet state, not VNet state)
+// Test network detection:
+// - Anvil and Tenderly VNet both support evm_snapshot (succeeds)
+// - Mainnet nodes reject evm_snapshot with -32601
+// - Tenderly Public RPC rejects with -32004 + "Access forbidden"
+// - To distinguish Anvil from Tenderly: probe anvil_nodeInfo (Anvil-only)
+// - Both are test networks — skip Tenderly simulation API on either
 
 // Error codes from RPC responses
 const ERROR_ACCESS_FORBIDDEN = -32004; // Tenderly Public RPC
@@ -34,44 +40,43 @@ const ERROR_METHOD_NOT_FOUND = -32601; // Standard mainnet nodes
 
 export function TenderlyProvider({ children }: { children: ReactNode }) {
   const { isConnected, connector } = useAccount();
+  const publicClient = usePublicClient();
   const queryClient = useQueryClient();
-  const [isTenderlyVNet, setIsTenderlyVNet] = useState(false);
+  const [testNetworkType, setTestNetworkType] = useState<TestNetworkType>(null);
   const [isDetecting, setIsDetecting] = useState(true);
   const [detectTrigger, setDetectTrigger] = useState(0);
-  const prevTenderlyRef = useRef<boolean | null>(null);
+  const prevTestNetworkRef = useRef<boolean | null>(null);
   const isInitialDetection = useRef(true);
 
-  // Invalidate queries and emit event when Tenderly detection changes
+  const isTestNetwork = testNetworkType !== null;
+
+  // Invalidate queries and emit event when test network detection changes
   useEffect(() => {
     // Skip on initial mount (when prevRef is null)
-    if (prevTenderlyRef.current === null) {
-      prevTenderlyRef.current = isTenderlyVNet;
+    if (prevTestNetworkRef.current === null) {
+      prevTestNetworkRef.current = isTestNetwork;
       return;
     }
 
     // Only act if the value actually changed
-    if (prevTenderlyRef.current !== isTenderlyVNet) {
-      console.log("[Tenderly] Network changed, refreshing queries");
+    if (prevTestNetworkRef.current !== isTestNetwork) {
+      console.log("[TestNetwork] Network changed, refreshing queries");
 
       // Small delay to let current queries complete before invalidating
       setTimeout(() => {
-        // Invalidate ALL queries - wagmi uses its own query keys for balances
-        // This ensures both custom queries and wagmi queries are refreshed
         queryClient.invalidateQueries();
       }, 100);
 
       // Emit custom event for components to reset local state (like input amounts)
       window.dispatchEvent(new CustomEvent("tenderly-network-change", {
-        detail: { isTenderlyVNet }
+        detail: { isTestNetwork, testNetworkType }
       }));
 
-      prevTenderlyRef.current = isTenderlyVNet;
+      prevTestNetworkRef.current = isTestNetwork;
     }
-  }, [isTenderlyVNet, queryClient]);
+  }, [isTestNetwork, testNetworkType, queryClient]);
 
-  // Detect Tenderly VNet by probing evm_snapshot error code
-  // - Tenderly Public RPC returns -32004 (Access forbidden)
-  // - Mainnet nodes return -32601 (Method not found)
+  // Detect test network by probing evm_snapshot
   useEffect(() => {
     if (typeof window === "undefined") {
       setIsDetecting(false);
@@ -80,7 +85,7 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
 
     // Not connected - reset state
     if (!isConnected || !connector) {
-      setIsTenderlyVNet(false);
+      setTestNetworkType(null);
       setIsDetecting(false);
       return;
     }
@@ -92,94 +97,108 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
       setIsDetecting(true);
     }
 
-    async function detectTenderly() {
+    async function detect() {
       try {
-        // Probe evm_snapshot for automatic detection
         const provider = await connector!.getProvider();
-        if (!provider || cancelled) {
-          return;
-        }
+        if (!provider || cancelled) return;
+
+        const rpc = (provider as { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> }).request.bind(provider);
 
         try {
-          // Call evm_snapshot with timeout - we expect it to fail
-          // HOW it fails tells us where we are
-          const rpcPromise = (provider as { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> }).request({
-            method: "evm_snapshot",
-            params: [],
-          });
+          // evm_snapshot: succeeds on Anvil/Tenderly, fails on mainnet
+          const rpcPromise = rpc({ method: "evm_snapshot", params: [] });
           const timeoutPromise = new Promise((_, reject) =>
             setTimeout(() => reject(new Error("timeout")), 1500)
           );
           await Promise.race([rpcPromise, timeoutPromise]);
 
-          // If it succeeds, we're on Tenderly Admin RPC
-          if (!cancelled) {
-            setIsTenderlyVNet((prev) => {
-              if (!prev) console.log("[Tenderly] Detected via evm_snapshot success (Admin RPC)");
-              return true;
+          if (cancelled) return;
+
+          // Succeeded — distinguish Anvil from Tenderly via anvil_nodeInfo
+          try {
+            await rpc({ method: "anvil_nodeInfo", params: [] });
+            setTestNetworkType((prev) => {
+              if (prev !== "anvil") console.log("[TestNetwork] Detected Anvil fork");
+              return "anvil";
+            });
+          } catch {
+            setTestNetworkType((prev) => {
+              if (prev !== "tenderly") console.log("[TestNetwork] Detected Tenderly VNet (Admin RPC)");
+              return "tenderly";
             });
           }
         } catch (err: unknown) {
+          if (cancelled) return;
+
           const error = err as { code?: number; error?: { code?: number } };
           const errorCode = error?.code || error?.error?.code;
+          const errorMsg = (err as { message?: string })?.message?.toLowerCase() || "";
 
-          if (!cancelled) {
-            const errorMsg = (err as { message?: string })?.message?.toLowerCase() || "";
-
-            if (errorCode === ERROR_ACCESS_FORBIDDEN && errorMsg.includes("forbidden")) {
-              // -32004 with "Access forbidden" = Tenderly Public RPC
-              // Note: Some wallets (1inch) return -32004 with "Method not supported" - that's NOT Tenderly
-              setIsTenderlyVNet((prev) => {
-                if (!prev) console.log("[Tenderly] Detected via evm_snapshot error -32004 (Public RPC)");
-                return true;
-              });
-            } else if (errorCode === ERROR_METHOD_NOT_FOUND || errorCode === ERROR_ACCESS_FORBIDDEN) {
-              // -32601 = "Method not found" = Real mainnet
-              // -32004 without "forbidden" = wallet doesn't support method (also mainnet)
-              setIsTenderlyVNet((prev) => {
-                if (prev) console.log("[Tenderly] Not detected - mainnet (error code:", errorCode, ")");
-                return false;
-              });
-            } else if ((err as Error)?.message === "timeout") {
-              // Timeout - keep previous state, don't change detection
-              console.log("[Tenderly] Detection timed out, keeping previous state");
-            } else {
-              // Unknown error - default to not Tenderly
-              setIsTenderlyVNet((prev) => {
-                if (prev) console.log("[Tenderly] Unknown error code:", errorCode);
-                return false;
-              });
+          if (errorCode === ERROR_ACCESS_FORBIDDEN && errorMsg.includes("forbidden")) {
+            // Tenderly Public RPC
+            setTestNetworkType((prev) => {
+              if (prev !== "tenderly") console.log("[TestNetwork] Detected Tenderly VNet (Public RPC)");
+              return "tenderly";
+            });
+          } else if (errorCode === ERROR_METHOD_NOT_FOUND || errorCode === ERROR_ACCESS_FORBIDDEN) {
+            // Real mainnet
+            setTestNetworkType((prev) => {
+              if (prev !== null) console.log("[TestNetwork] Mainnet detected (error code:", errorCode, ")");
+              return null;
+            });
+          } else if ((err as Error)?.message === "timeout") {
+            console.log("[TestNetwork] Detection timed out, keeping previous state");
+          } else {
+            // Wallet provider says mainnet — but check wagmi transport too
+            // (MetaMask may use real mainnet RPC while wagmi uses NEXT_PUBLIC_ANVIL_RPC)
+            if (publicClient) {
+              try {
+                await publicClient.transport.request({ method: "evm_snapshot", params: [] });
+                if (cancelled) return;
+                try {
+                  await publicClient.transport.request({ method: "anvil_nodeInfo", params: [] });
+                  setTestNetworkType((prev) => {
+                    if (prev !== "anvil") console.log("[TestNetwork] Detected Anvil fork via wagmi transport");
+                    return "anvil";
+                  });
+                } catch {
+                  setTestNetworkType((prev) => {
+                    if (prev !== "tenderly") console.log("[TestNetwork] Detected Tenderly VNet via wagmi transport");
+                    return "tenderly";
+                  });
+                }
+                // Skip the null fallback below
+                return;
+              } catch {
+                // wagmi transport also not a test network
+              }
             }
+            setTestNetworkType((prev) => {
+              if (prev !== null) console.log("[TestNetwork] Mainnet detected (error code:", errorCode, ")");
+              return null;
+            });
           }
         }
       } catch (err) {
-        console.log("[Tenderly] Detection error:", err);
+        console.log("[TestNetwork] Detection error:", err);
         if (!cancelled) {
-          setIsTenderlyVNet((prev) => {
-            if (prev) console.log("[Tenderly] Detection error, resetting to mainnet");
-            return false;
-          });
+          setTestNetworkType(null);
         }
       } finally {
-        if (!cancelled) {
-          // Only update isDetecting on initial detection
-          if (isInitialDetection.current) {
-            setIsDetecting(false);
-            isInitialDetection.current = false;
-          }
+        if (!cancelled && isInitialDetection.current) {
+          setIsDetecting(false);
+          isInitialDetection.current = false;
         }
       }
     }
 
-    detectTenderly();
+    detect();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [isConnected, connector, detectTrigger]);
+    return () => { cancelled = true; };
+  }, [isConnected, connector, publicClient, detectTrigger]);
 
   // Re-run detection periodically when tab is focused
-  // This handles cases where user changes RPC in Frame without disconnecting
+  // This handles cases where user changes RPC without disconnecting
   useEffect(() => {
     if (typeof window === "undefined" || !isConnected) return;
 
@@ -188,7 +207,7 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
     const startPolling = () => {
       intervalId = setInterval(() => {
         setDetectTrigger((t) => t + 1);
-      }, 1_000); // Re-check every 1 second
+      }, 1_000);
     };
 
     const stopPolling = () => {
@@ -197,7 +216,6 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        // Re-check immediately when tab becomes visible
         setDetectTrigger((t) => t + 1);
         startPolling();
       } else {
@@ -205,7 +223,6 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    // Start polling if tab is visible
     if (document.visibilityState === "visible") {
       startPolling();
     }
@@ -218,10 +235,14 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
     };
   }, [isConnected]);
 
-  // Memoize context value to ensure proper update propagation
   const contextValue = useMemo(
-    () => ({ isTenderlyVNet, isDetecting }),
-    [isTenderlyVNet, isDetecting]
+    () => ({
+      isTestNetwork,
+      isTenderlyVNet: isTestNetwork, // backwards compat — all consumers just need "am I on a test network?"
+      testNetworkType,
+      isDetecting,
+    }),
+    [isTestNetwork, testNetworkType, isDetecting]
   );
 
   return (
