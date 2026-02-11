@@ -6,10 +6,10 @@ import { SimulationModal } from "@/components/SimulationModal";
 import { toast } from "sonner";
 import {
   Loader2,
-  Check,
   AlertTriangle,
   Route,
   RouteOff,
+  ArrowRightLeft,
 } from "lucide-react";
 import { useAccount, usePublicClient, useBalance, useGasPrice, useBlockNumber } from "wagmi";
 import { formatUnits, parseUnits } from "viem";
@@ -99,6 +99,8 @@ interface RepayTabProps {
   controllerAddress: `0x${string}`;
   onTransactionSuccess: () => void;
   onEstimatedHealthChange?: (health: number | null) => void;
+  onDebtDeltaChange?: (delta: bigint | null) => void;
+  onTxStateChange?: (state: { status: "pending" | "success" | "reverted"; action: string; hash: string; details?: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string } } | null) => void;
 }
 
 export function RepayTab({
@@ -107,6 +109,8 @@ export function RepayTab({
   controllerAddress,
   onTransactionSuccess,
   onEstimatedHealthChange,
+  onDebtDeltaChange,
+  onTxStateChange,
 }: RepayTabProps) {
   const { address } = useAccount();
   const publicClient = usePublicClient();
@@ -124,6 +128,7 @@ export function RepayTab({
   );
 
   // Slippage (basis points) - persisted to localStorage
+  const [rateInverted, setRateInverted] = useState(false);
   const [slippage, setSlippage] = useState(() => {
     if (typeof window !== "undefined") {
       return localStorage.getItem("yldfi-slippage") || "50";
@@ -461,6 +466,38 @@ export function RepayTab({
     onEstimatedHealthChange?.(estimatedHealth);
   }, [estimatedHealth, onEstimatedHealthChange]);
 
+  // Report debt delta to parent (negative = repaying)
+  useEffect(() => {
+    if (isCrvUsd && repayAmount && Number(repayAmount) > 0) {
+      try {
+        onDebtDeltaChange?.(-parseUnits(repayAmount, 18));
+      } catch {
+        onDebtDeltaChange?.(null);
+      }
+    } else if (!isCrvUsd && estimatedCrvUsdOut) {
+      onDebtDeltaChange?.(-estimatedCrvUsdOut);
+    } else {
+      onDebtDeltaChange?.(null);
+    }
+  }, [isCrvUsd, repayAmount, estimatedCrvUsdOut, onDebtDeltaChange]);
+
+  // Report tx state to parent for full-screen overlay
+  useEffect(() => {
+    if ((status === "waitingTx" || status === "success" || status === "reverted") && txHash) {
+      const action = isClosingLoan ? "Close Loan" : "Repay";
+      const details = repayAmount && Number(repayAmount) > 0 ? {
+        fromAmount: repayAmount,
+        fromSymbol: repayToken.symbol,
+        fromLogo: repayToken.logoURI || "/tokens/unknown.png",
+        toAmount: isCrvUsd ? repayAmount : estimatedCrvUsdOut ? Number(formatUnits(estimatedCrvUsdOut, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 }) : "~",
+        toSymbol: "crvUSD debt",
+        toLogo: "/tokens/crvusd.png",
+      } : undefined;
+      const mapped = status === "waitingTx" ? "pending" : status;
+      onTxStateChange?.({ status: mapped as "pending" | "success" | "reverted", action, hash: txHash, details });
+    }
+  }, [status, txHash, isClosingLoan, onTxStateChange, repayAmount, repayToken, isCrvUsd, estimatedCrvUsdOut]);
+
   // Handle transaction success
   useEffect(() => {
     if (status === "success") {
@@ -627,13 +664,13 @@ export function RepayTab({
             Balance: {formattedBalance}
           </span>
         </div>
-        <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--muted)] border border-[var(--border)] focus-within:border-[var(--foreground)]">
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--muted)] border border-[var(--border)] focus-within:ring-2 focus-within:ring-[var(--accent)] transition-shadow">
           <input
             type="text"
             value={repayAmount}
             onChange={(e) => setRepayAmount(e.target.value)}
             placeholder="0.0"
-            className="flex-1 min-w-0 bg-transparent mono text-base outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
+            className="flex-1 min-w-0 bg-transparent mono text-sm outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
           />
           <TokenSelector
             selectedToken={repayToken}
@@ -669,15 +706,19 @@ export function RepayTab({
             <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
               {/* Exchange rate */}
               {exchangeRate !== null && (
-                <div className="flex justify-between">
+                <div className="flex justify-between items-center">
                   <span className="text-[var(--muted-foreground)]">Rate</span>
-                  <span className="mono">
-                    1 {repayToken.symbol} ={" "}
-                    {exchangeRate.toLocaleString(undefined, {
-                      maximumFractionDigits: 2,
-                    })}{" "}
-                    crvUSD
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setRateInverted(v => !v)}
+                    className="flex items-center gap-1 mono hover:text-[var(--accent)] transition-colors"
+                  >
+                    {rateInverted
+                      ? <>1 crvUSD = {(1 / exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 4 })} {repayToken.symbol}</>
+                      : <>1 {repayToken.symbol} = {exchangeRate.toLocaleString(undefined, { maximumFractionDigits: 2 })} crvUSD</>
+                    }
+                    <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
+                  </button>
                 </div>
               )}
 
@@ -779,29 +820,6 @@ export function RepayTab({
               {isApproving ? "Approving..." : "Approve"}
             </button>
           )}
-        </div>
-      )}
-
-      {/* Error Display */}
-      {error && status === "error" && (
-        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-500 text-sm">
-          {error}
-        </div>
-      )}
-
-      {/* Success Display */}
-      {status === "success" && txHash && (
-        <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/30 text-green-500 text-sm flex items-center gap-2">
-          <Check size={16} />
-          Transaction successful!
-          <a
-            href={`https://etherscan.io/tx/${txHash}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline"
-          >
-            View
-          </a>
         </div>
       )}
 
@@ -951,7 +969,7 @@ export function RepayTab({
                                     tokenSymbol: repayToken.symbol,
                                     action: "Redeem",
                                     description: `${repayToken.symbol} for ${vaultInfo.underlyingSymbol}`,
-                                    protocol: "ERC4626",
+                                    protocol: "yld",
                                   },
                                   {
                                     tokenSymbol: vaultInfo.underlyingSymbol,
@@ -971,7 +989,7 @@ export function RepayTab({
                             {
                               tokenSymbol: "crvUSD",
                               action: "Repay",
-                              description: "crvUSD debt via Curve",
+                              description: "crvUSD",
                               protocol: "Curve LlamaLend",
                             },
                           ],

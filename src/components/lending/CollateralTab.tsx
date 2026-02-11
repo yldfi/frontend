@@ -7,12 +7,12 @@ import { toast } from "sonner";
 import { isUserRejection } from "@/lib/analytics";
 import {
   Loader2,
-  Check,
   AlertTriangle,
   Route,
   RouteOff,
   Plus,
   Minus,
+  ArrowRightLeft,
 } from "lucide-react";
 import { useAccount, usePublicClient, useBalance, useGasPrice, useBlockNumber } from "wagmi";
 import { formatUnits, parseUnits } from "viem";
@@ -79,6 +79,7 @@ interface CollateralTabProps {
   controllerAddress: `0x${string}`;
   onTransactionSuccess: () => void;
   onEstimatedHealthChange?: (health: number | null) => void;
+  onTxStateChange?: (state: { status: "pending" | "success" | "reverted"; action: string; hash: string; details?: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string } } | null) => void;
 }
 
 export function CollateralTab({
@@ -88,6 +89,7 @@ export function CollateralTab({
   controllerAddress,
   onTransactionSuccess,
   onEstimatedHealthChange,
+  onTxStateChange,
 }: CollateralTabProps) {
   const { address } = useAccount();
   const publicClient = usePublicClient();
@@ -116,6 +118,7 @@ export function CollateralTab({
   const setAmount = useCallback((v: string) => setAmountState(sanitizeAmount(v)), []);
 
   // Slippage (basis points) — persisted
+  const [rateInverted, setRateInverted] = useState(false);
   const [slippage, setSlippage] = useState(() => {
     if (typeof window !== "undefined") {
       return localStorage.getItem("yldfi-slippage") || "50";
@@ -203,10 +206,10 @@ export function CollateralTab({
     return tokenBalance?.formatted ?? "0";
   }, [isVaultToken, userBalance, vault.decimals, tokenBalance]);
 
-  // Max balance for remove mode (position collateral)
+  // Max balance for remove mode (max withdrawable without breaking health)
   const removeMaxBalance = useMemo(() => {
     if (!position?.hasLoan) return "0";
-    return formatUnits(position.collateral, vault.decimals);
+    return formatUnits(position.maxWithdrawable, vault.decimals);
   }, [position, vault.decimals]);
 
   const maxBalance = mode === "add" ? addMaxBalance : removeMaxBalance;
@@ -433,6 +436,30 @@ export function CollateralTab({
     onEstimatedHealthChange?.(estimatedHealth);
   }, [estimatedHealth, onEstimatedHealthChange]);
 
+  // Report tx state to parent for full-screen overlay
+  useEffect(() => {
+    if ((status === "waitingTx" || status === "success" || status === "reverted") && txHash) {
+      const action = mode === "add" ? "Add Collateral" : "Remove Collateral";
+      const details = amount && Number(amount) > 0 ? (mode === "add" ? {
+        fromAmount: amount,
+        fromSymbol: selectedToken.symbol,
+        fromLogo: selectedToken.logoURI || "/tokens/unknown.png",
+        toAmount: isVaultToken ? amount : estimatedVaultTokenAmount ? Number(formatUnits(estimatedVaultTokenAmount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 }) : "~",
+        toSymbol: vault.symbol,
+        toLogo: vault.logo,
+      } : {
+        fromAmount: amount,
+        fromSymbol: vault.symbol,
+        fromLogo: vault.logo,
+        toAmount: isVaultToken ? amount : swapQuote?.amountOut ? Number(formatUnits(BigInt(swapQuote.amountOut), selectedToken.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 }) : "~",
+        toSymbol: selectedToken.symbol,
+        toLogo: selectedToken.logoURI || "/tokens/unknown.png",
+      }) : undefined;
+      const mapped = status === "waitingTx" ? "pending" : status;
+      onTxStateChange?.({ status: mapped as "pending" | "success" | "reverted", action, hash: txHash, details });
+    }
+  }, [status, txHash, mode, onTxStateChange, amount, selectedToken, isVaultToken, estimatedVaultTokenAmount, vault, swapQuote]);
+
   // Collateral change summary from Tenderly simulation + position data
   const collateralSummary = useMemo(() => {
     if (!simulationResult?.success || !position?.hasLoan) return undefined;
@@ -649,7 +676,7 @@ export function CollateralTab({
     if (mode !== "remove" || !amount || Number(amount) === 0 || !position?.hasLoan) return false;
     try {
       const amountWei = parseUnits(amount, vault.decimals);
-      return amountWei > position.collateral;
+      return amountWei > position.maxWithdrawable;
     } catch {
       return false;
     }
@@ -730,13 +757,13 @@ export function CollateralTab({
             {mode === "add" ? "Balance" : "Collateral"}: {formattedBalance}
           </span>
         </div>
-        <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--muted)] border border-[var(--border)] focus-within:border-[var(--foreground)]">
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--muted)] border border-[var(--border)] focus-within:ring-2 focus-within:ring-[var(--accent)] transition-shadow">
           <input
             type="text"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             placeholder="0.0"
-            className="flex-1 min-w-0 bg-transparent mono text-base outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
+            className="flex-1 min-w-0 bg-transparent mono text-sm outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
           />
           <TokenSelector
             selectedToken={selectedToken}
@@ -772,13 +799,19 @@ export function CollateralTab({
 
           {/* Exchange rate */}
           {exchangeRate !== null && (
-            <div className="flex justify-between">
+            <div className="flex justify-between items-center">
               <span className="text-[var(--muted-foreground)]">Rate</span>
-              <span className="mono">
-                1 {mode === "add" ? selectedToken.symbol : vault.symbol} ={" "}
-                {exchangeRate.toLocaleString(undefined, { maximumFractionDigits: 4 })}{" "}
-                {mode === "add" ? vault.symbol : selectedToken.symbol}
-              </span>
+              <button
+                type="button"
+                onClick={() => setRateInverted(v => !v)}
+                className="flex items-center gap-1 mono hover:text-[var(--accent)] transition-colors"
+              >
+                {rateInverted
+                  ? <>1 {mode === "add" ? vault.symbol : selectedToken.symbol} = {(1 / exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 4 })} {mode === "add" ? selectedToken.symbol : vault.symbol}</>
+                  : <>1 {mode === "add" ? selectedToken.symbol : vault.symbol} = {exchangeRate.toLocaleString(undefined, { maximumFractionDigits: 4 })} {mode === "add" ? vault.symbol : selectedToken.symbol}</>
+                }
+                <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
+              </button>
             </div>
           )}
 
@@ -802,20 +835,6 @@ export function CollateralTab({
           )}
 
         </div>
-      )}
-
-      {/* Warnings */}
-      {exceedsCollateral && amount && Number(amount) > 0 && (
-        <p className="text-sm text-red-500 flex items-center gap-1.5">
-          <AlertTriangle size={14} />
-          Exceeds position collateral ({Number(formatUnits(position?.collateral ?? 0n, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })} {vault.symbol})
-        </p>
-      )}
-      {healthTooLow && amount && Number(amount) > 0 && !exceedsCollateral && (
-        <p className="text-sm text-red-500 flex items-center gap-1.5">
-          <AlertTriangle size={14} />
-          Position would be unhealthy
-        </p>
       )}
 
       {/* Approval Flow */}
@@ -869,22 +888,6 @@ export function CollateralTab({
               {isApproving ? "Approving..." : `Approve ${pendingApproval.tokenSymbol}`}
             </button>
           )}
-        </div>
-      )}
-
-      {/* Success Display */}
-      {status === "success" && txHash && (
-        <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/30 text-green-500 text-sm flex items-center gap-2">
-          <Check size={16} />
-          Transaction successful!
-          <a
-            href={`https://etherscan.io/tx/${txHash}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline"
-          >
-            View
-          </a>
         </div>
       )}
 

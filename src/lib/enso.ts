@@ -100,7 +100,7 @@ const CVX_HYBRID_ZAPPER =
   process.env.NEXT_PUBLIC_CVX_HYBRID_ZAPPER || process.env.CVX_HYBRID_ZAPPER || "0xEE3FF294c7156090F5b2A37acd131FD3DC652182";
 const HYBRID_EXTRA_BUFFER_BPS = Number(process.env.ENSO_HYBRID_EXTRA_BUFFER_BPS ?? "200");
 
-// yld_fi referral code for Enso attribution
+// yld referral code for Enso attribution
 export const ENSO_REFERRAL_CODE = "yldfi";
 
 const CRV_ADDRESS = "0xD533a949740bb3306d119CC777fa900bA034cd52";
@@ -110,7 +110,7 @@ const CURVE_CRV_CVXCRV_POOL = "0x9D0464996170c6B9e75eED71c68B99dDEDf279e8";
 const CURVE_ROUTER = "0x99a58482BD75cbab83b27EC03CA68fF489b5788f";
 const WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 
-// Custom tokens not in Uniswap list (Convex ecosystem + yld_fi vaults)
+// Custom tokens not in Uniswap list (Convex ecosystem + yld vaults)
 export const CUSTOM_TOKENS: EnsoToken[] = [
   {
     address: ETH_ADDRESS,
@@ -225,11 +225,11 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
     logoURI: "/tokens/pxcvx.png",
     type: "defi",
   },
-  // yld_fi vault tokens - from centralized config
+  // yld vault tokens - from centralized config
   ...Object.values(VAULTS).map((vault) => ({
     address: vault.address,
     chainId: 1,
-    name: `yld_fi ${vault.name}`,
+    name: `yld ${vault.name}`,
     symbol: vault.symbol,
     decimals: vault.decimals,
     logoURI: vault.logo,
@@ -263,7 +263,7 @@ export const POPULAR_TOKENS = [
   // Pirex tokens
   "0xBCe0Cf87F513102F22232436CCa2ca49e815C3aC", // pxCVX
   "0x389fB29230D02e67eB963C1F5A00f2b16f95BEb7", // lpxCVX
-  ...Object.values(VAULT_ADDRESSES), // yld_fi vaults
+  ...Object.values(VAULT_ADDRESSES), // yld vaults
 ];
 
 /**
@@ -667,7 +667,7 @@ export function filterTokens(tokens: EnsoToken[], query: string): EnsoToken[] {
   );
 }
 
-// yld_fi vault addresses (for vault-to-vault routing)
+// yld vault addresses (for vault-to-vault routing)
 // Re-export with backwards-compatible naming (ycvxCRV vs YCVXCRV)
 export const YLDFI_VAULT_ADDRESSES = {
   ycvxCRV: VAULT_ADDRESSES.YCVXCRV,
@@ -675,7 +675,7 @@ export const YLDFI_VAULT_ADDRESSES = {
 } as const;
 
 /**
- * Check if an address is a yld_fi vault
+ * Check if an address is a yld vault
  * Uses centralized config from src/config/vaults.ts
  */
 export const isYldfiVault = checkIsYldfiVault;
@@ -1179,14 +1179,14 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
   // Build route info showing the actual path
   const routeInfo: RouteInfo = {
     steps: [
-      { tokenSymbol: sourceVaultSymbol, action: "Redeem", description: `${sourceVaultSymbol} for ${sourceUnderlyingSymbol}`, protocol: "yld_fi" },
+      { tokenSymbol: sourceVaultSymbol, action: "Redeem", description: `${sourceVaultSymbol} for ${sourceUnderlyingSymbol}`, protocol: "yld" },
       { tokenSymbol: sourceUnderlyingSymbol, action: "Swap", description: `${sourceUnderlyingSymbol} for CVX`, protocol: "Enso" },
-      { tokenSymbol: "CVX", action: "Swap", description: "CVX for cvgCVX", protocol: "Curve", bonus: swapBonus, bonusAmount: bonusAmountFormatted, bonusSymbol: "cvgCVX" },
-      { tokenSymbol: "cvgCVX", action: "Deposit", description: `cvgCVX into ${targetVaultSymbol} vault`, protocol: "yld_fi" },
-      { tokenSymbol: targetVaultSymbol, action: "Receive", description: "vault shares", protocol: "yld_fi" },
+      { tokenSymbol: "CVX", action: "Swap", description: "CVX → CVX1 → cvgCVX", protocol: "LiquidBoost", bonus: swapBonus, bonusAmount: bonusAmountFormatted, bonusSymbol: "cvgCVX" },
+      { tokenSymbol: "cvgCVX", action: "Deposit", description: `cvgCVX into ${targetVaultSymbol} vault`, protocol: "yld" },
+      { tokenSymbol: targetVaultSymbol, action: "Receive", description: "vault shares", protocol: "yld" },
     ],
     tokens: [sourceVaultSymbol, sourceUnderlyingSymbol, "CVX", "cvgCVX", targetVaultSymbol],
-    protocols: ["yld_fi", "Enso", "Curve", "yld_fi"],
+    protocols: ["yld", "Enso", "Curve", "yld"],
     // 100% swap (no mint) - show swap bonus
     hybrid: {
       swapAmount: conservativeCvx.toString(),
@@ -2330,8 +2330,8 @@ function buildCvgCvxZapInSteps(
     steps.push({
       tokenSymbol: "CVX",
       action: "Swap",
-      description: "CVX for cvgCVX",
-      protocol: "Curve",
+      description: "CVX → CVX1 → cvgCVX",
+      protocol: "LiquidBoost",
       amount: amounts?.swapCvxAmount,
       bonus: swapBonus,
       bonusAmount,
@@ -2340,8 +2340,8 @@ function buildCvgCvxZapInSteps(
     steps.push({
       tokenSymbol: "CVX",
       action: "Mint",
-      description: "cvgCVX with CVX",
-      protocol: "Convex",
+      description: "CVX → CVX1 → cvgCVX",
+      protocol: "LiquidBoost",
       amount: amounts?.mintCvxAmount,
     });
   } else if (swapAmount > 0n) {
@@ -2349,8 +2349,8 @@ function buildCvgCvxZapInSteps(
     steps.push({
       tokenSymbol: "CVX",
       action: "Swap",
-      description: "CVX for cvgCVX",
-      protocol: "Curve",
+      description: "CVX → CVX1 → cvgCVX",
+      protocol: "LiquidBoost",
       amount: amounts?.cvxAmount,
       bonus: swapBonus,
       bonusAmount,
@@ -2361,8 +2361,8 @@ function buildCvgCvxZapInSteps(
     steps.push({
       tokenSymbol: "CVX",
       action: "Mint",
-      description: "cvgCVX with CVX",
-      protocol: "Convex",
+      description: "CVX → CVX1 → cvgCVX",
+      protocol: "LiquidBoost",
       amount: amounts?.cvxAmount,
     });
   }
@@ -2372,7 +2372,7 @@ function buildCvgCvxZapInSteps(
     tokenSymbol: "cvgCVX",
     action: "Deposit",
     description: `cvgCVX into ${vaultSymbol}`,
-    protocol: "yld_fi",
+    protocol: "yld",
     amount: amounts?.cvgCvxAmount,
   });
 
@@ -2381,7 +2381,7 @@ function buildCvgCvxZapInSteps(
     tokenSymbol: vaultSymbol,
     action: "Receive",
     description: "vault shares",
-    protocol: "yld_fi",
+    protocol: "yld",
     amount: amounts?.vaultSharesAmount,
   });
 
@@ -2471,7 +2471,7 @@ function buildPxCvxZapInSteps(
     tokenSymbol: "pxCVX",
     action: "Deposit",
     description: `pxCVX into ${vaultSymbol}`,
-    protocol: "yld_fi",
+    protocol: "yld",
     amount: amounts?.pxCvxAmount,
   });
 
@@ -2480,7 +2480,7 @@ function buildPxCvxZapInSteps(
     tokenSymbol: vaultSymbol,
     action: "Receive",
     description: "vault shares",
-    protocol: "yld_fi",
+    protocol: "yld",
     amount: amounts?.vaultSharesAmount,
   });
 
@@ -2545,11 +2545,11 @@ export async function fetchCvgCvxZapInRoute(params: {
       ...bundle,
       routeInfo: {
         steps: [
-          { tokenSymbol: "cvgCVX", action: "Deposit", description: "cvgCVX into vault", protocol: "yld_fi" },
-          { tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld_fi" },
+          { tokenSymbol: "cvgCVX", action: "Deposit", description: "cvgCVX into vault", protocol: "yld" },
+          { tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld" },
         ],
         tokens: ["cvgCVX", vaultSymbol],
-        protocols: ["yld_fi"],
+        protocols: ["yld"],
       },
     };
   }
@@ -2606,7 +2606,7 @@ export async function fetchCvgCvxZapInRoute(params: {
     const routeInfo: RouteInfo = {
       steps: buildCvgCvxZapInSteps(inputSymbol, vaultSymbol, inputIsCvx, 0n, 0n, 0),
       tokens: tokenPath,
-      protocols: ["Enso", "Convex", "yld_fi"],
+      protocols: ["Enso", "Convex", "yld"],
       hybrid: {
         swapAmount: "0",
         mintAmount: "0",
@@ -2849,8 +2849,8 @@ export async function fetchCvgCvxZapInRoute(params: {
     steps: buildCvgCvxZapInSteps(inputSymbol, vaultSymbol, inputIsCvx, actualSwapAmount, actualMintAmount, swapBonus, bonusAmount, stepAmounts),
     tokens: tokenPath,
     protocols: inputIsCvx
-      ? (actualMintAmount === 0n ? ["Curve", "yld_fi"] : actualSwapAmount === 0n ? ["Convex", "yld_fi"] : ["Curve", "Convex", "yld_fi"])
-      : (actualMintAmount === 0n ? ["Enso", "Curve", "yld_fi"] : actualSwapAmount === 0n ? ["Enso", "Convex", "yld_fi"] : ["Enso", "Curve", "Convex", "yld_fi"]),
+      ? (actualMintAmount === 0n ? ["Curve", "yld"] : actualSwapAmount === 0n ? ["Convex", "yld"] : ["Curve", "Convex", "yld"])
+      : (actualMintAmount === 0n ? ["Enso", "Curve", "yld"] : actualSwapAmount === 0n ? ["Enso", "Convex", "yld"] : ["Enso", "Curve", "Convex", "yld"]),
     hybrid: {
       swapAmount: actualSwapAmount.toString(),
       mintAmount: actualMintAmount.toString(),
@@ -4569,11 +4569,11 @@ export async function fetchPxCvxZapInRoute(params: {
     };
     let protocols: string[];
     if (swapAmount > 0n && mintAmount > 0n) {
-      protocols = ["Curve", "Pirex", "yld_fi"];
+      protocols = ["Curve", "Pirex", "yld"];
     } else if (swapAmount > 0n) {
-      protocols = ["Curve", "yld_fi"];
+      protocols = ["Curve", "yld"];
     } else {
-      protocols = ["Pirex", "yld_fi"];
+      protocols = ["Pirex", "yld"];
     }
     const routeInfo: RouteInfo = {
       steps: buildPxCvxZapInSteps("CVX", vaultSymbol, true, swapAmount, mintAmount, swapBonus, bonusAmount, stepAmounts),
@@ -4847,11 +4847,11 @@ export async function fetchPxCvxZapInRoute(params: {
   // Determine protocols based on strategy
   let protocols: string[];
   if (swapAmount > 0n && mintAmount > 0n) {
-    protocols = inputIsCvx ? ["Curve", "Pirex", "yld_fi"] : ["Enso", "Curve", "Pirex", "yld_fi"];
+    protocols = inputIsCvx ? ["Curve", "Pirex", "yld"] : ["Enso", "Curve", "Pirex", "yld"];
   } else if (swapAmount > 0n) {
-    protocols = inputIsCvx ? ["Curve", "yld_fi"] : ["Enso", "Curve", "yld_fi"];
+    protocols = inputIsCvx ? ["Curve", "yld"] : ["Enso", "Curve", "yld"];
   } else {
-    protocols = inputIsCvx ? ["Pirex", "yld_fi"] : ["Enso", "Pirex", "yld_fi"];
+    protocols = inputIsCvx ? ["Pirex", "yld"] : ["Enso", "Pirex", "yld"];
   }
 
   // Format amounts for display
@@ -4920,7 +4920,7 @@ export async function previewUCrvWithdraw(shares: string): Promise<string> {
 }
 
 /**
- * Zap from uCRV (Llama Airforce) into any yld_fi vault
+ * Zap from uCRV (Llama Airforce) into any yld vault
  *
  * Route: uCRV → withdraw → cvxCRV → route to target underlying → deposit
  *
@@ -5019,25 +5019,25 @@ export async function fetchUCrvZapInRoute(params: {
   ];
 
   if (targetIsCvxCrv) {
-    steps.push({ tokenSymbol: "cvxCRV", action: "Deposit", description: `cvxCRV into ${vaultSymbol}`, protocol: "yld_fi" });
+    steps.push({ tokenSymbol: "cvxCRV", action: "Deposit", description: `cvxCRV into ${vaultSymbol}`, protocol: "yld" });
   } else {
     steps.push({ tokenSymbol: "cvxCRV", action: "Swap", description: `cvxCRV for ${targetUnderlyingSymbol}`, protocol: "Enso", amount: conservativeCvxCrv });
-    steps.push({ tokenSymbol: targetUnderlyingSymbol, action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld_fi" });
+    steps.push({ tokenSymbol: targetUnderlyingSymbol, action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld" });
   }
 
-  steps.push({ tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld_fi" });
+  steps.push({ tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld" });
 
   const routeInfo: RouteInfo = {
     steps,
     tokens: targetIsCvxCrv ? ["uCRV", "cvxCRV", vaultSymbol] : ["uCRV", "cvxCRV", targetUnderlyingSymbol, vaultSymbol],
-    protocols: targetIsCvxCrv ? ["Llama Airforce", "yld_fi"] : ["Llama Airforce", "Enso", "yld_fi"],
+    protocols: targetIsCvxCrv ? ["Llama Airforce", "yld"] : ["Llama Airforce", "Enso", "yld"],
   };
 
   return { ...bundleResult, routeInfo };
 }
 
 /**
- * Zap from uCVX (Llama Airforce) into any yld_fi vault
+ * Zap from uCVX (Llama Airforce) into any yld vault
  *
  * Route: uCVX → redeem → pxCVX → route to target underlying → deposit
  *
@@ -5213,35 +5213,35 @@ export async function fetchUCvxZapInRoute(params: {
   ];
 
   if (targetIsPxCvx) {
-    steps.push({ tokenSymbol: "pxCVX", action: "Deposit", description: `pxCVX into ${vaultSymbol}`, protocol: "yld_fi" });
+    steps.push({ tokenSymbol: "pxCVX", action: "Deposit", description: `pxCVX into ${vaultSymbol}`, protocol: "yld" });
   } else {
     steps.push({ tokenSymbol: "pxCVX", action: "Swap", description: "pxCVX for CVX", protocol: "Curve" });
 
     const targetIsCvx = targetUnderlying.toLowerCase() === TOKENS.CVX.toLowerCase();
     if (targetIsCvx) {
-      steps.push({ tokenSymbol: "CVX", action: "Deposit", description: `CVX into ${vaultSymbol}`, protocol: "yld_fi" });
+      steps.push({ tokenSymbol: "CVX", action: "Deposit", description: `CVX into ${vaultSymbol}`, protocol: "yld" });
     } else {
       steps.push({ tokenSymbol: "CVX", action: "Swap", description: `CVX for ${targetUnderlyingSymbol}`, protocol: "Enso" });
-      steps.push({ tokenSymbol: targetUnderlyingSymbol, action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld_fi" });
+      steps.push({ tokenSymbol: targetUnderlyingSymbol, action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld" });
     }
   }
 
-  steps.push({ tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld_fi" });
+  steps.push({ tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld" });
 
   // Build token path based on actual route
   let tokens: string[];
   let protocols: string[];
   if (targetIsPxCvx) {
     tokens = ["uCVX", "pxCVX", vaultSymbol];
-    protocols = ["Llama Airforce", "yld_fi"];
+    protocols = ["Llama Airforce", "yld"];
   } else {
     const targetIsCvx = targetUnderlying.toLowerCase() === TOKENS.CVX.toLowerCase();
     if (targetIsCvx) {
       tokens = ["uCVX", "pxCVX", "CVX", vaultSymbol];
-      protocols = ["Llama Airforce", "Curve", "yld_fi"];
+      protocols = ["Llama Airforce", "Curve", "yld"];
     } else {
       tokens = ["uCVX", "pxCVX", "CVX", targetUnderlyingSymbol, vaultSymbol];
-      protocols = ["Llama Airforce", "Curve", "Enso", "yld_fi"];
+      protocols = ["Llama Airforce", "Curve", "Enso", "yld"];
     }
   }
 
@@ -5279,7 +5279,7 @@ export async function previewBeefyWithdraw(vaultAddress: string, shares: string)
 }
 
 /**
- * Generic zap from external ERC4626 vault into any yld_fi vault
+ * Generic zap from external ERC4626 vault into any yld vault
  * Works for: aCVX, aCRV (Concentrator)
  *
  * Route: externalVault → redeem → underlying → route to target underlying → deposit
@@ -5377,13 +5377,13 @@ export async function fetchErc4626ExternalVaultZapInRoute(params: {
   ];
 
   if (sameUnderlying) {
-    steps.push({ tokenSymbol: externalUnderlyingSymbol, action: "Deposit", description: `${externalUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld_fi" });
+    steps.push({ tokenSymbol: externalUnderlyingSymbol, action: "Deposit", description: `${externalUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld" });
   } else {
     steps.push({ tokenSymbol: externalUnderlyingSymbol, action: "Swap", description: `${externalUnderlyingSymbol} for ${targetUnderlyingSymbol}`, protocol: "Enso", amount: conservativeUnderlying });
-    steps.push({ tokenSymbol: targetUnderlyingSymbol, action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld_fi" });
+    steps.push({ tokenSymbol: targetUnderlyingSymbol, action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld" });
   }
 
-  steps.push({ tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld_fi" });
+  steps.push({ tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld" });
 
   const routeInfo: RouteInfo = {
     steps,
@@ -5391,15 +5391,15 @@ export async function fetchErc4626ExternalVaultZapInRoute(params: {
       ? [params.externalVaultSymbol, externalUnderlyingSymbol, vaultSymbol]
       : [params.externalVaultSymbol, externalUnderlyingSymbol, targetUnderlyingSymbol, vaultSymbol],
     protocols: sameUnderlying
-      ? [params.externalVaultProtocol, "yld_fi"]
-      : [params.externalVaultProtocol, "Enso", "yld_fi"],
+      ? [params.externalVaultProtocol, "yld"]
+      : [params.externalVaultProtocol, "Enso", "yld"],
   };
 
   return { ...bundleResult, routeInfo };
 }
 
 /**
- * Generic zap from Beefy vault into any yld_fi vault
+ * Generic zap from Beefy vault into any yld vault
  * Works for: mooCvxCRV, mooCvxCVX
  *
  * Route: beefyVault → withdraw → underlying → route to target underlying → deposit
@@ -5506,13 +5506,13 @@ export async function fetchBeefyZapInRoute(params: {
   ];
 
   if (sameUnderlying) {
-    steps.push({ tokenSymbol: beefyUnderlyingSymbol, action: "Deposit", description: `${beefyUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld_fi" });
+    steps.push({ tokenSymbol: beefyUnderlyingSymbol, action: "Deposit", description: `${beefyUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld" });
   } else {
     steps.push({ tokenSymbol: beefyUnderlyingSymbol, action: "Swap", description: `${beefyUnderlyingSymbol} for ${targetUnderlyingSymbol}`, protocol: "Enso", amount: conservativeUnderlying });
-    steps.push({ tokenSymbol: targetUnderlyingSymbol, action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld_fi" });
+    steps.push({ tokenSymbol: targetUnderlyingSymbol, action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld" });
   }
 
-  steps.push({ tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld_fi" });
+  steps.push({ tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld" });
 
   const routeInfo: RouteInfo = {
     steps,
@@ -5520,15 +5520,15 @@ export async function fetchBeefyZapInRoute(params: {
       ? [params.beefyVaultSymbol, beefyUnderlyingSymbol, vaultSymbol]
       : [params.beefyVaultSymbol, beefyUnderlyingSymbol, targetUnderlyingSymbol, vaultSymbol],
     protocols: sameUnderlying
-      ? ["Beefy", "yld_fi"]
-      : ["Beefy", "Enso", "yld_fi"],
+      ? ["Beefy", "yld"]
+      : ["Beefy", "Enso", "yld"],
   };
 
   return { ...bundleResult, routeInfo };
 }
 
 /**
- * Master function to zap from any external vault into any yld_fi vault
+ * Master function to zap from any external vault into any yld vault
  * Dispatches to the appropriate routing function based on external vault type
  */
 export async function fetchExternalVaultZapInRoute(params: {
@@ -5617,7 +5617,7 @@ export function isLpxCvxToken(address: string): boolean {
 }
 
 /**
- * Zap from lpxCVX into any yld_fi vault
+ * Zap from lpxCVX into any yld vault
  *
  * Routes:
  * - lpxCVX → yspxCVX: unwrap to pxCVX → deposit
@@ -5679,11 +5679,11 @@ export async function fetchLpxCvxZapInRoute(params: {
     const routeInfo: RouteInfo = {
       steps: [
         { tokenSymbol: "lpxCVX", action: "Unwrap", description: "lpxCVX for pxCVX", protocol: "Pirex" },
-        { tokenSymbol: "pxCVX", action: "Deposit", description: `pxCVX into ${vaultSymbol}`, protocol: "yld_fi" },
-        { tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld_fi" },
+        { tokenSymbol: "pxCVX", action: "Deposit", description: `pxCVX into ${vaultSymbol}`, protocol: "yld" },
+        { tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld" },
       ],
       tokens: ["lpxCVX", "pxCVX", vaultSymbol],
-      protocols: ["Pirex", "yld_fi"],
+      protocols: ["Pirex", "yld"],
     };
 
     return { ...bundleResult, routeInfo };
@@ -5778,13 +5778,13 @@ export async function fetchLpxCvxZapInRoute(params: {
   ];
 
   if (targetIsCvx) {
-    steps.push({ tokenSymbol: "CVX", action: "Deposit", description: `CVX into ${vaultSymbol}`, protocol: "yld_fi" });
+    steps.push({ tokenSymbol: "CVX", action: "Deposit", description: `CVX into ${vaultSymbol}`, protocol: "yld" });
   } else {
     steps.push({ tokenSymbol: "CVX", action: "Swap", description: `CVX for ${targetUnderlyingSymbol}`, protocol: "Enso" });
-    steps.push({ tokenSymbol: targetUnderlyingSymbol, action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld_fi" });
+    steps.push({ tokenSymbol: targetUnderlyingSymbol, action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld" });
   }
 
-  steps.push({ tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld_fi" });
+  steps.push({ tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld" });
 
   const routeInfo: RouteInfo = {
     steps,
@@ -5792,15 +5792,15 @@ export async function fetchLpxCvxZapInRoute(params: {
       ? ["lpxCVX", "CVX", vaultSymbol]
       : ["lpxCVX", "CVX", targetUnderlyingSymbol, vaultSymbol],
     protocols: targetIsCvx
-      ? ["Curve", "yld_fi"]
-      : ["Curve", "Enso", "yld_fi"],
+      ? ["Curve", "yld"]
+      : ["Curve", "Enso", "yld"],
   };
 
   return { ...bundleResult, routeInfo };
 }
 
 /**
- * Zap from pxCVX into any yld_fi vault (except yspxCVX where it's the underlying)
+ * Zap from pxCVX into any yld vault (except yspxCVX where it's the underlying)
  *
  * Route: pxCVX → wrap to lpxCVX → swap to CVX (Curve) → route to target underlying → deposit
  *
@@ -5940,13 +5940,13 @@ export async function fetchPxCvxTokenZapInRoute(params: {
   ];
 
   if (targetIsCvx) {
-    steps.push({ tokenSymbol: "CVX", action: "Deposit", description: `CVX into ${vaultSymbol}`, protocol: "yld_fi" });
+    steps.push({ tokenSymbol: "CVX", action: "Deposit", description: `CVX into ${vaultSymbol}`, protocol: "yld" });
   } else {
     steps.push({ tokenSymbol: "CVX", action: "Swap", description: `CVX for ${targetUnderlyingSymbol}`, protocol: "Enso" });
-    steps.push({ tokenSymbol: targetUnderlyingSymbol, action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld_fi" });
+    steps.push({ tokenSymbol: targetUnderlyingSymbol, action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld" });
   }
 
-  steps.push({ tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld_fi" });
+  steps.push({ tokenSymbol: vaultSymbol, action: "Receive", description: "vault shares", protocol: "yld" });
 
   const routeInfo: RouteInfo = {
     steps,
@@ -5954,8 +5954,8 @@ export async function fetchPxCvxTokenZapInRoute(params: {
       ? ["pxCVX", "lpxCVX", "CVX", vaultSymbol]
       : ["pxCVX", "lpxCVX", "CVX", targetUnderlyingSymbol, vaultSymbol],
     protocols: targetIsCvx
-      ? ["Pirex", "Curve", "yld_fi"]
-      : ["Pirex", "Curve", "Enso", "yld_fi"],
+      ? ["Pirex", "Curve", "yld"]
+      : ["Pirex", "Curve", "Enso", "yld"],
   };
 
   return { ...bundleResult, routeInfo };

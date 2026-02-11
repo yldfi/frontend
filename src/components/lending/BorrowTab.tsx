@@ -9,6 +9,7 @@ import {
   Loader2,
   Check,
   AlertTriangle,
+  ArrowRightLeft,
   Route,
   RouteOff,
 } from "lucide-react";
@@ -122,6 +123,8 @@ interface BorrowTabProps {
   controllerAddress: `0x${string}`;
   onTransactionSuccess: () => void;
   onEstimatedHealthChange?: (health: number | null) => void;
+  onDebtDeltaChange?: (delta: bigint | null) => void;
+  onTxStateChange?: (state: { status: "pending" | "success" | "reverted"; action: string; hash: string; details?: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string } } | null) => void;
 }
 
 export function BorrowTab({
@@ -130,6 +133,8 @@ export function BorrowTab({
   controllerAddress,
   onTransactionSuccess,
   onEstimatedHealthChange,
+  onDebtDeltaChange,
+  onTxStateChange,
 }: BorrowTabProps) {
   const { address } = useAccount();
   const publicClient = usePublicClient();
@@ -146,7 +151,7 @@ export function BorrowTab({
       }
 
       try {
-        const N = BigInt(position.n2 - position.n1 + 1);
+        const N = BigInt(position.N);
         const maxTotal = await publicClient.readContract({
           address: controllerAddress,
           abi: CONTROLLER_ABI,
@@ -193,6 +198,9 @@ export function BorrowTab({
     }
     return true;
   });
+
+  // Rate inversion toggle
+  const [rateInverted, setRateInverted] = useState(false);
 
   // Health estimation
   const [estimatedHealth, setEstimatedHealth] = useState<number | null>(null);
@@ -331,7 +339,10 @@ export function BorrowTab({
         });
         // maxShares = maxBorrowable / (crvUsdPerShare / 1e18)
         const maxShares = (maxBorrowable! * 10n ** 18n) / BigInt(crvUsdPerShare);
-        return formatUnits(maxShares, borrowToken.decimals);
+        // Apply 0.1% haircut — two-step integer division (get ratio → divide → previewRedeem)
+        // can round up past maxBorrowable, causing "Exceeds max" on the reverse check
+        const haircut = maxShares * 999n / 1000n;
+        return formatUnits(haircut, borrowToken.decimals);
       }
 
       if (isCvgCvxVault) {
@@ -375,11 +386,26 @@ export function BorrowTab({
       });
 
       if (!quote?.amountOut) return null;
-      // Apply 0.5% haircut so the reverse quote (token → crvUSD) stays within maxBorrowable
-      // Forward and reverse quotes differ due to AMM spread
-      const haircut = BigInt(quote.amountOut) * 199n / 200n;
-      const decimals = vaultInfo ? 18 : borrowToken.decimals;
-      return formatUnits(haircut, decimals);
+
+      if (vaultInfo) {
+        // Vault token: convert underlying amount → vault shares, then apply haircut
+        const underlyingAmount = BigInt(quote.amountOut);
+        const oneShare = 10n ** 18n;
+        const underlyingPerShare = await publicClient!.readContract({
+          address: vaultInfo.address as `0x${string}`,
+          abi: ERC4626_PREVIEW_ABI,
+          functionName: "previewRedeem",
+          args: [oneShare],
+        });
+        const maxShares = (underlyingAmount * oneShare) / underlyingPerShare;
+        // Apply 1% haircut for forward/reverse AMM spread
+        const haircut = maxShares * 99n / 100n;
+        return formatUnits(haircut, borrowToken.decimals);
+      }
+
+      // Regular (non-vault) token: apply 1% haircut directly
+      const haircut = BigInt(quote.amountOut) * 99n / 100n;
+      return formatUnits(haircut, borrowToken.decimals);
     },
     enabled:
       !isCrvUsd &&
@@ -620,6 +646,38 @@ export function BorrowTab({
     onEstimatedHealthChange?.(estimatedHealth);
   }, [estimatedHealth, onEstimatedHealthChange]);
 
+  // Report debt delta to parent (positive = borrowing more)
+  useEffect(() => {
+    onDebtDeltaChange?.(estimatedCrvUsdBorrow ?? null);
+  }, [estimatedCrvUsdBorrow, onDebtDeltaChange]);
+
+  // Report tx state to parent for full-screen overlay
+  useEffect(() => {
+    if ((status === "waitingTx" || status === "success" || status === "reverted") && txHash) {
+      let details: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string } | undefined;
+      if (isCrvUsd && estimatedCrvUsdBorrow) {
+        // Direct crvUSD borrow: show crvUSD amount only (no arrow needed, but using same shape)
+        const amt = Number(formatUnits(estimatedCrvUsdBorrow, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 });
+        details = {
+          fromAmount: amt, fromSymbol: "crvUSD", fromLogo: "/tokens/crvusd.png",
+          toAmount: amt, toSymbol: "crvUSD", toLogo: "/tokens/crvusd.png",
+        };
+      } else if (!isCrvUsd && estimatedCrvUsdBorrow && borrowAmount) {
+        // Borrow + swap: show crvUSD debt → output token received
+        details = {
+          fromAmount: Number(formatUnits(estimatedCrvUsdBorrow, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 }),
+          fromSymbol: "crvUSD",
+          fromLogo: "/tokens/crvusd.png",
+          toAmount: borrowAmount,
+          toSymbol: borrowToken.symbol,
+          toLogo: borrowToken.logoURI || "/tokens/unknown.png",
+        };
+      }
+      const mapped = status === "waitingTx" ? "pending" : status;
+      onTxStateChange?.({ status: mapped as "pending" | "success" | "reverted", action: "Borrow", hash: txHash, details });
+    }
+  }, [status, txHash, onTxStateChange, estimatedCrvUsdBorrow, borrowAmount, borrowToken]);
+
   // Handle transaction success
   useEffect(() => {
     if (status === "success") {
@@ -800,13 +858,13 @@ export function BorrowTab({
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--muted)] border border-[var(--border)] focus-within:border-[var(--foreground)]">
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--muted)] border border-[var(--border)] focus-within:ring-2 focus-within:ring-[var(--accent)] transition-shadow">
           <input
             type="text"
             value={borrowAmount}
             onChange={(e) => setBorrowAmount(e.target.value)}
             placeholder="0.0"
-            className="flex-1 min-w-0 bg-transparent mono text-base outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
+            className="flex-1 min-w-0 bg-transparent mono text-sm outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
           />
           <TokenSelector
             selectedToken={borrowToken}
@@ -848,6 +906,22 @@ export function BorrowTab({
                   crvUSD
                 </span>
               </div>
+              {exchangeRate !== null && (
+                <div className="flex justify-between items-center">
+                  <span className="text-[var(--muted-foreground)]">Rate</span>
+                  <button
+                    type="button"
+                    onClick={() => setRateInverted(v => !v)}
+                    className="flex items-center gap-1 mono hover:text-[var(--accent)] transition-colors"
+                  >
+                    {rateInverted
+                      ? <>1 crvUSD = {(1 / exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 4 })} {borrowToken.symbol}</>
+                      : <>1 {borrowToken.symbol} = {exchangeRate.toLocaleString(undefined, { maximumFractionDigits: 4 })} crvUSD</>
+                    }
+                    <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -871,15 +945,19 @@ export function BorrowTab({
 
               {/* Exchange rate */}
               {exchangeRate !== null && (
-                <div className="flex justify-between">
+                <div className="flex justify-between items-center">
                   <span className="text-[var(--muted-foreground)]">Rate</span>
-                  <span className="mono">
-                    1 {borrowToken.symbol} ={" "}
-                    {exchangeRate.toLocaleString(undefined, {
-                      maximumFractionDigits: 2,
-                    })}{" "}
-                    crvUSD
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setRateInverted(v => !v)}
+                    className="flex items-center gap-1 mono hover:text-[var(--accent)] transition-colors"
+                  >
+                    {rateInverted
+                      ? <>1 crvUSD = {(1 / exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 4 })} {borrowToken.symbol}</>
+                      : <>1 {borrowToken.symbol} = {exchangeRate.toLocaleString(undefined, { maximumFractionDigits: 2 })} crvUSD</>
+                    }
+                    <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
+                  </button>
                 </div>
               )}
 
@@ -907,16 +985,6 @@ export function BorrowTab({
             </div>
           )}
         </>
-      )}
-
-      {/* Exceeds max borrowable warning */}
-      {(exceedsMax || debtTooHigh) && borrowAmount && Number(borrowAmount) > 0 && (
-        <p className="text-sm text-red-500 flex items-center gap-1.5">
-          <AlertTriangle size={14} />
-          Exceeds max borrowable ({maxBorrowable !== null && maxBorrowable > 0n
-            ? `${Number(formatUnits(maxBorrowable, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} crvUSD`
-            : "0 crvUSD"})
-        </p>
       )}
 
       {/* Approval Flow */}
@@ -1012,22 +1080,6 @@ export function BorrowTab({
       )}
 
 
-      {/* Success Display */}
-      {status === "success" && txHash && (
-        <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/30 text-green-500 text-sm flex items-center gap-2">
-          <Check size={16} />
-          Transaction successful!
-          <a
-            href={`https://etherscan.io/tx/${txHash}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline"
-          >
-            View
-          </a>
-        </div>
-      )}
-
       {/* Simulation Modal */}
       {showSimulationModal && simulationResult && (() => {
         // Filter asset changes to show only net result:
@@ -1096,8 +1148,8 @@ export function BorrowTab({
           </button>
         )}
 
-      {/* Settings icon for direct crvUSD / vault-crvUSD paths */}
-      {(isCrvUsd || isVaultWithCrvUsdUnderlying) && (
+      {/* Settings icon for direct crvUSD path */}
+      {isCrvUsd && (
         <div className="flex items-center justify-end">
           <button
             onClick={() => setShowSlippageModal(true)}
@@ -1115,7 +1167,7 @@ export function BorrowTab({
       )}
 
       {/* Enso Attribution + Route Toggle + Slippage Settings */}
-      {!isCrvUsd && !isVaultWithCrvUsdUnderlying && (
+      {!isCrvUsd && (
         <>
           <div className="flex items-center justify-between pt-2">
             <a
@@ -1172,7 +1224,7 @@ export function BorrowTab({
             className="grid transition-all duration-300 ease-in-out"
             style={{
               gridTemplateRows:
-                showRoute && borrowAmount && Number(borrowAmount) > 0 && (swapQuote || quoteLoading) ? "1fr" : "0fr",
+                showRoute && borrowAmount && Number(borrowAmount) > 0 && (swapQuote || quoteLoading || (isVaultWithCrvUsdUnderlying && estimatedCrvUsdBorrow !== null)) ? "1fr" : "0fr",
             }}
           >
             <div className="overflow-hidden">
@@ -1182,13 +1234,30 @@ export function BorrowTab({
                 </div>
                 <RouteDisplay
                   routeInfo={
-                    swapQuote
+                    isVaultWithCrvUsdUnderlying && estimatedCrvUsdBorrow !== null
                       ? {
                           steps: [
                             {
                               tokenSymbol: "crvUSD",
                               action: "Borrow",
-                              description: "crvUSD from Curve",
+                              description: "crvUSD",
+                              protocol: "Curve LlamaLend",
+                            },
+                            {
+                              tokenSymbol: borrowToken.symbol,
+                              action: "Deposit",
+                              description: "crvUSD",
+                              protocol: "Curve Savings",
+                            },
+                          ],
+                        }
+                      : swapQuote
+                      ? {
+                          steps: [
+                            {
+                              tokenSymbol: "crvUSD",
+                              action: "Borrow",
+                              description: "crvUSD",
                               protocol: "Curve LlamaLend",
                             },
                             ...(isCvgCvxVault
@@ -1205,13 +1274,13 @@ export function BorrowTab({
                                     amount: cvgCvxRouteAmounts?.cvgCvx,
                                     action: "Swap",
                                     description: "CVX → CVX1 → cvgCVX",
-                                    protocol: "Tangent",
+                                    protocol: "LiquidBoost",
                                   },
                                   {
                                     tokenSymbol: borrowToken.symbol,
                                     action: "Deposit",
                                     description: `cvgCVX into ${borrowToken.symbol}`,
-                                    protocol: "ERC4626",
+                                    protocol: "yld",
                                   },
                                 ]
                               : vaultInfo
@@ -1226,7 +1295,7 @@ export function BorrowTab({
                                       tokenSymbol: borrowToken.symbol,
                                       action: "Deposit",
                                       description: `${vaultInfo.underlyingSymbol} into ${borrowToken.symbol}`,
-                                      protocol: "ERC4626",
+                                      protocol: "yld",
                                     },
                                   ]
                                 : [
