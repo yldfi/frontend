@@ -5,12 +5,41 @@ import { useAccount, usePublicClient, useSendTransaction, useWriteContract, useW
 import { encodeFunctionData, maxUint256 } from "viem";
 import {
   ZAPPER_ADDRESS,
+  ZAPPER_V2_ADDRESS,
   ZAPPER_ABI,
   CONTROLLER_APPROVE_ABI,
   CRVUSD_ADDRESS,
   fetchZapperSwapData,
+  fetchFromTokenSwapData,
   getDeadline,
 } from "@/lib/zapper";
+
+// ABI for direct controller.liquidate (no Zapper needed)
+const CONTROLLER_LIQUIDATE_ABI = [
+  {
+    name: "liquidate",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "user", type: "address" },
+      { name: "min_x", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "liquidate_extended",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "user", type: "address" },
+      { name: "min_x", type: "uint256" },
+      { name: "frac", type: "uint256" },
+      { name: "callbacker", type: "address" },
+      { name: "callback_args", type: "uint256[]" },
+    ],
+    outputs: [],
+  },
+] as const;
 import { ERC20_APPROVAL_ABI } from "@/lib/abis";
 import type { SimulationResult } from "@/types/enso";
 import { useTenderly } from "@/contexts/TenderlyContext";
@@ -199,10 +228,56 @@ export interface UseZapperActionsResult {
     slippage?: number,
     previewOnly?: boolean
   ) => Promise<SimulationResult | null>;
+  deleverageAndWithdraw: (
+    controller: `0x${string}`,
+    collateralToSell: bigint,
+    withdrawAmount: bigint,
+    collateralToken: `0x${string}`,
+    slippage?: number,
+    previewOnly?: boolean
+  ) => Promise<SimulationResult | null>;
+  deleverageAndWithdrawToToken: (
+    controller: `0x${string}`,
+    collateralToSell: bigint,
+    withdrawAmount: bigint,
+    collateralToken: `0x${string}`,
+    outputToken: `0x${string}`,
+    outputTokenSymbol: string,
+    slippage?: number,
+    previewOnly?: boolean
+  ) => Promise<SimulationResult | null>;
   selfLiquidate: (
     controller: `0x${string}`,
     percentage: bigint,
     collateralToken: `0x${string}`,
+    slippage?: number,
+    previewOnly?: boolean
+  ) => Promise<SimulationResult | null>;
+  directLiquidate: (
+    controller: `0x${string}`,
+    percentage: bigint,
+    previewOnly?: boolean
+  ) => Promise<SimulationResult | null>;
+
+  // ZapperV2 FromToken operations
+  createLeveragedLoanFromToken: (
+    controller: `0x${string}`,
+    inputToken: `0x${string}`,
+    inputAmount: bigint,
+    debt: bigint,
+    N: number,
+    collateralToken: `0x${string}`,
+    tokenSymbol: string,
+    slippage?: number,
+    previewOnly?: boolean
+  ) => Promise<SimulationResult | null>;
+  leverageUpFromToken: (
+    controller: `0x${string}`,
+    inputToken: `0x${string}`,
+    inputAmount: bigint,
+    additionalDebt: bigint,
+    collateralToken: `0x${string}`,
+    tokenSymbol: string,
     slippage?: number,
     previewOnly?: boolean
   ) => Promise<SimulationResult | null>;
@@ -353,10 +428,8 @@ export function useZapperActions(): UseZapperActionsResult {
         setStatus("error");
         return tenderlyResult.result;
       }
-    } else if (previewOnly) {
-      setStatus("idle");
-      return null;
     }
+    // On test networks, no simulation to preview — always execute directly
 
     // Execute
     setStatus("executing");
@@ -371,7 +444,8 @@ export function useZapperActions(): UseZapperActionsResult {
 
     const receipt = await publicClient.waitForTransactionReceipt({
       hash,
-      confirmations: 1,
+      timeout: 60_000, // 60s timeout (Anvil auto-mine can hang on block polling)
+      pollingInterval: 1_000,
     });
 
     if (receipt.status === "success") {
@@ -438,7 +512,8 @@ export function useZapperActions(): UseZapperActionsResult {
 
       const receipt = await publicClient.waitForTransactionReceipt({
         hash,
-        confirmations: 1,
+        timeout: 60_000,
+        pollingInterval: 1_000,
       });
 
       if (receipt.status === "success") {
@@ -451,7 +526,7 @@ export function useZapperActions(): UseZapperActionsResult {
       setError(parseErrorMessage(err));
       setStatus("error");
     }
-  }, [pendingTx, publicClient, sendTransactionAsync]);
+  }, [pendingTx, publicClient, sendTransactionAsync, isTenderlyVNet]);
 
   // Check both ERC20 and controller approvals, return first missing
   const checkApprovals = useCallback(async (
@@ -784,6 +859,7 @@ export function useZapperActions(): UseZapperActionsResult {
           0n, // minFromAMM — AMM conversion minimum (0 = accept any)
           minFromSwap,
           percentage,
+          true, // sellAllCollateral — adapts to actual collateral at execution time
           swapData as `0x${string}`,
           getDeadline(),
         ],
@@ -822,11 +898,459 @@ export function useZapperActions(): UseZapperActionsResult {
     }
   }, [address, publicClient, simulateAndExecute]);
 
+  // Check approvals for FromToken operations (inputToken → ZapperV2, optionally controller → ZapperV2)
+  const checkFromTokenApprovals = useCallback(async (
+    inputToken: `0x${string}`,
+    inputAmount: bigint,
+    tokenSymbol: string,
+    controller?: `0x${string}`,
+  ): Promise<PendingApproval[]> => {
+    if (!publicClient || !address) return [];
+
+    const [erc20Allowance, controllerApproved] = await Promise.all([
+      inputAmount > 0n
+        ? checkAllowance(publicClient, address, inputToken, ZAPPER_V2_ADDRESS)
+        : Promise.resolve(inputAmount),
+      controller
+        ? checkControllerApproval(publicClient, controller, address, ZAPPER_V2_ADDRESS)
+        : Promise.resolve(true),
+    ]);
+
+    const erc20Needed = inputAmount > 0n && erc20Allowance < inputAmount;
+    const controllerNeeded = controller ? !controllerApproved : false;
+
+    const allSteps: { approval: PendingApproval; needed: boolean; label: string; description: string }[] = [];
+
+    if (inputAmount > 0n) {
+      allSteps.push({
+        approval: {
+          type: "erc20",
+          token: inputToken,
+          tokenSymbol,
+          spender: ZAPPER_V2_ADDRESS,
+          amount: inputAmount,
+        },
+        needed: erc20Needed,
+        label: tokenSymbol,
+        description: `Allow Zapper to spend ${tokenSymbol}`,
+      });
+    }
+
+    if (controller) {
+      allSteps.push({
+        approval: {
+          type: "controller",
+          token: controller,
+          tokenSymbol: "Controller",
+          spender: ZAPPER_V2_ADDRESS,
+        },
+        needed: controllerNeeded,
+        label: "Lending Access",
+        description: "Allow ZapperV2 to manage your loan",
+      });
+    }
+
+    const missing = allSteps.filter((s) => s.needed).map((s) => s.approval);
+
+    if (missing.length > 0) {
+      const total = allSteps.length;
+      const steps = allSteps.map((s) => ({ label: s.label, description: s.description, done: !s.needed }));
+      const firstNeededIdx = allSteps.findIndex((s) => s.needed);
+      setApprovalProgress({ step: firstNeededIdx + 1, total, steps });
+    } else {
+      setApprovalProgress(null);
+    }
+
+    return missing;
+  }, [publicClient, address]);
+
+  // ZapperV2: Deleverage + withdraw collateral in one tx
+  const deleverageAndWithdraw = useCallback(async (
+    controller: `0x${string}`,
+    collateralToSell: bigint,
+    withdrawAmount: bigint,
+    collateralToken: `0x${string}`,
+    slippage: number = 100,
+    previewOnly: boolean = false
+  ): Promise<SimulationResult | null> => {
+    if (!address || !publicClient) {
+      setError("Wallet not connected");
+      setStatus("error");
+      return null;
+    }
+
+    try {
+      setStatus("building");
+      setError(null);
+      setTxHash(null);
+      setSimulationResult(null);
+      setPendingTx(null);
+      setPendingApproval(null);
+
+      // Swap collateral -> crvUSD
+      const { swapData, expectedOut } = await fetchZapperSwapData({
+        tokenIn: collateralToken,
+        tokenOut: CRVUSD_ADDRESS,
+        amountIn: collateralToSell.toString(),
+        slippage: String(slippage),
+      });
+
+      const expectedOutBn = BigInt(expectedOut);
+      const minCrvusdFromSwap = expectedOutBn * BigInt(10000 - slippage) / 10000n;
+
+      const data = encodeFunctionData({
+        abi: ZAPPER_ABI,
+        functionName: "deleverageAndWithdraw",
+        args: [
+          controller,
+          collateralToSell,
+          minCrvusdFromSwap,
+          withdrawAmount,
+          swapData as `0x${string}`,
+          getDeadline(),
+        ],
+      });
+
+      const tx: PendingTx = {
+        to: ZAPPER_V2_ADDRESS,
+        data: data as `0x${string}`,
+        value: 0n,
+        inputToken: collateralToken,
+      };
+      setPendingTx(tx);
+
+      // Need controller approval for ZapperV2 (no ERC20 approval — collateral is in the controller)
+      const missingApprovals = await checkFromTokenApprovals(
+        collateralToken, 0n, "", controller
+      );
+      if (missingApprovals.length > 0) {
+        setPendingApproval(missingApprovals[0]);
+        setApprovalQueue(missingApprovals.slice(1));
+        setStatus("needsApproval");
+        return null;
+      }
+
+      return await simulateAndExecute(tx, previewOnly);
+    } catch (err) {
+      setError(parseErrorMessage(err));
+      setStatus("error");
+      return null;
+    }
+  }, [address, publicClient, checkFromTokenApprovals, simulateAndExecute]);
+
+  // ZapperV2: Deleverage + withdraw collateral as a different token
+  const deleverageAndWithdrawToToken = useCallback(async (
+    controller: `0x${string}`,
+    collateralToSell: bigint,
+    withdrawAmount: bigint,
+    collateralToken: `0x${string}`,
+    outputToken: `0x${string}`,
+    outputTokenSymbol: string,
+    slippage: number = 100,
+    previewOnly: boolean = false
+  ): Promise<SimulationResult | null> => {
+    if (!address || !publicClient) {
+      setError("Wallet not connected");
+      setStatus("error");
+      return null;
+    }
+
+    try {
+      setStatus("building");
+      setError(null);
+      setTxHash(null);
+      setSimulationResult(null);
+      setPendingTx(null);
+      setPendingApproval(null);
+
+      // Two swap routes in parallel:
+      // 1. collateral → crvUSD (deleverage swap)
+      // 2. collateral → outputToken (withdrawal swap)
+      const [deleverageRoute, outputRoute] = await Promise.all([
+        fetchZapperSwapData({
+          tokenIn: collateralToken,
+          tokenOut: CRVUSD_ADDRESS,
+          amountIn: collateralToSell.toString(),
+          slippage: String(slippage),
+        }),
+        fetchZapperSwapData({
+          tokenIn: collateralToken,
+          tokenOut: outputToken,
+          amountIn: withdrawAmount.toString(),
+          slippage: String(slippage),
+        }),
+      ]);
+
+      const minCrvusdFromSwap = BigInt(deleverageRoute.expectedOut) * BigInt(10000 - slippage) / 10000n;
+      const minOutputFromSwap = BigInt(outputRoute.expectedOut) * BigInt(10000 - slippage) / 10000n;
+
+      const data = encodeFunctionData({
+        abi: ZAPPER_ABI,
+        functionName: "deleverageAndWithdrawToToken",
+        args: [
+          controller,
+          collateralToSell,
+          minCrvusdFromSwap,
+          withdrawAmount,
+          outputToken,
+          minOutputFromSwap,
+          deleverageRoute.swapData as `0x${string}`,
+          outputRoute.swapData as `0x${string}`,
+          getDeadline(),
+        ],
+      });
+
+      const tx: PendingTx = {
+        to: ZAPPER_V2_ADDRESS,
+        data: data as `0x${string}`,
+        value: 0n,
+        inputToken: collateralToken,
+      };
+      setPendingTx(tx);
+
+      // Need controller approval for ZapperV2
+      const missingApprovals = await checkFromTokenApprovals(
+        collateralToken, 0n, "", controller
+      );
+      if (missingApprovals.length > 0) {
+        setPendingApproval(missingApprovals[0]);
+        setApprovalQueue(missingApprovals.slice(1));
+        setStatus("needsApproval");
+        return null;
+      }
+
+      return await simulateAndExecute(tx, previewOnly);
+    } catch (err) {
+      setError(parseErrorMessage(err));
+      setStatus("error");
+      return null;
+    }
+  }, [address, publicClient, checkFromTokenApprovals, simulateAndExecute]);
+
+  // ZapperV2: Create leveraged loan from any input token (pre-swap + loop leverage)
+  const createLeveragedLoanFromToken = useCallback(async (
+    controller: `0x${string}`,
+    inputToken: `0x${string}`,
+    inputAmount: bigint,
+    debt: bigint,
+    N: number,
+    collateralToken: `0x${string}`,
+    tokenSymbol: string,
+    slippage: number = 100,
+    previewOnly: boolean = false
+  ): Promise<SimulationResult | null> => {
+    if (!address || !publicClient) {
+      setError("Wallet not connected");
+      setStatus("error");
+      return null;
+    }
+
+    try {
+      setStatus("building");
+      setError(null);
+      setTxHash(null);
+      setSimulationResult(null);
+      setPendingTx(null);
+      setPendingApproval(null);
+
+      const routes = await fetchFromTokenSwapData({
+        inputToken,
+        collateralToken,
+        inputAmount: inputAmount.toString(),
+        debtAmount: debt.toString(),
+        slippage: String(slippage),
+      });
+
+      const minCollateralFromInput = BigInt(routes.inputExpectedOut) * BigInt(10000 - slippage) / 10000n;
+      const minCollateralFromDebt = BigInt(routes.leverageExpectedOut) * BigInt(10000 - slippage) / 10000n;
+
+      const data = encodeFunctionData({
+        abi: ZAPPER_ABI,
+        functionName: "createLeveragedLoanFromToken",
+        args: [
+          controller,
+          inputToken,
+          inputAmount,
+          debt,
+          BigInt(N),
+          minCollateralFromInput,
+          minCollateralFromDebt,
+          routes.inputSwapData as `0x${string}`,
+          routes.leverageSwapData as `0x${string}`,
+          getDeadline(),
+        ],
+      });
+
+      const tx: PendingTx = {
+        to: ZAPPER_V2_ADDRESS,
+        data: data as `0x${string}`,
+        value: 0n,
+        inputToken,
+      };
+      setPendingTx(tx);
+
+      // Only need inputToken → ZapperV2 approval (no controller approval for new loans)
+      const missingApprovals = await checkFromTokenApprovals(inputToken, inputAmount, tokenSymbol);
+      if (missingApprovals.length > 0) {
+        setPendingApproval(missingApprovals[0]);
+        setApprovalQueue(missingApprovals.slice(1));
+        setStatus("needsApproval");
+        return null;
+      }
+
+      return await simulateAndExecute(tx, previewOnly);
+    } catch (err) {
+      setError(parseErrorMessage(err));
+      setStatus("error");
+      return null;
+    }
+  }, [address, publicClient, checkFromTokenApprovals, simulateAndExecute]);
+
+  // ZapperV2: Leverage up existing position from any input token
+  const leverageUpFromToken = useCallback(async (
+    controller: `0x${string}`,
+    inputToken: `0x${string}`,
+    inputAmount: bigint,
+    additionalDebt: bigint,
+    collateralToken: `0x${string}`,
+    tokenSymbol: string,
+    slippage: number = 100,
+    previewOnly: boolean = false
+  ): Promise<SimulationResult | null> => {
+    if (!address || !publicClient) {
+      setError("Wallet not connected");
+      setStatus("error");
+      return null;
+    }
+
+    try {
+      setStatus("building");
+      setError(null);
+      setTxHash(null);
+      setSimulationResult(null);
+      setPendingTx(null);
+      setPendingApproval(null);
+
+      const routes = await fetchFromTokenSwapData({
+        inputToken,
+        collateralToken,
+        inputAmount: inputAmount.toString(),
+        debtAmount: additionalDebt.toString(),
+        slippage: String(slippage),
+      });
+
+      const minCollateralFromInput = BigInt(routes.inputExpectedOut) * BigInt(10000 - slippage) / 10000n;
+      const minCollateralFromDebt = BigInt(routes.leverageExpectedOut) * BigInt(10000 - slippage) / 10000n;
+
+      const data = encodeFunctionData({
+        abi: ZAPPER_ABI,
+        functionName: "leverageUpFromToken",
+        args: [
+          controller,
+          inputToken,
+          inputAmount,
+          additionalDebt,
+          minCollateralFromInput,
+          minCollateralFromDebt,
+          routes.inputSwapData as `0x${string}`,
+          routes.leverageSwapData as `0x${string}`,
+          getDeadline(),
+        ],
+      });
+
+      const tx: PendingTx = {
+        to: ZAPPER_V2_ADDRESS,
+        data: data as `0x${string}`,
+        value: 0n,
+        inputToken,
+      };
+      setPendingTx(tx);
+
+      // Need inputToken → ZapperV2 + controller → ZapperV2 (existing position)
+      const missingApprovals = await checkFromTokenApprovals(inputToken, inputAmount, tokenSymbol, controller);
+      if (missingApprovals.length > 0) {
+        setPendingApproval(missingApprovals[0]);
+        setApprovalQueue(missingApprovals.slice(1));
+        setStatus("needsApproval");
+        return null;
+      }
+
+      return await simulateAndExecute(tx, previewOnly);
+    } catch (err) {
+      setError(parseErrorMessage(err));
+      setStatus("error");
+      return null;
+    }
+  }, [address, publicClient, checkFromTokenApprovals, simulateAndExecute]);
+
+  // Direct liquidation — calls controller.liquidate() directly (no Zapper/swap needed)
+  // Use when AMM has enough crvUSD to cover debt (tokens_to_liquidate == 0)
+  const directLiquidate = useCallback(async (
+    controller: `0x${string}`,
+    percentage: bigint, // 1e18 scale (100% = 10n**18n)
+    previewOnly: boolean = false
+  ): Promise<SimulationResult | null> => {
+    if (!address || !publicClient) {
+      setError("Wallet not connected");
+      setStatus("error");
+      return null;
+    }
+
+    try {
+      setStatus("building");
+      setError(null);
+      setTxHash(null);
+      setSimulationResult(null);
+      setPendingTx(null);
+      setPendingApproval(null);
+
+      const isFullLiquidation = percentage >= 10n ** 18n;
+
+      const data = isFullLiquidation
+        ? encodeFunctionData({
+            abi: CONTROLLER_LIQUIDATE_ABI,
+            functionName: "liquidate",
+            args: [address, 0n],
+          })
+        : encodeFunctionData({
+            abi: CONTROLLER_LIQUIDATE_ABI,
+            functionName: "liquidate_extended",
+            args: [
+              address,
+              0n, // min_x
+              percentage,
+              "0x0000000000000000000000000000000000000000" as `0x${string}`, // no callbacker
+              [], // no callback_args
+            ],
+          });
+
+      const tx: PendingTx = {
+        to: controller,
+        data: data as `0x${string}`,
+        value: 0n,
+        inputToken: CRVUSD_ADDRESS,
+      };
+      setPendingTx(tx);
+
+      // No approvals needed — controller uses AMM's crvUSD directly
+      return await simulateAndExecute(tx, previewOnly);
+    } catch (err) {
+      setError(parseErrorMessage(err));
+      setStatus("error");
+      return null;
+    }
+  }, [address, publicClient, simulateAndExecute]);
+
   return {
     createLeveragedLoan,
     leverageUp,
     deleverage,
+    deleverageAndWithdraw,
+    deleverageAndWithdrawToToken,
     selfLiquidate,
+    directLiquidate,
+    createLeveragedLoanFromToken,
+    leverageUpFromToken,
     pendingApproval,
     approvalProgress,
     approve,

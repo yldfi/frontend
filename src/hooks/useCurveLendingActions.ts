@@ -6,6 +6,7 @@ import { maxUint256 } from "viem";
 import {
   fetchAddCollateralWithSwapBundle,
   fetchCreateLoanWithSwapBundle,
+  fetchCreateLoanWithOutputSwapBundle,
   fetchRemoveCollateralAndSwapBundle,
   fetchRepayBundle,
   fetchRepayWithSwapBundle,
@@ -55,6 +56,16 @@ export interface UseCurveLendingActionsResult {
     amountIn: string,
     debtAmount: string,
     bands: number,
+    slippage?: number,
+    options?: { previewOnly?: boolean; tokenSymbol?: string }
+  ) => Promise<SimulationResult | null>;
+  createLoanWithOutputSwap: (
+    vaultAddress: `0x${string}`,
+    tokenIn: string | undefined,
+    amountIn: string,
+    debtAmount: string,
+    bands: number,
+    tokenOut: string,
     slippage?: number,
     options?: { previewOnly?: boolean; tokenSymbol?: string }
   ) => Promise<SimulationResult | null>;
@@ -442,7 +453,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
       const receipt = await publicClient.waitForTransactionReceipt({
         hash,
-        confirmations: 1,
+        timeout: 60_000,
+        pollingInterval: 1_000,
       });
 
       if (receipt.status === "success") {
@@ -479,7 +491,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
       const receipt = await publicClient.waitForTransactionReceipt({
         hash,
-        confirmations: 1,
+        timeout: 60_000,
+        pollingInterval: 1_000,
       });
 
       if (receipt.status === "success") {
@@ -606,11 +619,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           setStatus("error");
           return tenderlyResult.result;
         }
-      } else if (options?.previewOnly) {
-        // On VNet, skip simulation for preview
-        setStatus("idle");
-        return null;
       }
+      // On test networks, no simulation to preview — execute directly
 
       // Execute the transaction
       setStatus("executing");
@@ -627,7 +637,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       // Wait for confirmation
       const receipt = await publicClient.waitForTransactionReceipt({
         hash,
-        confirmations: 1,
+        timeout: 60_000,
+        pollingInterval: 1_000,
       });
 
       if (receipt.status === "success") {
@@ -760,7 +771,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setTxHash(hash);
       setStatus("waitingTx");
 
-      const receipt = await publicClient.waitForTransactionReceipt({ hash, confirmations: 1 });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000, pollingInterval: 1_000 });
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -800,6 +811,39 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         slippage,
       }),
       tokenIn,
+      amountWei,
+      options
+    );
+  }, [address, executeBundle]);
+
+  // Create loan with output swap: create_loan → crvUSD → swap to tokenOut
+  // Optionally swaps input token to vault token first (double swap)
+  const createLoanWithOutputSwap = useCallback(async (
+    vaultAddress: `0x${string}`,
+    tokenIn: string | undefined, // undefined = vault token directly
+    amountIn: string,
+    debtAmount: string,
+    bands: number,
+    tokenOut: string,
+    slippage: number = 100,
+    options?: { previewOnly?: boolean; tokenSymbol?: string }
+  ): Promise<SimulationResult | null> => {
+    if (!address) return null;
+    const { parseUnits } = await import("viem");
+    const decimals = tokenIn ? 18 : 18; // vault tokens are always 18 decimals
+    const amountWei = parseUnits(amountIn, decimals);
+    return executeBundle(
+      () => fetchCreateLoanWithOutputSwapBundle({
+        fromAddress: address,
+        vaultAddress,
+        tokenIn,
+        amountIn: amountWei.toString(),
+        debtAmount,
+        bands,
+        tokenOut,
+        slippage,
+      }),
+      tokenIn ?? vaultAddress,
       amountWei,
       options
     );
@@ -917,7 +961,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setTxHash(hash);
       setStatus("waitingTx");
 
-      const receipt = await publicClient.waitForTransactionReceipt({ hash, confirmations: 1 });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000, pollingInterval: 1_000 });
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -1031,7 +1075,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setTxHash(hash);
       setStatus("waitingTx");
 
-      const receipt = await publicClient.waitForTransactionReceipt({ hash, confirmations: 1 });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000, pollingInterval: 1_000 });
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -1211,7 +1255,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setTxHash(hash);
       setStatus("waitingTx");
 
-      const receipt = await publicClient.waitForTransactionReceipt({ hash, confirmations: 1 });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000, pollingInterval: 1_000 });
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -1369,7 +1413,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
       const receipt = await publicClient.waitForTransactionReceipt({
         hash,
-        confirmations: 1,
+        timeout: 60_000,
+        pollingInterval: 1_000,
       });
 
       if (receipt.status === "success") {
@@ -1654,7 +1699,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
       const receipt = await publicClient.waitForTransactionReceipt({
         hash,
-        confirmations: 1,
+        timeout: 60_000,
+        pollingInterval: 1_000,
       });
 
       if (receipt.status === "success") {
@@ -1675,6 +1721,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
   return {
     createLoan,
     createLoanWithSwap,
+    createLoanWithOutputSwap,
     addCollateral,
     removeCollateral,
     addCollateralWithSwap,

@@ -35,7 +35,7 @@ function buildVaultToVaultRouteInfo(
       tokenSymbol: sourceSymbol,
       action: "Redeem",
       description: `${sourceSymbol} for ${sourceUnderlyingSymbol}`,
-      protocol: "yld_fi",
+      protocol: "yld",
     },
   ];
 
@@ -51,7 +51,7 @@ function buildVaultToVaultRouteInfo(
       tokenSymbol: targetUnderlyingSymbol,
       action: "Deposit",
       description: `${targetUnderlyingSymbol} into ${targetSymbol}`,
-      protocol: "yld_fi",
+      protocol: "yld",
       amount: targetUnderlyingAmount,
     });
   } else {
@@ -59,7 +59,7 @@ function buildVaultToVaultRouteInfo(
       tokenSymbol: sourceUnderlyingSymbol,
       action: "Deposit",
       description: `${sourceUnderlyingSymbol} into ${targetSymbol}`,
-      protocol: "yld_fi",
+      protocol: "yld",
       amount: sourceUnderlyingAmount,
     });
   }
@@ -68,7 +68,7 @@ function buildVaultToVaultRouteInfo(
     tokenSymbol: targetSymbol,
     action: "Receive",
     description: `${targetSymbol} shares`,
-    protocol: "yld_fi",
+    protocol: "yld",
   });
 
   return { steps };
@@ -104,7 +104,7 @@ function buildZapInRouteInfo(
       tokenSymbol: inputSymbol,
       action: "Deposit",
       description: `${inputSymbol} into ${vaultSymbol}`,
-      protocol: "yld_fi",
+      protocol: "yld",
     });
   } else {
     // Swap → deposit
@@ -118,7 +118,7 @@ function buildZapInRouteInfo(
       tokenSymbol: underlyingSymbol,
       action: "Deposit",
       description: `${underlyingSymbol} into ${vaultSymbol}`,
-      protocol: "yld_fi",
+      protocol: "yld",
       amount: underlyingAmount,
     });
   }
@@ -127,7 +127,7 @@ function buildZapInRouteInfo(
     tokenSymbol: vaultSymbol,
     action: "Receive",
     description: `${vaultSymbol} shares`,
-    protocol: "yld_fi",
+    protocol: "yld",
   });
 
   return { steps };
@@ -160,7 +160,7 @@ function buildZapOutRouteInfo(
       tokenSymbol: vaultSymbol,
       action: "Redeem",
       description: `${vaultSymbol} for ${underlyingSymbol}`,
-      protocol: "yld_fi",
+      protocol: "yld",
     },
   ];
 
@@ -179,7 +179,7 @@ function buildZapOutRouteInfo(
     tokenSymbol: outputSymbol,
     action: "Receive",
     description: "tokens",
-    protocol: outputToken.address.toLowerCase() === underlyingAddress.toLowerCase() ? "yld_fi" : "Enso",
+    protocol: outputToken.address.toLowerCase() === underlyingAddress.toLowerCase() ? "yld" : "Enso",
   });
 
   return { steps };
@@ -333,8 +333,8 @@ export function useZapQuote({
     (direction === "in" ? !!inputToken : !!outputToken);
 
   // Check if this is a vault-to-vault zap
-  // Zap Out: current vault → another yld_fi vault
-  // Zap In: another yld_fi vault → current vault
+  // Zap Out: current vault → another yld vault
+  // Zap In: another yld vault → current vault
   const isVaultToVaultOut = direction === "out" && outputToken && isYldfiVault(outputToken.address);
   const isVaultToVaultIn = direction === "in" && inputToken && isYldfiVault(inputToken.address);
   const isVaultToVault = isVaultToVaultOut || isVaultToVaultIn;
@@ -525,7 +525,7 @@ export function useZapQuote({
       }
 
       // External vault input (Llama Airforce, Concentrator, Beefy)
-      // These are external vaults users may hold that we can zap FROM into yld_fi vaults
+      // These are external vaults users may hold that we can zap FROM into yld vaults
       if (direction === "in" && inputToken && isExternalVaultToken(inputToken.address)) {
         const externalConfig = getExternalVaultConfig(inputToken.address);
         if (!externalConfig) {
@@ -551,7 +551,7 @@ export function useZapQuote({
 
         // Price impact calculation for external vault zap
         // Input: external vault shares → underlying value
-        // Output: yld_fi vault shares → underlying value
+        // Output: yld vault shares → underlying value
         const [priceMap, targetAssetsPerShare] = await Promise.all([
           getTokenPrices([externalConfig.underlying, underlyingToken || CVXCRV_ADDRESS]),
           getVaultAssetsPerShare(publicClient, vaultAddress as `0x${string}`),
@@ -593,7 +593,7 @@ export function useZapQuote({
         };
       }
 
-      // lpxCVX input token → any yld_fi vault
+      // lpxCVX input token → any yld vault
       // Route: lpxCVX → unwrap to pxCVX (for yspxCVX) or → swap via Curve to CVX → route to target
       if (direction === "in" && inputToken && isLpxCvxToken(inputToken.address)) {
         const bundle = await fetchLpxCvxZapInRoute({
@@ -646,7 +646,7 @@ export function useZapQuote({
         };
       }
 
-      // pxCVX input token → non-pxCVX yld_fi vault (pxCVX → yspxCVX is direct deposit, handled by standard zap)
+      // pxCVX input token → non-pxCVX yld vault (pxCVX → yspxCVX is direct deposit, handled by standard zap)
       // Route: pxCVX → wrap to lpxCVX → swap via Curve to CVX → route to target underlying → deposit
       // Note: pxCVX → yspxCVX is handled by standard zap since pxCVX is the underlying
       if (direction === "in" && inputToken && isPxCvxToken(inputToken.address) && !isPxCvxVault) {
@@ -813,8 +813,8 @@ export function useZapQuote({
             route: [],
             routeInfo: {
               steps: [
-                { tokenSymbol: vaultSymbol, action: "Redeem", description: `${vaultSymbol} for cvgCVX`, protocol: "yld_fi" },
-                { tokenSymbol: "cvgCVX", action: "Swap", description: "cvgCVX for CVX", protocol: "Curve" },
+                { tokenSymbol: vaultSymbol, action: "Redeem", description: `${vaultSymbol} for cvgCVX`, protocol: "yld" },
+                { tokenSymbol: "cvgCVX", action: "Swap", description: "cvgCVX → CVX1 → CVX", protocol: "LiquidBoost" },
                 { tokenSymbol: "CVX", action: "Swap", description: `CVX for ${outputToken.symbol}`, protocol: "Enso" },
                 { tokenSymbol: outputToken.symbol, action: "Receive", description: "tokens", protocol: "Enso" },
               ],
@@ -936,7 +936,7 @@ export function useZapQuote({
             route: [],
             routeInfo: {
               steps: [
-                { tokenSymbol: vaultSymbol, action: "Redeem", description: `${vaultSymbol} for pxCVX`, protocol: "yld_fi" },
+                { tokenSymbol: vaultSymbol, action: "Redeem", description: `${vaultSymbol} for pxCVX`, protocol: "yld" },
                 { tokenSymbol: "pxCVX", action: "Swap", description: "pxCVX for CVX", protocol: "Curve" },
                 { tokenSymbol: "CVX", action: "Swap", description: `CVX for ${outputToken.symbol}`, protocol: "Enso" },
                 { tokenSymbol: outputToken.symbol, action: "Receive", description: "tokens", protocol: "Enso" },
