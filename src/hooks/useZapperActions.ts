@@ -71,26 +71,97 @@ interface PendingTx {
   inputToken: string;
 }
 
+function parseEnsoError(hexData: string): { step: number; target: string; message: string } | null {
+  const data = hexData.replace(/^0x/, "").replace(/\.\s*$/, "");
+  if (!data.toLowerCase().startsWith("ef3dcb2f")) return null;
+  const body = data.slice(8);
+  if (body.length < 192) return null;
+  const step = parseInt(body.slice(0, 64), 16);
+  const target = "0x" + body.slice(88, 128);
+  const strLen = parseInt(body.slice(192, 256), 16);
+  if (strLen > 0 && strLen <= 256 && 256 + strLen * 2 <= body.length) {
+    const strHex = body.slice(256, 256 + strLen * 2);
+    try {
+      const message = strHex.match(/.{2}/g)!.map(b => String.fromCharCode(parseInt(b, 16))).join("");
+      if (/^[\x20-\x7e]+$/.test(message)) return { step, target, message };
+    } catch { /* invalid */ }
+  }
+  return null;
+}
+
+function extractStringFromHex(hex: string): string | null {
+  const data = hex.replace(/^0x/, "").replace(/^[0-9a-f]{8}/i, "");
+  for (let i = 0; i < data.length - 64; i += 64) {
+    const possibleLen = parseInt(data.slice(i, i + 64), 16);
+    if (possibleLen > 0 && possibleLen <= 256 && i + 64 + possibleLen * 2 <= data.length) {
+      const strHex = data.slice(i + 64, i + 64 + possibleLen * 2);
+      try {
+        const decoded = strHex.match(/.{2}/g)!.map(b => String.fromCharCode(parseInt(b, 16))).join("");
+        if (decoded.length > 2 && /^[\x20-\x7e]+$/.test(decoded)) return decoded;
+      } catch { /* not valid utf8 */ }
+    }
+  }
+  return null;
+}
+
 function parseErrorMessage(error: unknown): string {
   if (!error) return "Unknown error";
   const errorStr = String(error);
+  const lower = errorStr.toLowerCase();
 
-  if (errorStr.includes("User rejected") || errorStr.includes("user rejected")) {
+  if (lower.includes("user rejected") || lower.includes("user denied")) {
     return "Transaction cancelled";
   }
-  if (errorStr.includes("insufficient") || errorStr.includes("exceeds balance")) {
+  if (lower.includes("insufficient") || lower.includes("exceeds balance")) {
     return "Insufficient balance";
   }
-  if (errorStr.includes("slippage") || errorStr.includes("INSUFFICIENT_OUTPUT")) {
+  if (lower.includes("slippage") || lower.includes("insufficient_output")) {
     return "Price moved too much. Try increasing slippage.";
   }
-  if (errorStr.includes("health") || errorStr.includes("Health")) {
+  if (lower.includes("health")) {
     return "Position would be unhealthy";
   }
-  if (errorStr.includes("revert")) {
-    const match = errorStr.match(/reason="([^"]+)"/);
-    if (match) return `Transaction failed: ${match[1]}`;
-    return "Transaction failed";
+  // Pre-parsed Enso error from devEthCall (enso:Message format)
+  const ensoPrefixMatch = errorStr.match(/enso:(.+)/);
+  if (ensoPrefixMatch) {
+    const ensoMsg = ensoPrefixMatch[1].toLowerCase();
+    if (ensoMsg.includes("condition not met") || ensoMsg.includes("return amount is not enough")) {
+      return "Swap output below minimum. Try increasing slippage.";
+    }
+    if (ensoMsg.includes("call failed")) return "Swap route failed. Try increasing slippage or use a different token.";
+    return `Transaction failed: ${ensoPrefixMatch[1]}`;
+  }
+
+  // Parse Enso Shortcuts custom error from hex: error(uint256 step, address target, string message)
+  const ensoHexMatch = errorStr.match(/custom error 0xef3dcb2f[:\s]*([0-9a-f.]+)/i);
+  if (ensoHexMatch) {
+    const parsed = parseEnsoError("ef3dcb2f" + ensoHexMatch[1].replace(/\.\s*$/, ""));
+    if (parsed) {
+      if (process.env.NODE_ENV === "development") console.log("[Enso error]", { step: parsed.step, target: parsed.target, message: parsed.message });
+      const msg = parsed.message.toLowerCase();
+      if (msg.includes("condition not met") || msg.includes("return amount is not enough")) {
+        return "Swap output below minimum. Try increasing slippage.";
+      }
+      if (msg.includes("call failed")) {
+        return "Swap route failed. Try increasing slippage or use a different token.";
+      }
+      return `Transaction failed: ${parsed.message}`;
+    }
+  }
+  if (lower.includes("condition not met") || lower.includes("return amount is not enough")) {
+    return "Swap output below minimum. Try increasing slippage.";
+  }
+  if (lower.includes("call failed")) {
+    return "Swap route failed. Try increasing slippage or use a different token.";
+  }
+  const customErrorMatch = errorStr.match(/custom error (0x[0-9a-f]+):\s*([0-9a-f]+)/i);
+  if (customErrorMatch) {
+    const extracted = extractStringFromHex(customErrorMatch[1] + customErrorMatch[2]);
+    if (extracted) return `Transaction failed: ${extracted}`;
+  }
+  if (lower.includes("revert")) {
+    const match = errorStr.match(/reason="([^"]+)"/) || errorStr.match(/reason string '([^']+)'/) || errorStr.match(/reverted[^:]*:\s*(.+?)(?:\n|$)/i);
+    if (match) return `Transaction failed: ${match[1].trim()}`;
   }
   return "Transaction failed. Please try again.";
 }
@@ -287,7 +358,7 @@ export interface UseZapperActionsResult {
   approvalProgress: {
     step: number;
     total: number;
-    steps: { label: string; description: string; done: boolean }[];
+    steps: { label: string; description: string; done: boolean; spender?: string }[];
   } | null;
   approve: (exactAmount?: boolean) => void;
   isApproving: boolean;
@@ -300,6 +371,7 @@ export interface UseZapperActionsResult {
   error: string | null;
   simulationResult: SimulationResult | null;
   reset: () => void;
+  clearError: () => void;
   executeAfterPreview: () => Promise<void>;
 }
 
@@ -319,7 +391,7 @@ export function useZapperActions(): UseZapperActionsResult {
   const [approvalProgress, setApprovalProgress] = useState<{
     step: number;
     total: number;
-    steps: { label: string; description: string; done: boolean }[];
+    steps: { label: string; description: string; done: boolean; spender?: string }[];
   } | null>(null);
 
   // Approval tx
@@ -355,18 +427,41 @@ export function useZapperActions(): UseZapperActionsResult {
     resetApprove();
   }, [resetApprove]);
 
+  const clearError = useCallback(() => {
+    setStatus("idle");
+    setError(null);
+  }, []);
+
   const approve = useCallback((exactAmount?: boolean) => {
     if (!address || !pendingApproval) return;
     setStatus("approving");
 
     if (pendingApproval.type === "erc20") {
+      const amount = exactAmount && pendingApproval.amount ? pendingApproval.amount : maxUint256;
+      if (process.env.NODE_ENV === "development") {
+        console.log("[Approve TX]", {
+          type: "erc20",
+          token: pendingApproval.token,
+          symbol: pendingApproval.tokenSymbol,
+          spender: pendingApproval.spender,
+          amount: amount.toString(),
+          exact: !!exactAmount,
+        });
+      }
       writeApprove({
         address: pendingApproval.token,
         abi: ERC20_APPROVAL_ABI,
         functionName: "approve",
-        args: [pendingApproval.spender, exactAmount && pendingApproval.amount ? pendingApproval.amount : maxUint256],
+        args: [pendingApproval.spender, amount],
       });
     } else {
+      if (process.env.NODE_ENV === "development") {
+        console.log("[Approve TX]", {
+          type: "controller",
+          controller: pendingApproval.token,
+          spender: pendingApproval.spender,
+        });
+      }
       // Controller approve(address, bool)
       writeApprove({
         address: pendingApproval.token, // controller address
@@ -382,6 +477,19 @@ export function useZapperActions(): UseZapperActionsResult {
     previewOnly: boolean
   ): Promise<SimulationResult | null> => {
     if (!publicClient || !address) return null;
+
+    if (process.env.NODE_ENV === "development") {
+      const selector = txData.data.slice(0, 10);
+      console.log("[TX]", {
+        to: txData.to,
+        selector,
+        value: txData.value.toString(),
+        inputToken: txData.inputToken,
+        dataLength: txData.data.length,
+        data: txData.data,
+        previewOnly,
+      });
+    }
 
     // Simulate (skip on VNet or local)
     if (!isTenderlyVNet && chainId !== 1337) {
@@ -403,12 +511,23 @@ export function useZapperActions(): UseZapperActionsResult {
               data: txData.data,
               value: txData.value,
             });
+            if (process.env.NODE_ENV === "development") console.log("[eth_call]", { ok: true, to: txData.to });
             return { ok: true as const };
-          } catch (err) {
-            return {
-              ok: false as const,
-              errorMessage: err instanceof Error ? err.message : "eth_call failed",
-            };
+          } catch (err: unknown) {
+            const viemErr = err as { shortMessage?: string; message?: string; data?: string; cause?: { reason?: string; data?: string } };
+            const revertData = viemErr.data || viemErr.cause?.data;
+            let msg = viemErr.message || viemErr.shortMessage || viemErr.cause?.reason || "eth_call failed";
+            if (revertData && typeof revertData === "string" && revertData.startsWith("0x")) {
+              const enso = parseEnsoError(revertData.replace(/^0x/, ""));
+              if (enso) {
+                if (process.env.NODE_ENV === "development") console.log("[eth_call] Enso error", { step: enso.step, target: enso.target, message: enso.message });
+                msg = `enso:${enso.message}`;
+              } else {
+                msg = msg + " custom error " + revertData;
+              }
+            }
+            if (process.env.NODE_ENV === "development") console.log("[eth_call]", { ok: false, to: txData.to, error: msg.slice(0, 300) });
+            return { ok: false as const, errorMessage: msg };
           }
         })(),
       ]);
@@ -422,14 +541,41 @@ export function useZapperActions(): UseZapperActionsResult {
         return tenderlyResult.result;
       }
 
-      if (!tenderlyResult.ok && !ethCallResult.ok) {
-        const errorMsg = tenderlyResult.errorMessage || ethCallResult.errorMessage || "Simulation failed";
+      // eth_call is the ground truth for the chain we're submitting to
+      if (!ethCallResult.ok) {
+        const errorMsg = ethCallResult.errorMessage || "Simulation failed";
         setError(parseErrorMessage(new Error(errorMsg)));
         setStatus("error");
         return tenderlyResult.result;
       }
+      if (!tenderlyResult.ok) {
+        if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
+      }
+    } else if (process.env.NODE_ENV === "development") {
+      // On test networks (Anvil/VNet): run eth_call preflight only
+      setStatus("simulating");
+      try {
+        await publicClient.call({ account: address, to: txData.to, data: txData.data, value: txData.value });
+        console.log("[eth_call]", { ok: true, to: txData.to });
+      } catch (err: unknown) {
+        const viemErr = err as { shortMessage?: string; message?: string; data?: string; cause?: { reason?: string; data?: string } };
+        const revertData = viemErr.data || viemErr.cause?.data;
+        let msg = viemErr.message || viemErr.shortMessage || viemErr.cause?.reason || "eth_call failed";
+        if (revertData && typeof revertData === "string" && revertData.startsWith("0x")) {
+          const enso = parseEnsoError(revertData.replace(/^0x/, ""));
+          if (enso) {
+            console.log("[eth_call] Enso error", { step: enso.step, target: enso.target, message: enso.message });
+            msg = `enso:${enso.message}`;
+          } else {
+            msg = msg + " custom error " + revertData;
+          }
+        }
+        console.log("[eth_call]", { ok: false, to: txData.to, error: msg.slice(0, 300) });
+        setError(parseErrorMessage(new Error(msg)));
+        setStatus("error");
+        return null;
+      }
     }
-    // On test networks, no simulation to preview — always execute directly
 
     // Execute
     setStatus("executing");
@@ -448,6 +594,7 @@ export function useZapperActions(): UseZapperActionsResult {
       pollingInterval: 1_000,
     });
 
+    if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
     if (receipt.status === "success") {
       setStatus("success");
     } else {
@@ -516,6 +663,7 @@ export function useZapperActions(): UseZapperActionsResult {
         pollingInterval: 1_000,
       });
 
+      if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -549,7 +697,7 @@ export function useZapperActions(): UseZapperActionsResult {
     const controllerNeeded = !controllerApproved;
 
     // Build progress steps for all possible approvals
-    const allSteps: { approval: PendingApproval; needed: boolean; label: string; description: string }[] = [];
+    const allSteps: { approval: PendingApproval; needed: boolean; label: string; description: string; spender: string }[] = [];
 
     if (inputAmount > 0n) {
       allSteps.push({
@@ -562,7 +710,8 @@ export function useZapperActions(): UseZapperActionsResult {
         },
         needed: erc20Needed,
         label: tokenSymbol,
-        description: `Allow Zapper to spend ${tokenSymbol}`,
+        description: `Allow yld Zapper to spend ${tokenSymbol}`,
+        spender: ZAPPER_ADDRESS,
       });
     }
 
@@ -574,8 +723,9 @@ export function useZapperActions(): UseZapperActionsResult {
         spender: ZAPPER_ADDRESS as `0x${string}`,
       },
       needed: controllerNeeded,
-      label: "Lending Access",
-      description: "Allow Zapper to manage your loan",
+      label: "yld Zapper",
+      description: "Allow yld Zapper to manage position on LlamaLend controller",
+      spender: ZAPPER_ADDRESS,
     });
 
     const missing = allSteps.filter((s) => s.needed).map((s) => s.approval);
@@ -583,7 +733,7 @@ export function useZapperActions(): UseZapperActionsResult {
     // Set approval progress if any needed
     if (missing.length > 0) {
       const total = allSteps.length;
-      const steps = allSteps.map((s) => ({ label: s.label, description: s.description, done: !s.needed }));
+      const steps = allSteps.map((s) => ({ label: s.label, description: s.description, done: !s.needed, spender: s.spender }));
       const firstNeededIdx = allSteps.findIndex((s) => s.needed);
       setApprovalProgress({ step: firstNeededIdx + 1, total, steps });
     } else {
@@ -919,7 +1069,7 @@ export function useZapperActions(): UseZapperActionsResult {
     const erc20Needed = inputAmount > 0n && erc20Allowance < inputAmount;
     const controllerNeeded = controller ? !controllerApproved : false;
 
-    const allSteps: { approval: PendingApproval; needed: boolean; label: string; description: string }[] = [];
+    const allSteps: { approval: PendingApproval; needed: boolean; label: string; description: string; spender: string }[] = [];
 
     if (inputAmount > 0n) {
       allSteps.push({
@@ -932,7 +1082,8 @@ export function useZapperActions(): UseZapperActionsResult {
         },
         needed: erc20Needed,
         label: tokenSymbol,
-        description: `Allow Zapper to spend ${tokenSymbol}`,
+        description: `Allow yld Zapper to spend ${tokenSymbol}`,
+        spender: ZAPPER_V2_ADDRESS,
       });
     }
 
@@ -945,8 +1096,9 @@ export function useZapperActions(): UseZapperActionsResult {
           spender: ZAPPER_V2_ADDRESS,
         },
         needed: controllerNeeded,
-        label: "Lending Access",
-        description: "Allow ZapperV2 to manage your loan",
+        label: "yld Zapper",
+        description: "Allow yld Zapper to manage position on LlamaLend controller",
+        spender: ZAPPER_V2_ADDRESS,
       });
     }
 
@@ -954,7 +1106,7 @@ export function useZapperActions(): UseZapperActionsResult {
 
     if (missing.length > 0) {
       const total = allSteps.length;
-      const steps = allSteps.map((s) => ({ label: s.label, description: s.description, done: !s.needed }));
+      const steps = allSteps.map((s) => ({ label: s.label, description: s.description, done: !s.needed, spender: s.spender }));
       const firstNeededIdx = allSteps.findIndex((s) => s.needed);
       setApprovalProgress({ step: firstNeededIdx + 1, total, steps });
     } else {
@@ -1362,6 +1514,7 @@ export function useZapperActions(): UseZapperActionsResult {
     error,
     simulationResult,
     reset,
+    clearError,
     executeAfterPreview,
   };
 }

@@ -21,6 +21,35 @@ import { CRVUSD_ADDRESS } from "@/lib/zapper";
 import type { EnsoBundleResponse, SimulationResult } from "@/types/enso";
 import { useTenderly } from "@/contexts/TenderlyContext";
 
+async function devEthCall(
+  publicClient: ReturnType<typeof usePublicClient>,
+  params: { account: `0x${string}`; to: `0x${string}`; data: `0x${string}`; value?: bigint },
+): Promise<{ ok: true } | { ok: false; errorMessage: string }> {
+  try {
+    await publicClient!.call(params);
+    if (process.env.NODE_ENV === "development") console.log("[eth_call]", { ok: true, to: params.to });
+    return { ok: true };
+  } catch (err: unknown) {
+    // viem puts raw revert data in cause.data for unrecognized custom errors
+    const viemErr = err as { shortMessage?: string; message?: string; data?: string; cause?: { reason?: string; data?: string; message?: string } };
+    const revertData = viemErr.data || viemErr.cause?.data;
+    let msg = viemErr.message || viemErr.shortMessage || viemErr.cause?.reason || "eth_call failed";
+    // If we have raw revert data, try structured Enso error parsing first
+    if (revertData && typeof revertData === "string" && revertData.startsWith("0x")) {
+      const enso = parseEnsoError(revertData.replace(/^0x/, ""));
+      if (enso) {
+        if (process.env.NODE_ENV === "development") console.log("[eth_call] Enso error", { step: enso.step, target: enso.target, message: enso.message });
+        msg = `enso:${enso.message}`; // prefix so parseErrorMessage can match
+      } else {
+        // Append raw hex so parseErrorMessage regex can find it
+        msg = msg + " custom error " + revertData;
+      }
+    }
+    if (process.env.NODE_ENV === "development") console.log("[eth_call]", { ok: false, to: params.to, error: msg.slice(0, 300), revertData: revertData?.slice(0, 100) });
+    return { ok: false, errorMessage: msg };
+  }
+}
+
 export type LendingStatus =
   | "idle"
   | "building" // Building the transaction bundle
@@ -107,12 +136,19 @@ export interface UseCurveLendingActionsResult {
   repayDirect: (
     controllerAddress: `0x${string}`,
     repayAmount: bigint,
-    options?: { previewOnly?: boolean }
+    options?: { previewOnly?: boolean; closeLoan?: boolean }
+  ) => Promise<SimulationResult | null>;
+  repayWithRedeem: (
+    controllerAddress: `0x${string}`,
+    vaultTokenAddress: `0x${string}`,
+    redeemAmount: bigint,
+    options?: { previewOnly?: boolean; tokenSymbol?: string }
   ) => Promise<SimulationResult | null>;
   repayWithSwap: (
     vaultAddress: `0x${string}`,
     tokenIn: string,
     amountIn: string,
+    decimals?: number,
     slippage?: number,
     options?: { previewOnly?: boolean; tokenSymbol?: string }
   ) => Promise<SimulationResult | null>;
@@ -134,7 +170,7 @@ export interface UseCurveLendingActionsResult {
   approvalProgress: {
     step: number;
     total: number;
-    steps: { label: string; description: string; done: boolean }[];
+    steps: { label: string; description: string; done: boolean; spender?: string }[];
   } | null;
   approve: (exactApproval?: boolean) => void;
   isApproving: boolean;
@@ -153,36 +189,121 @@ export interface UseCurveLendingActionsResult {
   executeAfterPreview: () => Promise<void>;
 }
 
+// Decode Enso Shortcuts error: error(uint256 step, address target, string message)
+// Selector: 0xef3dcb2f
+function parseEnsoError(hexData: string): { step: number; target: string; message: string } | null {
+  const data = hexData.replace(/^0x/, "").replace(/\.\s*$/, "");
+  // Must start with ef3dcb2f selector
+  if (!data.toLowerCase().startsWith("ef3dcb2f")) return null;
+  const body = data.slice(8); // remove selector
+  if (body.length < 192) return null; // need at least 3 words + string length + data
+  const step = parseInt(body.slice(0, 64), 16);
+  const target = "0x" + body.slice(88, 128); // address is right-padded in 32 bytes
+  const strOffset = parseInt(body.slice(128, 192), 16) * 2; // byte offset → hex offset
+  const strLenHex = body.slice(192, 256);
+  const strLen = parseInt(strLenHex, 16);
+  if (strLen > 0 && strLen <= 256 && 256 + strLen * 2 <= body.length) {
+    const strHex = body.slice(256, 256 + strLen * 2);
+    try {
+      const message = strHex.match(/.{2}/g)!.map(b => String.fromCharCode(parseInt(b, 16))).join("");
+      if (/^[\x20-\x7e]+$/.test(message)) {
+        return { step, target, message };
+      }
+    } catch { /* invalid */ }
+  }
+  return null;
+}
+
+// Fallback: scan ABI-encoded hex for any embedded string
+function extractStringFromHex(hex: string): string | null {
+  const data = hex.replace(/^0x/, "").replace(/^[0-9a-f]{8}/i, "");
+  for (let i = 0; i < data.length - 64; i += 64) {
+    const possibleLen = parseInt(data.slice(i, i + 64), 16);
+    if (possibleLen > 0 && possibleLen <= 256 && i + 64 + possibleLen * 2 <= data.length) {
+      const strHex = data.slice(i + 64, i + 64 + possibleLen * 2);
+      try {
+        const decoded = strHex.match(/.{2}/g)!.map(b => String.fromCharCode(parseInt(b, 16))).join("");
+        if (decoded.length > 2 && /^[\x20-\x7e]+$/.test(decoded)) return decoded;
+      } catch { /* not valid utf8 */ }
+    }
+  }
+  return null;
+}
+
 function parseErrorMessage(error: unknown): string {
   if (!error) return "Unknown error";
 
   const errorStr = String(error);
+  const lower = errorStr.toLowerCase();
 
   // User rejection
-  if (errorStr.includes("User rejected") || errorStr.includes("user rejected")) {
+  if (lower.includes("user rejected") || lower.includes("user denied")) {
     return "Transaction cancelled";
   }
 
   // Insufficient balance
-  if (errorStr.includes("insufficient") || errorStr.includes("exceeds balance")) {
+  if (lower.includes("insufficient") || lower.includes("exceeds balance")) {
     return "Insufficient balance";
   }
 
   // Slippage
-  if (errorStr.includes("slippage") || errorStr.includes("INSUFFICIENT_OUTPUT")) {
+  if (lower.includes("slippage") || lower.includes("insufficient_output")) {
     return "Price moved too much. Try increasing slippage.";
   }
 
   // Health check
-  if (errorStr.includes("health") || errorStr.includes("Health")) {
+  if (lower.includes("health")) {
     return "Position would be unhealthy";
   }
 
-  // Generic revert
-  if (errorStr.includes("revert")) {
-    const match = errorStr.match(/reason="([^"]+)"/);
-    if (match) return `Transaction failed: ${match[1]}`;
-    return "Transaction failed";
+  // Pre-parsed Enso error from devEthCall (enso:Message format)
+  const ensoPrefixMatch = errorStr.match(/enso:(.+)/);
+  if (ensoPrefixMatch) {
+    const ensoMsg = ensoPrefixMatch[1].toLowerCase();
+    if (ensoMsg.includes("condition not met") || ensoMsg.includes("return amount is not enough")) {
+      return "Swap output below minimum. Try increasing slippage.";
+    }
+    if (ensoMsg.includes("call failed")) return "Swap route failed. Try increasing slippage or use a different token.";
+    return `Transaction failed: ${ensoPrefixMatch[1]}`;
+  }
+
+  // Parse Enso Shortcuts custom error from hex: error(uint256 step, address target, string message)
+  const ensoHexMatch = errorStr.match(/custom error 0xef3dcb2f[:\s]*([0-9a-f.]+)/i);
+  if (ensoHexMatch) {
+    const parsed = parseEnsoError("ef3dcb2f" + ensoHexMatch[1].replace(/\.\s*$/, ""));
+    if (parsed) {
+      if (process.env.NODE_ENV === "development") console.log("[Enso error]", { step: parsed.step, target: parsed.target, message: parsed.message });
+      const msg = parsed.message.toLowerCase();
+      if (msg.includes("condition not met") || msg.includes("return amount is not enough")) {
+        return "Swap output below minimum. Try increasing slippage.";
+      }
+      if (msg.includes("call failed")) {
+        return "Swap route failed. Try increasing slippage or use a different token.";
+      }
+      return `Transaction failed: ${parsed.message}`;
+    }
+  }
+
+  // Generic Enso/DEX assertion failures (when hex parsing fails)
+  if (lower.includes("condition not met") || lower.includes("return amount is not enough")) {
+    return "Swap output below minimum. Try increasing slippage.";
+  }
+  if (lower.includes("call failed")) {
+    return "Swap route failed. Try increasing slippage or use a different token.";
+  }
+
+  // Other custom errors with hex data — try to extract embedded string
+  const customErrorMatch = errorStr.match(/custom error (0x[0-9a-f]+):\s*([0-9a-f]+)/i);
+  if (customErrorMatch) {
+    const extracted = extractStringFromHex(customErrorMatch[1] + customErrorMatch[2]);
+    if (extracted) return `Transaction failed: ${extracted}`;
+  }
+
+  // Generic revert — try to extract the reason string
+  if (lower.includes("revert")) {
+    // viem format: reason="..." or reverted with reason string '...'
+    const match = errorStr.match(/reason="([^"]+)"/) || errorStr.match(/reason string '([^']+)'/) || errorStr.match(/reverted[^:]*:\s*(.+?)(?:\n|$)/i);
+    if (match) return `Transaction failed: ${match[1].trim()}`;
   }
 
   return "Transaction failed. Please try again.";
@@ -294,7 +415,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
   const [approvalProgress, setApprovalProgress] = useState<{
     step: number;
     total: number;
-    steps: { label: string; description: string; done: boolean }[];
+    steps: { label: string; description: string; done: boolean; spender?: string }[];
   } | null>(null);
   const [pendingInputToken, setPendingInputToken] = useState<string | null>(null);
 
@@ -410,29 +531,32 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
             pendingBundle.tx.value || "0",
             pendingInputToken
           ),
-          (async () => {
-            try {
-              await publicClient.call({
-                account: address,
-                ...txParams,
-              });
-              return { ok: true as const };
-            } catch (err) {
-              return {
-                ok: false as const,
-                errorMessage: err instanceof Error ? err.message : "eth_call failed",
-              };
-            }
-          })(),
+          devEthCall(publicClient, { account: address, ...txParams }),
         ]);
 
         if (tenderlyResult.result) {
           setSimulationResult(tenderlyResult.result);
         }
 
-        // If BOTH simulations fail, block the transaction
-        if (!tenderlyResult.ok && !ethCallResult.ok) {
-          const errorMsg = tenderlyResult.errorMessage || ethCallResult.errorMessage || "Simulation failed";
+        // eth_call is the ground truth for the chain we're submitting to
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          setError(parseErrorMessage(new Error(errorMsg)));
+          setStatus("error");
+          return;
+        }
+        if (!tenderlyResult.ok) {
+          if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
+        }
+      } else if (process.env.NODE_ENV === "development") {
+        const ethCallResult = await devEthCall(publicClient, {
+          account: address,
+          to: pendingBundle.tx.to as `0x${string}`,
+          data: pendingBundle.tx.data as `0x${string}`,
+          value: pendingBundle.tx.value ? BigInt(pendingBundle.tx.value) : 0n,
+        });
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return;
@@ -442,6 +566,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       // Execute the transaction
       setStatus("executing");
 
+      if (process.env.NODE_ENV === "development") console.log("[TX]", { to: pendingBundle.tx.to, selector: (pendingBundle.tx.data as string).slice(0, 10), data: pendingBundle.tx.data });
       const hash = await sendTransactionAsync({
         to: pendingBundle.tx.to as `0x${string}`,
         data: pendingBundle.tx.data as `0x${string}`,
@@ -457,6 +582,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         pollingInterval: 1_000,
       });
 
+      if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -480,6 +606,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     try {
       setStatus("executing");
 
+      if (process.env.NODE_ENV === "development") console.log("[TX]", { to: pendingBundle.tx.to, selector: (pendingBundle.tx.data as string).slice(0, 10), data: pendingBundle.tx.data });
       const hash = await sendTransactionAsync({
         to: pendingBundle.tx.to as `0x${string}`,
         data: pendingBundle.tx.data as `0x${string}`,
@@ -495,6 +622,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         pollingInterval: 1_000,
       });
 
+      if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -582,20 +710,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           inputToken
         );
 
-        const ethCallPromise = (async () => {
-          try {
-            await publicClient.call({
-              account: address,
-              ...txParams,
-            });
-            return { ok: true as const };
-          } catch (err) {
-            return {
-              ok: false as const,
-              errorMessage: err instanceof Error ? err.message : "eth_call failed",
-            };
-          }
-        })();
+        const ethCallPromise = devEthCall(publicClient, { account: address, ...txParams });
 
         const [tenderlyResult, ethCallResult] = await Promise.all([
           tenderlyPromise,
@@ -612,12 +727,31 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           return tenderlyResult.result;
         }
 
-        // If BOTH simulations fail, block the transaction
-        if (!tenderlyResult.ok && !ethCallResult.ok) {
-          const errorMsg = tenderlyResult.errorMessage || ethCallResult.errorMessage || "Simulation failed";
+        // eth_call is the ground truth for the chain we're submitting to
+        // If eth_call fails, block the transaction regardless of Tenderly result
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return tenderlyResult.result;
+        }
+        // If only Tenderly fails but eth_call passes, allow (Tenderly may be stale)
+        if (!tenderlyResult.ok) {
+          if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
+        }
+      } else if (process.env.NODE_ENV === "development") {
+        setStatus("simulating");
+        const ethCallResult = await devEthCall(publicClient, {
+          account: address,
+          to: bundle.tx.to as `0x${string}`,
+          data: bundle.tx.data as `0x${string}`,
+          value: bundle.tx.value ? BigInt(bundle.tx.value) : 0n,
+        });
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          setError(parseErrorMessage(new Error(errorMsg)));
+          setStatus("error");
+          return null;
         }
       }
       // On test networks, no simulation to preview — execute directly
@@ -625,6 +759,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       // Execute the transaction
       setStatus("executing");
 
+      if (process.env.NODE_ENV === "development") console.log("[TX]", { to: bundle.tx.to, selector: (bundle.tx.data as string).slice(0, 10), data: bundle.tx.data });
       const hash = await sendTransactionAsync({
         to: bundle.tx.to as `0x${string}`,
         data: bundle.tx.data as `0x${string}`,
@@ -641,6 +776,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         pollingInterval: 1_000,
       });
 
+      if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -733,14 +869,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
         const [tenderlyResult, ethCallResult] = await Promise.all([
           runTenderlySimulation(address, controllerAddress, callData, "0", vaultAddress),
-          (async () => {
-            try {
-              await publicClient.call({ account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` });
-              return { ok: true as const };
-            } catch (err) {
-              return { ok: false as const, errorMessage: err instanceof Error ? err.message : "eth_call failed" };
-            }
-          })(),
+          devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` }),
         ]);
 
         if (tenderlyResult.result) setSimulationResult(tenderlyResult.result);
@@ -750,19 +879,33 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           return tenderlyResult.result;
         }
 
-        if (!tenderlyResult.ok && !ethCallResult.ok) {
-          const errorMsg = tenderlyResult.errorMessage || ethCallResult.errorMessage || "Simulation failed";
+        // eth_call is the ground truth for the chain we're submitting to
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return tenderlyResult.result;
         }
-      } else if (options?.previewOnly) {
-        setStatus("idle");
-        return null;
+        if (!tenderlyResult.ok) {
+          if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
+        }
+      } else {
+        const ethCallResult = await devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` });
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          setError(parseErrorMessage(new Error(errorMsg)));
+          setStatus("error");
+          return null;
+        }
+        if (options?.previewOnly) {
+          setStatus("idle");
+          return null;
+        }
       }
 
       // Execute
       setStatus("executing");
+      if (process.env.NODE_ENV === "development") console.log("[TX]", { to: controllerAddress, selector: (callData as string).slice(0, 10), data: callData });
       const hash = await sendTransactionAsync({
         to: controllerAddress as `0x${string}`,
         data: callData as `0x${string}`,
@@ -772,6 +915,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("waitingTx");
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000, pollingInterval: 1_000 });
+      if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -923,14 +1067,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
         const [tenderlyResult, ethCallResult] = await Promise.all([
           runTenderlySimulation(address, controllerAddress, callData, "0", vaultAddress),
-          (async () => {
-            try {
-              await publicClient.call({ account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` });
-              return { ok: true as const };
-            } catch (err) {
-              return { ok: false as const, errorMessage: err instanceof Error ? err.message : "eth_call failed" };
-            }
-          })(),
+          devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` }),
         ]);
 
         if (tenderlyResult.result) setSimulationResult(tenderlyResult.result);
@@ -940,19 +1077,33 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           return tenderlyResult.result;
         }
 
-        if (!tenderlyResult.ok && !ethCallResult.ok) {
-          const errorMsg = tenderlyResult.errorMessage || ethCallResult.errorMessage || "Simulation failed";
+        // eth_call is the ground truth for the chain we're submitting to
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return tenderlyResult.result;
         }
-      } else if (options?.previewOnly) {
-        setStatus("idle");
-        return null;
+        if (!tenderlyResult.ok) {
+          if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
+        }
+      } else {
+        const ethCallResult = await devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` });
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          setError(parseErrorMessage(new Error(errorMsg)));
+          setStatus("error");
+          return null;
+        }
+        if (options?.previewOnly) {
+          setStatus("idle");
+          return null;
+        }
       }
 
       // Execute
       setStatus("executing");
+      if (process.env.NODE_ENV === "development") console.log("[TX]", { to: controllerAddress, selector: (callData as string).slice(0, 10), data: callData });
       const hash = await sendTransactionAsync({
         to: controllerAddress as `0x${string}`,
         data: callData as `0x${string}`,
@@ -962,6 +1113,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("waitingTx");
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000, pollingInterval: 1_000 });
+      if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -1037,14 +1189,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
         const [tenderlyResult, ethCallResult] = await Promise.all([
           runTenderlySimulation(address, controllerAddress, callData, "0", vaultAddress),
-          (async () => {
-            try {
-              await publicClient.call({ account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` });
-              return { ok: true as const };
-            } catch (err) {
-              return { ok: false as const, errorMessage: err instanceof Error ? err.message : "eth_call failed" };
-            }
-          })(),
+          devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` }),
         ]);
 
         if (tenderlyResult.result) setSimulationResult(tenderlyResult.result);
@@ -1054,19 +1199,33 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           return tenderlyResult.result;
         }
 
-        if (!tenderlyResult.ok && !ethCallResult.ok) {
-          const errorMsg = tenderlyResult.errorMessage || ethCallResult.errorMessage || "Simulation failed";
+        // eth_call is the ground truth for the chain we're submitting to
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return tenderlyResult.result;
         }
-      } else if (options?.previewOnly) {
-        setStatus("idle");
-        return null;
+        if (!tenderlyResult.ok) {
+          if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
+        }
+      } else {
+        const ethCallResult = await devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` });
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          setError(parseErrorMessage(new Error(errorMsg)));
+          setStatus("error");
+          return null;
+        }
+        if (options?.previewOnly) {
+          setStatus("idle");
+          return null;
+        }
       }
 
       // Execute
       setStatus("executing");
+      if (process.env.NODE_ENV === "development") console.log("[TX]", { to: controllerAddress, selector: (callData as string).slice(0, 10), data: callData });
       const hash = await sendTransactionAsync({
         to: controllerAddress as `0x${string}`,
         data: callData as `0x${string}`,
@@ -1076,6 +1235,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("waitingTx");
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000, pollingInterval: 1_000 });
+      if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -1217,14 +1377,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
         const [tenderlyResult, ethCallResult] = await Promise.all([
           runTenderlySimulation(address, controllerAddress, callData, "0", vaultAddress),
-          (async () => {
-            try {
-              await publicClient.call({ account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` });
-              return { ok: true as const };
-            } catch (err) {
-              return { ok: false as const, errorMessage: err instanceof Error ? err.message : "eth_call failed" };
-            }
-          })(),
+          devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` }),
         ]);
 
         if (tenderlyResult.result) setSimulationResult(tenderlyResult.result);
@@ -1234,19 +1387,33 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           return tenderlyResult.result;
         }
 
-        if (!tenderlyResult.ok && !ethCallResult.ok) {
-          const errorMsg = tenderlyResult.errorMessage || ethCallResult.errorMessage || "Simulation failed";
+        // eth_call is the ground truth for the chain we're submitting to
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return tenderlyResult.result;
         }
-      } else if (options?.previewOnly) {
-        setStatus("idle");
-        return null;
+        if (!tenderlyResult.ok) {
+          if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
+        }
+      } else {
+        const ethCallResult = await devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` });
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          setError(parseErrorMessage(new Error(errorMsg)));
+          setStatus("error");
+          return null;
+        }
+        if (options?.previewOnly) {
+          setStatus("idle");
+          return null;
+        }
       }
 
       // Execute
       setStatus("executing");
+      if (process.env.NODE_ENV === "development") console.log("[TX]", { to: controllerAddress, selector: (callData as string).slice(0, 10), data: callData });
       const hash = await sendTransactionAsync({
         to: controllerAddress as `0x${string}`,
         data: callData as `0x${string}`,
@@ -1256,6 +1423,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("waitingTx");
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000, pollingInterval: 1_000 });
+      if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -1295,7 +1463,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
   const repayDirect = useCallback(async (
     controllerAddress: `0x${string}`,
     repayAmount: bigint,
-    options?: { previewOnly?: boolean }
+    options?: { previewOnly?: boolean; closeLoan?: boolean }
   ): Promise<SimulationResult | null> => {
     if (!address || !publicClient) {
       setError("Wallet not connected");
@@ -1314,7 +1482,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setPendingApproval(null);
 
       // Encode controller.repay(_d_debt, _for, max_active_band)
-      const { encodeFunctionData } = await import("viem");
+      // When closing loan, pass maxUint256 as _d_debt so interest accrual
+      // between quote and TX confirmation can't prevent closure.
+      // The controller caps at actual debt: d_debt = min(debt, _d_debt)
+      const { encodeFunctionData, maxUint256 } = await import("viem");
+      const isClosing = options?.closeLoan;
+      const contractRepayAmount = isClosing ? maxUint256 : repayAmount;
       const callData = encodeFunctionData({
         abi: [{
           name: "repay",
@@ -1328,10 +1501,11 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           outputs: [],
         }],
         functionName: "repay",
-        args: [repayAmount, address, 2n ** 255n - 1n],
+        args: [contractRepayAmount, address, 2n ** 255n - 1n],
       });
 
       // Check crvUSD allowance to controller
+      // Use actual repayAmount (not maxUint256) since controller only transfers min(debt, _d_debt)
       const currentAllowance = await checkAllowance(
         publicClient,
         address,
@@ -1363,21 +1537,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
         const [tenderlyResult, ethCallResult] = await Promise.all([
           runTenderlySimulation(address, controllerAddress, callData, "0", CRVUSD),
-          (async () => {
-            try {
-              await publicClient.call({
-                account: address,
-                to: controllerAddress,
-                data: callData as `0x${string}`,
-              });
-              return { ok: true as const };
-            } catch (err) {
-              return {
-                ok: false as const,
-                errorMessage: err instanceof Error ? err.message : "eth_call failed",
-              };
-            }
-          })(),
+          devEthCall(publicClient, { account: address, to: controllerAddress, data: callData as `0x${string}` }),
         ]);
 
         if (tenderlyResult.result) {
@@ -1389,19 +1549,33 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           return tenderlyResult.result;
         }
 
-        if (!tenderlyResult.ok && !ethCallResult.ok) {
-          const errorMsg = tenderlyResult.errorMessage || ethCallResult.errorMessage || "Simulation failed";
+        // eth_call is the ground truth for the chain we're submitting to
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return tenderlyResult.result;
         }
-      } else if (options?.previewOnly) {
-        setStatus("idle");
-        return null;
+        if (!tenderlyResult.ok) {
+          if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
+        }
+      } else {
+        const ethCallResult = await devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` });
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          setError(parseErrorMessage(new Error(errorMsg)));
+          setStatus("error");
+          return null;
+        }
+        if (options?.previewOnly) {
+          setStatus("idle");
+          return null;
+        }
       }
 
       // Execute the transaction
       setStatus("executing");
+      if (process.env.NODE_ENV === "development") console.log("[TX]", { to: controllerAddress, selector: (callData as string).slice(0, 10), data: callData });
 
       const hash = await sendTransactionAsync({
         to: controllerAddress,
@@ -1417,6 +1591,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         pollingInterval: 1_000,
       });
 
+      if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -1432,17 +1607,191 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     }
   }, [address, publicClient, sendTransactionAsync, isTenderlyVNet, chainId, simulationResult]);
 
+  // Redeem a vault token (e.g., scrvUSD) to crvUSD, then repay controller directly.
+  // Bypasses Enso — two sequential transactions. Used for vault tokens with crvUSD underlying.
+  const repayWithRedeem = useCallback(async (
+    controllerAddress: `0x${string}`,
+    vaultTokenAddress: `0x${string}`,
+    redeemAmount: bigint,
+    options?: { previewOnly?: boolean; tokenSymbol?: string }
+  ): Promise<SimulationResult | null> => {
+    if (!address || !publicClient) {
+      setError("Wallet not connected");
+      setStatus("error");
+      return null;
+    }
+
+    try {
+      setStatus("building");
+      setError(null);
+      setTxHash(null);
+      setSimulationResult(null);
+      setPendingBundle(null);
+      setPendingApproval(null);
+
+      const { encodeFunctionData } = await import("viem");
+
+      // Step 1: Preview how much crvUSD we'll get from redeeming
+      const crvUsdOut = await publicClient.readContract({
+        address: vaultTokenAddress,
+        abi: [{
+          name: "previewRedeem",
+          type: "function",
+          stateMutability: "view",
+          inputs: [{ name: "shares", type: "uint256" }],
+          outputs: [{ name: "assets", type: "uint256" }],
+        }],
+        functionName: "previewRedeem",
+        args: [redeemAmount],
+      });
+
+      if (process.env.NODE_ENV === "development") {
+        console.log("[Redeem+Repay] Preview redeem:", { shares: redeemAmount.toString(), crvUsdOut: crvUsdOut.toString() });
+      }
+
+      // Step 2: Check vault token allowance — ERC4626 redeem from own shares doesn't need approval
+      // (owner=msg.sender), so we skip this check
+
+      // Step 3: Redeem vault token → crvUSD
+      const redeemData = encodeFunctionData({
+        abi: [{
+          name: "redeem",
+          type: "function",
+          stateMutability: "nonpayable",
+          inputs: [
+            { name: "shares", type: "uint256" },
+            { name: "receiver", type: "address" },
+            { name: "owner", type: "address" },
+          ],
+          outputs: [{ name: "assets", type: "uint256" }],
+        }],
+        functionName: "redeem",
+        args: [redeemAmount, address, address],
+      });
+
+      // Step 4: Build repay calldata (with the crvUSD we'll get)
+      const repayData = encodeFunctionData({
+        abi: [{
+          name: "repay",
+          type: "function",
+          stateMutability: "nonpayable",
+          inputs: [
+            { name: "_d_debt", type: "uint256" },
+            { name: "_for", type: "address" },
+            { name: "max_active_band", type: "int256" },
+          ],
+          outputs: [],
+        }],
+        functionName: "repay",
+        args: [crvUsdOut, address, 2n ** 255n - 1n],
+      });
+
+      // Step 5: Check crvUSD allowance to controller
+      const currentAllowance = await checkAllowance(
+        publicClient,
+        address,
+        CRVUSD_ADDRESS,
+        controllerAddress
+      );
+
+      if (currentAllowance < crvUsdOut) {
+        // Need crvUSD approval — store redeem tx as pending so we can resume after
+        setPendingBundle({
+          tx: { to: vaultTokenAddress, data: redeemData, value: "0" },
+          gas: "0",
+          createdAt: Date.now(),
+          // Stash repay info for after approval
+          _repayAfter: { controllerAddress, repayData, crvUsdOut: crvUsdOut.toString() },
+        } as unknown as EnsoBundleResponse);
+        setPendingInputToken(CRVUSD_ADDRESS);
+        setPendingApproval({
+          token: CRVUSD_ADDRESS,
+          tokenSymbol: "crvUSD",
+          spender: controllerAddress,
+          amount: crvUsdOut,
+        });
+        setStatus("needsApproval");
+        return null;
+      }
+
+      // Skip simulation for local/VNet
+      if (options?.previewOnly) {
+        setStatus("idle");
+        return null;
+      }
+
+      // Step 6: Execute redeem transaction
+      setStatus("executing");
+      if (process.env.NODE_ENV === "development") console.log("[TX] Redeem", { to: vaultTokenAddress, shares: redeemAmount.toString() });
+
+      const redeemHash = await sendTransactionAsync({
+        to: vaultTokenAddress,
+        data: redeemData as `0x${string}`,
+      });
+
+      setTxHash(redeemHash);
+      setStatus("waitingTx");
+
+      const redeemReceipt = await publicClient.waitForTransactionReceipt({
+        hash: redeemHash,
+        timeout: 60_000,
+        pollingInterval: 1_000,
+      });
+
+      if (process.env.NODE_ENV === "development") console.log("[TX Receipt] Redeem", { hash: redeemHash, status: redeemReceipt.status });
+
+      if (redeemReceipt.status !== "success") {
+        setStatus("reverted");
+        setError("Redeem transaction reverted");
+        return null;
+      }
+
+      // Step 7: Execute repay transaction
+      setStatus("executing");
+      if (process.env.NODE_ENV === "development") console.log("[TX] Repay", { to: controllerAddress, amount: crvUsdOut.toString() });
+
+      const repayHash = await sendTransactionAsync({
+        to: controllerAddress,
+        data: repayData as `0x${string}`,
+      });
+
+      setTxHash(repayHash);
+      setStatus("waitingTx");
+
+      const repayReceipt = await publicClient.waitForTransactionReceipt({
+        hash: repayHash,
+        timeout: 60_000,
+        pollingInterval: 1_000,
+      });
+
+      if (process.env.NODE_ENV === "development") console.log("[TX Receipt] Repay", { hash: repayHash, status: repayReceipt.status });
+
+      if (repayReceipt.status === "success") {
+        setStatus("success");
+      } else {
+        setStatus("reverted");
+        setError("Repay transaction reverted");
+      }
+
+      return null;
+    } catch (err) {
+      setError(parseErrorMessage(err));
+      setStatus("error");
+      return null;
+    }
+  }, [address, publicClient, sendTransactionAsync]);
+
   const repayWithSwap = useCallback(async (
     vaultAddress: `0x${string}`,
     tokenIn: string,
     amountIn: string,
+    decimals: number = 18,
     slippage: number = 100,
     options?: { previewOnly?: boolean; tokenSymbol?: string }
   ): Promise<SimulationResult | null> => {
     if (!address) return null;
     const { parseUnits } = await import("viem");
-    // TODO: Get decimals from token - for now assume 18
-    const amountWei = parseUnits(amountIn, 18);
+    const amountWei = parseUnits(amountIn, decimals);
     return executeBundle(
       () => fetchRepayWithSwapBundle({
         fromAddress: address,
@@ -1515,7 +1864,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       ? (isCvgCvxVault ? "CVX" : vaultInfo!.underlyingSymbol)
       : null;
     const tokenSymbol = options?.tokenSymbol ?? "token";
-    const allApprovals: { approval: PendingApproval; needed: boolean; label: string; description: string }[] = [
+    const allApprovals: { approval: PendingApproval; needed: boolean; label: string; description: string; spender: string }[] = [
       {
         approval: {
           type: "controller",
@@ -1524,8 +1873,9 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           spender: ENSO_SHORTCUTS as `0x${string}`,
         },
         needed: !controllerApproved,
-        label: "Curve Lending",
-        description: "Allow Enso Router to borrow on your behalf",
+        label: "Lending Access",
+        description: "Approve Enso Router to borrow on your behalf",
+        spender: ENSO_SHORTCUTS,
       },
       {
         approval: {
@@ -1536,7 +1886,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         },
         needed: crvUsdAllowance < debtWei,
         label: "crvUSD",
-        description: "Allow Enso Router to swap borrowed crvUSD",
+        description: "Approve crvUSD spending for swap",
+        spender: ENSO_SHORTCUTS,
       },
     ];
     if (swapTarget) {
@@ -1553,12 +1904,13 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         },
         needed: swapTargetAllowance === 0n,
         label: swapTargetSymbol!,
-        description: `Allow Enso Router to deposit ${swapTargetSymbol} into ${tokenSymbol} vault`,
+        description: `Approve ${swapTargetSymbol} spending for vault deposit`,
+        spender: ENSO_SHORTCUTS,
       });
     }
 
     const total = allApprovals.length;
-    const steps = allApprovals.map((a) => ({ label: a.label, description: a.description, done: !a.needed }));
+    const steps = allApprovals.map((a) => ({ label: a.label, description: a.description, done: !a.needed, spender: a.spender }));
     const firstNeededIdx = allApprovals.findIndex((a) => a.needed);
 
     if (firstNeededIdx >= 0) {
@@ -1669,12 +2021,18 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           setStatus("idle");
           return simResult.result;
         }
-      } else if (options?.previewOnly) {
-        setStatus("idle");
-        return null;
+      } else {
+        if (process.env.NODE_ENV === "development") {
+          await devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` });
+        }
+        if (options?.previewOnly) {
+          setStatus("idle");
+          return null;
+        }
       }
 
       setStatus("executing");
+      if (process.env.NODE_ENV === "development") console.log("[TX]", { fn: "liquidate", to: controllerAddress });
 
       const hash = await writeContractAsync({
         address: controllerAddress as `0x${string}`,
@@ -1703,6 +2061,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         pollingInterval: 1_000,
       });
 
+      if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -1729,6 +2088,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     borrowMore,
     repay,
     repayDirect,
+    repayWithRedeem,
     repayWithSwap,
     borrowAndSwap,
     selfLiquidate,

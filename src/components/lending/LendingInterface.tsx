@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { useState, useMemo, useEffect, useLayoutEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import Image from "next/image";
 import { formatUnits } from "viem";
 import { useQuery } from "@tanstack/react-query";
@@ -28,6 +29,7 @@ export type LendingTxState = {
     toAmount: string;
     toSymbol: string;
     toLogo: string;
+    message?: string;
   };
 } | null;
 
@@ -250,9 +252,17 @@ export function LendingInterface({
   };
 
   // Child tab estimated health (all tabs now report via callback)
+  // Debounce null (reset) values so health bar doesn't jump during animations
   const [childEstimatedHealth, setChildEstimatedHealth] = useState<number | null>(null);
+  const healthDebounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const handleEstimatedHealthChange = useCallback((health: number | null) => {
-    setChildEstimatedHealth(health);
+    clearTimeout(healthDebounceRef.current);
+    if (health === null) {
+      // Delay null by 400ms — lets animations settle before health bar reacts
+      healthDebounceRef.current = setTimeout(() => setChildEstimatedHealth(null), 400);
+    } else {
+      setChildEstimatedHealth(health);
+    }
   }, []);
 
   // Child tab estimated leverage
@@ -282,6 +292,8 @@ export function LendingInterface({
   // Debug tx state (dev only)
   type DebugLendingTxState = "none" | "borrow-pending" | "borrow-success" | "borrow-reverted" | "repay-pending" | "repay-success" | "repay-reverted" | "collateral-pending" | "collateral-success" | "collateral-reverted" | "leverage-pending" | "leverage-success" | "leverage-reverted" | "newloan-pending" | "newloan-success" | "newloan-reverted";
   const [debugTxState, setDebugTxState] = useState<DebugLendingTxState>("none");
+  type DebugApprovalScenario = "none" | "ctrl-1of1" | "erc20-1of2" | "ctrl-2of2" | "approving";
+  const [debugApproval, setDebugApproval] = useState<DebugApprovalScenario>("none");
   const debugHash = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
   const debugLendingTxState: LendingTxState = useMemo(() => {
     if (debugTxState === "none") return null;
@@ -299,12 +311,58 @@ export function LendingInterface({
         fromSymbol: action === "borrow" ? "crvUSD" : action === "repay" ? "crvUSD" : vault.symbol,
         fromLogo: action === "borrow" || action === "repay" ? "/tokens/crvusd.png" : vault.logo,
         toAmount: action === "borrow" ? "10.5" : action === "repay" ? "500.00" : "1,250.00",
-        toSymbol: action === "borrow" ? vault.symbol : action === "repay" ? "crvUSD debt" : "crvUSD",
+        toSymbol: action === "borrow" ? vault.symbol : "crvUSD",
         toLogo: action === "borrow" ? vault.logo : "/tokens/crvusd.png",
       },
     };
   }, [debugTxState, vault]);
   const effectiveTxState = debugLendingTxState || activeTxState;
+
+  // Debug approval scenarios
+  const debugApprovalData = useMemo(() => {
+    if (debugApproval === "none") return null;
+    const mockAmount = 10n ** BigInt(vault.decimals) * 100n;
+    const scenarios: Record<Exclude<DebugApprovalScenario, "none">, {
+      type: "erc20" | "controller";
+      tokenSymbol: string;
+      amount?: bigint;
+      progress: { step: number; total: number; steps: { label: string; description: string; done: boolean }[] };
+      isApproving: boolean;
+    }> = {
+      "ctrl-1of1": {
+        type: "controller", tokenSymbol: "Controller",
+        progress: { step: 1, total: 1, steps: [
+          { label: "yld Zapper", description: "Allow yld Zapper to manage position on LlamaLend controller", done: false },
+        ]},
+        isApproving: false,
+      },
+      "erc20-1of2": {
+        type: "erc20", tokenSymbol: vault.symbol, amount: mockAmount,
+        progress: { step: 1, total: 2, steps: [
+          { label: vault.symbol, description: `Allow yld Zapper to spend ${vault.symbol}`, done: false },
+          { label: "yld Zapper", description: "Allow yld Zapper to manage position on LlamaLend controller", done: false },
+        ]},
+        isApproving: false,
+      },
+      "ctrl-2of2": {
+        type: "controller", tokenSymbol: "Controller",
+        progress: { step: 2, total: 2, steps: [
+          { label: vault.symbol, description: `Allow yld Zapper to spend ${vault.symbol}`, done: true },
+          { label: "yld Zapper", description: "Allow yld Zapper to manage position on LlamaLend controller", done: false },
+        ]},
+        isApproving: false,
+      },
+      "approving": {
+        type: "erc20", tokenSymbol: vault.symbol, amount: mockAmount,
+        progress: { step: 1, total: 2, steps: [
+          { label: vault.symbol, description: `Allow yld Zapper to spend ${vault.symbol}`, done: false },
+          { label: "yld Zapper", description: "Allow yld Zapper to manage position on LlamaLend controller", done: false },
+        ]},
+        isApproving: true,
+      },
+    };
+    return scenarios[debugApproval];
+  }, [debugApproval, vault]);
 
   // DEBUG: Draggable panel position (persisted to localStorage)
   const [debugPanelPos, setDebugPanelPos] = useState<{ x: number; y: number } | null>(() => {
@@ -365,6 +423,35 @@ export function LendingInterface({
     setChildDebtDelta(null);
   }, [activeTab]);
 
+  // Smooth height transition for tab content
+  const tabContentRef = useRef<HTMLDivElement>(null);
+  const [tabContentHeight, setTabContentHeight] = useState<number | undefined>(undefined);
+  const [tabOverflowHidden, setTabOverflowHidden] = useState(false);
+
+  // Set initial pixel height synchronously before first paint (CSS can't transition from auto)
+  useLayoutEffect(() => {
+    if (tabContentRef.current && tabContentHeight === undefined) {
+      setTabContentHeight(tabContentRef.current.offsetHeight);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Watch for content height changes; delay update to next frame so the browser
+  // paints the old height first, allowing the CSS transition to animate smoothly
+  useEffect(() => {
+    if (!tabContentRef.current) return;
+    const observer = new ResizeObserver(() => {
+      if (tabContentRef.current) {
+        const newHeight = tabContentRef.current.offsetHeight;
+        requestAnimationFrame(() => {
+          setTabOverflowHidden(true);
+          setTabContentHeight(newHeight);
+        });
+      }
+    });
+    observer.observe(tabContentRef.current);
+    return () => observer.disconnect();
+  }, []);
+
   const effectiveEstimatedHealth = childEstimatedHealth;
 
   // Position summary values
@@ -421,6 +508,15 @@ export function LendingInterface({
 
   const hasLoan = position?.hasLoan ?? false;
 
+  // Reset to "borrow" tab when a loan is first created
+  const prevHasLoan = useRef(hasLoan);
+  useEffect(() => {
+    if (hasLoan && !prevHasLoan.current) {
+      setActiveTab("borrow");
+    }
+    prevHasLoan.current = hasLoan;
+  }, [hasLoan]);
+
   // New loan source choice (Curve vs yld)
   const [loanSource, setLoanSourceState] = useState<"choice" | "yldfi">(() => {
     if (typeof window === "undefined") return "choice";
@@ -439,8 +535,13 @@ export function LendingInterface({
   if (positionLoading) {
     return (
       <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl overflow-hidden p-4">
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-5 h-5 text-[var(--muted-foreground)] animate-spin" />
+        <div className="flex items-center justify-center py-40 text-sm text-[var(--muted-foreground)]">
+          <span>Loading position</span>
+          <span className="inline-flex items-center gap-0.5 ml-0.5">
+            <span className="animate-bounce" style={{ animationDelay: "0ms", animationDuration: "600ms" }}>.</span>
+            <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
+            <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
+          </span>
         </div>
       </div>
     );
@@ -457,12 +558,31 @@ export function LendingInterface({
           <h3 className="text-lg font-medium mb-2">Awaiting Confirmation</h3>
           {effectiveTxState.details && (() => {
             const d = effectiveTxState.details!;
+            if (d.message) {
+              // Render message with inline token logos
+              const isSameToken = d.fromSymbol === d.toSymbol;
+              return (
+                <div className="flex items-center flex-wrap justify-center gap-1 text-sm text-[var(--muted-foreground)] mb-3 px-4">
+                  <span>Repaying</span>
+                  <span className="mono">{d.toAmount}</span>
+                  <img src={d.toLogo} alt={d.toSymbol} className="w-4 h-4 rounded-full" />
+                  <span className="mono">{d.toSymbol}</span>
+                  {!isSameToken && (
+                    <>
+                      <span>with</span>
+                      <span className="mono">{d.fromAmount}</span>
+                      <img src={d.fromLogo} alt={d.fromSymbol} className="w-4 h-4 rounded-full" />
+                      <span className="mono">{d.fromSymbol}</span>
+                    </>
+                  )}
+                </div>
+              );
+            }
             const isSameToken = d.fromSymbol === d.toSymbol && d.fromLogo === d.toLogo;
             return isSameToken ? (
-              <div className="flex items-center gap-2 mb-3 px-4 py-2 bg-[var(--muted)] rounded-lg">
-                <img src={d.fromLogo} alt={d.fromSymbol} className="w-5 h-5 rounded-full" />
-                <span className="mono text-sm">{d.fromAmount} {d.fromSymbol}</span>
-              </div>
+              <p className="text-sm text-[var(--muted-foreground)] mb-3">
+                {effectiveTxState.action} {d.fromAmount} {d.fromSymbol}
+              </p>
             ) : (
               <div className="flex items-center gap-2 mb-3 px-4 py-2 bg-[var(--muted)] rounded-lg">
                 <img src={d.fromLogo} alt={d.fromSymbol} className="w-5 h-5 rounded-full" />
@@ -545,6 +665,111 @@ export function LendingInterface({
     { label: "New Loan", prefix: "newloan" },
   ];
 
+  // DEBUG: Shared debug panel (rendered via portal to escape stacking contexts)
+  const debugPanel = process.env.NODE_ENV === "development" && typeof document !== "undefined" && createPortal(
+    <div
+      data-debug-panel
+      className={cn(
+        "fixed z-[9999] border border-[var(--border)] rounded-lg p-3 shadow-2xl max-w-xs pointer-events-auto",
+        isDragging && "cursor-grabbing"
+      )}
+      style={{
+        background: "#09090b",
+        ...(debugPanelPos ? {
+          left: debugPanelPos.x,
+          top: debugPanelPos.y,
+          bottom: "auto",
+          right: "auto",
+        } : {
+          bottom: 16,
+          right: 16,
+        }),
+      }}
+    >
+      <div
+        className="text-xs text-[var(--muted-foreground)] mb-2 font-medium cursor-grab select-none"
+        onMouseDown={handleDragStart}
+      >
+        ⋮⋮ Lending TX Preview
+      </div>
+      <div className="space-y-2">
+        <button
+          onClick={() => { setDebugTxState("none"); setDebugApproval("none"); }}
+          className={cn(
+            "w-full px-2 py-1 text-xs rounded transition-colors",
+            debugTxState === "none" && debugApproval === "none"
+              ? "bg-[var(--foreground)] text-[var(--background)]"
+              : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+          )}
+        >
+          Reset All
+        </button>
+        {debugRows.map(({ label, prefix }) => (
+          <div key={prefix} className="flex gap-1">
+            <span className="text-[10px] text-[var(--muted-foreground)] w-16 flex items-center">{label}</span>
+            <button
+              onClick={() => setDebugTxState(`${prefix}-pending` as DebugLendingTxState)}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                debugTxState === `${prefix}-pending`
+                  ? "bg-[var(--accent)] text-[var(--background)]"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Pending
+            </button>
+            <button
+              onClick={() => setDebugTxState(`${prefix}-success` as DebugLendingTxState)}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                debugTxState === `${prefix}-success`
+                  ? "bg-green-500 text-white"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Success
+            </button>
+            <button
+              onClick={() => setDebugTxState(`${prefix}-reverted` as DebugLendingTxState)}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                debugTxState === `${prefix}-reverted`
+                  ? "bg-red-500 text-white"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Reverted
+            </button>
+          </div>
+        ))}
+        {/* Approval scenarios */}
+        <div className="flex gap-1 mt-1 pt-1 border-t border-[var(--border)]">
+          <span className="text-[10px] text-[var(--muted-foreground)] w-16 flex items-center">Approve</span>
+          {([
+            { key: "ctrl-1of1" as const, label: "1/1" },
+            { key: "erc20-1of2" as const, label: "1/2" },
+            { key: "ctrl-2of2" as const, label: "2/2" },
+            { key: "approving" as const, label: "Spin" },
+          ]).map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => { setDebugApproval(key); setDebugTxState("none"); }}
+              className={cn(
+                "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                debugApproval === key
+                  ? "bg-yellow-500 text-black"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+
   // --- No Loan View: Choice screen or NewLoanForm ---
   if (!hasLoan) {
     // Choice screen: Curve Finance vs yld
@@ -597,26 +822,28 @@ export function LendingInterface({
     // yld NewLoanForm view with back button
     return (
       <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl">
-        {/* Health Bar */}
-        <div className="overflow-hidden rounded-t-xl">
-          <HealthBar
-            currentHealth={undefined}
-            estimatedHealth={effectiveEstimatedHealth}
-            alwaysShow
-            title="New Position"
-            titlePrefix={
-              <button
-                onClick={() => setLoanSource("choice")}
-                className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-0.5 -ml-1"
-                title="Back to options"
-              >
-                <ChevronLeft size={16} />
-              </button>
-            }
-          />
-        </div>
+        {/* Health Bar — hidden during tx states */}
+        {!effectiveTxState && (
+          <div className="overflow-hidden rounded-t-xl">
+            <HealthBar
+              currentHealth={undefined}
+              estimatedHealth={effectiveEstimatedHealth}
+              alwaysShow
+              title="New Position"
+              titlePrefix={
+                <button
+                  onClick={() => setLoanSource("choice")}
+                  className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-0.5 -ml-1"
+                  title="Back to options"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+              }
+            />
+          </div>
+        )}
 
-        <div className={effectiveTxState ? "hidden" : "p-4 space-y-4"}>
+        <div className={effectiveTxState || debugApprovalData ? "hidden" : "p-4 space-y-4"}>
           <NewLoanForm
             vault={vault}
             userBalance={userBalance}
@@ -627,88 +854,99 @@ export function LendingInterface({
           />
         </div>
 
-        {txStateOverlay}
-
-        {/* DEBUG: Lending Tx State Preview Panel */}
-        {process.env.NODE_ENV === "development" && (
-          <div
-            data-debug-panel
-            className={cn(
-              "fixed z-[9999] border border-[var(--border)] rounded-lg p-3 shadow-2xl max-w-xs pointer-events-auto",
-              isDragging && "cursor-grabbing"
-            )}
-            style={{
-              background: "#09090b",
-              ...(debugPanelPos ? {
-                left: debugPanelPos.x,
-                top: debugPanelPos.y,
-                bottom: "auto",
-                right: "auto",
-              } : {
-                bottom: 16,
-                right: 16,
-              }),
-            }}
-          >
-            <div
-              className="text-xs text-[var(--muted-foreground)] mb-2 font-medium cursor-grab select-none"
-              onMouseDown={handleDragStart}
-            >
-              ⋮⋮ Lending TX Preview
-            </div>
-            <div className="space-y-2">
-              <button
-                onClick={() => setDebugTxState("none")}
-                className={cn(
-                  "w-full px-2 py-1 text-xs rounded transition-colors",
-                  debugTxState === "none"
-                    ? "bg-[var(--foreground)] text-[var(--background)]"
-                    : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                )}
-              >
-                Reset All
-              </button>
-              {debugRows.map(({ label, prefix }) => (
-                <div key={prefix} className="flex gap-1">
-                  <span className="text-[10px] text-[var(--muted-foreground)] w-16 flex items-center">{label}</span>
+        {/* Debug Approval Preview */}
+        {!effectiveTxState && debugApprovalData && (
+          <div className="p-4 space-y-4">
+            <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-3">
+              <div className="text-sm font-medium">
+                <span className="whitespace-nowrap">{debugApprovalData.progress.total > 1 ? "Approvals Required" : "Approval Required"} <a href={`https://etherscan.io/address/${controllerAddress}`} target="_blank" rel="noopener noreferrer" className="inline text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors font-normal"><ExternalLink size={12} className="!inline -mt-0.5" /></a></span>
+              </div>
+              {debugApprovalData.progress.total > 1 && (
+                <div className="space-y-2">
+                  {debugApprovalData.progress.steps.map((s, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      <div className="mt-0.5">
+                        {s.done ? (
+                          <Check size={14} className="text-green-500 shrink-0" />
+                        ) : i === debugApprovalData.progress.step - 1 ? (
+                          <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)] shrink-0" />
+                        ) : (
+                          <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)]/30 shrink-0" />
+                        )}
+                      </div>
+                      <div>
+                        <div className={cn(
+                          "text-sm",
+                          s.done
+                            ? "text-[var(--muted-foreground)] line-through"
+                            : i === debugApprovalData.progress.step - 1
+                              ? "text-[var(--foreground)] font-medium"
+                              : "text-[var(--muted-foreground)]"
+                        )}>
+                          {s.label}
+                        </div>
+                        <div className={cn(
+                          "text-xs",
+                          i === debugApprovalData.progress.step - 1
+                            ? "text-[var(--muted-foreground)]"
+                            : "text-[var(--muted-foreground)]/60"
+                        )}>
+                          {s.description}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {debugApprovalData.type === "erc20" && debugApprovalData.amount ? (
+                <div className="flex gap-2">
                   <button
-                    onClick={() => setDebugTxState(`${prefix}-pending` as DebugLendingTxState)}
+                    disabled={debugApprovalData.isApproving}
                     className={cn(
-                      "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                      debugTxState === `${prefix}-pending`
-                        ? "bg-[var(--accent)] text-[var(--background)]"
-                        : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                      debugApprovalData.isApproving
+                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                        : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
                     )}
                   >
-                    Pending
+                    {debugApprovalData.isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {debugApprovalData.isApproving ? "Approving..." : `${Number(formatUnits(debugApprovalData.amount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${debugApprovalData.tokenSymbol}`}
                   </button>
                   <button
-                    onClick={() => setDebugTxState(`${prefix}-success` as DebugLendingTxState)}
+                    disabled={debugApprovalData.isApproving}
                     className={cn(
-                      "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                      debugTxState === `${prefix}-success`
-                        ? "bg-green-500 text-white"
-                        : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                      debugApprovalData.isApproving
+                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                        : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
                     )}
                   >
-                    Success
-                  </button>
-                  <button
-                    onClick={() => setDebugTxState(`${prefix}-reverted` as DebugLendingTxState)}
-                    className={cn(
-                      "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                      debugTxState === `${prefix}-reverted`
-                        ? "bg-red-500 text-white"
-                        : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                    )}
-                  >
-                    Reverted
+                    {debugApprovalData.isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {debugApprovalData.isApproving ? "Approving..." : "Unlimited"}
                   </button>
                 </div>
-              ))}
+              ) : (
+                <button
+                  disabled={debugApprovalData.isApproving}
+                  className={cn(
+                    "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
+                    debugApprovalData.isApproving
+                      ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                      : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+                  )}
+                >
+                  {debugApprovalData.isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {debugApprovalData.isApproving
+                    ? "Approving..."
+                    : `Approve yld Zapper (${debugApprovalData.progress.step}/${debugApprovalData.progress.total})`}
+                </button>
+              )}
             </div>
           </div>
         )}
+
+        {txStateOverlay}
+        {debugPanel}
       </div>
     );
   }
@@ -716,13 +954,15 @@ export function LendingInterface({
   // --- Has Loan View: Position summary + Health bar + Management tabs ---
   return (
     <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl">
-      {/* Health Bar — always visible */}
-      <div className="overflow-hidden rounded-t-xl">
-        <HealthBar
-          currentHealth={position?.healthFull}
-          estimatedHealth={effectiveEstimatedHealth}
-        />
-      </div>
+      {/* Health Bar — hidden during tx states */}
+      {!effectiveTxState && (
+        <div className="overflow-hidden rounded-t-xl">
+          <HealthBar
+            currentHealth={position?.healthFull}
+            estimatedHealth={effectiveEstimatedHealth}
+          />
+        </div>
+      )}
 
       {/* Position Summary — hidden during tx states */}
       {!effectiveTxState && (
@@ -823,141 +1063,159 @@ export function LendingInterface({
         </div>
       )}
 
-      {/* Form Content — hidden during tx states */}
-      {!effectiveTxState && (
+      {/* Form Content — hidden (not unmounted) during tx states so effects keep running */}
+      <div className={effectiveTxState || debugApprovalData ? "hidden" : ""}>
+        <div
+          className={cn("transition-[height] duration-300 ease-in-out", tabOverflowHidden ? "overflow-hidden" : "")}
+          style={{ height: tabContentHeight !== undefined ? `${tabContentHeight}px` : "auto" }}
+          onTransitionEnd={(e) => { if (e.propertyName === "height") setTabOverflowHidden(false); }}
+        >
+          <div ref={tabContentRef} className="p-4 space-y-4">
+            {activeTab === "collateral" && (
+              <CollateralTab
+                vault={vault}
+                userBalance={userBalance}
+                position={position}
+                controllerAddress={controllerAddress}
+                onTransactionSuccess={onTransactionSuccess}
+                onEstimatedHealthChange={handleEstimatedHealthChange}
+                onTxStateChange={handleTxStateChange}
+              />
+            )}
+            {activeTab === "borrow" && (
+              <BorrowTab
+                vault={vault}
+                position={position}
+                controllerAddress={controllerAddress}
+                onTransactionSuccess={onTransactionSuccess}
+                onEstimatedHealthChange={handleEstimatedHealthChange}
+                onDebtDeltaChange={handleDebtDeltaChange}
+                onTxStateChange={handleTxStateChange}
+              />
+            )}
+            {activeTab === "repay" && (
+              <RepayTab
+                vault={vault}
+                position={position}
+                controllerAddress={controllerAddress}
+                onTransactionSuccess={onTransactionSuccess}
+                onEstimatedHealthChange={handleEstimatedHealthChange}
+                onDebtDeltaChange={handleDebtDeltaChange}
+                onTxStateChange={handleTxStateChange}
+              />
+            )}
+            {activeTab === "leverage" && (
+              <LeverageTab
+                vault={vault}
+                userBalance={userBalance}
+                position={position}
+                controllerAddress={controllerAddress}
+                onTransactionSuccess={onTransactionSuccess}
+                onEstimatedHealthChange={handleEstimatedHealthChange}
+                onEstimatedLeverageChange={handleEstimatedLeverageChange}
+                onDebtDeltaChange={handleDebtDeltaChange}
+                onTxStateChange={handleTxStateChange}
+              />
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Debug Approval Preview */}
+      {!effectiveTxState && debugApprovalData && (
         <div className="p-4 space-y-4">
-          {activeTab === "collateral" && (
-            <CollateralTab
-              vault={vault}
-              userBalance={userBalance}
-              position={position}
-              controllerAddress={controllerAddress}
-              onTransactionSuccess={onTransactionSuccess}
-              onEstimatedHealthChange={handleEstimatedHealthChange}
-              onTxStateChange={handleTxStateChange}
-            />
-          )}
-          {activeTab === "borrow" && (
-            <BorrowTab
-              vault={vault}
-              position={position}
-              controllerAddress={controllerAddress}
-              onTransactionSuccess={onTransactionSuccess}
-              onEstimatedHealthChange={handleEstimatedHealthChange}
-              onDebtDeltaChange={handleDebtDeltaChange}
-              onTxStateChange={handleTxStateChange}
-            />
-          )}
-          {activeTab === "repay" && (
-            <RepayTab
-              vault={vault}
-              position={position}
-              controllerAddress={controllerAddress}
-              onTransactionSuccess={onTransactionSuccess}
-              onEstimatedHealthChange={handleEstimatedHealthChange}
-              onDebtDeltaChange={handleDebtDeltaChange}
-              onTxStateChange={handleTxStateChange}
-            />
-          )}
-          {activeTab === "leverage" && (
-            <LeverageTab
-              vault={vault}
-              userBalance={userBalance}
-              position={position}
-              controllerAddress={controllerAddress}
-              onTransactionSuccess={onTransactionSuccess}
-              onEstimatedHealthChange={handleEstimatedHealthChange}
-              onEstimatedLeverageChange={handleEstimatedLeverageChange}
-              onDebtDeltaChange={handleDebtDeltaChange}
-              onTxStateChange={handleTxStateChange}
-            />
-          )}
+          <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-3">
+            <div className="text-sm font-medium">
+              <span className="whitespace-nowrap">{debugApprovalData.progress.total > 1 ? "Approvals Required" : "Approval Required"} <a href={`https://etherscan.io/address/${controllerAddress}`} target="_blank" rel="noopener noreferrer" className="inline text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors font-normal"><ExternalLink size={12} className="!inline -mt-0.5" /></a></span>
+            </div>
+            {debugApprovalData.progress.total > 1 && (
+              <div className="space-y-2">
+                {debugApprovalData.progress.steps.map((s, i) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <div className="mt-0.5">
+                      {s.done ? (
+                        <Check size={14} className="text-green-500 shrink-0" />
+                      ) : i === debugApprovalData.progress.step - 1 ? (
+                        <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)] shrink-0" />
+                      ) : (
+                        <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)]/30 shrink-0" />
+                      )}
+                    </div>
+                    <div>
+                      <div className={cn(
+                        "text-sm",
+                        s.done
+                          ? "text-[var(--muted-foreground)] line-through"
+                          : i === debugApprovalData.progress.step - 1
+                            ? "text-[var(--foreground)] font-medium"
+                            : "text-[var(--muted-foreground)]"
+                      )}>
+                        {s.label}
+                      </div>
+                      <div className={cn(
+                        "text-xs",
+                        i === debugApprovalData.progress.step - 1
+                          ? "text-[var(--muted-foreground)]"
+                          : "text-[var(--muted-foreground)]/60"
+                      )}>
+                        {s.description}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {debugApprovalData.type === "erc20" && debugApprovalData.amount ? (
+              <div className="flex gap-2">
+                <button
+                  disabled={debugApprovalData.isApproving}
+                  className={cn(
+                    "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                    debugApprovalData.isApproving
+                      ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                      : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
+                  )}
+                >
+                  {debugApprovalData.isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {debugApprovalData.isApproving ? "Approving..." : `${Number(formatUnits(debugApprovalData.amount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${debugApprovalData.tokenSymbol}`}
+                </button>
+                <button
+                  disabled={debugApprovalData.isApproving}
+                  className={cn(
+                    "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                    debugApprovalData.isApproving
+                      ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                      : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+                  )}
+                >
+                  {debugApprovalData.isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {debugApprovalData.isApproving ? "Approving..." : "Unlimited"}
+                </button>
+              </div>
+            ) : (
+              <button
+                disabled={debugApprovalData.isApproving}
+                className={cn(
+                  "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
+                  debugApprovalData.isApproving
+                    ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                    : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+                )}
+              >
+                {debugApprovalData.isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                {debugApprovalData.isApproving
+                  ? "Approving..."
+                  : `Approve yld Zapper (${debugApprovalData.progress.step}/${debugApprovalData.progress.total})`}
+              </button>
+            )}
+          </div>
         </div>
       )}
 
       {/* Tx state overlay */}
       {txStateOverlay}
 
-      {/* DEBUG: Lending Tx State Preview Panel */}
-      {process.env.NODE_ENV === "development" && (
-        <div
-          data-debug-panel
-          className={cn(
-            "fixed z-[9999] border border-[var(--border)] rounded-lg p-3 shadow-2xl max-w-xs pointer-events-auto",
-            isDragging && "cursor-grabbing"
-          )}
-          style={{
-            background: "#09090b",
-            ...(debugPanelPos ? {
-              left: debugPanelPos.x,
-              top: debugPanelPos.y,
-              bottom: "auto",
-              right: "auto",
-            } : {
-              bottom: 16,
-              right: 16,
-            }),
-          }}
-        >
-          <div
-            className="text-xs text-[var(--muted-foreground)] mb-2 font-medium cursor-grab select-none"
-            onMouseDown={handleDragStart}
-          >
-            ⋮⋮ Lending TX Preview
-          </div>
-          <div className="space-y-2">
-            <button
-              onClick={() => setDebugTxState("none")}
-              className={cn(
-                "w-full px-2 py-1 text-xs rounded transition-colors",
-                debugTxState === "none"
-                  ? "bg-[var(--foreground)] text-[var(--background)]"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              )}
-            >
-              Reset All
-            </button>
-            {debugRows.map(({ label, prefix }) => (
-              <div key={prefix} className="flex gap-1">
-                <span className="text-[10px] text-[var(--muted-foreground)] w-16 flex items-center">{label}</span>
-                <button
-                  onClick={() => setDebugTxState(`${prefix}-pending` as DebugLendingTxState)}
-                  className={cn(
-                    "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                    debugTxState === `${prefix}-pending`
-                      ? "bg-[var(--accent)] text-[var(--background)]"
-                      : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                  )}
-                >
-                  Pending
-                </button>
-                <button
-                  onClick={() => setDebugTxState(`${prefix}-success` as DebugLendingTxState)}
-                  className={cn(
-                    "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                    debugTxState === `${prefix}-success`
-                      ? "bg-green-500 text-white"
-                      : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                  )}
-                >
-                  Success
-                </button>
-                <button
-                  onClick={() => setDebugTxState(`${prefix}-reverted` as DebugLendingTxState)}
-                  className={cn(
-                    "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                    debugTxState === `${prefix}-reverted`
-                      ? "bg-red-500 text-white"
-                      : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                  )}
-                >
-                  Reverted
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {debugPanel}
     </div>
   );
 }

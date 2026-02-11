@@ -12,6 +12,7 @@ import {
   ArrowRightLeft,
   Route,
   RouteOff,
+  ExternalLink,
 } from "lucide-react";
 import { useAccount, usePublicClient, useGasPrice, useBlockNumber } from "wagmi";
 import { formatUnits, parseUnits } from "viem";
@@ -56,6 +57,15 @@ const ERC4626_PREVIEW_ABI = [
     outputs: [{ name: "", type: "uint256" }],
   },
 ] as const;
+
+// ERC20 balanceOf ABI (for checking controller's available crvUSD)
+const BALANCE_OF_ABI = [{
+  name: "balanceOf",
+  type: "function",
+  stateMutability: "view",
+  inputs: [{ name: "account", type: "address" }],
+  outputs: [{ name: "", type: "uint256" }],
+}] as const;
 
 // Controller ABI for health calculator + max_borrowable
 const CONTROLLER_ABI = [
@@ -168,6 +178,30 @@ export function BorrowTab({
     calculateMaxBorrowable();
   }, [publicClient, controllerAddress, position]);
 
+  // Controller's available crvUSD — detects when pool liquidity is the borrowing constraint
+  const { data: controllerCrvUsdBalance } = useQuery({
+    queryKey: ["controller-crvusd-balance", controllerAddress],
+    queryFn: async () => {
+      if (!publicClient) throw new Error("No client");
+      return publicClient.readContract({
+        address: CRVUSD_ADDRESS as `0x${string}`,
+        abi: BALANCE_OF_ABI,
+        functionName: "balanceOf",
+        args: [controllerAddress],
+      });
+    },
+    enabled: !!publicClient,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  });
+
+  const isLiquidityConstrained = useMemo(() => {
+    if (!controllerCrvUsdBalance || !maxBorrowable || maxBorrowable === 0n) return false;
+    // If max borrowable is within 5% of controller balance, liquidity is the bottleneck
+    const threshold = controllerCrvUsdBalance * 105n / 100n;
+    return maxBorrowable <= threshold;
+  }, [controllerCrvUsdBalance, maxBorrowable]);
+
   // Token selection (default: crvUSD)
   const [borrowToken, setBorrowToken] = useState<EnsoToken>(CRVUSD_TOKEN);
   const isCrvUsd =
@@ -242,6 +276,11 @@ export function BorrowTab({
     executeAfterPreview,
   } = useCurveLendingActions();
 
+  // Preserve last approval data so content stays in DOM during close animation
+  const lastApprovalRef = useRef(pendingApproval);
+  if (pendingApproval) lastApprovalRef.current = pendingApproval;
+  const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
+
   // Simulation toggle from settings
   const [showSimulationPreview, setShowSimulationPreview] = useState(() => {
     if (typeof window !== "undefined") {
@@ -256,9 +295,9 @@ export function BorrowTab({
   const { data: currentBlock } = useBlockNumber({ watch: true });
   const simulationBlock = useRef<bigint>(0n);
 
-  // Clear simulation when inputs change
+  // Clear simulation/approval state when inputs change
   useEffect(() => {
-    if (simulationResult) {
+    if (simulationResult || status === "needsApproval") {
       reset();
       setShowSimulationModal(false);
     }
@@ -678,12 +717,13 @@ export function BorrowTab({
     }
   }, [status, txHash, onTxStateChange, estimatedCrvUsdBorrow, borrowAmount, borrowToken]);
 
-  // Handle transaction success
+  // Handle transaction success — reset to idle so button returns to normal
   useEffect(() => {
     if (status === "success") {
       onTransactionSuccess();
+      reset();
     }
-  }, [status, onTransactionSuccess]);
+  }, [status, onTransactionSuccess, reset]);
 
   // Handle approval success -> continue execution
   // For swap path: re-run full flow to check next approval (controller → crvUSD → execute)
@@ -740,10 +780,11 @@ export function BorrowTab({
                 setEthPrice(Number(data[1] as bigint) / 1e8);
               }).catch(() => {});
             }
+            return;
           }
-        } else {
-          await borrowMore(vault.address as `0x${string}`, "0", debtWei);
+          // Preview unavailable (e.g., Anvil fork) — execute directly
         }
+        await borrowMore(vault.address as `0x${string}`, "0", debtWei);
       } else {
         // Path B: borrow crvUSD + swap
         if (!estimatedCrvUsdBorrow) return;
@@ -751,39 +792,49 @@ export function BorrowTab({
         const swapOutputEstimate = borrowAmount
           ? parseUnits(borrowAmount, borrowToken.decimals)
           : undefined;
-        const result = await borrowAndSwap(
+        if (showSimulationPreview) {
+          const result = await borrowAndSwap(
+            vault.address as `0x${string}`,
+            borrowToken.address,
+            debtHumanReadable,
+            Number(slippage),
+            { previewOnly: true, tokenSymbol: borrowToken.symbol, estimatedSwapOutput: swapOutputEstimate }
+          );
+          if (result) {
+            simulationBlock.current = currentBlock ?? 0n;
+            setShowSimulationModal(true);
+            if (publicClient) {
+              publicClient.readContract({
+                address: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
+                abi: [{
+                  name: "latestRoundData",
+                  type: "function",
+                  stateMutability: "view",
+                  inputs: [],
+                  outputs: [
+                    { name: "roundId", type: "uint80" },
+                    { name: "answer", type: "int256" },
+                    { name: "startedAt", type: "uint256" },
+                    { name: "updatedAt", type: "uint256" },
+                    { name: "answeredInRound", type: "uint80" },
+                  ],
+                }],
+                functionName: "latestRoundData",
+              }).then(data => {
+                setEthPrice(Number(data[1] as bigint) / 1e8);
+              }).catch(() => {});
+            }
+            return;
+          }
+          // Preview unavailable (e.g., Anvil fork) — execute directly
+        }
+        await borrowAndSwap(
           vault.address as `0x${string}`,
           borrowToken.address,
           debtHumanReadable,
           Number(slippage),
-          { previewOnly: showSimulationPreview, tokenSymbol: borrowToken.symbol, estimatedSwapOutput: swapOutputEstimate }
+          { tokenSymbol: borrowToken.symbol, estimatedSwapOutput: swapOutputEstimate }
         );
-        if (result && showSimulationPreview) {
-          simulationBlock.current = currentBlock ?? 0n;
-          setShowSimulationModal(true);
-          // Fetch ETH price for gas cost display
-          if (publicClient) {
-            publicClient.readContract({
-              address: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
-              abi: [{
-                name: "latestRoundData",
-                type: "function",
-                stateMutability: "view",
-                inputs: [],
-                outputs: [
-                  { name: "roundId", type: "uint80" },
-                  { name: "answer", type: "int256" },
-                  { name: "startedAt", type: "uint256" },
-                  { name: "updatedAt", type: "uint256" },
-                  { name: "answeredInRound", type: "uint80" },
-                ],
-              }],
-              functionName: "latestRoundData",
-            }).then(data => {
-              setEthPrice(Number(data[1] as bigint) / 1e8);
-            }).catch(() => {});
-          }
-        }
       }
     } catch (err) {
       console.error("Borrow action failed:", err);
@@ -820,11 +871,9 @@ export function BorrowTab({
     (isCrvUsd || (!quoteLoading && estimatedCrvUsdBorrow !== null));
 
   const getButtonText = () => {
-    if (status === "building" || status === "simulating") return isCrvUsd ? "Preparing..." : "Simulating...";
-    if (status === "executing") return "Confirm in wallet...";
-    if (status === "waitingTx") return "Waiting for confirmation...";
-    if (status === "success") return "Done!";
-    if (status === "error") return "Try Again";
+    if (status === "building" || status === "simulating") return <>Simulating<LoadingDots /></>;
+    if (status === "executing") return <>Confirm in wallet<LoadingDots /></>;
+    if (status === "waitingTx") return <>Waiting for confirmation<LoadingDots /></>;
     if (debtTooHigh || exceedsMax) return "Exceeds max borrowable";
 
     if (isCrvUsd) return "Borrow crvUSD";
@@ -987,97 +1036,114 @@ export function BorrowTab({
         </>
       )}
 
-      {/* Approval Flow */}
-      {pendingApproval && status === "needsApproval" && (
-        <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-3">
-          <div className="text-sm font-medium">Approvals Required</div>
-          {approvalProgress && (
-            <div className="space-y-2">
-              {approvalProgress.steps.map((s, i) => (
-                <div key={i} className="flex items-start gap-2">
-                  <div className="mt-0.5">
-                    {s.done ? (
-                      <Check size={14} className="text-green-500 shrink-0" />
-                    ) : i === approvalProgress.step - 1 ? (
-                      <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)] shrink-0" />
-                    ) : (
-                      <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)]/30 shrink-0" />
-                    )}
-                  </div>
-                  <div>
-                    <div className={cn(
-                      "text-sm",
-                      s.done
-                        ? "text-[var(--muted-foreground)] line-through"
-                        : i === approvalProgress.step - 1
-                          ? "text-[var(--foreground)] font-medium"
-                          : "text-[var(--muted-foreground)]"
-                    )}>
-                      {s.label}
-                    </div>
-                    <div className={cn(
-                      "text-xs",
-                      i === approvalProgress.step - 1
-                        ? "text-[var(--muted-foreground)]"
-                        : "text-[var(--muted-foreground)]/60"
-                    )}>
-                      {s.description}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          {pendingApproval.type !== "controller" && pendingApproval.amount ? (
-            <div className="flex gap-2">
-              <button
-                onClick={() => approve(true)}
-                disabled={isApproving}
-                className={cn(
-                  "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                  isApproving
-                    ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                    : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
-                )}
-              >
-                {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                {isApproving ? "Approving..." : `Exact (${Number(formatUnits(pendingApproval.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })})`}
-              </button>
-              <button
-                onClick={() => approve(false)}
-                disabled={isApproving}
-                className={cn(
-                  "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                  isApproving
-                    ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                    : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
-                )}
-              >
-                {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                {isApproving ? "Approving..." : "Unlimited"}
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => approve()}
-              disabled={isApproving}
-              className={cn(
-                "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
-                isApproving
-                  ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                  : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
-              )}
-            >
-              {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-              {isApproving
-                ? "Approving..."
-                : pendingApproval.type === "controller"
-                  ? `Approve Lending Access${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`
-                  : `Approve ${pendingApproval.tokenSymbol}${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`}
-            </button>
-          )}
+      {/* Low liquidity warning */}
+      {isLiquidityConstrained && maxBorrowable && maxBorrowable > 0n && (
+        <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-500 text-xs flex items-center gap-2">
+          <AlertTriangle size={14} className="shrink-0" />
+          <span>
+            Only {Number(formatUnits(controllerCrvUsdBalance!, 18)).toLocaleString(undefined, { maximumFractionDigits: 0 })} crvUSD available in lending market. Max borrow is limited by pool liquidity, not your collateral.
+          </span>
         </div>
       )}
+
+      {/* Approval Flow */}
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        style={{ gridTemplateRows: showApprovalCard ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
+          {lastApprovalRef.current && (
+            <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-3">
+              <div className="text-sm font-medium">Approvals Required</div>
+              {approvalProgress && (
+                <div className="space-y-2">
+                  {approvalProgress.steps.map((s, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      <div className="mt-0.5">
+                        {s.done ? (
+                          <Check size={14} className="text-green-500 shrink-0" />
+                        ) : i === approvalProgress.step - 1 ? (
+                          <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)] shrink-0" />
+                        ) : (
+                          <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)]/30 shrink-0" />
+                        )}
+                      </div>
+                      <div>
+                        <div className={cn(
+                          "text-sm",
+                          s.done
+                            ? "text-[var(--muted-foreground)] line-through"
+                            : i === approvalProgress.step - 1
+                              ? "text-[var(--foreground)] font-medium"
+                              : "text-[var(--muted-foreground)]"
+                        )}>
+                          {s.label}
+                        </div>
+                        <div className={cn(
+                          "text-xs",
+                          i === approvalProgress.step - 1
+                            ? "text-[var(--muted-foreground)]"
+                            : "text-[var(--muted-foreground)]/60"
+                        )}>
+                          {s.description}{s.spender && <>{" "}<a href={`https://etherscan.io/address/${s.spender}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={10} className="!inline -mt-0.5" /></a></>}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {lastApprovalRef.current!.type !== "controller" && lastApprovalRef.current!.amount ? (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => approve(true)}
+                    disabled={isApproving}
+                    className={cn(
+                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                      isApproving
+                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                        : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
+                    )}
+                  >
+                    {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {isApproving ? "Approving..." : `${Number(formatUnits(lastApprovalRef.current!.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${lastApprovalRef.current!.tokenSymbol}`}
+                  </button>
+                  <button
+                    onClick={() => approve(false)}
+                    disabled={isApproving}
+                    className={cn(
+                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                      isApproving
+                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                        : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+                    )}
+                  >
+                    {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {isApproving ? "Approving..." : "Unlimited"}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => approve()}
+                  disabled={isApproving}
+                  className={cn(
+                    "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
+                    isApproving
+                      ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                      : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+                  )}
+                >
+                  {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {isApproving
+                    ? "Approving..."
+                    : lastApprovalRef.current!.type === "controller"
+                      ? `Approve Enso Router${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`
+                      : `Approve ${lastApprovalRef.current!.tokenSymbol}${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
 
 
       {/* Simulation Modal */}
@@ -1119,7 +1185,11 @@ export function BorrowTab({
       })()}
 
       {/* Action Button */}
-      {status !== "needsApproval" && (
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        style={{ gridTemplateRows: !showApprovalCard ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
           <button
             onClick={() => {
               if (status === "error" || status === "success") {
@@ -1131,7 +1201,7 @@ export function BorrowTab({
                 handleSubmit();
               }
             }}
-            disabled={isProcessing || quoteLoading || (!isFormValid && status === "idle")}
+            disabled={showApprovalCard || isProcessing || quoteLoading || (!isFormValid && status === "idle")}
             className={cn(
               "w-full py-3 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
               isProcessing || quoteLoading || (!isFormValid && status === "idle")
@@ -1139,36 +1209,44 @@ export function BorrowTab({
                 : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
             )}
           >
-            {isProcessing && <Loader2 className="w-4 h-4 animate-spin" />}
             {!isCrvUsd && quoteLoading && status === "idle" ? (
               <>Getting quote<LoadingDots /></>
             ) : (
               getButtonText()
             )}
           </button>
-        )}
+        </div>
+      </div>
 
       {/* Settings icon for direct crvUSD path */}
-      {isCrvUsd && (
-        <div className="flex items-center justify-end">
-          <button
-            onClick={() => setShowSlippageModal(true)}
-            className="flex items-center gap-1.5 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
-            title="Settings"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="4" y1="6" x2="20" y2="6" />
-              <circle cx="8" cy="6" r="2" />
-              <line x1="4" y1="18" x2="20" y2="18" />
-              <circle cx="16" cy="18" r="2" />
-            </svg>
-          </button>
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        style={{ gridTemplateRows: isCrvUsd ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
+          <div className="flex items-center justify-end">
+            <button
+              onClick={() => setShowSlippageModal(true)}
+              className="flex items-center gap-1.5 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
+              title="Settings"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="4" y1="6" x2="20" y2="6" />
+                <circle cx="8" cy="6" r="2" />
+                <line x1="4" y1="18" x2="20" y2="18" />
+                <circle cx="16" cy="18" r="2" />
+              </svg>
+            </button>
+          </div>
         </div>
-      )}
+      </div>
 
       {/* Enso Attribution + Route Toggle + Slippage Settings */}
-      {!isCrvUsd && (
-        <>
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        style={{ gridTemplateRows: !isCrvUsd ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
           <div className="flex items-center justify-between pt-2">
             <a
               href="https://www.enso.build"
@@ -1219,16 +1297,19 @@ export function BorrowTab({
             </div>
           </div>
 
-          {/* Route details panel */}
-          <div
-            className="grid transition-all duration-300 ease-in-out"
-            style={{
-              gridTemplateRows:
-                showRoute && borrowAmount && Number(borrowAmount) > 0 && (swapQuote || quoteLoading || (isVaultWithCrvUsdUnderlying && estimatedCrvUsdBorrow !== null)) ? "1fr" : "0fr",
-            }}
-          >
-            <div className="overflow-hidden">
-              <div className="pt-3 mt-3 border-t border-[var(--border)]">
+        </div>
+      </div>
+
+      {/* Route details panel */}
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        style={{
+          gridTemplateRows:
+            showRoute && borrowAmount && Number(borrowAmount) > 0 && (swapQuote || quoteLoading || (isVaultWithCrvUsdUnderlying && estimatedCrvUsdBorrow !== null)) ? "1fr" : "0fr",
+        }}
+      >
+        <div className="overflow-hidden">
+          <div className="pt-3 mt-3 border-t border-[var(--border)]">
                 <div className="text-xs text-[var(--muted-foreground)] mb-2">
                   Route
                 </div>
@@ -1322,11 +1403,9 @@ export function BorrowTab({
                   }
                   isLoading={quoteLoading}
                 />
-              </div>
-            </div>
           </div>
-        </>
-      )}
+        </div>
+      </div>
 
       {/* Connect wallet prompt */}
       {!address && (

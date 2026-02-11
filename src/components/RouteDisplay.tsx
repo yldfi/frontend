@@ -43,6 +43,7 @@ const TOKEN_LOGOS: Record<string, string> = {
   usdc: "/tokens/usdc.png",
   usdt: "/tokens/usdt.png",
   dai: "/tokens/dai.png",
+  wbtc: "/tokens/wbtc.png",
   crvusd: "/tokens/crvusd.png",
   scrvusd: "/tokens/scrvusd.png",
   // Union (Llama Airforce) vaults
