@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useEnsoTokens } from "@/hooks/useEnsoTokens";
 import { useTokenMetadata } from "@/hooks/useTokenMetadata";
@@ -166,8 +166,26 @@ export function TokenSelector({
     return true;
   });
 
+  // Merge priority tokens + vault tokens into the list for balance fetching (they may not be in filteredTokens)
+  const tokensForBalances = useMemo(() => {
+    const seen = new Set(filteredTokens.map(t => t.address.toLowerCase()));
+    const extra = [
+      ...(priorityTokens || []),
+      ...FEATURED_VAULT_TOKENS,
+    ].filter(t => !seen.has(t.address.toLowerCase()));
+    // Deduplicate extras
+    const extraSeen = new Set<string>();
+    const uniqueExtra = extra.filter(t => {
+      const key = t.address.toLowerCase();
+      if (extraSeen.has(key)) return false;
+      extraSeen.add(key);
+      return true;
+    });
+    return uniqueExtra.length > 0 ? [...filteredTokens, ...uniqueExtra] : filteredTokens;
+  }, [filteredTokens, priorityTokens]);
+
   // Sort tokens by balance (tokens with balance first), get prices
-  const { sortedTokens, balanceMap, priceMap } = useTokenBalances(filteredTokens);
+  const { sortedTokens, balanceMap, priceMap } = useTokenBalances(tokensForBalances);
 
   // Close on click outside
   useEffect(() => {
@@ -305,7 +323,7 @@ export function TokenSelector({
                       : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                   )}
                 >
-                  yld_fi Vaults
+                  yld Vaults
                 </button>
               </div>
 

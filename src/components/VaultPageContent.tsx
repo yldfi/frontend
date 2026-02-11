@@ -4,11 +4,11 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { notFound, useRouter } from "next/navigation";
 import { useAccount, useBalance, useBlockNumber, useGasPrice, usePublicClient } from "wagmi";
-import { parseUnits } from "viem";
+import { parseUnits, formatUnits } from "viem";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
 import { MaxButton } from "@/components/MaxButton";
-import { ArrowUpRight, ExternalLink, Loader2, Search, Route, RouteOff, Copy, ChevronDown, ChevronRight, Check, X, Clock } from "lucide-react";
+import { ArrowUpRight, ExternalLink, Loader2, Search, Route, RouteOff, Copy, ChevronDown, ChevronRight, Check, X, Clock, ArrowRightLeft, HeartPulse } from "lucide-react";
 import { RouteDisplay } from "@/components/RouteDisplay";
 import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
@@ -59,6 +59,8 @@ import { cn } from "@/lib/utils";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { Logo } from "@/components/Logo";
 import { useCurveLendingVault, formatCurveVaultData } from "@/hooks/useCurveLendingData";
+import { useCurveLendingPosition, formatHealth } from "@/hooks/useCurveLendingPosition";
+import { buildLendingPositionDisplay } from "@/lib/lending";
 import { useYearnVault, formatYearnVaultData, calculateStrategyNetApy } from "@/hooks/useYearnVault";
 import { useVaultBalance } from "@/hooks/useVaultBalance";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
@@ -595,6 +597,15 @@ export function VaultPageContent({ id }: { id: string }) {
   );
   const curveData = formatCurveVaultData(curveVault);
 
+  // Fetch user's lending position (only for vault type with LlamaLend market)
+  const controllerAddress = vault?.address
+    ? (CURVE_CONTROLLERS[vault.address as keyof typeof CURVE_CONTROLLERS] as `0x${string}` | undefined)
+    : undefined;
+  const { position: lendingPosition } = useCurveLendingPosition(
+    controllerAddress ? (vault?.address as `0x${string}`) : undefined,
+    userAddress
+  );
+
   // Fetch cvxCRV price from on-chain oracles
   const { price: cvxCrvPrice } = useCvxCrvPrice();
 
@@ -639,6 +650,7 @@ export function VaultPageContent({ id }: { id: string }) {
   const tokenBalanceMax = tokenBalanceFormatted;
   const vaultBalanceMax = vaultBalanceFormatted;
   const exchangeRate = pricePerShare;
+  const [rateInverted, setRateInverted] = useState(false);
 
   // Zap input token balance (for MAX button)
   const isZapInputEth = zapInputToken?.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
@@ -1155,14 +1167,14 @@ export function VaultPageContent({ id }: { id: string }) {
           <Link href="/" className="flex items-center gap-2">
             <Logo size={28} />
             <span className="mono text-lg font-medium tracking-tight leading-none">
-              yld<span className="text-[var(--muted-foreground)]">_</span>fi
+              yld
             </span>
           </Link>
           <CustomConnectButton />
         </div>
       </header>
 
-      <main className="overflow-x-hidden" style={{ paddingTop: "calc(4rem + var(--test-banner-height))" }}>
+      <main style={{ paddingTop: "calc(4rem + var(--test-banner-height))", overflowX: "clip" }}>
         {/* Breadcrumb navigation */}
         <div className="border-b border-[var(--border)]">
           <div className="max-w-6xl mx-auto px-6 py-4">
@@ -1171,7 +1183,7 @@ export function VaultPageContent({ id }: { id: string }) {
                 href="/"
                 className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
               >
-                yld.fi
+                yld
               </Link>
               <ChevronRight size={14} className="text-[var(--muted-foreground)]" />
               <span className="text-[var(--foreground)]">{vault.symbol}</span>
@@ -1284,6 +1296,81 @@ export function VaultPageContent({ id }: { id: string }) {
                   </p>
                 </div>
               </div>
+
+              {/* Lending Position / Borrow CTA */}
+              {vault.type === "vault" && controllerAddress && (() => {
+                if (lendingPosition?.hasLoan && curveVault) {
+                  // Collateral APR = vault APY (what the collateral earns)
+                  const collateralApr = yearnVault?.apy ?? 0;
+                  const borrowApr = curveVault.rates.borrowApr * 100; // decimal to percent
+                  const display = buildLendingPositionDisplay(
+                    lendingPosition.collateral,
+                    lendingPosition.debt,
+                    underlyingPrice,
+                    collateralApr,
+                    borrowApr,
+                  );
+                  return (
+                    <Link
+                      href={`/vaults/${vault.name}/lending`}
+                      className="lending-card block group"
+                    >
+                      <div className="px-4 py-3">
+                        <div className="flex items-center gap-2 mb-3">
+                          <Image src="/curve-logo.png" alt="Curve" width={14} height={14} className="rounded-full" />
+                          <span className="text-sm font-medium">Lending Position</span>
+                          <span className="text-xs text-[var(--muted-foreground)]">Curve LlamaLend</span>
+                          <ArrowUpRight size={14} className="ml-auto text-[var(--muted-foreground)] group-hover:text-[var(--foreground)] transition-colors" />
+                        </div>
+                        <div className="grid grid-cols-4 gap-3">
+                          <div>
+                            <p className="text-xs text-[var(--muted-foreground)] mb-0.5">Collateral</p>
+                            <div className="flex items-center gap-1">
+                              {vault.logo && <Image src={vault.logo} alt={vault.symbol} width={12} height={12} className="rounded-full" />}
+                              <span className="mono text-sm font-medium">{display.collateralFormatted}</span>
+                            </div>
+                            <p className="text-xs text-green-500 mono">{display.collateralAprFormatted}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-[var(--muted-foreground)] mb-0.5">Debt</p>
+                            <div className="flex items-center gap-1">
+                              <Image src="/tokens/crvusd.png" alt="crvUSD" width={12} height={12} className="rounded-full" />
+                              <span className="mono text-sm font-medium">{display.debtFormatted}</span>
+                            </div>
+                            <p className="text-xs text-red-500 mono">{display.borrowAprFormatted}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-[var(--muted-foreground)] mb-0.5">Leverage</p>
+                            <p className="mono text-sm font-medium">{display.leverageFormatted}</p>
+                            <p className={cn("text-xs mono", display.netApr >= 0 ? "text-green-500" : "text-red-500")}>
+                              {display.netAprFormatted} NET
+                            </p>
+                          </div>
+                          <div>
+                            {(() => { const h = formatHealth(lendingPosition.health); return (<>
+                              <p className="text-xs text-[var(--muted-foreground)] mb-0.5">Health</p>
+                              <p className={`mono text-sm font-medium ${h.color}`}>{h.value.toFixed(0)}%</p>
+                            </>); })()}
+                          </div>
+                        </div>
+                      </div>
+                    </Link>
+                  );
+                }
+                // No position — show borrow CTA
+                return (
+                  <Link
+                    href={`/vaults/${vault.name}/lending`}
+                    className="collateral-link"
+                  >
+                    <span>
+                      <Image src="/curve-logo.png" alt="Curve" width={14} height={14} className="rounded-full inline-block" />
+                      Borrow against {vault.symbol}
+                      <ArrowUpRight size={14} />
+                    </span>
+                  </Link>
+                );
+              })()}
 
               {/* Details */}
               <div className="space-y-6">
@@ -1424,12 +1511,12 @@ export function VaultPageContent({ id }: { id: string }) {
             {/* Right column - Action Card */}
             <div className="lg:col-span-2 min-w-0">
               <div className="sticky border border-[var(--border)] rounded-xl overflow-hidden w-full" style={{ top: "calc(6rem + var(--test-banner-height))" }}>
-                {/* Your Position - Always visible when connected with balance */}
+                {/* Your Wallet - Always visible when connected with balance */}
                 {isConnected && vaultBalance > 0 && (
                   <div className="bg-[var(--muted)]/30 p-5 border-b border-[var(--border)]">
                     <div className="flex flex-wrap items-center justify-center gap-4">
                       <div className="text-center basis-full sm:basis-auto">
-                        <span className="text-xs uppercase tracking-wider text-[var(--muted-foreground)]">Your Position</span>
+                        <span className="text-xs uppercase tracking-wider text-[var(--muted-foreground)]">Your Wallet</span>
                         <div className="mt-1">
                           {(() => {
                             const formatted = vaultBalanceLoading ? "..." : vaultBalance.toFixed(4);
@@ -1446,15 +1533,15 @@ export function VaultPageContent({ id }: { id: string }) {
                           })()}
                         </div>
                       </div>
-                      {/* Collateral button - only for vault type with LlamaLend market */}
+                      {/* Borrow button - only for vault type with LlamaLend market */}
                       {vault.type === "vault" && CURVE_CONTROLLERS[vault.address as keyof typeof CURVE_CONTROLLERS] && (
                         <button
                           onClick={handleCollateralClick}
                           className="collateral-link shrink-0"
                         >
                           <span className="whitespace-nowrap">
-                            <Image src="/curve-logo.png" alt="Curve" width={14} height={14} className="inline-block" />
-                            Use as Collateral
+                            <Image src="/curve-logo.png" alt="Curve" width={14} height={14} className="inline-block rounded-full" />
+                            Borrow
                             <ArrowUpRight size={12} />
                           </span>
                         </button>
@@ -1727,12 +1814,6 @@ export function VaultPageContent({ id }: { id: string }) {
                             onSelect={setAmount}
                           />
                         </div>
-                        <p className={cn(
-                          "text-xs mt-2 h-4",
-                          hasInsufficientBalance ? "text-[var(--destructive)]" : "invisible"
-                        )}>
-                          {hasInsufficientBalance ? "Insufficient balance" : "\u00A0"}
-                        </p>
                       </div>
 
                       {/* Arrow indicator */}
@@ -1763,7 +1844,17 @@ export function VaultPageContent({ id }: { id: string }) {
                       <div className="space-y-2 text-sm">
                         <div className="flex items-center justify-between py-1">
                           <span className="text-[var(--muted-foreground)]">Exchange rate</span>
-                          <span className="mono">1 {vault.assetSymbol} = {(1 / exchangeRate).toFixed(4)} {vault.symbol}</span>
+                          <button
+                            type="button"
+                            onClick={() => setRateInverted(v => !v)}
+                            className="flex items-center gap-1 mono hover:text-[var(--accent)] transition-colors"
+                          >
+                            {rateInverted
+                              ? <>1 {vault.symbol} = {exchangeRate.toFixed(4)} {vault.assetSymbol}</>
+                              : <>1 {vault.assetSymbol} = {(1 / exchangeRate).toFixed(4)} {vault.symbol}</>
+                            }
+                            <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
+                          </button>
                         </div>
                         <div className={cn(
                           "flex items-center justify-between py-1",
@@ -2083,17 +2174,17 @@ export function VaultPageContent({ id }: { id: string }) {
                   {isVaultDeployed && activeTab === "zap" && !isDebugZap && !isDebugDeposit && !isDebugWithdraw && zapStatus !== "waitingTx" && !pendingMultiStep?.type && !(showTxSuccess?.show && showTxSuccess.type === "zap") && !(showTxReverted?.show && showTxReverted.type === "zap") && (
                     <>
                       {/* Direction Toggle + Settings */}
-                      <div className="flex gap-2">
+                      <div className="flex items-center gap-1 p-1 rounded-lg bg-[var(--muted)] border border-[var(--border)]">
                         <button
                           onClick={() => {
                             setZapDirection("in");
                             setZapAmount("");
                           }}
                           className={cn(
-                            "flex-1 py-2 text-sm rounded-lg transition-colors",
+                            "flex-1 flex items-center justify-center gap-1.5 py-2 rounded-md text-sm font-medium transition-all",
                             zapDirection === "in"
-                              ? "bg-[var(--foreground)] text-[var(--background)]"
-                              : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                              ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm"
+                              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                           )}
                         >
                           Zap In
@@ -2104,10 +2195,10 @@ export function VaultPageContent({ id }: { id: string }) {
                             setZapAmount("");
                           }}
                           className={cn(
-                            "flex-1 py-2 text-sm rounded-lg transition-colors",
+                            "flex-1 flex items-center justify-center gap-1.5 py-2 rounded-md text-sm font-medium transition-all",
                             zapDirection === "out"
-                              ? "bg-[var(--foreground)] text-[var(--background)]"
-                              : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                              ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm"
+                              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                           )}
                         >
                           Zap Out
@@ -2229,13 +2320,21 @@ export function VaultPageContent({ id }: { id: string }) {
                       )}>
                         <div className="flex items-center justify-between py-1">
                           <span className="text-[var(--muted-foreground)]">Rate</span>
-                          <span className="mono">
-                            {zapQuote ? (
-                              <>1 {zapDirection === "in" ? zapInputToken?.symbol : vault.symbol} = {zapQuote.exchangeRate.toFixed(4)} {zapDirection === "in" ? vault.symbol : zapOutputToken?.symbol}</>
-                            ) : (
-                              "—"
-                            )}
-                          </span>
+                          {zapQuote ? (
+                            <button
+                              type="button"
+                              onClick={() => setRateInverted(v => !v)}
+                              className="flex items-center gap-1 mono hover:text-[var(--accent)] transition-colors"
+                            >
+                              {rateInverted
+                                ? <>1 {zapDirection === "in" ? vault.symbol : zapOutputToken?.symbol} = {(1 / zapQuote.exchangeRate).toFixed(4)} {zapDirection === "in" ? zapInputToken?.symbol : vault.symbol}</>
+                                : <>1 {zapDirection === "in" ? zapInputToken?.symbol : vault.symbol} = {zapQuote.exchangeRate.toFixed(4)} {zapDirection === "in" ? vault.symbol : zapOutputToken?.symbol}</>
+                              }
+                              <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
+                            </button>
+                          ) : (
+                            <span className="mono">—</span>
+                          )}
                         </div>
                         <div className="flex items-center justify-between py-1">
                           <span className="text-[var(--muted-foreground)]">Price Impact</span>

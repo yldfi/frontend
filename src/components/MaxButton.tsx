@@ -16,11 +16,12 @@ export function MaxButton({ balance, onSelect, showClose, onClose }: MaxButtonPr
   const balanceNum = parseFloat(balance) || 0;
 
   const handlePercentage = (percent: number) => {
-    const amount = balanceNum * (percent / 100);
-    // Use full precision for 100%, otherwise limit decimals
-    if (percent === 100) {
+    if (percent === 0) {
+      onSelect("");
+    } else if (percent === 100) {
       onSelect(balance);
     } else {
+      const amount = balanceNum * (percent / 100);
       onSelect(amount.toString());
     }
     // Hide menu after selection
@@ -49,7 +50,7 @@ export function MaxButton({ balance, onSelect, showClose, onClose }: MaxButtonPr
       <div
         className={cn(
           "absolute right-0 rounded-lg bg-[var(--background)]/40 transition-opacity duration-200 z-0 pointer-events-none",
-          showClose ? "-top-[88px] -bottom-[28px] -left-1.5 -right-1.5" : "-top-[88px] -bottom-1.5 -left-1.5 -right-1.5",
+          showClose ? "-top-[116px] -bottom-[28px] -left-1.5 -right-1.5" : "-top-[116px] -bottom-1.5 -left-1.5 -right-1.5",
           isHovered ? "opacity-100" : "opacity-0"
         )}
       />
@@ -63,7 +64,7 @@ export function MaxButton({ balance, onSelect, showClose, onClose }: MaxButtonPr
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
-        {[25, 50, 75].map((percent) => (
+        {[0, 25, 50, 75].map((percent) => (
           <button
             key={percent}
             type="button"
@@ -114,6 +115,7 @@ export function MaxButton({ balance, onSelect, showClose, onClose }: MaxButtonPr
           </button>
         </div>
       )}
+
     </div>
   );
 }

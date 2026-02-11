@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -30,8 +31,15 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
     address
   );
 
-  if (!vault || !controllerAddress) {
-    router.push("/");
+  const shouldRedirect = !vault || !controllerAddress;
+
+  useEffect(() => {
+    if (shouldRedirect) {
+      router.push("/");
+    }
+  }, [shouldRedirect, router]);
+
+  if (shouldRedirect) {
     return null;
   }
 
@@ -43,14 +51,14 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
           <Link href="/" className="flex items-center gap-2">
             <Logo size={28} />
             <span className="mono text-lg font-medium tracking-tight leading-none">
-              yld<span className="text-[var(--muted-foreground)]">_</span>fi
+              yld
             </span>
           </Link>
           <CustomConnectButton />
         </div>
       </header>
 
-      <main className="overflow-x-hidden" style={{ paddingTop: "calc(4rem + var(--test-banner-height))" }}>
+      <main style={{ paddingTop: "calc(4rem + var(--test-banner-height))", overflowX: "clip" }}>
         {/* Breadcrumb navigation */}
         <div className="border-b border-[var(--border)]">
           <div className="max-w-6xl mx-auto px-6 py-4">
@@ -59,7 +67,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                 href="/"
                 className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
               >
-                yld.fi
+                yld
               </Link>
               <ChevronRight size={14} className="text-[var(--muted-foreground)]" />
               <Link
