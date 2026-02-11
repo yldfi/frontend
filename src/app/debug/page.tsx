@@ -8,7 +8,7 @@ import { useConnect, useDisconnect } from "wagmi";
 export default function DebugPage() {
   const { address, connector, isConnected, chain } = useAccount();
   const chainId = useChainId();
-  const { isTenderlyVNet, isDetecting } = useTenderly();
+  const { isTestNetwork, testNetworkType, isDetecting } = useTenderly();
   const { connectors, connect } = useConnect();
   const { disconnect } = useDisconnect();
   const [rpcProbeResult, setRpcProbeResult] = useState<string>("");
@@ -81,9 +81,10 @@ export default function DebugPage() {
         chainName: chain?.name,
         isMainnet: chainId === 1,
       },
-      tenderly: {
+      testNetwork: {
         isDetecting,
-        isTenderlyVNet,
+        isTestNetwork,
+        testNetworkType,
       },
       rpcProbe: {
         result: rpcProbeResult || (isConnected ? "Testing..." : "Not connected"),
@@ -96,7 +97,7 @@ export default function DebugPage() {
     navigator.clipboard.writeText(JSON.stringify(debugData, null, 2));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }, [isConnected, address, connector, chainId, chain, isDetecting, isTenderlyVNet, rpcProbeResult, rpcError, providerInfo]);
+  }, [isConnected, address, connector, chainId, chain, isDetecting, isTestNetwork, testNetworkType, rpcProbeResult, rpcError, providerInfo]);
 
   return (
     <div className="min-h-screen bg-black text-white p-8">
@@ -160,12 +161,12 @@ export default function DebugPage() {
           <Row label="Is Mainnet" value={chainId === 1 ? "Yes" : "No"} />
         </Section>
 
-        <Section title="Tenderly Detection">
+        <Section title="Test Network Detection">
           <Row label="Is Detecting" value={isDetecting ? "Yes..." : "No"} />
           <Row
-            label="Is Tenderly VNet"
-            value={isTenderlyVNet ? "YES (Test Mode)" : "No (Mainnet)"}
-            highlight={isTenderlyVNet}
+            label="Is Test Network"
+            value={isTestNetwork ? `YES (${testNetworkType})` : "No (Mainnet)"}
+            highlight={isTestNetwork}
           />
         </Section>
 
