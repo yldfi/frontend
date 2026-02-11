@@ -186,7 +186,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   // Log transaction receipts to browser console in dev
   useEffect(() => {
     if (approvalReceipt && process.env.NODE_ENV === "development") {
-      console.log("[Approval Transaction]", {
+      console.log("[Approve Receipt]", {
         hash: approvalReceipt.transactionHash,
         status: approvalReceipt.status,
         blockNumber: Number(approvalReceipt.blockNumber),
@@ -197,7 +197,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
   useEffect(() => {
     if (zapReceipt && process.env.NODE_ENV === "development") {
-      console.log("[Zap Transaction]", {
+      console.log("[TX Receipt]", {
         hash: zapReceipt.transactionHash,
         status: zapReceipt.status,
         blockNumber: Number(zapReceipt.blockNumber),
@@ -270,11 +270,21 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     if (!userAddress || isEth || !tokenAddress || !routerAddress) return;
     setActionState("approving");
 
+    const amount = exactAmount ?? maxUint256;
+    if (process.env.NODE_ENV === "development") {
+      console.log("[Approve TX]", {
+        type: "erc20",
+        token: tokenAddress,
+        spender: routerAddress,
+        amount: amount.toString(),
+        exact: !!exactAmount,
+      });
+    }
     writeApprove({
       address: tokenAddress,
       abi: ERC20_APPROVAL_ABI,
       functionName: "approve",
-      args: [routerAddress, exactAmount ?? maxUint256],
+      args: [routerAddress, amount],
     });
   }, [userAddress, isEth, tokenAddress, routerAddress, writeApprove]);
 
@@ -296,6 +306,19 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       data: quote.tx.data as `0x${string}`,
       value: BigInt(quote.tx.value || "0"),
     };
+
+    if (process.env.NODE_ENV === "development") {
+      console.log("[TX]", {
+        fn: "zap",
+        to: txParams.to,
+        selector: txParams.data.slice(0, 10),
+        value: txParams.value.toString(),
+        dataLength: txParams.data.length,
+        data: txParams.data,
+        previewOnly: !!options?.previewOnly,
+        skipSimulation: !!options?.skipSimulation,
+      });
+    }
 
     // If skipSimulation is true, go straight to sending (used after preview mode confirmation)
     if (options?.skipSimulation && simulationResult?.success) {
@@ -397,11 +420,14 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
           account: userAddress,
           ...txParams,
         });
+        if (process.env.NODE_ENV === "development") console.log("[eth_call]", { ok: true, to: txParams.to });
         return { ok: true as const };
       } catch (error) {
+        const msg = error instanceof Error ? error.message : "Unknown error";
+        if (process.env.NODE_ENV === "development") console.log("[eth_call]", { ok: false, to: txParams.to, error: msg });
         return {
           ok: false as const,
-          errorMessage: error instanceof Error ? error.message : "Unknown error",
+          errorMessage: msg,
         };
       }
     })();

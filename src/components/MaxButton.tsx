@@ -109,7 +109,7 @@ export function MaxButton({ balance, onSelect, showClose, onClose }: MaxButtonPr
               onClose();
               setIsHovered(false);
             }}
-            className="relative shrink-0 px-2 py-1 text-[9px] font-medium bg-[var(--background)] text-[var(--accent)]/70 hover:text-[var(--accent)] rounded transition-colors cursor-pointer"
+            className="relative shrink-0 px-2 h-[24px] flex items-center text-[8px] font-medium tracking-wide bg-[var(--background)] text-[var(--accent)]/70 hover:text-[var(--accent)] rounded transition-colors cursor-pointer"
           >
             CLOSE
           </button>

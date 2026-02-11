@@ -713,7 +713,10 @@ export async function fetchBundle(params: {
         routingStrategy: params.routingStrategy ?? "router",
         referralCode: ENSO_REFERRAL_CODE,
         receiver: params.receiver as `0x${string}` | undefined,
-        skipQuote: params.skipQuote,
+        // In development (Anvil fork), skip Enso's server-side simulation which runs
+        // against mainnet state. Operations requiring account-specific state (loans, etc.)
+        // fail because the test account has no position on mainnet.
+        skipQuote: params.skipQuote ?? isDev,
       },
       // Cast our generic actions to SDK's union type
       params.actions as unknown as Parameters<typeof ensoClient.getBundleData>[1]

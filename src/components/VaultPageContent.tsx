@@ -1797,7 +1797,7 @@ export function VaultPageContent({ id }: { id: string }) {
                             }
                           </span>
                         </div>
-                        <div className="bg-[var(--muted)] rounded-lg p-4 flex items-center gap-2 focus-within:ring-2 focus-within:ring-[var(--accent)] transition-shadow">
+                        <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2 focus-within:ring-2 focus-within:ring-[var(--accent)] transition-shadow">
                           <input
                             type="number"
                             value={amount}
@@ -1830,7 +1830,7 @@ export function VaultPageContent({ id }: { id: string }) {
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-sm text-[var(--muted-foreground)]">You receive</span>
                         </div>
-                        <div className="bg-[var(--muted)] rounded-lg p-4 flex items-center gap-2">
+                        <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2">
                           <span className="mono text-base text-[var(--foreground)] flex-1">
                             {outputAmount > 0 ? outputAmount.toFixed(4) : "0.00"}
                           </span>
@@ -1891,7 +1891,7 @@ export function VaultPageContent({ id }: { id: string }) {
                           /* Approval choice: Exact or Unlimited */
                           <div className="space-y-2">
                             <div className="text-sm text-[var(--muted-foreground)]">
-                              Approve {vault.assetSymbol} spending
+                              Approve {vault.assetSymbol}{" "}<span className="whitespace-nowrap">spending <a href={`https://etherscan.io/address/${vault.address}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={12} className="!inline -mt-0.5" /></a></span>
                             </div>
                             <div className="flex gap-2">
                               <button
@@ -1907,7 +1907,7 @@ export function VaultPageContent({ id }: { id: string }) {
                                     : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10 cursor-pointer"
                                 )}
                               >
-                                Exact ({inputAmount ? inputAmount.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "0"})
+                                {inputAmount ? inputAmount.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "0"} {vault.assetSymbol}
                               </button>
                               <button
                                 onClick={() => handleSubmit()}
@@ -1942,18 +1942,14 @@ export function VaultPageContent({ id }: { id: string }) {
                           )}
                         >
                           {isSimulatingPreview ? (
-                            <>
-                              <Loader2 size={18} className="animate-spin" />
-                              Simulating...
-                            </>
+                            <>Simulating<LoadingDots /></>
                           ) : isLoading ? (
                             <>
-                              <Loader2 size={18} className="animate-spin" />
                               {txStatus === "approving" || txStatus === "waitingApproval"
-                                ? "Approving..."
+                                ? <>Approving<LoadingDots /></>
                                 : txStatus === "depositing" || txStatus === "withdrawing"
-                                ? "Confirming..."
-                                : "Processing..."}
+                                ? <>Confirming<LoadingDots /></>
+                                : <>Processing<LoadingDots /></>}
                             </>
                           ) : !inputAmount ? (
                             "Enter amount"
@@ -2214,7 +2210,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               <span className="text-sm text-[var(--muted-foreground)]">Amount</span>
                               <span className="text-xs mono text-[var(--muted-foreground)]">{zapInputBalanceNum.toFixed(4)}</span>
                             </div>
-                            <div className="bg-[var(--muted)] rounded-lg p-4 flex items-center gap-2 focus-within:ring-2 focus-within:ring-[var(--accent)] transition-shadow">
+                            <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2 focus-within:ring-2 focus-within:ring-[var(--accent)] transition-shadow">
                               <input
                                 type="number"
                                 value={zapAmount}
@@ -2249,7 +2245,7 @@ export function VaultPageContent({ id }: { id: string }) {
                             <div className="flex items-center justify-between mb-2">
                               <span className="text-sm text-[var(--muted-foreground)]">You receive</span>
                             </div>
-                            <div className="bg-[var(--muted)] rounded-lg p-4 flex items-center gap-2">
+                            <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2">
                               <span className="mono text-base text-[var(--foreground)] flex-1">
                                 {zapQuoteLoading ? "—" : zapQuote ? Number(zapQuote.outputAmountFormatted).toFixed(4) : "0.00"}
                               </span>
@@ -2268,7 +2264,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               <span className="text-sm text-[var(--muted-foreground)]">Amount</span>
                               <span className="text-xs mono text-[var(--muted-foreground)]">{vaultBalance.toFixed(4)}</span>
                             </div>
-                            <div className="bg-[var(--muted)] rounded-lg p-4 flex items-center gap-2 focus-within:ring-2 focus-within:ring-[var(--accent)] transition-shadow">
+                            <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2 focus-within:ring-2 focus-within:ring-[var(--accent)] transition-shadow">
                               <input
                                 type="number"
                                 value={zapAmount}
@@ -2299,7 +2295,7 @@ export function VaultPageContent({ id }: { id: string }) {
                             <div className="flex items-center justify-between mb-2">
                               <span className="text-sm text-[var(--muted-foreground)]">You receive</span>
                             </div>
-                            <div className="bg-[var(--muted)] rounded-lg p-4 flex items-center gap-2">
+                            <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2">
                               <span className="mono text-base text-[var(--foreground)] flex-1">
                                 {zapQuoteLoading ? "—" : zapQuote ? Number(zapQuote.outputAmountFormatted).toFixed(4) : "0.00"}
                               </span>
@@ -2374,7 +2370,7 @@ export function VaultPageContent({ id }: { id: string }) {
                           /* Zap approval choice: Exact or Unlimited */
                           <div className="space-y-2">
                             <div className="text-sm text-[var(--muted-foreground)]">
-                              Approve {zapDirection === "in" ? zapInputToken?.symbol : vault.symbol} spending
+                              Approve {zapDirection === "in" ? zapInputToken?.symbol : vault.symbol}{" "}<span className="whitespace-nowrap">spending {zapQuote?.tx?.to && <a href={`https://etherscan.io/address/${zapQuote.tx.to}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={12} className="!inline -mt-0.5" /></a>}</span>
                             </div>
                             <div className="flex gap-2">
                               <button
@@ -2398,7 +2394,7 @@ export function VaultPageContent({ id }: { id: string }) {
                                     : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10 cursor-pointer"
                                 )}
                               >
-                                Exact ({Number(zapAmount).toLocaleString(undefined, { maximumFractionDigits: 2 })})
+                                {Number(zapAmount).toLocaleString(undefined, { maximumFractionDigits: 2 })} {zapDirection === "in" ? (zapInputToken?.symbol ?? "Token") : vault.symbol}
                               </button>
                               <button
                                 onClick={() => {
@@ -2450,16 +2446,12 @@ export function VaultPageContent({ id }: { id: string }) {
                           )}
                         >
                           {isSimulatingPreview ? (
-                            <>
-                              <Loader2 size={18} className="animate-spin" />
-                              Simulating...
-                            </>
+                            <>Simulating<LoadingDots /></>
                           ) : zapIsLoading ? (
                             <>
-                              <Loader2 size={18} className="animate-spin" />
                               {zapStatus === "approving" || zapStatus === "waitingApproval"
-                                ? "Approving..."
-                                : "Zapping..."}
+                                ? <>Approving<LoadingDots /></>
+                                : <>Zapping<LoadingDots /></>}
                             </>
                           ) : zapQuoteLoading ? (
                             <>Getting quote<LoadingDots /></>
@@ -2521,9 +2513,9 @@ export function VaultPageContent({ id }: { id: string }) {
                         </div>
                       </div>
 
-                      {/* Route details panel - expandable with slide animation (only show when have quote or loading) */}
+                      {/* Route details panel */}
                       <div
-                        className="grid transition-all duration-300 ease-in-out"
+                        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
                         style={{ gridTemplateRows: showRoute && zapAmount && Number(zapAmount) > 0 && (zapQuote || zapQuoteLoading) ? "1fr" : "0fr" }}
                       >
                         <div className="overflow-hidden">

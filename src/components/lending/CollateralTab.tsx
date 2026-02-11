@@ -13,6 +13,7 @@ import {
   Plus,
   Minus,
   ArrowRightLeft,
+  ExternalLink,
 } from "lucide-react";
 import { useAccount, usePublicClient, useBalance, useGasPrice, useBlockNumber } from "wagmi";
 import { formatUnits, parseUnits } from "viem";
@@ -190,9 +191,14 @@ export function CollateralTab({
     executeAfterPreview,
   } = useCurveLendingActions();
 
+  // Preserve last approval data so content stays in DOM during close animation
+  const lastApprovalRef = useRef(pendingApproval);
+  if (pendingApproval) lastApprovalRef.current = pendingApproval;
+  const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
+
   // Read selected token balance (native ETH or ERC20)
   const isEth = selectedToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
-  const { data: tokenBalance } = useBalance({
+  const { data: tokenBalance, refetch: refetchBalance } = useBalance({
     address,
     token: isEth ? undefined : (selectedToken.address as `0x${string}`),
     query: { enabled: !!address },
@@ -492,9 +498,9 @@ export function CollateralTab({
     return undefined;
   }, [simulationResult, position, vault.address, vault.decimals, vault.symbol, mode]);
 
-  // Clear simulation when inputs change
+  // Clear simulation/approval state when inputs change
   useEffect(() => {
-    if (simulationResult) {
+    if (simulationResult || status === "needsApproval") {
       reset();
       setShowSimulationModal(false);
     }
@@ -511,8 +517,10 @@ export function CollateralTab({
         },
       });
       onTransactionSuccess();
+      refetchBalance();
+      reset();
     }
-  }, [status, txHash, mode, onTransactionSuccess]);
+  }, [status, txHash, mode, onTransactionSuccess, reset, refetchBalance]);
 
   useEffect(() => {
     if (status === "error" && error) {
@@ -577,7 +585,6 @@ export function CollateralTab({
       if (mode === "add") {
         if (isVaultToken) {
           if (showSimulationPreview) {
-            // Preview mode: run simulation first
             const result = await addCollateral(
               vault.address as `0x${string}`,
               amount,
@@ -587,29 +594,40 @@ export function CollateralTab({
               simulationBlock.current = currentBlock ?? 0n;
               setShowSimulationModal(true);
               fetchEthPrice();
+              return;
             }
-          } else {
-            // Direct execution
-            await addCollateral(
-              vault.address as `0x${string}`,
-              amount,
-              { tokenSymbol: vault.symbol }
-            );
+            // Preview unavailable (e.g., Anvil fork) — execute directly
           }
+          await addCollateral(
+            vault.address as `0x${string}`,
+            amount,
+            { tokenSymbol: vault.symbol }
+          );
         } else {
           // Swap: tokenIn → vaultToken → add_collateral
-          const result = await addCollateralWithSwap(
+          if (showSimulationPreview) {
+            const result = await addCollateralWithSwap(
+              vault.address as `0x${string}`,
+              selectedToken.address,
+              amount,
+              Number(slippage),
+              { previewOnly: true, tokenSymbol: selectedToken.symbol }
+            );
+            if (result) {
+              simulationBlock.current = currentBlock ?? 0n;
+              setShowSimulationModal(true);
+              fetchEthPrice();
+              return;
+            }
+            // Preview unavailable — execute directly
+          }
+          await addCollateralWithSwap(
             vault.address as `0x${string}`,
             selectedToken.address,
             amount,
             Number(slippage),
-            { previewOnly: showSimulationPreview, tokenSymbol: selectedToken.symbol }
+            { tokenSymbol: selectedToken.symbol }
           );
-          if (result && showSimulationPreview) {
-            simulationBlock.current = currentBlock ?? 0n;
-            setShowSimulationModal(true);
-            fetchEthPrice();
-          }
         }
       } else {
         // Remove mode
@@ -624,27 +642,39 @@ export function CollateralTab({
               simulationBlock.current = currentBlock ?? 0n;
               setShowSimulationModal(true);
               fetchEthPrice();
+              return;
             }
-          } else {
-            await removeCollateral(
-              vault.address as `0x${string}`,
-              amount,
-            );
+            // Preview unavailable — execute directly
           }
+          await removeCollateral(
+            vault.address as `0x${string}`,
+            amount,
+          );
         } else {
           // Swap: remove_collateral → vaultToken → tokenOut
-          const result = await removeCollateralAndSwap(
+          if (showSimulationPreview) {
+            const result = await removeCollateralAndSwap(
+              vault.address as `0x${string}`,
+              amount,
+              selectedToken.address,
+              Number(slippage),
+              { previewOnly: true, tokenSymbol: selectedToken.symbol }
+            );
+            if (result) {
+              simulationBlock.current = currentBlock ?? 0n;
+              setShowSimulationModal(true);
+              fetchEthPrice();
+              return;
+            }
+            // Preview unavailable — execute directly
+          }
+          await removeCollateralAndSwap(
             vault.address as `0x${string}`,
             amount,
             selectedToken.address,
             Number(slippage),
-            { previewOnly: showSimulationPreview, tokenSymbol: selectedToken.symbol }
+            { tokenSymbol: selectedToken.symbol }
           );
-          if (result && showSimulationPreview) {
-            simulationBlock.current = currentBlock ?? 0n;
-            setShowSimulationModal(true);
-            fetchEthPrice();
-          }
         }
       }
     } catch (err) {
@@ -699,11 +729,9 @@ export function CollateralTab({
     (isVaultToken || (!quoteLoading && swapQuote !== undefined));
 
   const getButtonText = () => {
-    if (status === "building" || status === "simulating") return needsSwap ? "Simulating..." : "Preparing...";
-    if (status === "executing") return "Confirm in wallet...";
-    if (status === "waitingTx") return "Waiting for confirmation...";
-    if (status === "success") return "Done!";
-    if (status === "error") return "Try Again";
+    if (status === "building" || status === "simulating") return <>Simulating<LoadingDots /></>;
+    if (status === "executing") return <>Confirm in wallet<LoadingDots /></>;
+    if (status === "waitingTx") return <>Waiting for confirmation<LoadingDots /></>;
     if (hasInsufficientBalance) return "Insufficient balance";
     if (exceedsCollateral) return "Exceeds collateral";
     if (healthTooLow) return "Position would be unhealthy";
@@ -838,58 +866,68 @@ export function CollateralTab({
       )}
 
       {/* Approval Flow */}
-      {pendingApproval && status === "needsApproval" && (
-        <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-3">
-          <div className="text-sm font-medium">Approval Required</div>
-          <div className="text-sm text-[var(--muted-foreground)]">
-            Approve {pendingApproval.tokenSymbol} spending
-          </div>
-          {pendingApproval.type !== "controller" && pendingApproval.amount ? (
-            <div className="flex gap-2">
-              <button
-                onClick={() => approve(true)}
-                disabled={isApproving}
-                className={cn(
-                  "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                  isApproving
-                    ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                    : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
-                )}
-              >
-                {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                {isApproving ? "Approving..." : `Exact (${Number(formatUnits(pendingApproval.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })})`}
-              </button>
-              <button
-                onClick={() => approve(false)}
-                disabled={isApproving}
-                className={cn(
-                  "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                  isApproving
-                    ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                    : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
-                )}
-              >
-                {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                {isApproving ? "Approving..." : "Unlimited"}
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => approve()}
-              disabled={isApproving}
-              className={cn(
-                "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
-                isApproving
-                  ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                  : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        style={{ gridTemplateRows: showApprovalCard ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
+          {lastApprovalRef.current && (
+            <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-3">
+              <div className="text-sm font-medium">Approval Required</div>
+              <div className="text-sm text-[var(--muted-foreground)]">
+                {lastApprovalRef.current!.type === "controller"
+                  ? <>Allow yld Zapper to manage position on LlamaLend{" "}<span className="whitespace-nowrap">controller <a href={`https://etherscan.io/address/${lastApprovalRef.current!.spender}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={12} className="!inline -mt-0.5" /></a></span></>
+                  : <>Allow yld Zapper to spend {lastApprovalRef.current!.tokenSymbol}{" "}<span className="whitespace-nowrap"><a href={`https://etherscan.io/address/${lastApprovalRef.current!.spender}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={12} className="!inline -mt-0.5" /></a></span></>
+                }
+              </div>
+              {lastApprovalRef.current!.type !== "controller" && lastApprovalRef.current!.amount ? (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => approve(true)}
+                    disabled={isApproving}
+                    className={cn(
+                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                      isApproving
+                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                        : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
+                    )}
+                  >
+                    {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {isApproving ? "Approving..." : `${Number(formatUnits(lastApprovalRef.current!.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${lastApprovalRef.current!.tokenSymbol}`}
+                  </button>
+                  <button
+                    onClick={() => approve(false)}
+                    disabled={isApproving}
+                    className={cn(
+                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                      isApproving
+                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                        : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+                    )}
+                  >
+                    {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {isApproving ? "Approving..." : "Unlimited"}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => approve()}
+                  disabled={isApproving}
+                  className={cn(
+                    "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
+                    isApproving
+                      ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                      : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+                  )}
+                >
+                  {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {isApproving ? "Approving..." : `Approve ${lastApprovalRef.current!.tokenSymbol}`}
+                </button>
               )}
-            >
-              {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-              {isApproving ? "Approving..." : `Approve ${pendingApproval.tokenSymbol}`}
-            </button>
+            </div>
           )}
         </div>
-      )}
+      </div>
 
       {/* Simulation Modal */}
       {showSimulationModal && simulationResult && (
@@ -912,55 +950,67 @@ export function CollateralTab({
       )}
 
       {/* Action Button */}
-      {status !== "needsApproval" && (
-        <button
-          onClick={() => {
-            if (status === "error" || status === "success") {
-              reset();
-            } else if (simulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
-              setShowSimulationModal(true);
-            } else if (!quoteLoading) {
-              handleSubmit();
-            }
-          }}
-          disabled={isProcessing || quoteLoading || (!isFormValid && status === "idle")}
-          className={cn(
-            "w-full py-3 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
-            isProcessing || quoteLoading || (!isFormValid && status === "idle")
-              ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-              : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
-          )}
-        >
-          {isProcessing && <Loader2 className="w-4 h-4 animate-spin" />}
-          {needsSwap && quoteLoading && status === "idle" ? (
-            <>Getting quote<LoadingDots /></>
-          ) : (
-            getButtonText()
-          )}
-        </button>
-      )}
-
-      {/* Settings icon for direct vault token paths (no swap) */}
-      {!needsSwap && (
-        <div className="flex items-center justify-end">
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        style={{ gridTemplateRows: !showApprovalCard ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
           <button
-            onClick={() => setShowSlippageModal(true)}
-            className="flex items-center gap-1.5 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
-            title="Settings"
+            onClick={() => {
+              if (status === "error" || status === "success") {
+                reset();
+              } else if (simulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
+                setShowSimulationModal(true);
+              } else if (!quoteLoading) {
+                handleSubmit();
+              }
+            }}
+            disabled={showApprovalCard || isProcessing || quoteLoading || (!isFormValid && status === "idle")}
+            className={cn(
+              "w-full py-3 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
+              isProcessing || quoteLoading || (!isFormValid && status === "idle")
+                ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+            )}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="4" y1="6" x2="20" y2="6" />
-              <circle cx="8" cy="6" r="2" />
-              <line x1="4" y1="18" x2="20" y2="18" />
-              <circle cx="16" cy="18" r="2" />
-            </svg>
+            {needsSwap && quoteLoading && status === "idle" ? (
+              <>Getting quote<LoadingDots /></>
+            ) : (
+              getButtonText()
+            )}
           </button>
         </div>
-      )}
+      </div>
+
+      {/* Settings icon for direct vault token paths (no swap) */}
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        style={{ gridTemplateRows: !needsSwap ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
+          <div className="flex items-center justify-end">
+            <button
+              onClick={() => setShowSlippageModal(true)}
+              className="flex items-center gap-1.5 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
+              title="Settings"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="4" y1="6" x2="20" y2="6" />
+                <circle cx="8" cy="6" r="2" />
+                <line x1="4" y1="18" x2="20" y2="18" />
+                <circle cx="16" cy="18" r="2" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* Enso Attribution + Route Toggle + Slippage Settings */}
-      {needsSwap && (
-        <>
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        style={{ gridTemplateRows: needsSwap ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
           <div className="flex items-center justify-between pt-2">
             <a
               href="https://www.enso.build"
@@ -1011,16 +1061,19 @@ export function CollateralTab({
             </div>
           </div>
 
-          {/* Route details panel */}
-          <div
-            className="grid transition-all duration-300 ease-in-out"
-            style={{
-              gridTemplateRows:
-                showRoute && amount && Number(amount) > 0 && (swapQuote || quoteLoading) ? "1fr" : "0fr",
-            }}
-          >
-            <div className="overflow-hidden">
-              <div className="pt-3 mt-3 border-t border-[var(--border)]">
+        </div>
+      </div>
+
+      {/* Route details panel */}
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        style={{
+          gridTemplateRows:
+            showRoute && amount && Number(amount) > 0 && (swapQuote || quoteLoading) ? "1fr" : "0fr",
+        }}
+      >
+        <div className="overflow-hidden">
+          <div className="pt-3 mt-3 border-t border-[var(--border)]">
                 <div className="text-xs text-[var(--muted-foreground)] mb-2">
                   Route
                 </div>
@@ -1075,11 +1128,9 @@ export function CollateralTab({
                   }
                   isLoading={quoteLoading}
                 />
-              </div>
-            </div>
           </div>
-        </>
-      )}
+        </div>
+      </div>
 
       {/* Connect wallet prompt */}
       {!address && (

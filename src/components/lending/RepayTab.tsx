@@ -4,12 +4,14 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
 import { toast } from "sonner";
+import { isUserRejection } from "@/lib/analytics";
 import {
   Loader2,
   AlertTriangle,
   Route,
   RouteOff,
   ArrowRightLeft,
+  ExternalLink,
 } from "lucide-react";
 import { useAccount, usePublicClient, useBalance, useGasPrice, useBlockNumber } from "wagmi";
 import { formatUnits, parseUnits } from "viem";
@@ -27,7 +29,14 @@ import { fetchRoute, fetchTokenPrices, ETH_ADDRESS } from "@/lib/enso";
 import { CRVUSD_ADDRESS } from "@/lib/zapper";
 import { CURVE_SAVINGS } from "@/config/vaults";
 import { getVaultInfo } from "@/lib/curve-lending";
-import { previewRedeem } from "@/lib/curve/rpc";
+// previewRedeem ABI for ERC4626 vaults
+const PREVIEW_REDEEM_ABI = [{
+  inputs: [{ name: "shares", type: "uint256" }],
+  name: "previewRedeem",
+  outputs: [{ name: "", type: "uint256" }],
+  stateMutability: "view",
+  type: "function",
+}] as const;
 import type { EnsoToken, EnsoRouteResponse } from "@/types/enso";
 
 const WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
@@ -185,6 +194,7 @@ export function RepayTab({
   // Lending actions
   const {
     repayDirect,
+    repayWithRedeem,
     repayWithSwap,
     pendingApproval,
     approve,
@@ -196,12 +206,18 @@ export function RepayTab({
     error,
     simulationResult,
     reset,
+    clearError,
     executeAfterPreview,
   } = useCurveLendingActions();
 
+  // Preserve last approval data so content stays in DOM during close animation
+  const lastApprovalRef = useRef(pendingApproval);
+  if (pendingApproval) lastApprovalRef.current = pendingApproval;
+  const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
+
   // Read selected token balance (native ETH or ERC20)
   const isEth = repayToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
-  const { data: repayTokenBalance } = useBalance({
+  const { data: repayTokenBalance, refetch: refetchBalance } = useBalance({
     address,
     token: isEth ? undefined : (repayToken.address as `0x${string}`),
     query: { enabled: !!address },
@@ -235,11 +251,19 @@ export function RepayTab({
   } = useQuery({
     queryKey: ["repay-redeem-preview", repayToken.address, debouncedAmount],
     queryFn: async () => {
-      const amountWei = parseUnits(debouncedAmount, repayToken.decimals).toString();
-      return previewRedeem(vaultInfo!.address, amountWei);
+      if (!publicClient) throw new Error("No public client");
+      const amountWei = parseUnits(debouncedAmount, repayToken.decimals);
+      const result = await publicClient.readContract({
+        address: vaultInfo!.address as `0x${string}`,
+        abi: PREVIEW_REDEEM_ABI,
+        functionName: "previewRedeem",
+        args: [amountWei],
+      });
+      return result.toString();
     },
     enabled:
       isVaultWithCrvUsdUnderlying &&
+      !!publicClient &&
       !!debouncedAmount &&
       Number(debouncedAmount) > 0,
     refetchInterval: 30_000,
@@ -263,20 +287,25 @@ export function RepayTab({
       vaultInfo?.underlying ?? null,
     ],
     queryFn: async (): Promise<EnsoRouteResponse> => {
-      if (!address) throw new Error("No address");
+      if (!address || !publicClient) throw new Error("No address or client");
       const amountWei = parseUnits(
         debouncedAmount,
         repayToken.decimals
-      ).toString();
+      );
 
       if (vaultInfo) {
         // Vault token: estimate underlying from redeem, then quote underlying → crvUSD
-        const underlyingAmount = await previewRedeem(vaultInfo.address, amountWei);
+        const underlyingAmount = await publicClient.readContract({
+          address: vaultInfo.address as `0x${string}`,
+          abi: PREVIEW_REDEEM_ABI,
+          functionName: "previewRedeem",
+          args: [amountWei],
+        });
         return fetchRoute({
           fromAddress: address,
           tokenIn: vaultInfo.underlying,
           tokenOut: CRVUSD_ADDRESS,
-          amountIn: underlyingAmount,
+          amountIn: underlyingAmount.toString(),
           slippage,
         });
       }
@@ -286,7 +315,7 @@ export function RepayTab({
         fromAddress: address,
         tokenIn: repayToken.address,
         tokenOut: CRVUSD_ADDRESS,
-        amountIn: amountWei,
+        amountIn: amountWei.toString(),
         slippage,
       });
     },
@@ -314,15 +343,17 @@ export function RepayTab({
   }, [swapQuote, redeemPreview, isVaultWithCrvUsdUnderlying]);
 
   const exchangeRate = useMemo(() => {
-    if (
-      !swapQuote?.amountOut ||
-      !debouncedAmount ||
-      Number(debouncedAmount) === 0
-    )
-      return null;
+    if (!debouncedAmount || Number(debouncedAmount) === 0) return null;
+    // For vault-with-crvUSD-underlying: use redeem preview
+    if (isVaultWithCrvUsdUnderlying && redeemPreview) {
+      const outFormatted = Number(formatUnits(BigInt(redeemPreview), 18));
+      return outFormatted / Number(debouncedAmount);
+    }
+    // For regular swaps: use swap quote
+    if (!swapQuote?.amountOut) return null;
     const outFormatted = Number(formatUnits(BigInt(swapQuote.amountOut), 18));
     return outFormatted / Number(debouncedAmount);
-  }, [swapQuote, debouncedAmount]);
+  }, [swapQuote, debouncedAmount, isVaultWithCrvUsdUnderlying, redeemPreview]);
 
   // Price impact: manual calculation using USD token prices
   // Same pattern as BorrowTab: ((inputUsd - outputUsd) / inputUsd) × 100
@@ -336,7 +367,7 @@ export function RepayTab({
   const { data: tokenPrices } = useQuery({
     queryKey: ["repay-token-prices", priceTokenAddress],
     queryFn: () => fetchTokenPrices([priceTokenAddress, CRVUSD_ADDRESS]),
-    enabled: !isCrvUsd && !isVaultWithCrvUsdUnderlying,
+    enabled: !isCrvUsd,
     refetchInterval: 60_000,
     staleTime: 30_000,
   });
@@ -485,25 +516,58 @@ export function RepayTab({
   useEffect(() => {
     if ((status === "waitingTx" || status === "success" || status === "reverted") && txHash) {
       const action = isClosingLoan ? "Close Loan" : "Repay";
+      const crvUsdAmount = isCrvUsd
+        ? Number(repayAmount).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })
+        : estimatedCrvUsdOut
+          ? Number(formatUnits(estimatedCrvUsdOut, 18)).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })
+          : "~";
+      // Build a descriptive message for the overlay
+      let message: string | undefined;
+      if (isCrvUsd) {
+        message = `Repaying ${repayAmount} crvUSD debt`;
+      } else if (isVaultWithCrvUsdUnderlying) {
+        message = `Repaying ${crvUsdAmount} crvUSD debt with ${repayAmount} ${repayToken.symbol}`;
+      } else {
+        message = `Repaying ${crvUsdAmount} crvUSD debt with ${repayAmount} ${repayToken.symbol}`;
+      }
+      const fromNum = Number(repayAmount);
+      const fromDp = fromNum > 0 && fromNum < 0.01 ? 6 : fromNum < 1 ? 4 : 2;
+      const formattedFrom = fromNum.toLocaleString(undefined, { maximumFractionDigits: fromDp, minimumFractionDigits: 2 });
       const details = repayAmount && Number(repayAmount) > 0 ? {
-        fromAmount: repayAmount,
+        fromAmount: formattedFrom,
         fromSymbol: repayToken.symbol,
         fromLogo: repayToken.logoURI || "/tokens/unknown.png",
-        toAmount: isCrvUsd ? repayAmount : estimatedCrvUsdOut ? Number(formatUnits(estimatedCrvUsdOut, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 }) : "~",
-        toSymbol: "crvUSD debt",
+        toAmount: crvUsdAmount,
+        toSymbol: "crvUSD",
         toLogo: "/tokens/crvusd.png",
+        message,
       } : undefined;
       const mapped = status === "waitingTx" ? "pending" : status;
       onTxStateChange?.({ status: mapped as "pending" | "success" | "reverted", action, hash: txHash, details });
     }
-  }, [status, txHash, isClosingLoan, onTxStateChange, repayAmount, repayToken, isCrvUsd, estimatedCrvUsdOut]);
+  }, [status, txHash, isClosingLoan, onTxStateChange, repayAmount, repayToken, isCrvUsd, isVaultWithCrvUsdUnderlying, estimatedCrvUsdOut]);
 
-  // Handle transaction success
+  // Handle transaction success — reset to idle so button returns to normal
   useEffect(() => {
     if (status === "success") {
       onTransactionSuccess();
+      refetchBalance();
+      reset();
     }
-  }, [status, onTransactionSuccess]);
+  }, [status, onTransactionSuccess, reset, refetchBalance]);
+
+  // Toast error messages to user
+  useEffect(() => {
+    if (status === "error" && error) {
+      if (isUserRejection(error)) {
+        toast("Transaction cancelled", { id: "repay-cancelled", duration: 3000 });
+        clearError();
+      } else {
+        toast.error(error);
+        reset();
+      }
+    }
+  }, [status, error, reset, clearError]);
 
   // Handle approval success -> continue execution
   useEffect(() => {
@@ -512,10 +576,11 @@ export function RepayTab({
     }
   }, [isApprovalSuccess, status, executeAfterApproval]);
 
-  // Clear amount when switching tokens
+  // Clear amount and reset action state when switching tokens
   useEffect(() => {
     setRepayAmountState("");
-  }, [repayToken.address]);
+    reset();
+  }, [repayToken.address]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSubmit = async () => {
     if (!address || !controllerAddress || !repayAmount || !position?.hasLoan)
@@ -526,69 +591,50 @@ export function RepayTab({
         // Path A: direct controller.repay()
         const repayWei = parseUnits(repayAmount, 18);
         if (showSimulationPreview) {
-          const result = await repayDirect(controllerAddress, repayWei, { previewOnly: true });
+          const result = await repayDirect(controllerAddress, repayWei, { previewOnly: true, closeLoan: isClosingLoan });
           if (result) {
             simulationBlock.current = currentBlock ?? 0n;
             setShowSimulationModal(true);
-            if (publicClient) {
-              publicClient.readContract({
-                address: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419" as `0x${string}`,
-                abi: [{
-                  name: "latestRoundData",
-                  type: "function",
-                  stateMutability: "view",
-                  inputs: [],
-                  outputs: [
-                    { name: "roundId", type: "uint80" },
-                    { name: "answer", type: "int256" },
-                    { name: "startedAt", type: "uint256" },
-                    { name: "updatedAt", type: "uint256" },
-                    { name: "answeredInRound", type: "uint80" },
-                  ],
-                }],
-                functionName: "latestRoundData",
-              }).then(data => {
-                setEthPrice(Number(data[1] as bigint) / 1e8);
-              }).catch(() => {});
-            }
+            return;
           }
-        } else {
-          await repayDirect(controllerAddress, repayWei);
+          // Preview unavailable (e.g., Anvil fork) — execute directly
         }
+        await repayDirect(controllerAddress, repayWei, { closeLoan: isClosingLoan });
+      } else if (isVaultWithCrvUsdUnderlying) {
+        // Path B: Redeem vault token → crvUSD, then repay (no Enso)
+        const redeemWei = parseUnits(repayAmount, repayToken.decimals);
+        await repayWithRedeem(
+          controllerAddress,
+          repayToken.address as `0x${string}`,
+          redeemWei,
+          { tokenSymbol: repayToken.symbol }
+        );
       } else {
-        // Path B: Enso swap + repay
-        const result = await repayWithSwap(
+        // Path C: Enso swap + repay
+        if (showSimulationPreview) {
+          const result = await repayWithSwap(
+            vault.address as `0x${string}`,
+            repayToken.address,
+            repayAmount,
+            repayToken.decimals,
+            Number(slippage),
+            { previewOnly: true, tokenSymbol: repayToken.symbol }
+          );
+          if (result) {
+            simulationBlock.current = currentBlock ?? 0n;
+            setShowSimulationModal(true);
+            return;
+          }
+          // Preview unavailable (e.g., Anvil fork) — execute directly
+        }
+        await repayWithSwap(
           vault.address as `0x${string}`,
           repayToken.address,
           repayAmount,
+          repayToken.decimals,
           Number(slippage),
-          { previewOnly: showSimulationPreview, tokenSymbol: repayToken.symbol }
+          { tokenSymbol: repayToken.symbol }
         );
-        if (result && showSimulationPreview) {
-          simulationBlock.current = currentBlock ?? 0n;
-          setShowSimulationModal(true);
-          if (publicClient) {
-            publicClient.readContract({
-              address: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419" as `0x${string}`,
-              abi: [{
-                name: "latestRoundData",
-                type: "function",
-                stateMutability: "view",
-                inputs: [],
-                outputs: [
-                  { name: "roundId", type: "uint80" },
-                  { name: "answer", type: "int256" },
-                  { name: "startedAt", type: "uint256" },
-                  { name: "updatedAt", type: "uint256" },
-                  { name: "answeredInRound", type: "uint80" },
-                ],
-              }],
-              functionName: "latestRoundData",
-            }).then(data => {
-              setEthPrice(Number(data[1] as bigint) / 1e8);
-            }).catch(() => {});
-          }
-        }
       }
     } catch (err) {
       console.error("Repay action failed:", err);
@@ -627,12 +673,10 @@ export function RepayTab({
     (isCrvUsd || isVaultWithCrvUsdUnderlying || (!isCrvUsd && !quoteLoading));
 
   const getButtonText = () => {
-    if (status === "building") return "Building transaction...";
-    if (status === "simulating") return "Simulating...";
-    if (status === "executing") return "Confirm in wallet...";
-    if (status === "waitingTx") return "Waiting for confirmation...";
-    if (status === "success") return "Done!";
-    if (status === "error") return "Try Again";
+    if (status === "building") return <>Building transaction<LoadingDots /></>;
+    if (status === "simulating") return <>Simulating<LoadingDots /></>;
+    if (status === "executing") return <>Confirm in wallet<LoadingDots /></>;
+    if (status === "waitingTx") return <>Waiting for confirmation<LoadingDots /></>;
     if (hasInsufficientBalance) return "Insufficient balance";
 
     if (isCrvUsd) {
@@ -679,149 +723,155 @@ export function RepayTab({
             excludeDefiTokens
           />
           <MaxButton
-            balance={balanceFormatted}
+            balance={(() => {
+              // Cap MAX at debt - 0.01 to avoid accidentally closing the loan
+              // CLOSE button handles full loan closure
+              if (isCrvUsd && position?.hasLoan && position.debt > 0n) {
+                const debtMinus = position.debt - parseUnits("0.01", 18);
+                if (debtMinus > 0n && currentBalance > debtMinus) {
+                  return formatUnits(debtMinus, 18);
+                }
+              }
+              return balanceFormatted;
+            })()}
             onSelect={setRepayAmount}
+            showClose={!!position?.hasLoan}
+            onClose={() => {
+              if (isCrvUsd) {
+                setRepayAmount(formatUnits(position!.debt, 18));
+              } else {
+                setRepayAmount(balanceFormatted);
+              }
+            }}
           />
         </div>
       </div>
 
       {/* Quote details (non-crvUSD, when amount entered and quote loaded) */}
       {!isCrvUsd && repayAmount && Number(repayAmount) > 0 && (
-        <>
-          {/* Vault with crvUSD underlying (e.g., scrvUSD): show repay amount only */}
-          {isVaultWithCrvUsdUnderlying && estimatedCrvUsdOut !== null && !quoteLoading && (
-            <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
+        (isVaultWithCrvUsdUnderlying ? estimatedCrvUsdOut !== null && !quoteLoading : swapQuote && !quoteLoading) && (
+          <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
+            {/* Exchange rate */}
+            {exchangeRate !== null && (
+              <div className="flex justify-between items-center">
+                <span className="text-[var(--muted-foreground)]">Rate</span>
+                <button
+                  type="button"
+                  onClick={() => setRateInverted(v => !v)}
+                  className="flex items-center gap-1 mono hover:text-[var(--accent)] transition-colors"
+                >
+                  {rateInverted
+                    ? <>1 crvUSD = {(1 / exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 4 })} {repayToken.symbol}</>
+                    : <>1 {repayToken.symbol} = {exchangeRate.toLocaleString(undefined, { maximumFractionDigits: 4 })} crvUSD</>
+                  }
+                  <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
+                </button>
+              </div>
+            )}
+
+            {/* Price impact */}
+            {priceImpact !== null && (
               <div className="flex justify-between">
-                <span className="text-[var(--muted-foreground)]">Repaying</span>
-                <span className="mono">
-                  ~{Number(formatUnits(estimatedCrvUsdOut, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })}{" "}
-                  / {Number(formatUnits(position.debt, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} crvUSD
+                <span className="text-[var(--muted-foreground)]">
+                  Price Impact
+                </span>
+                <span
+                  className={cn(
+                    "mono",
+                    priceImpact <= 0
+                      ? "text-green-500"
+                      : priceImpact < 3
+                        ? "text-yellow-500"
+                        : "text-red-500"
+                  )}
+                >
+                  {priceImpact > 0 ? "" : "+"}{(-priceImpact).toFixed(2)}%
                 </span>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Regular swap: show rate, impact, repay amount */}
-          {!isVaultWithCrvUsdUnderlying && swapQuote && !quoteLoading && (
-            <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
-              {/* Exchange rate */}
-              {exchangeRate !== null && (
-                <div className="flex justify-between items-center">
-                  <span className="text-[var(--muted-foreground)]">Rate</span>
-                  <button
-                    type="button"
-                    onClick={() => setRateInverted(v => !v)}
-                    className="flex items-center gap-1 mono hover:text-[var(--accent)] transition-colors"
-                  >
-                    {rateInverted
-                      ? <>1 crvUSD = {(1 / exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 4 })} {repayToken.symbol}</>
-                      : <>1 {repayToken.symbol} = {exchangeRate.toLocaleString(undefined, { maximumFractionDigits: 2 })} crvUSD</>
-                    }
-                    <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
-                  </button>
-                </div>
-              )}
-
-              {/* Price impact */}
-              {priceImpact !== null && (
-                <div className="flex justify-between">
-                  <span className="text-[var(--muted-foreground)]">
-                    Price Impact
-                  </span>
-                  <span
-                    className={cn(
-                      "mono",
-                      priceImpact <= 0
-                        ? "text-green-500"
-                        : priceImpact < 3
-                          ? "text-yellow-500"
-                          : "text-red-500"
-                    )}
-                  >
-                    {priceImpact > 0 ? "" : "+"}{(-priceImpact).toFixed(2)}%
-                  </span>
-                </div>
-              )}
-
-              {/* Repaying amount */}
-              {estimatedCrvUsdOut !== null && (
-                <div className="flex justify-between">
-                  <span className="text-[var(--muted-foreground)]">
-                    Repaying
-                  </span>
-                  <span className="mono">
-                    ~
-                    {Number(
-                      formatUnits(estimatedCrvUsdOut, 18)
-                    ).toLocaleString(undefined, { maximumFractionDigits: 2 })}{" "}
-                    /{" "}
-                    {Number(formatUnits(position.debt, 18)).toLocaleString(
-                      undefined,
-                      { maximumFractionDigits: 2 }
-                    )}{" "}
-                    crvUSD
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-        </>
+            {/* Repaying amount */}
+            {estimatedCrvUsdOut !== null && (
+              <div className="flex justify-between">
+                <span className="text-[var(--muted-foreground)]">
+                  Repaying
+                </span>
+                <span className="mono">
+                  {isClosingLoan
+                    ? `${Number(formatUnits(position.debt, 18)).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })} / ${Number(formatUnits(position.debt, 18)).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })} crvUSD`
+                    : `~${Number(formatUnits(estimatedCrvUsdOut, 18)).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })} / ${Number(formatUnits(position.debt, 18)).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })} crvUSD`
+                  }
+                </span>
+              </div>
+            )}
+          </div>
+        )
       )}
 
 
       {/* Approval Flow */}
-      {pendingApproval && status === "needsApproval" && (
-        <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-3">
-          <div className="text-sm font-medium">Approval Required</div>
-          <div className="text-sm text-[var(--muted-foreground)]">
-            Approve {pendingApproval.tokenSymbol} spending
-          </div>
-          {pendingApproval.type !== "controller" && pendingApproval.amount ? (
-            <div className="flex gap-2">
-              <button
-                onClick={() => approve(true)}
-                disabled={isApproving}
-                className={cn(
-                  "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                  isApproving
-                    ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                    : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
-                )}
-              >
-                {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                {isApproving ? "Approving..." : `Exact (${Number(formatUnits(pendingApproval.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })})`}
-              </button>
-              <button
-                onClick={() => approve(false)}
-                disabled={isApproving}
-                className={cn(
-                  "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                  isApproving
-                    ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                    : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
-                )}
-              >
-                {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                {isApproving ? "Approving..." : "Unlimited"}
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => approve()}
-              disabled={isApproving}
-              className={cn(
-                "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
-                isApproving
-                  ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                  : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        style={{ gridTemplateRows: showApprovalCard ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
+          {lastApprovalRef.current && (
+            <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-3">
+              <div className="text-sm font-medium">Approval Required</div>
+              <div className="text-sm text-[var(--muted-foreground)]">
+                {lastApprovalRef.current!.type === "controller"
+                  ? <>Allow yld Zapper to manage position on LlamaLend{" "}<span className="whitespace-nowrap">controller <a href={`https://etherscan.io/address/${lastApprovalRef.current!.spender}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={12} className="!inline -mt-0.5" /></a></span></>
+                  : <>Allow yld Zapper to spend {lastApprovalRef.current!.tokenSymbol}{" "}<span className="whitespace-nowrap"><a href={`https://etherscan.io/address/${lastApprovalRef.current!.spender}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={12} className="!inline -mt-0.5" /></a></span></>
+                }
+              </div>
+              {lastApprovalRef.current!.type !== "controller" && lastApprovalRef.current!.amount ? (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => approve(true)}
+                    disabled={isApproving}
+                    className={cn(
+                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                      isApproving
+                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                        : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
+                    )}
+                  >
+                    {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {isApproving ? "Approving..." : `${Number(formatUnits(lastApprovalRef.current!.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${lastApprovalRef.current!.tokenSymbol}`}
+                  </button>
+                  <button
+                    onClick={() => approve(false)}
+                    disabled={isApproving}
+                    className={cn(
+                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                      isApproving
+                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                        : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+                    )}
+                  >
+                    {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {isApproving ? "Approving..." : "Unlimited"}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => approve()}
+                  disabled={isApproving}
+                  className={cn(
+                    "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
+                    isApproving
+                      ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                      : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+                  )}
+                >
+                  {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {isApproving ? "Approving..." : "Approve"}
+                </button>
               )}
-            >
-              {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-              {isApproving ? "Approving..." : "Approve"}
-            </button>
+            </div>
           )}
         </div>
-      )}
+      </div>
 
       {/* Simulation Modal */}
       {showSimulationModal && simulationResult && (
@@ -842,57 +892,77 @@ export function RepayTab({
         />
       )}
 
-      {/* Action Button */}
-      {status !== "needsApproval" && (
-        <button
-          onClick={() => {
-            if (status === "error" || status === "success") {
-              reset();
-            } else if (simulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
-              // Re-open cached simulation modal if same block
-              setShowSimulationModal(true);
-            } else if (!quoteLoading) {
-              handleSubmit();
-            }
-          }}
-          disabled={isProcessing || quoteLoading || (!isFormValid && status === "idle")}
-          className={cn(
-            "w-full py-3 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
-            isProcessing || quoteLoading || (!isFormValid && status === "idle")
-              ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-              : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
-          )}
-        >
-          {isProcessing && <Loader2 className="w-4 h-4 animate-spin" />}
-          {!isCrvUsd && quoteLoading && status === "idle" ? (
-            <>Getting quote<LoadingDots /></>
-          ) : (
-            getButtonText()
-          )}
-        </button>
-      )}
-
-      {/* Settings icon for direct crvUSD / vault-crvUSD paths */}
-      {(isCrvUsd || isVaultWithCrvUsdUnderlying) && (
-        <div className="flex items-center justify-end">
-          <button
-            onClick={() => setShowSlippageModal(true)}
-            className="flex items-center gap-1.5 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
-            title="Settings"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="4" y1="6" x2="20" y2="6" />
-              <circle cx="8" cy="6" r="2" />
-              <line x1="4" y1="18" x2="20" y2="18" />
-              <circle cx="16" cy="18" r="2" />
-            </svg>
-          </button>
+      {/* Close loan warning */}
+      {isClosingLoan && (
+        <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-500 text-xs flex items-center gap-2">
+          <AlertTriangle size={14} className="shrink-0" />
+          Repays all debt and closes loan, collateral returned to wallet
         </div>
       )}
 
-      {/* Enso Attribution + Route Toggle + Slippage Settings (after button, like zap) */}
-      {!isCrvUsd && !isVaultWithCrvUsdUnderlying && (
-        <>
+      {/* Action Button */}
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        style={{ gridTemplateRows: !showApprovalCard ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
+          <button
+            onClick={() => {
+              if (status === "error" || status === "success") {
+                reset();
+              } else if (simulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
+                // Re-open cached simulation modal if same block
+                setShowSimulationModal(true);
+              } else if (!quoteLoading) {
+                handleSubmit();
+              }
+            }}
+            disabled={showApprovalCard || isProcessing || quoteLoading || (!isFormValid && status === "idle")}
+            className={cn(
+              "w-full py-3 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
+              isProcessing || quoteLoading || (!isFormValid && status === "idle")
+                ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+            )}
+          >
+            {!isCrvUsd && quoteLoading && status === "idle" ? (
+              <>Getting quote<LoadingDots /></>
+            ) : (
+              getButtonText()
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Settings icon for direct crvUSD / vault-crvUSD paths */}
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        style={{ gridTemplateRows: (isCrvUsd || isVaultWithCrvUsdUnderlying) ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
+          <div className="flex items-center justify-end">
+            <button
+              onClick={() => setShowSlippageModal(true)}
+              className="flex items-center gap-1.5 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
+              title="Settings"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="4" y1="6" x2="20" y2="6" />
+                <circle cx="8" cy="6" r="2" />
+                <line x1="4" y1="18" x2="20" y2="18" />
+                <circle cx="16" cy="18" r="2" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Enso Attribution + Route Toggle + Slippage Settings */}
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        style={{ gridTemplateRows: (!isCrvUsd && !isVaultWithCrvUsdUnderlying) ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
           <div className="flex items-center justify-between pt-2">
             <a
               href="https://www.enso.build"
@@ -943,49 +1013,62 @@ export function RepayTab({
             </div>
           </div>
 
-          {/* Route details panel - expandable with slide animation */}
-          <div
-            className="grid transition-all duration-300 ease-in-out"
-            style={{
-              gridTemplateRows:
-                showRoute && repayAmount && Number(repayAmount) > 0 && (swapQuote || quoteLoading) ? "1fr" : "0fr",
-            }}
-          >
-            <div className="overflow-hidden">
-              <div className="pt-3 mt-3 border-t border-[var(--border)]">
+        </div>
+      </div>
+
+      {/* Route details panel */}
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        style={{
+          gridTemplateRows:
+            showRoute && repayAmount && Number(repayAmount) > 0 && (swapQuote || (isVaultWithCrvUsdUnderlying && estimatedCrvUsdOut) || quoteLoading) ? "1fr" : "0fr",
+        }}
+      >
+        <div className="overflow-hidden">
+          <div className="pt-3 mt-3 border-t border-[var(--border)]">
                 <div className="text-xs text-[var(--muted-foreground)] mb-2">
                   Route
                 </div>
                 <RouteDisplay
                   routeInfo={
-                    swapQuote
+                    (swapQuote || (isVaultWithCrvUsdUnderlying && estimatedCrvUsdOut))
                       ? {
                           steps: [
-                            // For vault tokens: Redeem → Swap underlying → Repay
+                            // For vault-with-crvUSD-underlying: Redeem → Repay
+                            // For vault tokens with non-crvUSD underlying: Redeem → Swap → Repay
                             // For regular tokens: Swap → Repay
-                            ...(vaultInfo
+                            ...(isVaultWithCrvUsdUnderlying
                               ? [
                                   {
                                     tokenSymbol: repayToken.symbol,
                                     action: "Redeem",
-                                    description: `${repayToken.symbol} for ${vaultInfo.underlyingSymbol}`,
-                                    protocol: "yld",
-                                  },
-                                  {
-                                    tokenSymbol: vaultInfo.underlyingSymbol,
-                                    action: "Swap",
-                                    description: `${vaultInfo.underlyingSymbol} for crvUSD`,
-                                    protocol: "Enso Router",
+                                    description: `${repayToken.symbol} for crvUSD`,
+                                    protocol: "Curve Savings",
                                   },
                                 ]
-                              : [
-                                  {
-                                    tokenSymbol: repayToken.symbol,
-                                    action: "Swap",
-                                    description: `${repayToken.symbol} for crvUSD`,
-                                    protocol: "Enso Router",
-                                  },
-                                ]),
+                              : vaultInfo
+                                ? [
+                                    {
+                                      tokenSymbol: repayToken.symbol,
+                                      action: "Redeem",
+                                      description: `${repayToken.symbol} for ${vaultInfo.underlyingSymbol}`,
+                                      protocol: "yld",
+                                    },
+                                    {
+                                      tokenSymbol: vaultInfo.underlyingSymbol,
+                                      action: "Swap",
+                                      description: `${vaultInfo.underlyingSymbol} for crvUSD`,
+                                      protocol: "Enso Router",
+                                    },
+                                  ]
+                                : [
+                                    {
+                                      tokenSymbol: repayToken.symbol,
+                                      action: "Swap",
+                                      description: `${repayToken.symbol} for crvUSD`,
+                                      protocol: "Enso Router",
+                                    },
+                                  ]),
                             {
                               tokenSymbol: "crvUSD",
                               action: "Repay",
@@ -1008,11 +1091,9 @@ export function RepayTab({
                   }
                   isLoading={quoteLoading}
                 />
-              </div>
-            </div>
           </div>
-        </>
-      )}
+        </div>
+      </div>
 
       {/* Connect wallet prompt */}
       {!address && (

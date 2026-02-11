@@ -14,6 +14,7 @@ import {
   Landmark,
   TrendingUp,
   Check,
+  ExternalLink,
 } from "lucide-react";
 import { useAccount, usePublicClient, useBalance, useGasPrice, useBlockNumber } from "wagmi";
 import { formatUnits, parseUnits } from "viem";
@@ -59,6 +60,15 @@ const CONTROLLER_ABI = [
     outputs: [{ name: "", type: "uint256" }],
   },
 ] as const;
+
+// ERC20 balanceOf ABI (for checking controller's available crvUSD)
+const BALANCE_OF_ABI = [{
+  name: "balanceOf",
+  type: "function",
+  stateMutability: "view",
+  inputs: [{ name: "account", type: "address" }],
+  outputs: [{ name: "", type: "uint256" }],
+}] as const;
 
 // ERC4626 convertToAssets ABI
 const ERC4626_CONVERT_ABI = [
@@ -233,7 +243,7 @@ export function NewLoanForm({
   const hasOutputSwap = outputToken.address.toLowerCase() !== CRVUSD_ADDRESS.toLowerCase();
 
   // Token selection
-  const [selectedToken, setSelectedToken] = useState<EnsoToken>(defaultToken ?? vaultToken);
+  const [selectedToken, setSelectedTokenState] = useState<EnsoToken>(defaultToken ?? vaultToken);
   const isVaultToken =
     selectedToken.address.toLowerCase() === vault.address.toLowerCase();
 
@@ -422,6 +432,11 @@ export function NewLoanForm({
   const isApproving = isLeveraged ? zapperIsApproving : lendingIsApproving;
   const reset = isLeveraged ? zapperReset : lendingReset;
 
+  // Preserve last approval data so content stays in DOM during close animation
+  const lastApprovalRef = useRef(pendingApproval);
+  if (pendingApproval) lastApprovalRef.current = pendingApproval;
+  const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
+
   // Switch between Loan and Leverage tabs
   const switchTab = useCallback((tab: "loan" | "leverage") => {
     setLoanTab(tab);
@@ -442,7 +457,7 @@ export function NewLoanForm({
 
   // Read selected token balance
   const isEth = selectedToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
-  const { data: tokenBalance } = useBalance({
+  const { data: tokenBalance, refetch: refetchBalance } = useBalance({
     address,
     token: isEth ? undefined : (selectedToken.address as `0x${string}`),
     query: { enabled: !!address },
@@ -486,13 +501,16 @@ export function NewLoanForm({
     queryFn: async (): Promise<EnsoRouteResponse> => {
       if (!address) throw new Error("No address");
       const amountWei = parseUnits(debouncedAmount, selectedToken.decimals).toString();
-      return fetchRoute({
+      if (process.env.NODE_ENV === "development") console.log("[NewLoan] Swap quote request:", { tokenIn: selectedToken.symbol, tokenOut: vault.symbol, amount: debouncedAmount });
+      const result = await fetchRoute({
         fromAddress: address,
         tokenIn: selectedToken.address,
         tokenOut: vault.address,
         amountIn: amountWei,
         slippage,
       });
+      if (process.env.NODE_ENV === "development") console.log("[NewLoan] Swap quote result:", { amountOut: result.amountOut, gas: result.gas });
+      return result;
     },
     enabled:
       needsSwap &&
@@ -522,13 +540,16 @@ export function NewLoanForm({
     queryFn: async (): Promise<EnsoRouteResponse> => {
       if (!address) throw new Error("No address");
       const amountWei = parseUnits(debouncedDebtInput, outputToken.decimals).toString();
-      return fetchRoute({
+      if (process.env.NODE_ENV === "development") console.log("[NewLoan] Output swap quote request:", { tokenIn: outputToken.symbol, tokenOut: "crvUSD", amount: debouncedDebtInput });
+      const result = await fetchRoute({
         fromAddress: address,
         tokenIn: outputToken.address,
         tokenOut: CRVUSD_ADDRESS,
         amountIn: amountWei,
         slippage,
       });
+      if (process.env.NODE_ENV === "development") console.log("[NewLoan] Output swap quote result:", { amountOut: result.amountOut, gas: result.gas });
+      return result;
     },
     enabled:
       hasOutputSwap &&
@@ -659,6 +680,7 @@ export function NewLoanForm({
 
   // Max borrowable for the estimated collateral
   const [maxBorrowable, setMaxBorrowable] = useState<bigint>(0n);
+  const [maxBorrowableFetching, setMaxBorrowableFetching] = useState(false);
   const maxBorrowableBandsRef = useRef<number>(10); // tracks which debouncedBands produced current maxBorrowable
 
   useEffect(() => {
@@ -669,9 +691,11 @@ export function NewLoanForm({
       if (!publicClient || !estimatedVaultTokenAmount) {
         setMaxBorrowable(0n);
         setMaxBorrowableLoaded(true);
+        setMaxBorrowableFetching(false);
         setCalcMaxSeq(s => s + 1);
         return;
       }
+      setMaxBorrowableFetching(true);
       let max = 0n;
       try {
         max = await publicClient.readContract({
@@ -681,12 +705,15 @@ export function NewLoanForm({
           args: [estimatedVaultTokenAmount, BigInt(debouncedBands)],
         });
         if (stale) return;
-      } catch {
+        if (process.env.NODE_ENV === "development") console.log("[NewLoan] max_borrowable:", { max: max.toString(), bands: debouncedBands, collateral: estimatedVaultTokenAmount.toString() });
+      } catch (err) {
         if (stale) return;
+        if (process.env.NODE_ENV === "development") console.log("[NewLoan] max_borrowable error:", err);
       }
       // Batch: update maxBorrowable AND adjust debt together to avoid
       // a render where old debt > new max (which causes button flicker)
       setMaxBorrowable(max);
+      setMaxBorrowableFetching(false);
       maxBorrowableBandsRef.current = debouncedBands;
       if (max > 0n && debtRatio.current !== null && loanTab === "loan" && !hasOutputSwap) {
         const ratio = Math.min(debtRatio.current, 1.0);
@@ -703,6 +730,31 @@ export function NewLoanForm({
     return () => { stale = true; };
   }, [publicClient, controllerAddress, estimatedVaultTokenAmount, debouncedBands, forceCalcMax]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Controller's available crvUSD — detects when pool liquidity is the borrowing constraint
+  const { data: controllerCrvUsdBalance } = useQuery({
+    queryKey: ["controller-crvusd-balance", controllerAddress],
+    queryFn: async () => {
+      if (!publicClient) throw new Error("No client");
+      return publicClient.readContract({
+        address: CRVUSD_ADDRESS as `0x${string}`,
+        abi: BALANCE_OF_ABI,
+        functionName: "balanceOf",
+        args: [controllerAddress],
+      });
+    },
+    enabled: !!publicClient,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  });
+
+  // True when pool liquidity caps borrowing (maxBorrowable ≈ controller balance)
+  const isLiquidityConstrained = useMemo(() => {
+    if (!controllerCrvUsdBalance || maxBorrowable === 0n) return false;
+    // If max borrowable is within 5% of controller balance, liquidity is the bottleneck
+    const threshold = controllerCrvUsdBalance * 105n / 100n;
+    return maxBorrowable <= threshold;
+  }, [controllerCrvUsdBalance, maxBorrowable]);
+
   // Max receivable in output token terms (forward quote: maxBorrowable crvUSD → outputToken)
   const maxBorrowableStr = useMemo(
     () => (maxBorrowable > 0n ? maxBorrowable.toString() : null),
@@ -717,6 +769,7 @@ export function NewLoanForm({
     ],
     queryFn: async () => {
       if (!address || !maxBorrowableStr) throw new Error("Missing params");
+      if (process.env.NODE_ENV === "development") console.log("[NewLoan] Max output token quote request:", { tokenOut: outputToken.symbol, maxCrvUSD: formatUnits(BigInt(maxBorrowableStr), 18) });
       const quote = await fetchRoute({
         fromAddress: address,
         tokenIn: CRVUSD_ADDRESS,
@@ -727,7 +780,9 @@ export function NewLoanForm({
       if (!quote?.amountOut) return null;
       // Apply 1% haircut for forward/reverse AMM spread
       const haircut = BigInt(quote.amountOut) * 99n / 100n;
-      return formatUnits(haircut, outputToken.decimals);
+      const result = formatUnits(haircut, outputToken.decimals);
+      if (process.env.NODE_ENV === "development") console.log("[NewLoan] Max output token quote result:", { maxOutput: result, outputToken: outputToken.symbol });
+      return result;
     },
     enabled:
       hasOutputSwap &&
@@ -857,6 +912,7 @@ export function NewLoanForm({
   const debouncedDebtAmount = useDebouncedValue(debtAmount > 0n ? formatUnits(debtAmount, 18) : "", 500);
   const {
     data: leverageSwapQuote,
+    isPending: leverageSwapPending,
   } = useQuery({
     queryKey: [
       "new-loan-leverage-swap-quote",
@@ -868,13 +924,16 @@ export function NewLoanForm({
     queryFn: async (): Promise<EnsoRouteResponse> => {
       if (!address) throw new Error("No address");
       const debtWei = parseUnits(debouncedDebtAmount, 18).toString();
-      return fetchRoute({
+      if (process.env.NODE_ENV === "development") console.log("[NewLoan] Leverage swap quote request:", { tokenIn: "crvUSD", tokenOut: vault.symbol, debtAmount: debouncedDebtAmount });
+      const result = await fetchRoute({
         fromAddress: address,
         tokenIn: CRVUSD_ADDRESS,
         tokenOut: vault.address,
         amountIn: debtWei,
         slippage,
       });
+      if (process.env.NODE_ENV === "development") console.log("[NewLoan] Leverage swap quote result:", { amountOut: result.amountOut, gas: result.gas });
+      return result;
     },
     enabled:
       loanTab === "leverage" &&
@@ -885,6 +944,7 @@ export function NewLoanForm({
     refetchInterval: 30_000,
     staleTime: 10_000,
     retry: 1,
+    placeholderData: (prev) => prev,
   });
 
   // Clamp leverage to valid range when maxLeverage changes
@@ -931,6 +991,72 @@ export function NewLoanForm({
   );
   const isQuoteSettling = outputSwapIsSettling || (!isVaultToken && quoteLoading);
 
+  // Leverage route settling: true when any part of the leverage async chain is in flight
+  // (YOLO pending → maxBorrowable calc → leverage animation → debt debounce → swap quote)
+  const debtAmountStr = debtAmount > 0n ? formatUnits(debtAmount, 18) : "";
+  const leverageIsSettling = loanTab === "leverage" && (
+    pendingYolo ||
+    leverageAnimRef.current !== null ||
+    (effectiveLeverage > 1.005 && (debtAmountStr !== debouncedDebtAmount || leverageSwapPending))
+  );
+
+  // Memoize route steps — only update when all data is settled
+  const routeSteps = useMemo(() => [
+    ...(needsSwap && swapQuote ? [{
+      tokenSymbol: selectedToken.symbol,
+      amount: amount ? Number(amount).toLocaleString(undefined, { maximumFractionDigits: 4 }) : undefined,
+      action: "Swap" as const,
+      description: `for ${vault.symbol}`,
+      protocol: "Enso Router",
+    }] : []),
+    {
+      tokenSymbol: vault.symbol,
+      amount: estimatedVaultTokenAmount
+        ? Number(formatUnits(estimatedVaultTokenAmount, vault.decimals)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        : undefined,
+      action: "Deposit" as const,
+      description: vault.symbol,
+      protocol: "Curve LlamaLend",
+    },
+    ...(debtAmount > 0n ? [{
+      tokenSymbol: "crvUSD",
+      amount: Number(formatUnits(debtAmount, 18)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      action: "Borrow" as const,
+      description: "crvUSD",
+      protocol: "Curve LlamaLend",
+    }] : []),
+    ...(loanTab === "leverage" && effectiveLeverage > 1.005 && debtAmount > 0n ? [{
+      tokenSymbol: vault.symbol,
+      amount: leverageSwapQuote?.amountOut
+        ? Number(formatUnits(BigInt(leverageSwapQuote.amountOut), vault.decimals)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        : undefined,
+      action: "Swap" as const,
+      description: `crvUSD for ${vault.symbol}`,
+      protocol: "Enso Router",
+    }] : []),
+    ...(hasOutputSwap ? [{
+      tokenSymbol: outputToken.symbol,
+      amount: debtInput
+        ? Number(debtInput).toLocaleString(undefined, { maximumFractionDigits: 4 })
+        : undefined,
+      action: "Swap" as const,
+      description: `crvUSD for ${outputToken.symbol}`,
+      protocol: "Enso Router",
+    }] : []),
+  ], [needsSwap, swapQuote, selectedToken.symbol, amount, vault.symbol, vault.decimals, estimatedVaultTokenAmount, debtAmount, loanTab, effectiveLeverage, leverageSwapQuote, hasOutputSwap, outputToken?.symbol, debtInput]);
+
+  // Lock route display during settling — avoid showing partial/mismatched values
+  // Initialize empty so the route panel doesn't open until all data is ready
+  const settledRouteRef = useRef<typeof routeSteps>([]);
+  const anySettling = isQuoteSettling || leverageIsSettling;
+  if (!anySettling && routeSteps.length > 0) {
+    settledRouteRef.current = routeSteps;
+  }
+  // During settling: show previous settled route (or nothing if no previous)
+  const displayRouteSteps = anySettling
+    ? settledRouteRef.current
+    : routeSteps;
+
   // Estimate health — skip during settling to avoid stale intermediate values
   useEffect(() => {
     if (isQuoteSettling) return; // don't compute health with stale data
@@ -955,9 +1081,16 @@ export function NewLoanForm({
           ],
         });
 
-        if (!cancelled) setEstimatedHealth(Number(health) / 1e16);
-      } catch {
-        if (!cancelled) setEstimatedHealth(null);
+        if (!cancelled) {
+          const h = Number(health) / 1e16;
+          if (process.env.NODE_ENV === "development") console.log("[NewLoan] health_calculator:", { health: h.toFixed(2) + "%", collateral: estimatedVaultTokenAmount.toString(), debt: debtAmount.toString(), bands: debouncedBands });
+          setEstimatedHealth(h);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          if (process.env.NODE_ENV === "development") console.log("[NewLoan] health_calculator error:", err);
+          setEstimatedHealth(null);
+        }
       }
     }
 
@@ -1010,8 +1143,10 @@ export function NewLoanForm({
         },
       });
       onTransactionSuccess();
+      refetchBalance();
+      reset();
     }
-  }, [status, txHash, onTransactionSuccess]);
+  }, [status, txHash, onTransactionSuccess, reset, refetchBalance]);
 
   useEffect(() => {
     if (status === "error" && error) {
@@ -1029,9 +1164,9 @@ export function NewLoanForm({
     }
   }, [status, error, reset, isLeveraged, zapperReset, lendingClearError]);
 
-  // Clear simulation when inputs change
+  // Clear simulation/approval state when inputs change
   useEffect(() => {
-    if (simulationResult) {
+    if (simulationResult || status === "needsApproval") {
       reset();
       setShowSimulationModal(false);
     }
@@ -1057,13 +1192,16 @@ export function NewLoanForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lendingIsApprovalSuccess, lendingStatus, zapperIsApprovalSuccess, zapperStatus]);
 
-  // Clear amount when switching token
-  useEffect(() => {
+  // Clear amounts synchronously when switching token (avoids stale-data flash in RouteDisplay)
+  const setSelectedToken = useCallback((token: EnsoToken) => {
+    setSelectedTokenState(token);
     setAmountState("");
     setDebtInputState("");
+    debtRatio.current = null;
+    receiveRatio.current = null;
     lendingReset();
     zapperReset();
-  }, [selectedToken.address, lendingReset, zapperReset]);
+  }, [lendingReset, zapperReset]);
 
   // Reset leverage when collateral is cleared
   useEffect(() => {
@@ -1105,78 +1243,60 @@ export function NewLoanForm({
 
     const preview = showSimulationPreview;
 
-    const openModalIfPreview = (result: unknown) => {
+    // Show simulation modal if preview result is available; returns true if modal was shown
+    const openModalIfPreview = (result: unknown): boolean => {
       if (result && preview) {
         simulationBlock.current = currentBlock ?? 0n;
         setShowSimulationModal(true);
         fetchEthPrice();
+        return true;
       }
+      return false;
     };
 
     try {
       if (loanTab === "leverage" && isVaultToken) {
         // Leverage tab + collateral token → existing Zapper loop
+        if (process.env.NODE_ENV === "development") console.log("[NewLoan] Submit: leveraged loan (vault token)", { collateral: amount, debt: debtAmount.toString(), leverage: effectiveLeverage.toFixed(2), bands });
         const collateralWei = parseUnits(amount, vault.decimals);
-        const result = await createLeveragedLoan(
-          controllerAddress,
-          collateralWei,
-          debtAmount,
-          bands,
-          vault.address as `0x${string}`,
-          Number(slippage),
-          preview
-        );
-        openModalIfPreview(result);
+        if (preview) {
+          const result = await createLeveragedLoan(controllerAddress, collateralWei, debtAmount, bands, vault.address as `0x${string}`, Number(slippage), true);
+          if (openModalIfPreview(result)) return;
+        }
+        await createLeveragedLoan(controllerAddress, parseUnits(amount, vault.decimals), debtAmount, bands, vault.address as `0x${string}`, Number(slippage), false);
       } else if (loanTab === "leverage" && !isVaultToken) {
         // Leverage tab + non-collateral → ZapperV2 FromToken loop
+        if (process.env.NODE_ENV === "development") console.log("[NewLoan] Submit: leveraged loan (swap)", { token: selectedToken.symbol, amount, debt: debtAmount.toString(), leverage: effectiveLeverage.toFixed(2), bands });
         const inputWei = parseUnits(amount, selectedToken.decimals);
-        const result = await createLeveragedLoanFromToken(
-          controllerAddress,
-          selectedToken.address as `0x${string}`,
-          inputWei,
-          debtAmount,
-          bands,
-          vault.address as `0x${string}`,
-          selectedToken.symbol,
-          Number(slippage),
-          preview
-        );
-        openModalIfPreview(result);
+        if (preview) {
+          const result = await createLeveragedLoanFromToken(controllerAddress, selectedToken.address as `0x${string}`, inputWei, debtAmount, bands, vault.address as `0x${string}`, selectedToken.symbol, Number(slippage), true);
+          if (openModalIfPreview(result)) return;
+        }
+        await createLeveragedLoanFromToken(controllerAddress, selectedToken.address as `0x${string}`, parseUnits(amount, selectedToken.decimals), debtAmount, bands, vault.address as `0x${string}`, selectedToken.symbol, Number(slippage), false);
       } else if (hasOutputSwap) {
         // Loan tab + output swap → create_loan + swap crvUSD to output token
-        const result = await createLoanWithOutputSwap(
-          vault.address as `0x${string}`,
-          isVaultToken ? undefined : selectedToken.address,
-          amount,
-          debtAmount.toString(),
-          bands,
-          outputToken.address,
-          Number(slippage),
-          { previewOnly: preview, tokenSymbol: isVaultToken ? vault.symbol : selectedToken.symbol }
-        );
-        openModalIfPreview(result);
+        if (process.env.NODE_ENV === "development") console.log("[NewLoan] Submit: borrow & swap", { token: selectedToken.symbol, amount, debt: debtAmount.toString(), outputToken: outputToken.symbol, bands });
+        if (preview) {
+          const result = await createLoanWithOutputSwap(vault.address as `0x${string}`, isVaultToken ? undefined : selectedToken.address, amount, debtAmount.toString(), bands, outputToken.address, Number(slippage), { previewOnly: true, tokenSymbol: isVaultToken ? vault.symbol : selectedToken.symbol });
+          if (openModalIfPreview(result)) return;
+        }
+        await createLoanWithOutputSwap(vault.address as `0x${string}`, isVaultToken ? undefined : selectedToken.address, amount, debtAmount.toString(), bands, outputToken.address, Number(slippage), { tokenSymbol: isVaultToken ? vault.symbol : selectedToken.symbol });
       } else if (isVaultToken) {
         // Loan tab + collateral token → direct controller create_loan
-        const result = await createLoan(
-          vault.address as `0x${string}`,
-          amount,
-          debtAmount.toString(),
-          bands,
-          { previewOnly: preview, tokenSymbol: vault.symbol }
-        );
-        openModalIfPreview(result);
+        if (process.env.NODE_ENV === "development") console.log("[NewLoan] Submit: create_loan (direct)", { collateral: amount, debt: debtAmount.toString(), bands });
+        if (preview) {
+          const result = await createLoan(vault.address as `0x${string}`, amount, debtAmount.toString(), bands, { previewOnly: true, tokenSymbol: vault.symbol });
+          if (openModalIfPreview(result)) return;
+        }
+        await createLoan(vault.address as `0x${string}`, amount, debtAmount.toString(), bands, { tokenSymbol: vault.symbol });
       } else {
         // Loan tab + non-collateral → Enso swap + create_loan
-        const result = await createLoanWithSwap(
-          vault.address as `0x${string}`,
-          selectedToken.address,
-          amount,
-          debtAmount.toString(),
-          bands,
-          Number(slippage),
-          { previewOnly: preview, tokenSymbol: selectedToken.symbol }
-        );
-        openModalIfPreview(result);
+        if (process.env.NODE_ENV === "development") console.log("[NewLoan] Submit: swap & create_loan", { token: selectedToken.symbol, amount, debt: debtAmount.toString(), bands });
+        if (preview) {
+          const result = await createLoanWithSwap(vault.address as `0x${string}`, selectedToken.address, amount, debtAmount.toString(), bands, Number(slippage), { previewOnly: true, tokenSymbol: selectedToken.symbol });
+          if (openModalIfPreview(result)) return;
+        }
+        await createLoanWithSwap(vault.address as `0x${string}`, selectedToken.address, amount, debtAmount.toString(), bands, Number(slippage), { tokenSymbol: selectedToken.symbol });
       }
     } catch (err) {
       console.error("Create loan failed:", err);
@@ -1229,15 +1349,15 @@ export function NewLoanForm({
     (!hasOutputSwap || outputSwapQuote !== undefined);
 
   const getButtonText = () => {
-    if (status === "building" || status === "simulating") return needsSwap ? "Simulating..." : "Preparing...";
-    if (status === "executing") return "Confirm in wallet...";
-    if (status === "waitingTx") return "Waiting for confirmation...";
-    if (status === "success") return "Done!";
-    if (status === "error") return "Try Again";
+    if (status === "building" || status === "simulating") return <>Simulating<LoadingDots /></>;
+    if (status === "executing") return <>Confirm in wallet<LoadingDots /></>;
+    if (status === "waitingTx") return <>Waiting for confirmation<LoadingDots /></>;
     if (hasInsufficientBalance) return "Insufficient balance";
     if (!amount || Number(amount) <= 0) return "Enter amount";
     if (needsSwap && (!estimatedVaultTokenAmount || amount !== debouncedAmount || swapQuoteIsPlaceholder)) return <><span>Getting quote</span><LoadingDots /></>;
-    if (!debtInput || Number(debtInput) <= 0) return "Enter amount";
+    if (maxBorrowableFetching) return <><span>Getting max borrowable</span><LoadingDots /></>;
+    if (loanTab !== "leverage" && (!debtInput || Number(debtInput) <= 0)) return "Enter amount";
+    if (loanTab === "leverage" && debtAmount <= 0n) return "Increase leverage";
     if (isQuoteSettling) return <><span>Getting quote</span><LoadingDots /></>;
     if (exceedsMaxBorrowable) return "Exceeds max borrowable";
 
@@ -1302,18 +1422,18 @@ export function NewLoanForm({
                     </div>
                   )}
                   <div className={cn("space-y-2 transition-opacity duration-200", swapQuoteStale && "opacity-0")}>
-                    {displayAmountOut && (
-                      <div className="flex justify-between">
-                        <span className="text-[var(--muted-foreground)]">Collateral after swap</span>
-                        <span className="mono">
-                          ~{Number(formatUnits(BigInt(displayAmountOut), vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })}{" "}
-                          {vault.symbol}
-                        </span>
-                      </div>
-                    )}
-                    {exchangeRate !== null && (
-                      <div className="flex justify-between items-center">
-                        <span className="text-[var(--muted-foreground)]">Rate</span>
+                    <div className="flex justify-between">
+                      <span className="text-[var(--muted-foreground)]">Collateral after swap</span>
+                      <span className="mono">
+                        {displayAmountOut
+                          ? <>~{Number(formatUnits(BigInt(displayAmountOut), vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })} {vault.symbol}</>
+                          : "—"
+                        }
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-[var(--muted-foreground)]">Rate</span>
+                      {exchangeRate !== null ? (
                         <button
                           type="button"
                           onClick={() => setRateInverted(v => !v)}
@@ -1325,19 +1445,23 @@ export function NewLoanForm({
                           }
                           <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
                         </button>
-                      </div>
-                    )}
-                    {priceImpact !== null && (
-                      <div className="flex justify-between">
-                        <span className="text-[var(--muted-foreground)]">Price Impact</span>
+                      ) : (
+                        <span className="mono">—</span>
+                      )}
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-[var(--muted-foreground)]">Price Impact</span>
+                      {priceImpact !== null ? (
                         <span className={cn(
                           "mono",
                           priceImpact <= 0 ? "text-green-500" : priceImpact < 3 ? "text-yellow-500" : "text-red-500"
                         )}>
                           {priceImpact > 0 ? "" : "+"}{(-priceImpact).toFixed(2)}%
                         </span>
-                      </div>
-                    )}
+                      ) : (
+                        <span className="mono">—</span>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1539,101 +1663,118 @@ export function NewLoanForm({
         </div>
       </div>
 
-{/* Approval Flow */}
-      {pendingApproval && status === "needsApproval" && (
-        <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-3">
-          <div className="text-sm font-medium">{approvalProgress && approvalProgress.total > 1 ? "Approvals Required" : "Approval Required"}</div>
-          {approvalProgress && approvalProgress.total > 1 ? (
-            <div className="space-y-2">
-              {approvalProgress.steps.map((s, i) => (
-                <div key={i} className="flex items-start gap-2">
-                  <div className="mt-0.5">
-                    {s.done ? (
-                      <Check size={14} className="text-green-500 shrink-0" />
-                    ) : i === approvalProgress.step - 1 ? (
-                      <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)] shrink-0" />
-                    ) : (
-                      <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)]/30 shrink-0" />
-                    )}
-                  </div>
-                  <div>
-                    <div className={cn(
-                      "text-sm",
-                      s.done
-                        ? "text-[var(--muted-foreground)] line-through"
-                        : i === approvalProgress.step - 1
-                          ? "text-[var(--foreground)] font-medium"
-                          : "text-[var(--muted-foreground)]"
-                    )}>
-                      {s.label}
-                    </div>
-                    <div className={cn(
-                      "text-xs",
-                      i === approvalProgress.step - 1
-                        ? "text-[var(--muted-foreground)]"
-                        : "text-[var(--muted-foreground)]/60"
-                    )}>
-                      {s.description}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-sm text-[var(--muted-foreground)]">
-              Approve {pendingApproval.tokenSymbol} for Curve LlamaLend Controller
-            </div>
-          )}
-          {pendingApproval.type !== "controller" && pendingApproval.amount ? (
-            <div className="flex gap-2">
-              <button
-                onClick={() => (isLeveraged ? zapperApprove : lendingApprove)(true)}
-                disabled={isApproving}
-                className={cn(
-                  "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                  isApproving
-                    ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                    : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
-                )}
-              >
-                {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                {isApproving ? "Approving..." : `Exact (${Number(formatUnits(pendingApproval.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })})`}
-              </button>
-              <button
-                onClick={() => (isLeveraged ? zapperApprove : lendingApprove)(false)}
-                disabled={isApproving}
-                className={cn(
-                  "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                  isApproving
-                    ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                    : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
-                )}
-              >
-                {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                {isApproving ? "Approving..." : "Unlimited"}
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => (isLeveraged ? zapperApprove : lendingApprove)()}
-              disabled={isApproving}
-              className={cn(
-                "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
-                isApproving
-                  ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                  : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
-              )}
-            >
-              {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-              {isApproving
-                ? "Approving..."
-                : pendingApproval.type === "controller"
-                  ? `Approve Lending Access${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`
-                  : `Approve ${pendingApproval.tokenSymbol}${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`}
-            </button>
-          )}
+      {/* Low liquidity warning */}
+      {isLiquidityConstrained && maxBorrowable > 0n && estimatedVaultTokenAmount && (
+        <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-500 text-xs flex items-center gap-2">
+          <AlertTriangle size={14} className="shrink-0" />
+          <span>
+            Only {Number(formatUnits(controllerCrvUsdBalance!, 18)).toLocaleString(undefined, { maximumFractionDigits: 0 })} crvUSD available in lending market. Max borrow is limited by pool liquidity, not your collateral.
+          </span>
         </div>
       )}
+
+{/* Approval Flow */}
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        style={{ gridTemplateRows: showApprovalCard ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
+          {lastApprovalRef.current && (
+            <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-3">
+              <div className="text-sm font-medium">{approvalProgress && approvalProgress.total > 1 ? "Approvals Required" : "Approval Required"}</div>
+              {approvalProgress && approvalProgress.total > 1 ? (
+                <div className="space-y-2">
+                  {approvalProgress.steps.map((s, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      <div className="mt-0.5">
+                        {s.done ? (
+                          <Check size={14} className="text-green-500 shrink-0" />
+                        ) : i === approvalProgress.step - 1 ? (
+                          <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)] shrink-0" />
+                        ) : (
+                          <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)]/30 shrink-0" />
+                        )}
+                      </div>
+                      <div>
+                        <div className={cn(
+                          "text-sm",
+                          s.done
+                            ? "text-[var(--muted-foreground)] line-through"
+                            : i === approvalProgress.step - 1
+                              ? "text-[var(--foreground)] font-medium"
+                              : "text-[var(--muted-foreground)]"
+                        )}>
+                          {s.label}
+                        </div>
+                        <div className={cn(
+                          "text-xs",
+                          i === approvalProgress.step - 1
+                            ? "text-[var(--muted-foreground)]"
+                            : "text-[var(--muted-foreground)]/60"
+                        )}>
+                          {s.description}{s.spender && <>{" "}<a href={`https://etherscan.io/address/${s.spender}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={10} className="!inline -mt-0.5" /></a></>}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-[var(--muted-foreground)]">
+                  Allow yld Zapper to manage position on LlamaLend{" "}<span className="whitespace-nowrap">controller <a href={`https://etherscan.io/address/${lastApprovalRef.current!.spender}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={12} className="!inline -mt-0.5" /></a></span>
+                </div>
+              )}
+              {lastApprovalRef.current!.type !== "controller" && lastApprovalRef.current!.amount ? (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => (isLeveraged ? zapperApprove : lendingApprove)(true)}
+                    disabled={isApproving}
+                    className={cn(
+                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                      isApproving
+                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                        : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
+                    )}
+                  >
+                    {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {isApproving ? "Approving..." : `${Number(formatUnits(lastApprovalRef.current!.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${lastApprovalRef.current!.tokenSymbol}`}
+                  </button>
+                  <button
+                    onClick={() => (isLeveraged ? zapperApprove : lendingApprove)(false)}
+                    disabled={isApproving}
+                    className={cn(
+                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                      isApproving
+                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                        : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+                    )}
+                  >
+                    {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {isApproving ? "Approving..." : "Unlimited"}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => (isLeveraged ? zapperApprove : lendingApprove)()}
+                  disabled={isApproving}
+                  className={cn(
+                    "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
+                    isApproving
+                      ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                      : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+                  )}
+                >
+                  {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {isApproving
+                    ? "Approving..."
+                    : lastApprovalRef.current!.type === "controller"
+                      ? `Approve yld Zapper${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`
+                      : `Approve ${lastApprovalRef.current!.tokenSymbol}${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Simulation Modal */}
       {showSimulationModal && simulationResult && (
@@ -1655,53 +1796,66 @@ export function NewLoanForm({
       )}
 
       {/* Action Button */}
-      {status !== "needsApproval" && (
-        <button
-          onClick={() => {
-            if (status === "error" || status === "success") {
-              reset();
-            } else if (simulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
-              setShowSimulationModal(true);
-            } else if (!quoteLoading) {
-              handleSubmit();
-            }
-          }}
-          disabled={isProcessing || quoteLoading || (!isFormValid && status === "idle")}
-          className={cn(
-            "w-full py-3 px-4 rounded-lg font-medium transition-colors flex items-center justify-center gap-2",
-            isProcessing || quoteLoading || (!isFormValid && status === "idle")
-              ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-              : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
-          )}
-        >
-          {isProcessing && <Loader2 className="w-4 h-4 animate-spin" />}
-          {getButtonText()}
-        </button>
-      )}
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        style={{ gridTemplateRows: !showApprovalCard ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
+          <button
+            onClick={() => {
+              if (status === "error" || status === "success") {
+                reset();
+              } else if (simulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
+                setShowSimulationModal(true);
+              } else if (!quoteLoading) {
+                handleSubmit();
+              }
+            }}
+            disabled={showApprovalCard || isProcessing || quoteLoading || (!isFormValid && status === "idle")}
+            className={cn(
+              "w-full py-3 px-4 rounded-lg font-medium transition-colors flex items-center justify-center gap-2",
+              isProcessing || quoteLoading || (!isFormValid && status === "idle")
+                ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+            )}
+          >
+            {getButtonText()}
+          </button>
+        </div>
+      </div>
 
       {/* Settings / Route */}
       {(() => {
         const usesEnso = needsSwap || hasOutputSwap || (loanTab === "leverage" && effectiveLeverage > 1.005);
-        return !usesEnso ? (
-        <div className="flex items-center justify-end">
-          <button
-            onClick={() => setShowSlippageModal(true)}
-            className="flex items-center gap-1.5 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
-            title="Settings"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="4" y1="6" x2="20" y2="6" />
-              <circle cx="8" cy="6" r="2" />
-              <line x1="4" y1="18" x2="20" y2="18" />
-              <circle cx="16" cy="18" r="2" />
-            </svg>
-          </button>
-        </div>
-        ) : null;
-      })()}
-
-      {(needsSwap || hasOutputSwap || (loanTab === "leverage" && effectiveLeverage > 1.005)) && (
+        return (
         <>
+        <div
+          className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+          style={{ gridTemplateRows: !usesEnso ? "1fr" : "0fr" }}
+        >
+          <div className="overflow-hidden">
+            <div className="flex items-center justify-end">
+              <button
+                onClick={() => setShowSlippageModal(true)}
+                className="flex items-center gap-1.5 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
+                title="Settings"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="4" y1="6" x2="20" y2="6" />
+                  <circle cx="8" cy="6" r="2" />
+                  <line x1="4" y1="18" x2="20" y2="18" />
+                  <circle cx="16" cy="18" r="2" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div
+          className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+          style={{ gridTemplateRows: usesEnso ? "1fr" : "0fr" }}
+        >
+          <div className="overflow-hidden">
           <div className="flex items-center justify-between pt-2">
             <div className="flex items-center gap-2">
               <a
@@ -1739,71 +1893,31 @@ export function NewLoanForm({
             </div>
           </div>
 
-          {/* Route details panel */}
-          <div
-            className="grid transition-[grid-template-rows] duration-300 ease-in-out"
-            style={{
-              gridTemplateRows:
-                showRoute && amount && Number(amount) > 0 && (needsSwap ? (swapQuote || quoteLoading) : (hasOutputSwap || (loanTab === "leverage" && effectiveLeverage > 1.005))) ? "1fr" : "0fr",
-            }}
-          >
-            <div className="overflow-hidden">
-              <div className="pt-3 mt-3 border-t border-[var(--border)]">
-                <div className="text-xs text-[var(--muted-foreground)] mb-2">Route</div>
-                <RouteDisplay
-                  routeInfo={{
-                    steps: [
-                      ...(needsSwap && swapQuote ? [{
-                        tokenSymbol: selectedToken.symbol,
-                        amount: amount ? Number(amount).toLocaleString(undefined, { maximumFractionDigits: 4 }) : undefined,
-                        action: "Swap",
-                        description: `for ${vault.symbol}`,
-                        protocol: "Enso Router",
-                      }] : []),
-                      {
-                        tokenSymbol: vault.symbol,
-                        amount: estimatedVaultTokenAmount
-                          ? Number(formatUnits(estimatedVaultTokenAmount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })
-                          : undefined,
-                        action: "Deposit",
-                        description: vault.symbol,
-                        protocol: "Curve LlamaLend",
-                      },
-                      ...(debtAmount > 0n ? [{
-                        tokenSymbol: "crvUSD",
-                        amount: Number(formatUnits(debtAmount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 }),
-                        action: "Borrow",
-                        description: "crvUSD",
-                        protocol: "Curve LlamaLend",
-                      }] : []),
-                      ...(loanTab === "leverage" && effectiveLeverage > 1.005 && debtAmount > 0n ? [{
-                        tokenSymbol: vault.symbol,
-                        amount: leverageSwapQuote?.amountOut
-                          ? Number(formatUnits(BigInt(leverageSwapQuote.amountOut), vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })
-                          : undefined,
-                        action: "Swap",
-                        description: `crvUSD for ${vault.symbol}`,
-                        protocol: "Enso Router",
-                      }] : []),
-                      ...(hasOutputSwap ? [{
-                        tokenSymbol: outputToken.symbol,
-                        amount: debtInput
-                          ? Number(debtInput).toLocaleString(undefined, { maximumFractionDigits: 4 })
-                          : undefined,
-                        action: "Swap",
-                        description: `crvUSD for ${outputToken.symbol}`,
-                        protocol: "Enso Router",
-                      }] : []),
-                    ],
-                  }}
-                  isLoading={quoteLoading || (hasOutputSwap && outputSwapQuoteLoading)}
-                  completionMessage="Loan created on Curve LlamaLend"
-                />
-              </div>
+          </div>
+        </div>
+
+        {/* Route details panel */}
+        <div
+          className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+          style={{
+            gridTemplateRows:
+              showRoute && amount && Number(amount) > 0 && (needsSwap ? (swapQuote || quoteLoading) : (hasOutputSwap || displayRouteSteps.length > 1)) ? "1fr" : "0fr",
+          }}
+        >
+          <div className="overflow-hidden">
+            <div className="pt-3 mt-3 border-t border-[var(--border)]">
+              <div className="text-xs text-[var(--muted-foreground)] mb-2">Route</div>
+              <RouteDisplay
+                routeInfo={{ steps: displayRouteSteps }}
+                isLoading={quoteLoading || (hasOutputSwap && outputSwapQuoteLoading)}
+                completionMessage="Loan created on Curve LlamaLend"
+              />
             </div>
           </div>
+        </div>
         </>
-      )}
+        );
+      })()}
 
       {/* Connect wallet prompt */}
       {!address && (

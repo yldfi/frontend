@@ -122,6 +122,25 @@ export function useVaultActions(
   const isDepositReverted = depositReceipt?.status === "reverted";
   const isWithdrawReverted = withdrawReceipt?.status === "reverted";
 
+  // Log receipts in dev mode
+  useEffect(() => {
+    if (process.env.NODE_ENV === "development" && approvalReceipt) {
+      console.log("[Approve Receipt]", { hash: approveHash, status: approvalReceipt.status, gasUsed: approvalReceipt.gasUsed.toString(), blockNumber: approvalReceipt.blockNumber.toString() });
+    }
+  }, [approvalReceipt, approveHash]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "development" && depositReceipt) {
+      console.log("[TX Receipt]", { hash: depositHash, status: depositReceipt.status, gasUsed: depositReceipt.gasUsed.toString(), blockNumber: depositReceipt.blockNumber.toString() });
+    }
+  }, [depositReceipt, depositHash]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "development" && withdrawReceipt) {
+      console.log("[TX Receipt]", { hash: withdrawHash, status: withdrawReceipt.status, gasUsed: withdrawReceipt.gasUsed.toString(), blockNumber: withdrawReceipt.blockNumber.toString() });
+    }
+  }, [withdrawReceipt, withdrawHash]);
+
   // Derive status from state (avoids setState in effects)
   const status: TransactionStatus = useMemo(() => {
     // On-chain state takes priority - if we have a receipt, respect its status
@@ -183,11 +202,21 @@ export function useVaultActions(
     if (!userAddress) return;
     setActionState("approving");
 
+    const amount = exactAmount ?? maxUint256;
+    if (process.env.NODE_ENV === "development") {
+      console.log("[Approve TX]", {
+        type: "erc20",
+        token: tokenAddress,
+        spender: vaultAddress,
+        amount: amount.toString(),
+        exact: !!exactAmount,
+      });
+    }
     writeApprove({
       address: tokenAddress,
       abi: ERC20_APPROVAL_ABI,
       functionName: "approve",
-      args: [vaultAddress, exactAmount ?? maxUint256],
+      args: [vaultAddress, amount],
     });
   }, [userAddress, tokenAddress, vaultAddress, writeApprove]);
 
@@ -265,8 +294,11 @@ export function useVaultActions(
           data: calldata,
           value,
         });
+        if (process.env.NODE_ENV === "development") console.log("[eth_call]", { ok: true, to: vaultAddress });
         return { ok: true as const };
       } catch (err) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        if (process.env.NODE_ENV === "development") console.log("[eth_call]", { ok: false, to: vaultAddress, error: msg });
         return {
           ok: false as const,
           errorMessage: err instanceof Error ? err.message : "Unknown error",
@@ -342,6 +374,9 @@ export function useVaultActions(
 
     // Simulation passed - send transaction
     setActionState("depositing");
+    if (process.env.NODE_ENV === "development") {
+      console.log("[TX]", { fn: "deposit", to: vaultAddress, amount: amountWei.toString(), receiver: userAddress });
+    }
     writeDeposit({
       address: vaultAddress,
       abi: VAULT_ABI,
@@ -397,6 +432,9 @@ export function useVaultActions(
 
     // Simulation passed - send transaction
     setActionState("withdrawing");
+    if (process.env.NODE_ENV === "development") {
+      console.log("[TX]", { fn: "redeem", to: vaultAddress, shares: sharesWei.toString(), receiver: userAddress });
+    }
     writeWithdraw({
       address: vaultAddress,
       abi: VAULT_ABI,

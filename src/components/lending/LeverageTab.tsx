@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { Loader2, Check, AlertTriangle, TrendingUp, TrendingDown, Route as RouteIcon, RouteOff } from "lucide-react";
+import { Loader2, Check, AlertTriangle, TrendingUp, TrendingDown, Route as RouteIcon, RouteOff, ExternalLink } from "lucide-react";
 import { useAccount, usePublicClient, useGasPrice, useBlockNumber, useBalance } from "wagmi";
 import { SimulationModal } from "@/components/SimulationModal";
 import { toast } from "sonner";
+import { isUserRejection } from "@/lib/analytics";
 import { formatUnits, parseUnits } from "viem";
 import type { VaultConfig } from "@/config/vaults";
 import { CURVE_CONTROLLERS } from "@/config/vaults";
@@ -180,6 +181,98 @@ function LeverageMaxButton({
   );
 }
 
+// Deleverage MIN button with hover options: CLOSE (above) + RESET (below)
+function DeleverageMinButton({
+  onMin,
+  onClose,
+  onReset,
+}: {
+  onMin: () => void;
+  onClose: () => void;
+  onReset?: () => void;
+}) {
+  const [isHovered, setIsHovered] = useState(false);
+  const hideTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  const handleMouseEnter = useCallback(() => {
+    if (hideTimeout.current) clearTimeout(hideTimeout.current);
+    setIsHovered(true);
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    hideTimeout.current = setTimeout(() => setIsHovered(false), 150);
+  }, []);
+
+  const btnClass = "relative shrink-0 w-[36px] px-1 py-0.5 text-[10px] font-medium bg-[var(--background)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded transition-colors cursor-pointer flex items-center justify-center";
+
+  return (
+    <div className="relative">
+      {/* Backdrop */}
+      <div
+        className={cn(
+          "absolute right-0 rounded-md bg-[var(--background)]/40 transition-opacity duration-200 z-0 pointer-events-none -left-1 -right-1 -top-[26px] -bottom-[26px]",
+          isHovered ? "opacity-100" : "opacity-0"
+        )}
+      />
+
+      {/* CLOSE - above */}
+      <div
+        className={cn(
+          "absolute bottom-full right-0 pb-0.5 transition-[opacity,transform] duration-200 ease-out z-10",
+          isHovered ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1 pointer-events-none"
+        )}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+      >
+        <button
+          type="button"
+          tabIndex={-1}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => { onClose(); setIsHovered(false); }}
+          className={cn(btnClass, "text-red-400/70 hover:text-red-400")}
+        >
+          <span className="text-[8px]">CLOSE</span>
+        </button>
+      </div>
+
+      {/* Main MIN button */}
+      <button
+        type="button"
+        tabIndex={-1}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onMin}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        className={cn(btnClass, "relative z-10")}
+      >
+        MIN
+      </button>
+
+      {/* RESET - below */}
+      <div
+        className={cn(
+          "absolute top-full right-0 pt-0.5 transition-[opacity,transform] duration-200 ease-out z-10",
+          isHovered ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1 pointer-events-none"
+        )}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+      >
+        <button
+          type="button"
+          tabIndex={-1}
+          disabled={!onReset}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => { onReset?.(); setIsHovered(false); }}
+          className={cn(btnClass, !onReset && "opacity-30 !cursor-default hover:text-[var(--muted-foreground)]")}
+          title="Reset to current leverage"
+        >
+          <span className="text-[8px]">RESET</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 interface LeverageTabProps {
   vault: VaultConfig;
   userBalance: string;
@@ -193,6 +286,16 @@ interface LeverageTabProps {
 }
 
 type LeverageMode = "leverageUp" | "deleverage" | "selfLiquidate";
+
+function LoadingDots() {
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      <span className="animate-bounce" style={{ animationDelay: "0ms", animationDuration: "600ms" }}>.</span>
+      <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
+      <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
+    </span>
+  );
+}
 
 export function LeverageTab({
   vault,
@@ -214,7 +317,7 @@ export function LeverageTab({
     return "leverageUp"; // Default, user can switch
   }, [position]);
 
-  // Sub-tab for positions with loan (leverageUp / deleverage)
+  // Sub-tab for positions with loan (leverageUp / deleverage) — always default to leverageUp
   const [subTab, setSubTab] = useState<"leverageUp" | "deleverage">("leverageUp");
   const activeMode = mode === "selfLiquidate" ? mode : subTab;
 
@@ -271,7 +374,34 @@ export function LeverageTab({
   // Deleverage state: target leverage slider + optional withdrawal
   const [deleverageTarget, setDeleverageTarget] = useState(1.0);
   const [deleverageInput, setDeleverageInput] = useState("1.00");
+  const deleverageInitialized = useRef(false);
   const deleverageInputFocused = useRef(false);
+  const deleverageAnimRef = useRef<number | null>(null);
+  const cancelDeleverageAnim = useCallback(() => {
+    if (deleverageAnimRef.current !== null) {
+      cancelAnimationFrame(deleverageAnimRef.current);
+      deleverageAnimRef.current = null;
+    }
+  }, []);
+  const animateDeleverage = useCallback((from: number, to: number, duration: number) => {
+    cancelDeleverageAnim();
+    const startTime = performance.now();
+    function tick(now: number) {
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3); // easeOutCubic
+      const value = from + (to - from) * eased;
+      setDeleverageTarget(value);
+      setDeleverageInput(value.toFixed(2));
+      if (progress < 1) {
+        deleverageAnimRef.current = requestAnimationFrame(tick);
+      } else {
+        deleverageAnimRef.current = null;
+      }
+    }
+    deleverageAnimRef.current = requestAnimationFrame(tick);
+  }, [cancelDeleverageAnim]);
+  useEffect(() => () => cancelDeleverageAnim(), [cancelDeleverageAnim]);
   const deleverageDebounce = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [withdrawAmount, setWithdrawAmountRaw] = useState("");
   const setWithdrawAmount = useCallback((v: string) => setWithdrawAmountRaw(sanitizeAmount(v)), []);
@@ -368,6 +498,7 @@ export function LeverageTab({
   // Calculated values
   const [maxBorrowable, setMaxBorrowable] = useState<bigint>(0n); // max total debt for totalCollateral
   const [maxBorrowableLoaded, setMaxBorrowableLoaded] = useState(false);
+  const [controllerCrvUsdBalance, setControllerCrvUsdBalance] = useState<bigint | null>(null);
   const [oraclePrice, setOraclePrice] = useState<bigint>(0n); // collateral price in crvUSD (1e18)
   const [estimatedHealth, setEstimatedHealth] = useState<number | null>(null);
   const [swapQuote, setSwapQuote] = useState<{ expectedOut: string } | null>(null);
@@ -394,8 +525,14 @@ export function LeverageTab({
     error,
     simulationResult,
     reset,
+    clearError,
     executeAfterPreview,
   } = useZapperActions();
+
+  // Preserve last approval data so content stays in DOM during close animation
+  const lastApprovalRef = useRef(pendingApproval);
+  if (pendingApproval) lastApprovalRef.current = pendingApproval;
+  const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
 
   // Collateral token is the vault address
   const collateralToken = vault.address as `0x${string}`;
@@ -419,7 +556,7 @@ export function LeverageTab({
 
   // Balance for non-collateral token
   const isEth = selectedToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
-  const { data: altTokenBalance } = useBalance({
+  const { data: altTokenBalance, refetch: refetchBalance } = useBalance({
     address,
     token: isEth ? undefined : (selectedToken.address as `0x${string}`),
     query: { enabled: !!address && !isCollateralToken },
@@ -564,7 +701,22 @@ export function LeverageTab({
           }
         }
         if (stale) return;
-        setMaxBorrowable(max);
+        // Read controller's crvUSD balance (for liquidity constraint detection)
+        try {
+          const bal = await publicClient.readContract({
+            address: CRVUSD_ADDRESS as `0x${string}`,
+            abi: [{ name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ name: "", type: "uint256" }] }] as const,
+            functionName: "balanceOf",
+            args: [controllerAddress],
+          });
+          if (!stale) setControllerCrvUsdBalance(bal);
+        } catch { /* non-critical */ }
+
+        // Apply 0.2% safety margin (matches Curve lending-js SDK: * 998 / 1000)
+        // Controller's max_borrowable already has 0.01% on-chain buffer;
+        // this SDK-level buffer prevents "Debt too high" at max leverage
+        // due to swap slippage between quote time and execution.
+        setMaxBorrowable(max > 0n ? max * 998n / 1000n : 0n);
       } catch {
         if (stale) return;
         setMaxBorrowable(0n);
@@ -575,6 +727,13 @@ export function LeverageTab({
     calcMax();
     return () => { stale = true; };
   }, [publicClient, controllerAddress, totalCollateral, positionBands, existingDebt, forceCalcMax]);
+
+  // True when pool liquidity caps borrowing (maxBorrowable ≈ controller balance)
+  const isLiquidityConstrained = useMemo(() => {
+    if (!controllerCrvUsdBalance || maxBorrowable === 0n) return false;
+    const threshold = controllerCrvUsdBalance * 105n / 100n;
+    return maxBorrowable <= threshold;
+  }, [controllerCrvUsdBalance, maxBorrowable]);
 
   // Max additional borrow
   // For existing positions: maxBorrowable = max total debt (from 3-arg call with current_debt),
@@ -693,6 +852,16 @@ export function LeverageTab({
     }
   }, [effectiveLeverage]);
 
+  // Initialize deleverage target to current leverage on mount (when refreshing on deleverage tab)
+  useEffect(() => {
+    if (deleverageInitialized.current) return;
+    if (activeMode === "deleverage" && currentLeverage > 1) {
+      deleverageInitialized.current = true;
+      setDeleverageTarget(currentLeverage);
+      setDeleverageInput(currentLeverage.toFixed(2));
+    }
+  }, [activeMode, currentLeverage]);
+
   // Sync deleverage input when target changes from slider (not while user is typing)
   useEffect(() => {
     if (!deleverageInputFocused.current) {
@@ -762,8 +931,10 @@ export function LeverageTab({
     return deleverageCollateralToSell * oraclePrice / (10n ** BigInt(vault.decimals));
   }, [deleverageCollateralToSell, oraclePrice, vault.decimals]);
 
-  // Close position threshold
-  const isClosePosition = deleverageTarget <= 1.05;
+  // Close position: sell ALL collateral to fully repay debt.
+  // Controller closes loan when stablecoins from swap >= debt (repay_extended).
+  // Only trigger when user explicitly targets 1.0x (CLOSE button or slider at minimum).
+  const isClosePosition = deleverageTarget <= 1.001;
 
   // Projected max withdrawable after deleverage
   // DeFi Saver's userMaxWithdraw = collateral - controller.min_collateral(debt, N)
@@ -804,7 +975,7 @@ export function LeverageTab({
       steps.push({
         tokenSymbol: "crvUSD",
         action: "Repay",
-        description: "debt on Curve LlamaLend",
+        description: "debt",
         protocol: "Curve LlamaLend",
         amount: Number(formatUnits(debtToRepay, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 }),
       });
@@ -924,7 +1095,7 @@ export function LeverageTab({
           fromSymbol: collateralAmount && Number(collateralAmount) > 0 ? vault.symbol : "Leverage",
           fromLogo: vault.logo,
           toAmount: Number(formatUnits(debtAmount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 }),
-          toSymbol: "crvUSD debt",
+          toSymbol: "crvUSD",
           toLogo: "/tokens/crvusd.png",
         };
       } else if (activeMode === "deleverage" && (deleverageCollateralToSell > 0n || withdrawAmountBn > 0n)) {
@@ -981,12 +1152,27 @@ export function LeverageTab({
     return () => { stale = true; };
   }, [mode, publicClient, address, controllerAddress, selfLiqPercent]);
 
-  // Handle transaction success
+  // Handle transaction success — reset to idle so button returns to normal
   useEffect(() => {
     if (status === "success") {
       onTransactionSuccess();
+      refetchBalance();
+      reset();
     }
-  }, [status, onTransactionSuccess]);
+  }, [status, onTransactionSuccess, reset, refetchBalance]);
+
+  // Toast error messages to user
+  useEffect(() => {
+    if (status === "error" && error) {
+      if (isUserRejection(error)) {
+        toast("Transaction cancelled", { id: "leverage-cancelled", duration: 3000 });
+        clearError();
+      } else {
+        toast.error(error);
+        reset();
+      }
+    }
+  }, [status, error, reset, clearError]);
 
   // Handle approval success -> continue execution
   useEffect(() => {
@@ -1000,7 +1186,7 @@ export function LeverageTab({
 
     const preview = showSimulationPreview;
 
-    const openModalIfPreview = (result: unknown) => {
+    const openModalIfPreview = (result: unknown): boolean => {
       if (result && preview) {
         simulationBlock.current = currentBlock ?? 0n;
         setShowSimulationModal(true);
@@ -1025,7 +1211,9 @@ export function LeverageTab({
             setEthPrice(Number(data[1] as bigint) / 1e8);
           }).catch(() => {});
         }
+        return true;
       }
+      return false;
     };
 
     try {
@@ -1033,97 +1221,68 @@ export function LeverageTab({
         if (isCollateralToken) {
           // Existing Zapper path — loop leverage with collateral token
           const additionalCollateral = collateralAmount ? parseUnits(collateralAmount, vault.decimals) : 0n;
-          const result = await leverageUpAction(
-            controllerAddress,
-            additionalCollateral,
-            debtAmount,
-            collateralToken,
-            Number(slippage),
-            preview
-          );
-          openModalIfPreview(result);
+          if (preview) {
+            const result = await leverageUpAction(controllerAddress, additionalCollateral, debtAmount, collateralToken, Number(slippage), true);
+            if (openModalIfPreview(result)) return;
+          }
+          await leverageUpAction(controllerAddress, collateralAmount ? parseUnits(collateralAmount, vault.decimals) : 0n, debtAmount, collateralToken, Number(slippage), false);
         } else {
           // ZapperV2 path — loop leverage from any token
           const inputAmount = collateralAmount ? parseUnits(collateralAmount, effectiveDecimals) : 0n;
-          const result = await leverageUpFromTokenAction(
-            controllerAddress,
-            selectedToken.address as `0x${string}`,
-            inputAmount,
-            debtAmount,
-            collateralToken,
-            selectedToken.symbol,
-            Number(slippage),
-            preview
-          );
-          openModalIfPreview(result);
+          if (preview) {
+            const result = await leverageUpFromTokenAction(controllerAddress, selectedToken.address as `0x${string}`, inputAmount, debtAmount, collateralToken, selectedToken.symbol, Number(slippage), true);
+            if (openModalIfPreview(result)) return;
+          }
+          await leverageUpFromTokenAction(controllerAddress, selectedToken.address as `0x${string}`, collateralAmount ? parseUnits(collateralAmount, effectiveDecimals) : 0n, debtAmount, collateralToken, selectedToken.symbol, Number(slippage), false);
         }
       } else if (activeMode === "deleverage") {
         if (isClosePosition) {
           // Close: sell all collateral via V1 deleverage
-          const result = await deleverageAction(
-            controllerAddress,
-            position?.collateral ?? 0n,
-            collateralToken,
-            Number(slippage),
-            preview
-          );
-          openModalIfPreview(result);
+          if (preview) {
+            const result = await deleverageAction(controllerAddress, position?.collateral ?? 0n, collateralToken, Number(slippage), true);
+            if (openModalIfPreview(result)) return;
+          }
+          await deleverageAction(controllerAddress, position?.collateral ?? 0n, collateralToken, Number(slippage), false);
         } else if (withdrawAmountBn > 0n && isV2Available) {
           if (isWithdrawToOtherToken) {
             // Deleverage + withdraw as different token via V2
-            const result = await deleverageAndWithdrawToTokenAction(
-              controllerAddress,
-              deleverageCollateralToSell,
-              withdrawAmountBn,
-              collateralToken,
-              withdrawToken.address as `0x${string}`,
-              withdrawToken.symbol,
-              Number(slippage),
-              preview
-            );
-            openModalIfPreview(result);
+            if (preview) {
+              const result = await deleverageAndWithdrawToTokenAction(controllerAddress, deleverageCollateralToSell, withdrawAmountBn, collateralToken, withdrawToken.address as `0x${string}`, withdrawToken.symbol, Number(slippage), true);
+              if (openModalIfPreview(result)) return;
+            }
+            await deleverageAndWithdrawToTokenAction(controllerAddress, deleverageCollateralToSell, withdrawAmountBn, collateralToken, withdrawToken.address as `0x${string}`, withdrawToken.symbol, Number(slippage), false);
           } else {
             // Deleverage + withdraw as collateral via V2
-            const result = await deleverageAndWithdrawAction(
-              controllerAddress,
-              deleverageCollateralToSell,
-              withdrawAmountBn,
-              collateralToken,
-              Number(slippage),
-              preview
-            );
-            openModalIfPreview(result);
+            if (preview) {
+              const result = await deleverageAndWithdrawAction(controllerAddress, deleverageCollateralToSell, withdrawAmountBn, collateralToken, Number(slippage), true);
+              if (openModalIfPreview(result)) return;
+            }
+            await deleverageAndWithdrawAction(controllerAddress, deleverageCollateralToSell, withdrawAmountBn, collateralToken, Number(slippage), false);
           }
         } else {
           // Pure deleverage via V1
-          const result = await deleverageAction(
-            controllerAddress,
-            deleverageCollateralToSell,
-            collateralToken,
-            Number(slippage),
-            preview
-          );
-          openModalIfPreview(result);
+          if (preview) {
+            const result = await deleverageAction(controllerAddress, deleverageCollateralToSell, collateralToken, Number(slippage), true);
+            if (openModalIfPreview(result)) return;
+          }
+          await deleverageAction(controllerAddress, deleverageCollateralToSell, collateralToken, Number(slippage), false);
         }
       } else if (activeMode === "selfLiquidate") {
+        const percentage = BigInt(selfLiqPercent) * 10n ** 16n;
         if (canDirectLiquidate) {
           // Direct path: AMM has enough crvUSD, no swap needed
-          const result = await directLiquidateAction(
-            controllerAddress,
-            BigInt(selfLiqPercent) * 10n ** 16n,
-            preview
-          );
-          openModalIfPreview(result);
+          if (preview) {
+            const result = await directLiquidateAction(controllerAddress, percentage, true);
+            if (openModalIfPreview(result)) return;
+          }
+          await directLiquidateAction(controllerAddress, percentage, false);
         } else {
           // Zapper path: need to swap collateral to crvUSD
-          const result = await selfLiquidateAction(
-            controllerAddress,
-            BigInt(selfLiqPercent) * 10n ** 16n,
-            collateralToken,
-            Number(slippage),
-            preview
-          );
-          openModalIfPreview(result);
+          if (preview) {
+            const result = await selfLiquidateAction(controllerAddress, percentage, collateralToken, Number(slippage), true);
+            if (openModalIfPreview(result)) return;
+          }
+          await selfLiquidateAction(controllerAddress, percentage, collateralToken, Number(slippage), false);
         }
       }
     } catch (err) {
@@ -1142,13 +1301,10 @@ export function LeverageTab({
   const isProcessing = status !== "idle" && status !== "success" && status !== "error" && status !== "needsApproval";
 
   const getButtonText = () => {
-    if (status === "building") return "Building transaction...";
-    if (status === "simulating") return "Simulating...";
-    if (status === "executing") return "Confirm in wallet...";
-    if (status === "waitingTx") return "Waiting for confirmation...";
-    if (status === "success") return "Done!";
-    if (status === "error") return "Try Again";
-
+    if (status === "building") return <>Building transaction<LoadingDots /></>;
+    if (status === "simulating") return <>Simulating<LoadingDots /></>;
+    if (status === "executing") return <>Confirm in wallet<LoadingDots /></>;
+    if (status === "waitingTx") return <>Waiting for confirmation<LoadingDots /></>;
     if (activeMode === "leverageUp") return isCollateralToken ? "Leverage Up" : "Swap & Leverage Up";
     if (activeMode === "deleverage") {
       if (isClosePosition) return "Close Position";
@@ -1401,7 +1557,7 @@ export function LeverageTab({
               )}
 
               {/* Target Leverage slider */}
-              {position?.hasLoan && currentLeverage > 1.05 && (
+              {position?.hasLoan && currentLeverage > 1.01 && (
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <label className="text-sm text-[var(--muted-foreground)]">
@@ -1423,7 +1579,7 @@ export function LeverageTab({
                             }
                           }, 500);
                         }}
-                        onFocus={() => { deleverageInputFocused.current = true; }}
+                        onFocus={() => { cancelDeleverageAnim(); deleverageInputFocused.current = true; }}
                         onBlur={() => {
                           deleverageInputFocused.current = false;
                           const v = parseFloat(deleverageInput);
@@ -1438,15 +1594,20 @@ export function LeverageTab({
                         className="w-[3rem] bg-transparent text-right mono text-sm outline-none"
                       />
                       <span className="text-sm text-[var(--muted-foreground)] pointer-events-none">x</span>
-                      <button
-                        type="button"
-                        tabIndex={-1}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => { setDeleverageTarget(1.0); setDeleverageInput("1.00"); }}
-                        className="shrink-0 px-1.5 py-0.5 text-[10px] font-medium bg-[var(--background)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded transition-colors cursor-pointer"
-                      >
-                        MAX
-                      </button>
+                      <DeleverageMinButton
+                        onMin={() => {
+                          cancelDeleverageAnim();
+                          animateDeleverage(deleverageTarget, 1.01, 300);
+                        }}
+                        onClose={() => {
+                          cancelDeleverageAnim();
+                          animateDeleverage(deleverageTarget, 1.0, 300);
+                        }}
+                        onReset={deleverageTarget !== currentLeverage ? () => {
+                          cancelDeleverageAnim();
+                          animateDeleverage(deleverageTarget, currentLeverage, 300);
+                        } : undefined}
+                      />
                     </div>
                   </div>
                   <input
@@ -1456,6 +1617,7 @@ export function LeverageTab({
                     step="any"
                     value={deleverageTarget}
                     onChange={(e) => {
+                      cancelDeleverageAnim();
                       const v = parseFloat(e.target.value);
                       setDeleverageTarget(v);
                       if (!deleverageInputFocused.current) setDeleverageInput(v.toFixed(2));
@@ -1463,51 +1625,12 @@ export function LeverageTab({
                     className="w-full"
                   />
                   <div className="flex justify-between text-xs text-[var(--muted-foreground)] mt-1">
-                    <span>1.00x (close)</span>
+                    <span>1.00x (close loan)</span>
                     <span>{currentLeverage.toFixed(2)}x (current)</span>
                   </div>
                 </div>
               )}
 
-              {/* Summary */}
-              {(deleverageCollateralToSell > 0n || withdrawAmountBn > 0n) && (
-                <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
-                  {deleverageCollateralToSell > 0n && (
-                    <div className="flex justify-between">
-                      <span className="text-[var(--muted-foreground)]">Collateral Sold</span>
-                      <span className="mono">
-                        {Number(formatUnits(deleverageCollateralToSell, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })} {vault.symbol}
-                      </span>
-                    </div>
-                  )}
-                  {debtToRepay > 0n && (
-                    <div className="flex justify-between">
-                      <span className="text-[var(--muted-foreground)]">Debt Repaid</span>
-                      <span className="mono">
-                        {Number(formatUnits(debtToRepay, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} crvUSD
-                      </span>
-                    </div>
-                  )}
-                  {withdrawAmountBn > 0n && (
-                    <div className="flex justify-between">
-                      <span className="text-[var(--muted-foreground)]">
-                        {isWithdrawToOtherToken ? `Withdrawn as ${withdrawToken.symbol}` : "Collateral Withdrawn"}
-                      </span>
-                      <span className="mono">
-                        {isWithdrawToOtherToken
-                          ? `${withdrawAmount} ${withdrawToken.symbol}`
-                          : `${Number(formatUnits(withdrawAmountBn, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${vault.symbol}`
-                        }
-                      </span>
-                    </div>
-                  )}
-                  {isClosePosition && (
-                    <div className="text-xs text-[var(--accent)]">
-                      Sells all collateral, repays debt, returns remainder
-                    </div>
-                  )}
-                </div>
-              )}
             </>
           )}
         </>
@@ -1558,97 +1681,114 @@ export function LeverageTab({
         </>
       )}
 
-      {/* Approval Flow */}
-      {pendingApproval && status === "needsApproval" && (
-        <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-3">
-          <div className="text-sm font-medium">Approvals Required</div>
-          {approvalProgress && (
-            <div className="space-y-2">
-              {approvalProgress.steps.map((s, i) => (
-                <div key={i} className="flex items-start gap-2">
-                  <div className="mt-0.5">
-                    {s.done ? (
-                      <Check size={14} className="text-green-500 shrink-0" />
-                    ) : i === approvalProgress.step - 1 ? (
-                      <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)] shrink-0" />
-                    ) : (
-                      <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)]/30 shrink-0" />
-                    )}
-                  </div>
-                  <div>
-                    <div className={cn(
-                      "text-sm",
-                      s.done
-                        ? "text-[var(--muted-foreground)] line-through"
-                        : i === approvalProgress.step - 1
-                          ? "text-[var(--foreground)] font-medium"
-                          : "text-[var(--muted-foreground)]"
-                    )}>
-                      {s.label}
-                    </div>
-                    <div className={cn(
-                      "text-xs",
-                      i === approvalProgress.step - 1
-                        ? "text-[var(--muted-foreground)]"
-                        : "text-[var(--muted-foreground)]/60"
-                    )}>
-                      {s.description}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          {pendingApproval.type === "erc20" && pendingApproval.amount ? (
-            <div className="flex gap-2">
-              <button
-                onClick={() => approve(true)}
-                disabled={isApproving}
-                className={cn(
-                  "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                  isApproving
-                    ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                    : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
-                )}
-              >
-                {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                {isApproving ? "Approving..." : `Exact (${Number(formatUnits(pendingApproval.amount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })})`}
-              </button>
-              <button
-                onClick={() => approve(false)}
-                disabled={isApproving}
-                className={cn(
-                  "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                  isApproving
-                    ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                    : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
-                )}
-              >
-                {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                {isApproving ? "Approving..." : "Unlimited"}
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => approve()}
-              disabled={isApproving}
-              className={cn(
-                "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
-                isApproving
-                  ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                  : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
-              )}
-            >
-              {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-              {isApproving
-                ? "Approving..."
-                : pendingApproval.type === "controller"
-                  ? `Approve Lending Access${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`
-                  : `Approve ${pendingApproval.tokenSymbol}${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`}
-            </button>
-          )}
+      {/* Low liquidity warning */}
+      {isLiquidityConstrained && maxBorrowable > 0n && activeMode === "leverageUp" && (
+        <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-500 text-xs flex items-center gap-2">
+          <AlertTriangle size={14} className="shrink-0" />
+          <span>
+            Only {Number(formatUnits(controllerCrvUsdBalance!, 18)).toLocaleString(undefined, { maximumFractionDigits: 0 })} crvUSD available in lending market. Max leverage is limited by pool liquidity, not your collateral.
+          </span>
         </div>
       )}
+
+      {/* Approval Flow */}
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        style={{ gridTemplateRows: showApprovalCard ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
+          {lastApprovalRef.current && (
+            <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-3">
+              <div className="text-sm font-medium">Approvals Required</div>
+              {approvalProgress && (
+                <div className="space-y-2">
+                  {approvalProgress.steps.map((s, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      <div className="mt-0.5">
+                        {s.done ? (
+                          <Check size={14} className="text-green-500 shrink-0" />
+                        ) : i === approvalProgress.step - 1 ? (
+                          <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)] shrink-0" />
+                        ) : (
+                          <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)]/30 shrink-0" />
+                        )}
+                      </div>
+                      <div>
+                        <div className={cn(
+                          "text-sm",
+                          s.done
+                            ? "text-[var(--muted-foreground)] line-through"
+                            : i === approvalProgress.step - 1
+                              ? "text-[var(--foreground)] font-medium"
+                              : "text-[var(--muted-foreground)]"
+                        )}>
+                          {s.label}
+                        </div>
+                        <div className={cn(
+                          "text-xs",
+                          i === approvalProgress.step - 1
+                            ? "text-[var(--muted-foreground)]"
+                            : "text-[var(--muted-foreground)]/60"
+                        )}>
+                          {s.description}{s.spender && <>{" "}<a href={`https://etherscan.io/address/${s.spender}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={10} className="!inline -mt-0.5" /></a></>}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {lastApprovalRef.current!.type === "erc20" && lastApprovalRef.current!.amount ? (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => approve(true)}
+                    disabled={isApproving}
+                    className={cn(
+                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                      isApproving
+                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                        : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
+                    )}
+                  >
+                    {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {isApproving ? "Approving..." : `${Number(formatUnits(lastApprovalRef.current!.amount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${lastApprovalRef.current!.tokenSymbol}`}
+                  </button>
+                  <button
+                    onClick={() => approve(false)}
+                    disabled={isApproving}
+                    className={cn(
+                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                      isApproving
+                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                        : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+                    )}
+                  >
+                    {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {isApproving ? "Approving..." : "Unlimited"}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => approve()}
+                  disabled={isApproving}
+                  className={cn(
+                    "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
+                    isApproving
+                      ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                      : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+                  )}
+                >
+                  {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {isApproving
+                    ? "Approving..."
+                    : lastApprovalRef.current!.type === "controller"
+                      ? `Approve yld Zapper${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`
+                      : `Approve ${lastApprovalRef.current!.tokenSymbol}${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Simulation Modal */}
       {showSimulationModal && simulationResult && (
@@ -1670,30 +1810,40 @@ export function LeverageTab({
       )}
 
       {/* Action Button */}
-      {status !== "needsApproval" && (
-        <button
-          onClick={() => {
-            if (status === "error" || status === "success") {
-              reset();
-            } else if (simulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
-              // Re-open cached simulation modal if same block
-              setShowSimulationModal(true);
-            } else {
-              handleSubmit();
-            }
-          }}
-          disabled={isProcessing || (!isFormValid() && status === "idle")}
-          className={cn(
-            "w-full py-3 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
-            isProcessing || (!isFormValid() && status === "idle")
-              ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-              : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+      <div
+        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+        style={{ gridTemplateRows: !showApprovalCard ? "1fr" : "0fr" }}
+      >
+        <div className="overflow-hidden">
+          {isClosePosition && activeMode === "deleverage" && deleverageInitialized.current && (
+            <div className="mb-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-500 text-xs flex items-center gap-2">
+              <AlertTriangle size={14} className="shrink-0" />
+              Sells all collateral, repays debt, returns remainder
+            </div>
           )}
-        >
-          {isProcessing && <Loader2 className="w-4 h-4 animate-spin" />}
-          {getButtonText()}
-        </button>
-      )}
+          <button
+            onClick={() => {
+              if (status === "error" || status === "success") {
+                reset();
+              } else if (simulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
+                // Re-open cached simulation modal if same block
+                setShowSimulationModal(true);
+              } else {
+                handleSubmit();
+              }
+            }}
+            disabled={showApprovalCard || isProcessing || (!isFormValid() && status === "idle")}
+            className={cn(
+              "w-full py-3 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
+              isProcessing || (!isFormValid() && status === "idle")
+                ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+            )}
+          >
+            {getButtonText()}
+          </button>
+        </div>
+      </div>
 
       {/* Powered by Enso + Route toggle + Settings */}
       <div className="flex items-center justify-between pt-2">
@@ -1753,7 +1903,7 @@ export function LeverageTab({
         const routeVisible = showRoute && (hasLeverageRoute || hasDeleverageRoute);
         return (
           <div
-            className="grid transition-all duration-300 ease-in-out"
+            className="grid transition-[grid-template-rows] duration-300 ease-in-out"
             style={{ gridTemplateRows: routeVisible ? "1fr" : "0fr" }}
           >
             <div className="overflow-hidden">
