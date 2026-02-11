@@ -7,21 +7,21 @@
  */
 
 export const BRAND = {
-  /** Brand name for display (matches stylized version with underscore) */
-  name: "yld_fi",
+  /** Brand name for display */
+  name: "yld",
 
   /** Full tagline */
   tagline: "Automated Yield Optimization",
 
   /** Copyright text */
   copyright: (year: number = new Date().getFullYear()) =>
-    `© ${year} yld_fi. All rights reserved.`,
+    `© ${year} yld. All rights reserved.`,
 
   /** User-Agent for API requests */
-  userAgent: "yld_fi ENS Avatar Proxy",
+  userAgent: "yld ENS Avatar Proxy",
 
   /** App name for wallet connections */
-  walletAppName: "yld_fi",
+  walletAppName: "yld",
 } as const;
 
 export const URLS = {
