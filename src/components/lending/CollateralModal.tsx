@@ -138,7 +138,7 @@ export function CollateralModal({
             <div className="w-10 h-10 rounded-full overflow-hidden shrink-0">
               <Image
                 src="/logo-128.png"
-                alt="yld_fi"
+                alt="yld"
                 width={40}
                 height={40}
               />

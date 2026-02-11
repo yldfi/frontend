@@ -3,8 +3,8 @@ import Link from "next/link";
 import Image from "next/image";
 
 export const metadata: Metadata = {
-  title: "Terms of Service | yld_fi",
-  description: "Terms of Service and restricted jurisdictions for yld_fi",
+  title: "Terms of Service | yld",
+  description: "Terms of Service and restricted jurisdictions for yld",
 };
 
 export default function TermsPage() {
@@ -16,13 +16,13 @@ export default function TermsPage() {
           <Link href="/" className="flex items-center gap-3">
             <Image
               src="/logo-128.png"
-              alt="yld_fi"
+              alt="yld"
               width={32}
               height={32}
               className="rounded-full"
             />
             <span className="mono text-lg font-medium">
-              yld<span className="text-[var(--muted-foreground)]">_</span>fi
+              yld
             </span>
           </Link>
         </div>
@@ -40,8 +40,8 @@ export default function TermsPage() {
           <section>
             <h2 className="text-xl font-medium mb-4">1. Introduction</h2>
             <p className="text-[var(--muted-foreground)] leading-relaxed">
-              Welcome to yld_fi. By accessing or using our interface, you agree to be bound by these Terms of Service.
-              yld_fi provides a web interface for interacting with Yearn V3 vaults and related smart contracts on Ethereum.
+              Welcome to yld. By accessing or using our interface, you agree to be bound by these Terms of Service.
+              yld provides a web interface for interacting with Yearn V3 vaults and related smart contracts on Ethereum.
               The interface is provided &quot;as is&quot; without warranties of any kind.
             </p>
           </section>
@@ -50,7 +50,7 @@ export default function TermsPage() {
           <section>
             <h2 className="text-xl font-medium mb-4">2. Restricted Jurisdictions</h2>
             <p className="text-[var(--muted-foreground)] leading-relaxed mb-4">
-              yld_fi is not available to persons or entities located in, incorporated in, or residents of certain restricted jurisdictions.
+              yld is not available to persons or entities located in, incorporated in, or residents of certain restricted jurisdictions.
               By geo-blocking users from these regions, we ensure compliance with applicable laws and regulations.
             </p>
 
@@ -89,7 +89,7 @@ export default function TermsPage() {
           <section>
             <h2 className="text-xl font-medium mb-4">3. Eligibility</h2>
             <p className="text-[var(--muted-foreground)] leading-relaxed">
-              By using yld_fi, you represent and warrant that you are not located in, incorporated in, or a resident of any restricted jurisdiction listed above,
+              By using yld, you represent and warrant that you are not located in, incorporated in, or a resident of any restricted jurisdiction listed above,
               and that you are not on any sanctions list maintained by OFAC or other relevant authorities.
               You further represent that your use of this interface complies with all applicable laws and regulations in your jurisdiction.
             </p>
@@ -99,7 +99,7 @@ export default function TermsPage() {
           <section>
             <h2 className="text-xl font-medium mb-4">4. Prohibited Activities</h2>
             <p className="text-[var(--muted-foreground)] leading-relaxed mb-4">
-              By using yld_fi, you agree not to engage in any of the following prohibited activities:
+              By using yld, you agree not to engage in any of the following prohibited activities:
             </p>
             <ul className="list-disc list-inside text-[var(--muted-foreground)] space-y-2 ml-4">
               <li>Using the interface for any illegal activities, including money laundering, terrorist financing, or fraud</li>
@@ -122,10 +122,10 @@ export default function TermsPage() {
             <p className="text-[var(--muted-foreground)] leading-relaxed mb-4">
               This web application is provided as a tool for users to interact with smart contracts deployed on Ethereum on their own initiative,
               with no endorsement or recommendation of cryptocurrency trading activities. By using this interface, you acknowledge that you are accessing
-              blockchain smart contracts directly, without any intermediary, custodian, or fiduciary involvement from yld_fi.
+              blockchain smart contracts directly, without any intermediary, custodian, or fiduciary involvement from yld.
             </p>
             <p className="text-[var(--muted-foreground)] leading-relaxed">
-              yld_fi is a frontend interface only. It does not hold, control, or have access to your assets at any time.
+              yld is a frontend interface only. It does not hold, control, or have access to your assets at any time.
               All transactions are executed directly on the blockchain via your connected wallet. You maintain sole custody and control of your funds.
             </p>
           </section>
@@ -137,7 +137,7 @@ export default function TermsPage() {
               DeFi protocols involve significant risks including but not limited to: smart contract vulnerabilities,
               impermanent loss, market volatility, regulatory changes, and potential loss of funds.
               You acknowledge that you understand these risks and accept full responsibility for your actions.
-              yld_fi does not provide financial, investment, or legal advice.
+              yld does not provide financial, investment, or legal advice.
             </p>
           </section>
 
@@ -155,7 +155,7 @@ export default function TermsPage() {
           <section>
             <h2 className="text-xl font-medium mb-4">8. Limitation of Liability</h2>
             <p className="text-[var(--muted-foreground)] leading-relaxed">
-              To the maximum extent permitted by law, yld_fi and its contributors shall not be liable for any indirect,
+              To the maximum extent permitted by law, yld and its contributors shall not be liable for any indirect,
               incidental, special, consequential, or punitive damages, or any loss of profits or revenues,
               whether incurred directly or indirectly, or any loss of data, use, goodwill, or other intangible losses.
             </p>
@@ -165,7 +165,7 @@ export default function TermsPage() {
           <section>
             <h2 className="text-xl font-medium mb-4">9. Privacy Policy</h2>
             <p className="text-[var(--muted-foreground)] leading-relaxed">
-              Your use of yld_fi is also governed by our{" "}
+              Your use of yld is also governed by our{" "}
               <Link href="/privacy" className="text-[var(--accent)] hover:underline">
                 Privacy Policy
               </Link>, which describes how we collect, use, and protect your information.
@@ -204,7 +204,7 @@ export default function TermsPage() {
             href="/"
             className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
           >
-            &larr; Back to yld_fi
+            &larr; Back to yld
           </Link>
         </div>
       </main>
@@ -213,7 +213,7 @@ export default function TermsPage() {
       <footer className="border-t border-[var(--border)] mt-12">
         <div className="max-w-4xl mx-auto px-6 py-6">
           <p className="text-xs text-[var(--muted-foreground)]">
-            &copy; {new Date().getFullYear()} yld_fi. All rights reserved.
+            &copy; {new Date().getFullYear()} yld. All rights reserved.
           </p>
         </div>
       </footer>

@@ -76,7 +76,7 @@ export const PIREX = {
 
 // ============================================================================
 // External Vault Infrastructure (Llama Airforce, Concentrator, Beefy)
-// Users holding these tokens can zap directly into yld_fi vaults
+// Users holding these tokens can zap directly into yld vaults
 // ============================================================================
 
 // Llama Airforce (Union) vaults
@@ -525,7 +525,7 @@ export function getAllVaultIds(): string[] {
   return Object.keys(VAULTS);
 }
 
-// Check if address is a yld_fi vault
+// Check if address is a yld vault
 export function isYldfiVault(address: string): boolean {
   // Exclude zero address (used for undeployed vaults)
   if (address.toLowerCase() === "0x0000000000000000000000000000000000000000") {
