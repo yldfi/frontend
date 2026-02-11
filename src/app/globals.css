@@ -65,6 +65,7 @@ button:disabled {
 
 html {
   scroll-behavior: smooth;
+  scroll-padding-top: 7rem;
   overscroll-behavior: none;
   overflow-y: scroll;
 }
@@ -228,16 +229,28 @@ input[type="range"]::-moz-range-track {
   background: var(--border);
 }
 
-/* Animated rainbow gradient */
-@keyframes rainbowSlide {
-  0% { background-position: 0% 50%; }
-  100% { background-position: 200% 50%; }
-}
+
 
 /* Health bar pulse animation */
 @keyframes health-pulse {
   0%, 100% { opacity: 1; filter: brightness(1); }
   50% { opacity: 0.4; filter: brightness(1.6); }
+}
+
+/* Synced estimate pulse — animated CSS variable on parent, children inherit */
+@property --estimate-pulse {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+
+@keyframes estimate-pulse {
+  0%, 100% { --estimate-pulse: 1; }
+  50% { --estimate-pulse: 0.4; }
+}
+
+.estimating {
+  animation: estimate-pulse 1.2s ease-in-out infinite;
 }
 
 /* Collateral link - compact with logo rainbow gradient border */
@@ -249,9 +262,7 @@ input[type="range"]::-moz-range-track {
   font-size: 13px;
   font-weight: 500;
   border-radius: 6px;
-  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6, #ef4444);
-  background-size: 200% 100%;
-  animation: rainbowSlide 3s linear infinite;
+  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6);
   transition: all 0.2s ease;
 }
 
@@ -280,10 +291,26 @@ input[type="range"]::-moz-range-track {
   position: absolute;
   inset: -1px;
   border-radius: 5px;
-  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6, #ef4444);
-  background-size: 200% 100%;
-  animation: rainbowSlide 3s linear infinite;
+  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6);
   z-index: -1;
+}
+
+/* Lending card - block with rainbow gradient border */
+.lending-card {
+  padding: 1px;
+  border-radius: 10px;
+  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6);
+  transition: opacity 0.2s ease;
+}
+
+.lending-card > * {
+  background: var(--background);
+  border-radius: 9px;
+  transition: background 0.2s ease;
+}
+
+.lending-card:hover > * {
+  background: var(--muted);
 }
 
 /* Sonner Toast Customization */
