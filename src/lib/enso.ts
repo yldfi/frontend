@@ -4,7 +4,7 @@
 
 import { EnsoClient } from "@ensofinance/sdk";
 import type { EnsoToken, EnsoTokensResponse, EnsoRouteResponse, EnsoBundleAction, EnsoBundleResponse, RouteInfo, RouteStep, CustomBundleResponse } from "@/types/enso";
-import { TOKENS, VAULTS, VAULT_ADDRESSES, isYldfiVault as checkIsYldfiVault } from "@/config/vaults";
+import { TOKENS, VAULTS, VAULT_ADDRESSES, CURVE_SAVINGS, isYldfiVault as checkIsYldfiVault } from "@/config/vaults";
 import { PUBLIC_RPC_URLS } from "@/config/rpc";
 
 // Import Curve helpers from dedicated module
@@ -138,6 +138,16 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
     decimals: 18,
     logoURI: "https://assets.coingecko.com/coins/images/30118/thumb/crvusd.jpeg",
     type: "base",
+  },
+  // Curve Savings vault (scrvUSD) - deeply integrated partner token
+  {
+    address: CURVE_SAVINGS.SCRVUSD,
+    chainId: 1,
+    name: "Savings crvUSD",
+    symbol: "scrvUSD",
+    decimals: 18,
+    logoURI: "/tokens/scrvusd.png",
+    type: "defi",
   },
   // Llama Airforce (Union) vault tokens - external vaults users can zap FROM
   {

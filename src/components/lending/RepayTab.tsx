@@ -110,6 +110,7 @@ interface RepayTabProps {
   onEstimatedHealthChange?: (health: number | null) => void;
   onDebtDeltaChange?: (delta: bigint | null) => void;
   onTxStateChange?: (state: { status: "pending" | "success" | "reverted"; action: string; hash: string; details?: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string } } | null) => void;
+  onSwitchTab?: (tab: string) => void;
 }
 
 export function RepayTab({
@@ -120,6 +121,7 @@ export function RepayTab({
   onEstimatedHealthChange,
   onDebtDeltaChange,
   onTxStateChange,
+  onSwitchTab,
 }: RepayTabProps) {
   const { address } = useAccount();
   const publicClient = usePublicClient();
@@ -194,7 +196,6 @@ export function RepayTab({
   // Lending actions
   const {
     repayDirect,
-    repayWithRedeem,
     repayWithSwap,
     pendingApproval,
     approve,
@@ -214,6 +215,12 @@ export function RepayTab({
   const lastApprovalRef = useRef(pendingApproval);
   if (pendingApproval) lastApprovalRef.current = pendingApproval;
   const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
+
+  // Track which approval button was clicked
+  const [approvingType, setApprovingType] = useState<"exact" | "unlimited" | "single" | null>(null);
+  useEffect(() => {
+    if (!isApproving) setApprovingType(null);
+  }, [isApproving]);
 
   // Read selected token balance (native ETH or ERC20)
   const isEth = repayToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
@@ -558,7 +565,7 @@ export function RepayTab({
 
   // Toast error messages to user
   useEffect(() => {
-    if (status === "error" && error) {
+    if ((status === "error" || status === "reverted") && error) {
       if (isUserRejection(error)) {
         toast("Transaction cancelled", { id: "repay-cancelled", duration: 3000 });
         clearError();
@@ -595,22 +602,13 @@ export function RepayTab({
           if (result) {
             simulationBlock.current = currentBlock ?? 0n;
             setShowSimulationModal(true);
-            return;
+            return; // Modal opened — bail
           }
-          // Preview unavailable (e.g., Anvil fork) — execute directly
+          // No simulation data (e.g. Anvil) — fall through to execute
         }
         await repayDirect(controllerAddress, repayWei, { closeLoan: isClosingLoan });
-      } else if (isVaultWithCrvUsdUnderlying) {
-        // Path B: Redeem vault token → crvUSD, then repay (no Enso)
-        const redeemWei = parseUnits(repayAmount, repayToken.decimals);
-        await repayWithRedeem(
-          controllerAddress,
-          repayToken.address as `0x${string}`,
-          redeemWei,
-          { tokenSymbol: repayToken.symbol }
-        );
       } else {
-        // Path C: Enso swap + repay
+        // Path B: Enso bundle — handles vault tokens (redeem + repay) and regular tokens (swap + repay) atomically
         if (showSimulationPreview) {
           const result = await repayWithSwap(
             vault.address as `0x${string}`,
@@ -618,14 +616,14 @@ export function RepayTab({
             repayAmount,
             repayToken.decimals,
             Number(slippage),
-            { previewOnly: true, tokenSymbol: repayToken.symbol }
+            { previewOnly: true, tokenSymbol: repayToken.symbol, inSoftLiquidation: position?.inSoftLiquidation }
           );
           if (result) {
             simulationBlock.current = currentBlock ?? 0n;
             setShowSimulationModal(true);
-            return;
+            return; // Modal opened — bail
           }
-          // Preview unavailable (e.g., Anvil fork) — execute directly
+          // No simulation data (e.g. Anvil) — fall through to execute
         }
         await repayWithSwap(
           vault.address as `0x${string}`,
@@ -633,7 +631,7 @@ export function RepayTab({
           repayAmount,
           repayToken.decimals,
           Number(slippage),
-          { tokenSymbol: repayToken.symbol }
+          { tokenSymbol: repayToken.symbol, inSoftLiquidation: position?.inSoftLiquidation }
         );
       }
     } catch (err) {
@@ -653,6 +651,7 @@ export function RepayTab({
     status !== "idle" &&
     status !== "success" &&
     status !== "error" &&
+    status !== "reverted" &&
     status !== "needsApproval";
 
   const hasInsufficientBalance = useMemo(() => {
@@ -698,6 +697,29 @@ export function RepayTab({
 
   return (
     <div className="space-y-4">
+      {position?.inSoftLiquidation && onSwitchTab ? (
+        <div className={cn(
+          "p-3 rounded-lg text-sm flex items-center gap-2",
+          position.health <= 0
+            ? "bg-red-500/10 border border-red-500/30 text-red-500"
+            : "bg-yellow-500/10 border border-yellow-500/30 text-yellow-500"
+        )}>
+          <AlertTriangle size={16} className="shrink-0" />
+          <div>
+            <div className="font-medium">
+              {position.health <= 0 ? "Position Underwater" : "Soft Liquidation"}
+            </div>
+            <div className="text-xs mt-0.5">
+              Reduce debt from your wallet — your collateral stays deposited and the position remains open. Use <button type="button" onClick={() => onSwitchTab("leverage")} className={cn("underline transition-colors", position.health <= 0 ? "hover:text-red-300" : "hover:text-yellow-300")}>Liquidate</button> to withdraw collateral and close instead.
+            </div>
+          </div>
+        </div>
+      ) : (
+        <p className="text-xs text-[var(--muted-foreground)]">
+          Pay down debt with crvUSD or any token. Your collateral stays in the position.
+        </p>
+      )}
+
       {/* Token Selector + Amount Input */}
       <div>
         <div className="flex items-center justify-between mb-2">
@@ -827,20 +849,19 @@ export function RepayTab({
               {lastApprovalRef.current!.type !== "controller" && lastApprovalRef.current!.amount ? (
                 <div className="flex gap-2">
                   <button
-                    onClick={() => approve(true)}
+                    onClick={() => { setApprovingType("exact"); approve(true); }}
                     disabled={isApproving}
                     className={cn(
-                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                      "flex-[2] py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
                       isApproving
                         ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
                         : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
                     )}
                   >
-                    {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                    {isApproving ? "Approving..." : `${Number(formatUnits(lastApprovalRef.current!.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${lastApprovalRef.current!.tokenSymbol}`}
+                    {isApproving && approvingType === "exact" ? <>Approving<LoadingDots /></> : `${Number(formatUnits(lastApprovalRef.current!.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${lastApprovalRef.current!.tokenSymbol}`}
                   </button>
                   <button
-                    onClick={() => approve(false)}
+                    onClick={() => { setApprovingType("unlimited"); approve(false); }}
                     disabled={isApproving}
                     className={cn(
                       "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
@@ -849,13 +870,12 @@ export function RepayTab({
                         : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
                     )}
                   >
-                    {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                    {isApproving ? "Approving..." : "Unlimited"}
+                    {isApproving && approvingType === "unlimited" ? <>Approving<LoadingDots /></> : "Max"}
                   </button>
                 </div>
               ) : (
                 <button
-                  onClick={() => approve()}
+                  onClick={() => { setApprovingType("single"); approve(); }}
                   disabled={isApproving}
                   className={cn(
                     "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
@@ -864,8 +884,7 @@ export function RepayTab({
                       : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
                   )}
                 >
-                  {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                  {isApproving ? "Approving..." : "Approve"}
+                  {isApproving ? <>Approving<LoadingDots /></> : "Approve"}
                 </button>
               )}
             </div>
@@ -900,6 +919,14 @@ export function RepayTab({
         </div>
       )}
 
+      {/* Underwater warning before action */}
+      {position?.health !== undefined && position.health <= 0 && (
+        <div className="p-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-500 text-xs flex items-center gap-2">
+          <AlertTriangle size={14} className="shrink-0" />
+          <span>Debt exceeds collateral value. Repaying may not be worthwhile.</span>
+        </div>
+      )}
+
       {/* Action Button */}
       <div
         className="grid transition-[grid-template-rows] duration-300 ease-in-out"
@@ -908,7 +935,7 @@ export function RepayTab({
         <div className="overflow-hidden">
           <button
             onClick={() => {
-              if (status === "error" || status === "success") {
+              if (status === "error" || status === "reverted" || status === "success") {
                 reset();
               } else if (simulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
                 // Re-open cached simulation modal if same block
@@ -1042,7 +1069,7 @@ export function RepayTab({
                                   {
                                     tokenSymbol: repayToken.symbol,
                                     action: "Redeem",
-                                    description: `${repayToken.symbol} for crvUSD`,
+                                    description: "for crvUSD",
                                     protocol: "Curve Savings",
                                   },
                                 ]
@@ -1051,13 +1078,13 @@ export function RepayTab({
                                     {
                                       tokenSymbol: repayToken.symbol,
                                       action: "Redeem",
-                                      description: `${repayToken.symbol} for ${vaultInfo.underlyingSymbol}`,
+                                      description: `for ${vaultInfo.underlyingSymbol}`,
                                       protocol: "yld",
                                     },
                                     {
                                       tokenSymbol: vaultInfo.underlyingSymbol,
                                       action: "Swap",
-                                      description: `${vaultInfo.underlyingSymbol} for crvUSD`,
+                                      description: "for crvUSD",
                                       protocol: "Enso Router",
                                     },
                                   ]
@@ -1065,14 +1092,13 @@ export function RepayTab({
                                     {
                                       tokenSymbol: repayToken.symbol,
                                       action: "Swap",
-                                      description: `${repayToken.symbol} for crvUSD`,
+                                      description: "for crvUSD",
                                       protocol: "Enso Router",
                                     },
                                   ]),
                             {
                               tokenSymbol: "crvUSD",
                               action: "Repay",
-                              description: "crvUSD",
                               protocol: "Curve LlamaLend",
                             },
                           ],

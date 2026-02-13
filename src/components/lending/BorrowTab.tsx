@@ -135,6 +135,7 @@ interface BorrowTabProps {
   onEstimatedHealthChange?: (health: number | null) => void;
   onDebtDeltaChange?: (delta: bigint | null) => void;
   onTxStateChange?: (state: { status: "pending" | "success" | "reverted"; action: string; hash: string; details?: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string } } | null) => void;
+  onSwitchTab?: (tab: string) => void;
 }
 
 export function BorrowTab({
@@ -145,6 +146,7 @@ export function BorrowTab({
   onEstimatedHealthChange,
   onDebtDeltaChange,
   onTxStateChange,
+  onSwitchTab,
 }: BorrowTabProps) {
   const { address } = useAccount();
   const publicClient = usePublicClient();
@@ -281,6 +283,12 @@ export function BorrowTab({
   if (pendingApproval) lastApprovalRef.current = pendingApproval;
   const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
 
+  // Track which approval button was clicked (spinner only on that button)
+  const [approvingType, setApprovingType] = useState<"exact" | "unlimited" | "single" | null>(null);
+  useEffect(() => {
+    if (!isApproving) setApprovingType(null);
+  }, [isApproving]);
+
   // Simulation toggle from settings
   const [showSimulationPreview, setShowSimulationPreview] = useState(() => {
     if (typeof window !== "undefined") {
@@ -318,7 +326,7 @@ export function BorrowTab({
   }, [status, txHash, onTransactionSuccess]);
 
   useEffect(() => {
-    if (status === "error" && error) {
+    if ((status === "error" || status === "reverted") && error) {
       if (isUserRejection(error)) {
         // Wallet rejection: show toast, clear error but keep simulation cached
         toast("Transaction cancelled", { id: "borrow-cancelled", duration: 3000 });
@@ -780,9 +788,9 @@ export function BorrowTab({
                 setEthPrice(Number(data[1] as bigint) / 1e8);
               }).catch(() => {});
             }
-            return;
           }
-          // Preview unavailable (e.g., Anvil fork) — execute directly
+          if (result) return; // Modal opened — bail
+          // No simulation data (e.g. Anvil) — fall through to execute
         }
         await borrowMore(vault.address as `0x${string}`, "0", debtWei);
       } else {
@@ -824,9 +832,9 @@ export function BorrowTab({
                 setEthPrice(Number(data[1] as bigint) / 1e8);
               }).catch(() => {});
             }
-            return;
           }
-          // Preview unavailable (e.g., Anvil fork) — execute directly
+          if (result) return; // Modal opened — bail
+          // No simulation data (e.g. Anvil) — fall through to execute
         }
         await borrowAndSwap(
           vault.address as `0x${string}`,
@@ -860,6 +868,7 @@ export function BorrowTab({
     status !== "idle" &&
     status !== "success" &&
     status !== "error" &&
+    status !== "reverted" &&
     status !== "needsApproval";
 
   const isFormValid =
@@ -871,7 +880,8 @@ export function BorrowTab({
     (isCrvUsd || (!quoteLoading && estimatedCrvUsdBorrow !== null));
 
   const getButtonText = () => {
-    if (status === "building" || status === "simulating") return <>Simulating<LoadingDots /></>;
+    if (status === "building") return <>Building transaction<LoadingDots /></>;
+    if (status === "simulating") return <>Simulating<LoadingDots /></>;
     if (status === "executing") return <>Confirm in wallet<LoadingDots /></>;
     if (status === "waitingTx") return <>Waiting for confirmation<LoadingDots /></>;
     if (debtTooHigh || exceedsMax) return "Exceeds max borrowable";
@@ -887,7 +897,7 @@ export function BorrowTab({
         <AlertTriangle size={20} className="mx-auto text-yellow-500" />
         <div className="text-sm font-medium text-[var(--foreground)]">Borrowing unavailable</div>
         <div className="text-xs text-[var(--muted-foreground)]">
-          Your position is in soft-liquidation. Repay debt to resume borrowing.
+          Your position is in soft-liquidation.{onSwitchTab ? (<> Use <button type="button" onClick={() => onSwitchTab("repay")} className="underline hover:text-[var(--foreground)] transition-colors">Repay</button> to reduce debt or <button type="button" onClick={() => onSwitchTab("leverage")} className="underline hover:text-[var(--foreground)] transition-colors">Liquidate</button> to close your position.</>) : " Repay debt to resume borrowing."}
         </div>
       </div>
     );
@@ -1037,7 +1047,7 @@ export function BorrowTab({
       )}
 
       {/* Low liquidity warning */}
-      {isLiquidityConstrained && maxBorrowable && maxBorrowable > 0n && (
+      {isLiquidityConstrained && maxBorrowable && maxBorrowable > 0n && estimatedCrvUsdBorrow && estimatedCrvUsdBorrow >= maxBorrowable * 90n / 100n && (
         <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-500 text-xs flex items-center gap-2">
           <AlertTriangle size={14} className="shrink-0" />
           <span>
@@ -1095,20 +1105,19 @@ export function BorrowTab({
               {lastApprovalRef.current!.type !== "controller" && lastApprovalRef.current!.amount ? (
                 <div className="flex gap-2">
                   <button
-                    onClick={() => approve(true)}
+                    onClick={() => { setApprovingType("exact"); approve(true); }}
                     disabled={isApproving}
                     className={cn(
-                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                      "flex-[2] py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
                       isApproving
                         ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
                         : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
                     )}
                   >
-                    {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                    {isApproving ? "Approving..." : `${Number(formatUnits(lastApprovalRef.current!.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${lastApprovalRef.current!.tokenSymbol}`}
+                    {isApproving && approvingType === "exact" ? <>Approving<LoadingDots /></> : `${Number(formatUnits(lastApprovalRef.current!.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${lastApprovalRef.current!.tokenSymbol}`}
                   </button>
                   <button
-                    onClick={() => approve(false)}
+                    onClick={() => { setApprovingType("unlimited"); approve(false); }}
                     disabled={isApproving}
                     className={cn(
                       "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
@@ -1117,13 +1126,12 @@ export function BorrowTab({
                         : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
                     )}
                   >
-                    {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                    {isApproving ? "Approving..." : "Unlimited"}
+                    {isApproving && approvingType === "unlimited" ? <>Approving<LoadingDots /></> : "Max"}
                   </button>
                 </div>
               ) : (
                 <button
-                  onClick={() => approve()}
+                  onClick={() => { setApprovingType("single"); approve(); }}
                   disabled={isApproving}
                   className={cn(
                     "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
@@ -1132,12 +1140,9 @@ export function BorrowTab({
                       : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
                   )}
                 >
-                  {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
                   {isApproving
-                    ? "Approving..."
-                    : lastApprovalRef.current!.type === "controller"
-                      ? `Approve Enso Router${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`
-                      : `Approve ${lastApprovalRef.current!.tokenSymbol}${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`}
+                    ? <>Approving<LoadingDots /></>
+                    : `Approve${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`}
                 </button>
               )}
             </div>
@@ -1192,7 +1197,7 @@ export function BorrowTab({
         <div className="overflow-hidden">
           <button
             onClick={() => {
-              if (status === "error" || status === "success") {
+              if (status === "error" || status === "reverted" || status === "success") {
                 reset();
               } else if (simulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
                 // Re-open cached simulation modal if same block
@@ -1321,13 +1326,12 @@ export function BorrowTab({
                             {
                               tokenSymbol: "crvUSD",
                               action: "Borrow",
-                              description: "crvUSD",
                               protocol: "Curve LlamaLend",
                             },
                             {
                               tokenSymbol: borrowToken.symbol,
                               action: "Deposit",
-                              description: "crvUSD",
+                              description: "from crvUSD",
                               protocol: "Curve Savings",
                             },
                           ],
@@ -1338,7 +1342,6 @@ export function BorrowTab({
                             {
                               tokenSymbol: "crvUSD",
                               action: "Borrow",
-                              description: "crvUSD",
                               protocol: "Curve LlamaLend",
                             },
                             ...(isCvgCvxVault
@@ -1347,7 +1350,7 @@ export function BorrowTab({
                                     tokenSymbol: "CVX",
                                     amount: cvgCvxRouteAmounts?.cvx,
                                     action: "Swap",
-                                    description: "crvUSD for CVX",
+                                    description: "from crvUSD",
                                     protocol: "Enso Router",
                                   },
                                   {
@@ -1360,7 +1363,6 @@ export function BorrowTab({
                                   {
                                     tokenSymbol: borrowToken.symbol,
                                     action: "Deposit",
-                                    description: `cvgCVX into ${borrowToken.symbol}`,
                                     protocol: "yld",
                                   },
                                 ]
@@ -1369,13 +1371,12 @@ export function BorrowTab({
                                     {
                                       tokenSymbol: vaultInfo.underlyingSymbol,
                                       action: "Swap",
-                                      description: `crvUSD for ${vaultInfo.underlyingSymbol}`,
+                                      description: "from crvUSD",
                                       protocol: "Enso Router",
                                     },
                                     {
                                       tokenSymbol: borrowToken.symbol,
                                       action: "Deposit",
-                                      description: `${vaultInfo.underlyingSymbol} into ${borrowToken.symbol}`,
                                       protocol: "yld",
                                     },
                                   ]
@@ -1383,7 +1384,7 @@ export function BorrowTab({
                                     {
                                       tokenSymbol: borrowToken.symbol,
                                       action: "Swap",
-                                      description: `crvUSD for ${borrowToken.symbol}`,
+                                      description: "from crvUSD",
                                       protocol: "Enso Router",
                                     },
                                   ]),

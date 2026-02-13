@@ -75,7 +75,7 @@ import { useClearOnNavigation } from "@/hooks/useClearOnNavigation";
 import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS } from "@/lib/enso";
-import { getVault, getParentVault, getVaultByAddress, TOKENS, VAULT_UNDERLYING_TOKENS, VAULTS, EXTERNAL_VAULT_TOKENS, CURVE_CONTROLLERS } from "@/config/vaults";
+import { getVault, getParentVault, getVaultByAddress, TOKENS, VAULT_UNDERLYING_TOKENS, VAULTS, EXTERNAL_VAULT_TOKENS, CURVE_CONTROLLERS, CURVE_SAVINGS } from "@/config/vaults";
 import { CollateralModal, LendingInterface } from "@/components/lending";
 import type { EnsoToken, ZapDirection, SimulationAssetChange } from "@/types/enso";
 import {
@@ -2302,7 +2302,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               <TokenSelector
                                 selectedToken={zapOutputToken}
                                 onSelect={handleZapOutputTokenChange}
-                                excludeTokens={[...VAULT_UNDERLYING_TOKENS, ...EXTERNAL_VAULT_TOKENS, vault?.address ?? ""]} // Exclude underlying tokens, external vaults (no zap out support), and current vault
+                                excludeTokens={[...VAULT_UNDERLYING_TOKENS, ...EXTERNAL_VAULT_TOKENS.filter(a => a.toLowerCase() !== CURVE_SAVINGS.SCRVUSD.toLowerCase()), vault?.address ?? ""]}
                               />
                             </div>
                           </div>
