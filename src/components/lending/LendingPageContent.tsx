@@ -119,7 +119,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                   <div>
                     <div className="font-medium">Position in soft-liquidation</div>
                     <div className="text-xs mt-0.5">
-                      Your collateral is being gradually converted. Consider repaying debt or adding collateral.
+                      Your collateral is being gradually converted to crvUSD. Repay debt to improve health.
                     </div>
                   </div>
                 </div>

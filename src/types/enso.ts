@@ -113,7 +113,7 @@ export interface RouteStep {
   tokenSymbol: string;      // Token symbol shown in the pill (output of this step)
   tokenAddress?: string;    // Address for icon lookup
   action: string;           // "Swap", "Mint", "Lock", "Stake", "Deposit", "Redeem", "Withdraw"
-  description: string;      // Full description like "ETH for CVX" or "cvgCVX with CVX"
+  description?: string;     // Optional: "for CVX", "from crvUSD", etc. (action is primary label)
   protocol: string;         // Protocol name (e.g., "Enso", "Curve", "Convex", "Yearn")
   amount?: string;          // Optional: formatted amount for this step
   bonus?: number;           // Optional: bonus % for this step (e.g., +2.5% from Curve swap)

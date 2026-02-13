@@ -7,10 +7,10 @@ import { useTokenMetadata } from "@/hooks/useTokenMetadata";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
 import { formatUnits, isAddress } from "viem";
 import { cn } from "@/lib/utils";
-import { VAULTS } from "@/config/vaults";
+import { VAULTS, CURVE_SAVINGS } from "@/config/vaults";
 import type { EnsoToken } from "@/types/enso";
 
-// Our vault tokens to show at top of list
+// Our vault tokens to show in yld Vaults tab
 const FEATURED_VAULT_TOKENS: EnsoToken[] = Object.values(VAULTS)
   .filter((v) => v.address !== "0x0000000000000000000000000000000000000000" && !v.hidden)
   .map((v) => ({
@@ -22,6 +22,13 @@ const FEATURED_VAULT_TOKENS: EnsoToken[] = Object.values(VAULTS)
     chainId: 1,
     type: "defi" as const,
   }));
+
+// Tokens that should always be selectable regardless of excludeDefiTokens
+// (our vaults + partner vaults we deeply integrate with)
+const ALWAYS_AVAILABLE_ADDRESSES = new Set([
+  ...FEATURED_VAULT_TOKENS.map((t) => t.address.toLowerCase()),
+  CURVE_SAVINGS.SCRVUSD.toLowerCase(),
+]);
 
 interface TokenSelectorProps {
   selectedToken: EnsoToken | null;
@@ -160,7 +167,8 @@ export function TokenSelector({
       return false;
     }
     // Exclude DeFi tokens (vault/strategy tokens can't be swapped to)
-    if (excludeDefiTokens && t.type === "defi") {
+    // But always keep our vaults and partner tokens (scrvUSD etc.)
+    if (excludeDefiTokens && t.type === "defi" && !ALWAYS_AVAILABLE_ADDRESSES.has(t.address.toLowerCase())) {
       return false;
     }
     return true;

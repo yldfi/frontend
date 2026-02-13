@@ -1,10 +1,14 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, useMemo, useRef, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, useMemo, useRef, type ReactNode } from "react";
 import { useAccount, usePublicClient } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
 
 type TestNetworkType = "anvil" | "tenderly" | null;
+
+// VNet dev-mode toggle env vars
+const VNET_RPC_URL = process.env.NEXT_PUBLIC_TENDERLY_VNET_RPC || "";
+const VNET_ADDRESS = process.env.NEXT_PUBLIC_TENDERLY_VNET_ADDRESS || "";
 
 interface TenderlyContextValue {
   /** True when connected to any test network (Anvil fork, Tenderly VNet, chain 1337) */
@@ -14,6 +18,16 @@ interface TenderlyContextValue {
   /** "anvil" | "tenderly" | null — only for display (banner label) */
   testNetworkType: TestNetworkType;
   isDetecting: boolean;
+  /** VNet dev-mode toggle: true when user has enabled the in-app VNet mode */
+  vnetEnabled: boolean;
+  /** True when NEXT_PUBLIC_TENDERLY_VNET_RPC is set and NODE_ENV is development */
+  vnetAvailable: boolean;
+  /** Override address for impersonation (from NEXT_PUBLIC_TENDERLY_VNET_ADDRESS) */
+  vnetAddress: `0x${string}` | null;
+  /** VNet RPC URL (from env var) */
+  vnetRpcUrl: string | null;
+  /** Toggle VNet mode on/off */
+  toggleVNet: () => void;
 }
 
 const TenderlyContext = createContext<TenderlyContextValue>({
@@ -21,6 +35,11 @@ const TenderlyContext = createContext<TenderlyContextValue>({
   isTenderlyVNet: false,
   testNetworkType: null,
   isDetecting: false,
+  vnetEnabled: false,
+  vnetAvailable: false,
+  vnetAddress: null,
+  vnetRpcUrl: null,
+  toggleVNet: () => {},
 });
 
 export function useTenderly() {
@@ -48,7 +67,40 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
   const prevTestNetworkRef = useRef<boolean | null>(null);
   const isInitialDetection = useRef(true);
 
-  const isTestNetwork = testNetworkType !== null;
+  // VNet dev-mode toggle state
+  // Disabled when Anvil is set (Anvil takes priority — avoids split-brain reads/writes)
+  const anvilActive = !!(process.env.NEXT_PUBLIC_ANVIL_RPC);
+  const vnetAvailable = !!(VNET_RPC_URL && process.env.NODE_ENV === "development" && !anvilActive);
+  const [vnetEnabled, setVnetEnabled] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return vnetAvailable && localStorage.getItem("yldfi-vnet-enabled") === "true";
+  });
+
+  const vnetAddress: `0x${string}` | null = VNET_ADDRESS ? (VNET_ADDRESS as `0x${string}`) : null;
+  const vnetRpcUrl = vnetAvailable ? VNET_RPC_URL : null;
+
+  // When VNet is enabled, force testNetworkType to "tenderly"
+  const effectiveTestNetworkType = vnetEnabled ? "tenderly" : testNetworkType;
+  const isTestNetwork = effectiveTestNetworkType !== null;
+
+  // Toggle VNet mode on/off
+  const toggleVNet = useCallback(() => {
+    setVnetEnabled((prev) => {
+      const next = !prev;
+      localStorage.setItem("yldfi-vnet-enabled", String(next));
+      console.log(`[VNet] Toggle ${next ? "ON" : "OFF"}`);
+
+      // Invalidate cache so reads switch to the new RPC
+      setTimeout(() => queryClient.invalidateQueries(), 100);
+
+      // Emit event for components to react
+      window.dispatchEvent(new CustomEvent("tenderly-network-change", {
+        detail: { isTestNetwork: next || testNetworkType !== null, testNetworkType: next ? "tenderly" : testNetworkType }
+      }));
+
+      return next;
+    });
+  }, [queryClient, testNetworkType]);
 
   // Invalidate queries and emit event when test network detection changes
   useEffect(() => {
@@ -69,12 +121,12 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
 
       // Emit custom event for components to reset local state (like input amounts)
       window.dispatchEvent(new CustomEvent("tenderly-network-change", {
-        detail: { isTestNetwork, testNetworkType }
+        detail: { isTestNetwork, testNetworkType: effectiveTestNetworkType }
       }));
 
       prevTestNetworkRef.current = isTestNetwork;
     }
-  }, [isTestNetwork, testNetworkType, queryClient]);
+  }, [isTestNetwork, effectiveTestNetworkType, queryClient]);
 
   // Detect test network by probing evm_snapshot
   useEffect(() => {
@@ -140,17 +192,12 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
               if (prev !== "tenderly") console.log("[TestNetwork] Detected Tenderly VNet (Public RPC)");
               return "tenderly";
             });
-          } else if (errorCode === ERROR_METHOD_NOT_FOUND || errorCode === ERROR_ACCESS_FORBIDDEN) {
-            // Real mainnet
-            setTestNetworkType((prev) => {
-              if (prev !== null) console.log("[TestNetwork] Mainnet detected (error code:", errorCode, ")");
-              return null;
-            });
           } else if ((err as Error)?.message === "timeout") {
             console.log("[TestNetwork] Detection timed out, keeping previous state");
           } else {
-            // Wallet provider says mainnet — but check wagmi transport too
-            // (MetaMask may use real mainnet RPC while wagmi uses NEXT_PUBLIC_ANVIL_RPC)
+            // Wallet provider rejected evm_snapshot — could be real mainnet,
+            // or wallet filtering methods (e.g. Rabby returns -32601 even on Anvil).
+            // Always check wagmi transport as fallback (uses NEXT_PUBLIC_ANVIL_RPC directly).
             if (publicClient) {
               try {
                 await publicClient.transport.request({ method: "evm_snapshot", params: [] });
@@ -167,7 +214,6 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
                     return "tenderly";
                   });
                 }
-                // Skip the null fallback below
                 return;
               } catch {
                 // wagmi transport also not a test network
@@ -239,10 +285,15 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
     () => ({
       isTestNetwork,
       isTenderlyVNet: isTestNetwork, // backwards compat — all consumers just need "am I on a test network?"
-      testNetworkType,
+      testNetworkType: effectiveTestNetworkType,
       isDetecting,
+      vnetEnabled,
+      vnetAvailable,
+      vnetAddress,
+      vnetRpcUrl,
+      toggleVNet,
     }),
-    [isTestNetwork, testNetworkType, isDetecting]
+    [isTestNetwork, effectiveTestNetworkType, isDetecting, vnetEnabled, vnetAvailable, vnetAddress, vnetRpcUrl, toggleVNet]
   );
 
   return (

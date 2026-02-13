@@ -1,4 +1,4 @@
-import { createConfig, http, fallback, unstable_connector } from "wagmi";
+import { createConfig, http, fallback, unstable_connector, custom } from "wagmi";
 import { mainnet } from "wagmi/chains";
 import { injected } from "wagmi/connectors";
 import {
@@ -11,12 +11,11 @@ import { PUBLIC_RPC_URLS } from "./rpc";
 // NOTE: use process.env.X (not process.env?.X) so Next.js DefinePlugin inlines it in the browser bundle
 const anvilRpc: string | undefined = process.env.NEXT_PUBLIC_ANVIL_RPC || undefined;
 
-// RPC endpoints with fallbacks for reliability
-// Public RPCs first for reliable reads; wallet RPC last as fallback
-// (injected provider can hang indefinitely with no timeout, blocking all reads)
-// CORS-friendly RPCs first (llamarpc blocks browser-origin requests)
-// Wallet RPC last as fallback (injected provider can hang with no timeout)
-const mainnetTransport = anvilRpc
+// Tenderly VNet RPC for dev-mode toggle (set NEXT_PUBLIC_TENDERLY_VNET_RPC in .env.local)
+const vnetRpc: string | undefined = process.env.NEXT_PUBLIC_TENDERLY_VNET_RPC || undefined;
+
+// Normal transport chain (used as fallback or when VNet is off)
+const normalTransport = anvilRpc
   ? fallback([http(anvilRpc), http(PUBLIC_RPC_URLS.drpc)])
   : fallback([
       http(PUBLIC_RPC_URLS.drpc),
@@ -24,6 +23,24 @@ const mainnetTransport = anvilRpc
       unstable_connector(injected),
       http(), // Default RPC as last fallback
     ]);
+
+// Switchable transport: checks localStorage on every request to route to VNet or normal RPC.
+// Only created when VNet RPC is configured AND Anvil is not (Anvil takes priority).
+const mainnetTransport = (vnetRpc && !anvilRpc)
+  ? (() => {
+      const vnetTransport = http(vnetRpc);
+      return custom({
+        async request({ method, params }) {
+          const useVNet = typeof window !== "undefined"
+            && localStorage.getItem("yldfi-vnet-enabled") === "true";
+          const transport = useVNet
+            ? vnetTransport({ chain: mainnet })
+            : normalTransport({ chain: mainnet });
+          return transport.request({ method, params });
+        },
+      });
+    })()
+  : normalTransport;
 
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "demo";
 

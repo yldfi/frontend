@@ -1,10 +1,13 @@
 "use client";
 
-import { useReadContract, useWriteContract, useWaitForTransactionReceipt, useAccount, usePublicClient } from "wagmi";
+import { useReadContract, useWaitForTransactionReceipt, useAccount, usePublicClient } from "wagmi";
+import { useVNetWriteContract as useWriteContract } from "@/hooks/useVNetWriteContract";
 import { parseUnits, maxUint256, encodeFunctionData } from "viem";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { ERC20_APPROVAL_ABI, VAULT_ABI } from "@/lib/abis";
 import type { SimulationResult } from "@/types/enso";
+import { useTenderly } from "@/contexts/TenderlyContext";
+import { runVNetSimulation } from "@/lib/vnet-simulation";
 
 export type TransactionStatus = "idle" | "approving" | "waitingApproval" | "depositing" | "withdrawing" | "waitingTx" | "success" | "reverted" | "error";
 
@@ -57,6 +60,7 @@ export function useVaultActions(
 ) {
   const { address: userAddress, chainId } = useAccount();
   const publicClient = usePublicClient();
+  const { testNetworkType } = useTenderly();
   const [actionState, setActionState] = useState<"idle" | "approving" | "simulating" | "depositing" | "withdrawing">("idle");
   const [simulationError, setSimulationError] = useState<string | null>(null);
   const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
@@ -220,73 +224,81 @@ export function useVaultActions(
     });
   }, [userAddress, tokenAddress, vaultAddress, writeApprove]);
 
-  // Run Tenderly simulation + eth_call in parallel for a vault call
-  const runTenderlySimulation = useCallback(async (
+  // Run simulation + eth_call in parallel for a vault call
+  // Three-way: mainnet → REST API, tenderly VNet → RPC sim, anvil → eth_call only
+  const runSimulation = useCallback(async (
     calldata: `0x${string}`,
     value: bigint = 0n,
   ): Promise<SimulationResult | null> => {
-    if (!userAddress) return null;
+    if (!userAddress || !publicClient) return null;
 
-    // Run Tenderly and eth_call in parallel
-    const tenderlyPromise = (async () => {
-      try {
-        const nonceResponse = await fetch("/api/simulate/nonce");
-        const nonceResult = (await nonceResponse.json()) as {
-          success: boolean;
-          nonce?: string;
-          expires?: number;
-          sig?: string;
-        };
+    // Build simulation promise based on network type
+    const simPromise = (testNetworkType === null && chainId !== 1337)
+      ? (async () => {
+          try {
+            const nonceResponse = await fetch("/api/simulate/nonce");
+            const nonceResult = (await nonceResponse.json()) as {
+              success: boolean;
+              nonce?: string;
+              expires?: number;
+              sig?: string;
+            };
 
-        if (!nonceResult.success || !nonceResult.nonce || !nonceResult.expires || !nonceResult.sig) {
-          return { ok: false as const, errorMessage: "Failed to obtain simulation nonce", retryable: true };
-        }
+            if (!nonceResult.success || !nonceResult.nonce || !nonceResult.expires || !nonceResult.sig) {
+              return { ok: false as const, errorMessage: "Failed to obtain simulation nonce", retryable: true };
+            }
 
-        const response = await fetch("/api/simulate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            from: userAddress,
-            to: vaultAddress,
-            data: calldata,
-            value: value.toString(),
-            nonce: nonceResult.nonce,
-            expires: nonceResult.expires,
-            sig: nonceResult.sig,
-          }),
-        });
+            const response = await fetch("/api/simulate", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                from: userAddress,
+                to: vaultAddress,
+                data: calldata,
+                value: value.toString(),
+                nonce: nonceResult.nonce,
+                expires: nonceResult.expires,
+                sig: nonceResult.sig,
+              }),
+            });
 
-        const result = (await response.json()) as SimulationResult & { retryable?: boolean };
+            const result = (await response.json()) as SimulationResult & { retryable?: boolean };
 
-        if (process.env.NODE_ENV === "development") {
-          console.log("[Tenderly Vault Simulation]", {
-            success: result.success,
-            simulationId: result.simulationId,
-            gasUsed: result.gasUsed,
-            errorMessage: result.errorMessage,
-            assetChanges: result.assetChanges?.length ?? 0,
-          });
-        }
+            if (process.env.NODE_ENV === "development") {
+              console.log("[Tenderly Vault Simulation]", {
+                success: result.success,
+                simulationId: result.simulationId,
+                gasUsed: result.gasUsed,
+                errorMessage: result.errorMessage,
+                assetChanges: result.assetChanges?.length ?? 0,
+              });
+            }
 
-        if (result.success) return { ok: true as const, result };
-        return {
-          ok: false as const,
-          result,
-          errorMessage: result.errorMessage ?? "Tenderly simulation failed",
-          retryable: Boolean(result.retryable),
-        };
-      } catch (err) {
-        return {
-          ok: false as const,
-          result: null,
-          errorMessage: err instanceof Error ? err.message : "Tenderly simulation failed",
-          retryable: true,
-        };
-      }
-    })();
+            if (result.success) return { ok: true as const, result };
+            return {
+              ok: false as const,
+              result,
+              errorMessage: result.errorMessage ?? "Tenderly simulation failed",
+              retryable: Boolean(result.retryable),
+            };
+          } catch (err) {
+            return {
+              ok: false as const,
+              result: null,
+              errorMessage: err instanceof Error ? err.message : "Tenderly simulation failed",
+              retryable: true,
+            };
+          }
+        })()
+      : (testNetworkType === "tenderly")
+        ? runVNetSimulation(
+            publicClient.transport,
+            { from: userAddress, to: vaultAddress, data: calldata, value: `0x${value.toString(16)}` },
+            userAddress,
+          )
+        : Promise.resolve({ ok: true as const, result: null });
 
     const ethCallPromise = (async () => {
-      if (!publicClient) return { ok: false as const, errorMessage: "No public client" };
       try {
         await publicClient.call({
           account: userAddress,
@@ -306,25 +318,25 @@ export function useVaultActions(
       }
     })();
 
-    const [tenderlyResult, ethCallResult] = await Promise.all([tenderlyPromise, ethCallPromise]);
+    const [simResult, ethCallResult] = await Promise.all([simPromise, ethCallPromise]);
 
     // Store the simulation result
-    if (tenderlyResult.result) {
-      setSimulationResult(tenderlyResult.result);
+    if (simResult.result) {
+      setSimulationResult(simResult.result);
     }
 
-    if (!tenderlyResult.ok && !ethCallResult.ok) {
-      const rawMsg = tenderlyResult.retryable
-        ? ethCallResult.errorMessage ?? tenderlyResult.errorMessage
-        : tenderlyResult.errorMessage;
+    if (!simResult.ok && !ethCallResult.ok) {
+      const rawMsg = (simResult as { retryable?: boolean }).retryable
+        ? ethCallResult.errorMessage ?? simResult.errorMessage
+        : simResult.errorMessage;
       const errorMsg = typeof rawMsg === "string" ? rawMsg : (rawMsg as { message?: string })?.message ?? "Simulation failed";
       setSimulationError(parseErrorMessage(new Error(errorMsg), "Transaction would fail"));
       setActionState("idle");
-      return tenderlyResult.result ?? null;
+      return simResult.result ?? null;
     }
 
-    return tenderlyResult.result ?? null;
-  }, [userAddress, vaultAddress, publicClient]);
+    return simResult.result ?? null;
+  }, [userAddress, vaultAddress, publicClient, testNetworkType, chainId]);
 
   // Deposit with pre-flight simulation
   // Options: previewOnly — when true, run Tenderly simulation and return result without sending tx
@@ -348,7 +360,7 @@ export function useVaultActions(
       // Store pending tx for executeAfterPreview
       pendingTx.current = { type: "deposit", args: [amountWei, userAddress] };
 
-      const result = await runTenderlySimulation(calldata);
+      const result = await runSimulation(calldata);
       // If simulation succeeded (or was previewOnly), stay idle so modal can show
       if (result) {
         setActionState("idle");
@@ -384,7 +396,7 @@ export function useVaultActions(
       args: [amountWei, userAddress],
     });
     return null;
-  }, [userAddress, vaultAddress, decimals, publicClient, writeDeposit, runTenderlySimulation]);
+  }, [userAddress, vaultAddress, decimals, publicClient, writeDeposit, runSimulation]);
 
   // Withdraw with pre-flight simulation (using redeem for shares)
   // Options: previewOnly — when true, run Tenderly simulation and return result without sending tx
@@ -407,7 +419,7 @@ export function useVaultActions(
 
       pendingTx.current = { type: "withdraw", args: [sharesWei, userAddress, userAddress] };
 
-      const result = await runTenderlySimulation(calldata);
+      const result = await runSimulation(calldata);
       if (result) {
         setActionState("idle");
       }
@@ -442,7 +454,7 @@ export function useVaultActions(
       args: [sharesWei, userAddress, userAddress],
     });
     return null;
-  }, [userAddress, vaultAddress, decimals, publicClient, writeWithdraw, runTenderlySimulation]);
+  }, [userAddress, vaultAddress, decimals, publicClient, writeWithdraw, runSimulation]);
 
   // Execute stored pending tx after user confirms simulation preview
   const executeAfterPreview = useCallback(() => {

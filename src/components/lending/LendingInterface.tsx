@@ -62,7 +62,27 @@ function semilogBorrowAPR(utilization: number, minRate: number, maxRate: number)
   return minRate * Math.pow(maxRate / minRate, util);
 }
 
-// Health bar: visual bar at top of panel, red→green, ∞ at right end
+function LoadingDots() {
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      <span className="animate-bounce" style={{ animationDelay: "0ms", animationDuration: "600ms" }}>.</span>
+      <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
+      <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
+    </span>
+  );
+}
+
+// LTV indicator with soft/hard liquidation thresholds
+// Shows LTV value and soft/hard liquidation thresholds, all in muted grey
+function LtvIndicator({ ltv }: { ltv: number; thresholds?: { soft: number; hard: number } | null; hideThresholds?: boolean }) {
+  return (
+    <div className="text-[9px] text-[var(--muted-foreground)] mt-0.5 whitespace-nowrap flex items-center justify-end gap-0.5">
+      <span>{Number.isInteger(ltv) ? ltv.toFixed(0) : ltv.toFixed(1)}% LTV</span>
+    </div>
+  );
+}
+
+// Health bar: visual bar at top of panel, red→green
 function HealthBar({
   currentHealth,
   estimatedHealth,
@@ -96,7 +116,6 @@ function HealthBar({
   const currentPercent = currentHealth !== undefined
     ? Math.min(Math.max(currentHealth, 0), 100)
     : 0;
-  const currentColor = currentHealth !== undefined ? getColor(currentHealth) : color;
   const hasEstimate = estimatedHealth !== null && currentHealth !== undefined;
 
   if (currentHealth === undefined && estimatedHealth === null && !alwaysShow) return null;
@@ -111,13 +130,13 @@ function HealthBar({
       </div>
       <div className="flex items-center gap-2 px-4 pb-1 h-8">
       <div className="relative flex-1 h-2 rounded-full bg-[var(--muted)] overflow-hidden">
-        {/* Ghost bar: shows current health at reduced opacity when estimate differs */}
+        {/* Ghost bar: shows current health at reduced opacity, same color as estimate */}
         {hasEstimate && currentPercent !== percent && (
           <div
             className="absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out"
             style={{
               width: `${currentPercent}%`,
-              backgroundColor: currentColor,
+              backgroundColor: color,
               opacity: 0.25,
             }}
           />
@@ -137,9 +156,9 @@ function HealthBar({
       {!isEmpty && (
         <span
           className="text-sm font-medium mono leading-none select-none min-w-[2ch] text-right"
-          style={{ color: displayHealth >= 100 ? "var(--muted-foreground)" : color }}
+          style={{ color }}
         >
-          {displayHealth >= 100
+          {displayHealth > 999
             ? <span className="text-xl leading-none" style={{ position: "relative", top: "1px" }}>∞</span>
             : `${Math.round(displayHealth)}%`}
         </span>
@@ -182,6 +201,40 @@ export function LendingInterface({
       }
     }
     readOraclePrice();
+  }, [publicClient, controllerAddress]);
+
+  // Liquidation LTV thresholds and AMM params from controller
+  const [ltvThresholds, setLtvThresholds] = useState<{ soft: number; hard: number } | null>(null);
+  const [ammParams, setAmmParams] = useState<{ A: number; loanDiscount: number } | null>(null);
+  useEffect(() => {
+    async function readDiscounts() {
+      if (!publicClient) return;
+      const discountAbi = [
+        { name: "loan_discount", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
+        { name: "liquidation_discount", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
+        { name: "amm", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
+      ] as const;
+      try {
+        const [loanDiscount, liqDiscount, ammAddr] = await Promise.all([
+          publicClient.readContract({ address: controllerAddress, abi: discountAbi, functionName: "loan_discount" }),
+          publicClient.readContract({ address: controllerAddress, abi: discountAbi, functionName: "liquidation_discount" }),
+          publicClient.readContract({ address: controllerAddress, abi: discountAbi, functionName: "amm" }),
+        ]);
+        setLtvThresholds({
+          soft: Math.round((1 - Number(loanDiscount) / 1e18) * 10000) / 100,
+          hard: Math.round((1 - Number(liqDiscount) / 1e18) * 10000) / 100,
+        });
+        const A = await publicClient.readContract({
+          address: ammAddr as `0x${string}`,
+          abi: [{ name: "A", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] }] as const,
+          functionName: "A",
+        });
+        setAmmParams({ A: Number(A), loanDiscount: Number(loanDiscount) / 1e18 });
+      } catch {
+        setLtvThresholds(null);
+      }
+    }
+    readDiscounts();
   }, [publicClient, controllerAddress]);
 
   // Market rate data for semilog borrow APR model
@@ -254,15 +307,14 @@ export function LendingInterface({
   // Child tab estimated health (all tabs now report via callback)
   // Debounce null (reset) values so health bar doesn't jump during animations
   const [childEstimatedHealth, setChildEstimatedHealth] = useState<number | null>(null);
-  const healthDebounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const handleEstimatedHealthChange = useCallback((health: number | null) => {
-    clearTimeout(healthDebounceRef.current);
-    if (health === null) {
-      // Delay null by 400ms — lets animations settle before health bar reacts
-      healthDebounceRef.current = setTimeout(() => setChildEstimatedHealth(null), 400);
-    } else {
-      setChildEstimatedHealth(health);
-    }
+    setChildEstimatedHealth(health);
+  }, []);
+
+  // Child tab settling state (for health bar animation)
+  const [childSettling, setChildSettling] = useState(false);
+  const handleSettlingChange = useCallback((settling: boolean) => {
+    setChildSettling(settling);
   }, []);
 
   // Child tab estimated leverage
@@ -271,10 +323,52 @@ export function LendingInterface({
     setChildEstimatedLeverage(lev);
   }, []);
 
+  // Child tab bands (from NewLoanForm)
+  const [childBands, setChildBands] = useState(10);
+  const handleBandsChange = useCallback((b: number) => { setChildBands(b); }, []);
+
   // Child tab estimated debt delta (positive = borrowing more, negative = repaying)
   const [childDebtDelta, setChildDebtDelta] = useState<bigint | null>(null);
   const handleDebtDeltaChange = useCallback((delta: bigint | null) => {
     setChildDebtDelta(delta);
+  }, []);
+
+  // Child tab collateral amount (new loan form)
+  const [childCollateralAmount, setChildCollateralAmount] = useState<bigint | null>(null);
+  const handleCollateralAmountChange = useCallback((amount: bigint | null) => {
+    setChildCollateralAmount(amount);
+  }, []);
+
+  // Fade in/out for position summary
+  const [positionVisible, setPositionVisible] = useState(false);
+  const [positionOpaque, setPositionOpaque] = useState(false);
+  const positionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastCollateralAmount = useRef<bigint>(0n);
+  if (childCollateralAmount !== null && childCollateralAmount > 0n) {
+    lastCollateralAmount.current = childCollateralAmount;
+  }
+  const displayCollateralAmount = childCollateralAmount ?? lastCollateralAmount.current;
+  const hasCollateral = childCollateralAmount !== null && childCollateralAmount > 0n;
+  useEffect(() => {
+    if (positionTimer.current) { clearTimeout(positionTimer.current); positionTimer.current = null; }
+    if (hasCollateral) {
+      // Fade in: mount at opacity-0, then flip to opacity-1 next frame
+      setPositionVisible(true);
+      requestAnimationFrame(() => requestAnimationFrame(() => setPositionOpaque(true)));
+    } else if (positionVisible) {
+      // Fade out: set opacity-0, then unmount after transition
+      setPositionOpaque(false);
+      positionTimer.current = setTimeout(() => {
+        setPositionVisible(false);
+        positionTimer.current = null;
+      }, 300);
+    }
+  }, [hasCollateral]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Child tab collateral delta (existing position: positive = add, negative = remove)
+  const [childCollateralDelta, setChildCollateralDelta] = useState<bigint | null>(null);
+  const handleCollateralDeltaChange = useCallback((delta: bigint | null) => {
+    setChildCollateralDelta(delta);
   }, []);
 
   // Transaction state from child tabs (for full-screen overlays)
@@ -292,6 +386,8 @@ export function LendingInterface({
   // Debug tx state (dev only)
   type DebugLendingTxState = "none" | "borrow-pending" | "borrow-success" | "borrow-reverted" | "repay-pending" | "repay-success" | "repay-reverted" | "collateral-pending" | "collateral-success" | "collateral-reverted" | "leverage-pending" | "leverage-success" | "leverage-reverted" | "newloan-pending" | "newloan-success" | "newloan-reverted";
   const [debugTxState, setDebugTxState] = useState<DebugLendingTxState>("none");
+  const [debugMinimized, setDebugMinimized] = useState(false);
+  const [debugSoftLiq, setDebugSoftLiq] = useState(false);
   type DebugApprovalScenario = "none" | "ctrl-1of1" | "erc20-1of2" | "ctrl-2of2" | "approving";
   const [debugApproval, setDebugApproval] = useState<DebugApprovalScenario>("none");
   const debugHash = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
@@ -364,6 +460,12 @@ export function LendingInterface({
     return scenarios[debugApproval];
   }, [debugApproval, vault]);
 
+  // Track which debug approval button was clicked (spinner only on that button)
+  const [debugApprovingType, setDebugApprovingType] = useState<"exact" | "unlimited" | "single" | null>(null);
+  useEffect(() => {
+    if (!debugApprovalData?.isApproving) setDebugApprovingType(null);
+  }, [debugApprovalData?.isApproving]);
+
   // DEBUG: Draggable panel position (persisted to localStorage)
   const [debugPanelPos, setDebugPanelPos] = useState<{ x: number; y: number } | null>(() => {
     try {
@@ -421,6 +523,8 @@ export function LendingInterface({
     setChildEstimatedHealth(null);
     setChildEstimatedLeverage(null);
     setChildDebtDelta(null);
+    setChildCollateralDelta(null);
+    setChildSettling(false);
   }, [activeTab]);
 
   // Smooth height transition for tab content
@@ -457,7 +561,7 @@ export function LendingInterface({
   // Position summary values
   const positionCollateral = useMemo(() => {
     if (!position?.hasLoan) return null;
-    return Number(formatUnits(position.collateral, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 });
+    return Number(formatUnits(position.collateral, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 });
   }, [position, vault.decimals]);
 
   const positionDebt = useMemo(() => {
@@ -473,14 +577,46 @@ export function LendingInterface({
     return Number(formatUnits(newDebt, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 });
   }, [position, childDebtDelta]);
 
-  const effectiveLeverage = useMemo(() => {
-    if (!position?.hasLoan || position.collateral === 0n || oraclePrice === 0n) return null;
-    // collateralValue in crvUSD = collateral * oraclePrice / 10^decimals
-    const collValue = Number(formatUnits(position.collateral * oraclePrice / (10n ** BigInt(vault.decimals)), 18));
-    const debt = Number(formatUnits(position.debt, 18));
-    if (collValue <= 0 || collValue <= debt) return null;
-    return (collValue / (collValue - debt)).toFixed(2);
+  // Estimated collateral after pending operation
+  const estimatedCollateral = useMemo(() => {
+    if (!position?.hasLoan || childCollateralDelta === null || childCollateralDelta === 0n) return null;
+    const newColl = position.collateral + childCollateralDelta;
+    if (newColl < 0n) return "0";
+    return Number(formatUnits(newColl, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }, [position, childCollateralDelta, vault.decimals]);
+
+  // Total collateral value in crvUSD: includes both vault token + stablecoin in AMM bands (soft-liquidation)
+  const totalCollateralValue = useMemo(() => {
+    if (!position?.hasLoan || oraclePrice === 0n) return 0;
+    const vaultTokenValue = Number(formatUnits(position.collateral * oraclePrice / (10n ** BigInt(vault.decimals)), 18));
+    const stablecoinValue = Number(formatUnits(position.stablecoin, 18));
+    return vaultTokenValue + stablecoinValue;
   }, [position, vault.decimals, oraclePrice]);
+
+  const effectiveLeverage = useMemo(() => {
+    if (!position?.hasLoan || totalCollateralValue <= 0) return null;
+    const debt = Number(formatUnits(position.debt, 18));
+    if (totalCollateralValue <= debt) return null;
+    return (totalCollateralValue / (totalCollateralValue - debt)).toFixed(2);
+  }, [position, totalCollateralValue]);
+
+  // Max leverage for current bands setting based on A, loan_discount, and N
+  const maxLeverage = useMemo(() => {
+    if (!ammParams) return null;
+    const { A, loanDiscount } = ammParams;
+    const N = position?.hasLoan ? position.N : childBands;
+    const ratio = (A - 1) / A;
+    const sqrtBandRatio = Math.sqrt(A / (A - 1));
+    let geoSum = 0;
+    let term = 1;
+    for (let i = 0; i < N; i++) {
+      geoSum += term;
+      term *= ratio;
+    }
+    const effectiveFactor = (1 - loanDiscount) * geoSum / (sqrtBandRatio * N);
+    if (effectiveFactor >= 1) return null;
+    return Math.round(1 / (1 - effectiveFactor) * 100) / 100;
+  }, [ammParams, position, childBands]);
 
   // Net APR on equity: leverage * collateralAPR - (leverage - 1) * borrowAPR
   const currentNetAPR = useMemo(() => {
@@ -500,13 +636,13 @@ export function LendingInterface({
     return projLev * collateralAPR - (projLev - 1) * projBorrow;
   }, [collateralAPR, currentBorrowAPR, projectedBorrowAPR, effectiveLeverage, childEstimatedLeverage]);
 
-  // Any projected value differs from current — drives synced pulse animation
-  const isEstimating =
-    (projectedBorrowAPR !== null && currentBorrowAPR !== null && projectedBorrowAPR.toFixed(2) !== currentBorrowAPR.toFixed(2)) ||
-    (childEstimatedLeverage !== null && effectiveLeverage !== null && childEstimatedLeverage.toFixed(2) !== effectiveLeverage) ||
-    (projectedNetAPR !== null && currentNetAPR !== null && projectedNetAPR.toFixed(2) !== currentNetAPR.toFixed(2));
-
   const hasLoan = position?.hasLoan ?? false;
+
+  // Debug: override position with soft liquidation flag
+  const effectivePosition = useMemo(() => {
+    if (!debugSoftLiq || !position) return position;
+    return { ...position, inSoftLiquidation: true };
+  }, [position, debugSoftLiq]);
 
   // Reset to "borrow" tab when a loan is first created
   const prevHasLoan = useRef(hasLoan);
@@ -536,12 +672,7 @@ export function LendingInterface({
     return (
       <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl overflow-hidden p-4">
         <div className="flex items-center justify-center py-40 text-sm text-[var(--muted-foreground)]">
-          <span>Loading position</span>
-          <span className="inline-flex items-center gap-0.5 ml-0.5">
-            <span className="animate-bounce" style={{ animationDelay: "0ms", animationDuration: "600ms" }}>.</span>
-            <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
-            <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
-          </span>
+          <LoadingDots />
         </div>
       </div>
     );
@@ -670,7 +801,7 @@ export function LendingInterface({
     <div
       data-debug-panel
       className={cn(
-        "fixed z-[9999] border border-[var(--border)] rounded-lg p-3 shadow-2xl max-w-xs pointer-events-auto",
+        "fixed z-[9999] border border-[var(--border)] rounded-lg p-3 shadow-2xl max-w-xs pointer-events-auto max-h-[80vh] overflow-y-auto",
         isDragging && "cursor-grabbing"
       )}
       style={{
@@ -687,14 +818,22 @@ export function LendingInterface({
       }}
     >
       <div
-        className="text-xs text-[var(--muted-foreground)] mb-2 font-medium cursor-grab select-none"
+        className="text-xs text-[var(--muted-foreground)] font-medium cursor-grab select-none flex items-center justify-between"
         onMouseDown={handleDragStart}
       >
-        ⋮⋮ Lending TX Preview
-      </div>
-      <div className="space-y-2">
+        <span>⋮⋮ Lending TX Preview</span>
         <button
-          onClick={() => { setDebugTxState("none"); setDebugApproval("none"); }}
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setDebugMinimized(!debugMinimized); }}
+          onMouseDown={(e) => e.stopPropagation()}
+          className="ml-2 px-1.5 py-0.5 rounded hover:bg-[var(--muted)] transition-colors text-[10px]"
+        >
+          {debugMinimized ? "+" : "−"}
+        </button>
+      </div>
+      {!debugMinimized && <div className="space-y-2 mt-2">
+        <button
+          onClick={() => { setDebugTxState("none"); setDebugApproval("none"); setDebugSoftLiq(false); }}
           className={cn(
             "w-full px-2 py-1 text-xs rounded transition-colors",
             debugTxState === "none" && debugApproval === "none"
@@ -765,7 +904,22 @@ export function LendingInterface({
             </button>
           ))}
         </div>
-      </div>
+        {/* Soft liquidation toggle */}
+        <div className="flex gap-1 mt-1 pt-1 border-t border-[var(--border)]">
+          <span className="text-[10px] text-[var(--muted-foreground)] w-16 flex items-center">Soft Liq</span>
+          <button
+            onClick={() => setDebugSoftLiq(!debugSoftLiq)}
+            className={cn(
+              "flex-1 px-2 py-1 text-xs rounded transition-colors",
+              debugSoftLiq
+                ? "bg-orange-500 text-black"
+                : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            )}
+          >
+            {debugSoftLiq ? "On" : "Off"}
+          </button>
+        </div>
+      </div>}
     </div>,
     document.body
   );
@@ -822,35 +976,144 @@ export function LendingInterface({
     // yld NewLoanForm view with back button
     return (
       <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl">
-        {/* Health Bar — hidden during tx states */}
+        {/* Title + Back button — hidden during tx states */}
         {!effectiveTxState && (
-          <div className="overflow-hidden rounded-t-xl">
-            <HealthBar
-              currentHealth={undefined}
-              estimatedHealth={effectiveEstimatedHealth}
-              alwaysShow
-              title="New Position"
-              titlePrefix={
-                <button
-                  onClick={() => setLoanSource("choice")}
-                  className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-0.5 -ml-1"
-                  title="Back to options"
-                >
-                  <ChevronLeft size={16} />
-                </button>
-              }
-            />
+          <div className="px-4 pt-3 pb-1 flex items-center gap-2">
+            <button
+              onClick={() => setLoanSource("choice")}
+              className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-0.5 -ml-1"
+              title="Back to options"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <span className="text-sm font-medium">New Position</span>
           </div>
         )}
+
+        {/* New Position Summary — mirrors the existing-position summary layout */}
+        {!effectiveTxState && positionVisible && (<>
+          <div className={cn("grid grid-cols-[2fr_2fr_3fr] gap-x-3 gap-y-0.5 px-4 pt-3 pb-2 transition-opacity duration-300", positionOpaque ? "opacity-100" : "opacity-0")}>
+            <div className="text-[10px] uppercase tracking-wider text-[var(--muted-foreground)]">
+              Collateral
+            </div>
+            <div className="text-[10px] uppercase tracking-wider text-[var(--muted-foreground)]">
+              Debt
+            </div>
+            <div className="text-[10px] uppercase tracking-wider text-[var(--muted-foreground)] text-right">
+              Leverage
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5">
+                {vault.logo && (
+                  <Image src={vault.logo} alt="" width={14} height={14} className="rounded-full" />
+                )}
+                <span className="mono text-sm font-medium truncate">
+                  {Number(formatUnits(displayCollateralAmount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </span>
+              </div>
+              {oraclePrice > 0n && (
+                <div className="text-[10px] text-[var(--muted-foreground)] mt-0.5">
+                  ${(Number(formatUnits(displayCollateralAmount * oraclePrice / (10n ** BigInt(vault.decimals)), 18))).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </div>
+              )}
+              {collateralAPR != null && collateralAPR > 0 && (
+                <div className="text-[10px] text-green-500 mt-0.5">
+                  +{collateralAPR.toFixed(2)}% APR
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <Image src="/tokens/crvusd.png" alt="" width={14} height={14} className="rounded-full" />
+                <span className="mono text-sm font-medium truncate">
+                  {childDebtDelta !== null && childDebtDelta > 0n
+                    ? Number(formatUnits(childDebtDelta, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                    : "0"}
+                </span>
+              </div>
+              <div className="text-[10px] text-[var(--muted-foreground)] mt-0.5">
+                ${childDebtDelta !== null && childDebtDelta > 0n
+                  ? Number(formatUnits(childDebtDelta, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                  : "0.00"}
+              </div>
+              {(projectedBorrowAPR ?? currentBorrowAPR) != null && childDebtDelta !== null && childDebtDelta > 0n && (
+                <div className="text-[10px] text-red-500 mt-0.5">
+                  -{(projectedBorrowAPR ?? currentBorrowAPR!).toFixed(2)}% APR
+                </div>
+              )}
+            </div>
+            <div className="text-right">
+              <div className="mono text-sm font-medium">
+                {childEstimatedLeverage !== null ? childEstimatedLeverage.toFixed(2) : "1.00"}x
+                {maxLeverage && <span className="text-[var(--muted-foreground)] font-normal">{"\u2009/\u2009"}{maxLeverage.toFixed(2)}x</span>}
+              </div>
+              {oraclePrice > 0n && childDebtDelta !== null && childDebtDelta > 0n && (() => {
+                const collValue = Number(formatUnits(displayCollateralAmount * oraclePrice / (10n ** BigInt(vault.decimals)), 18));
+                const debt = Number(formatUnits(childDebtDelta, 18));
+                const ltv = collValue > 0 ? (debt / collValue) * 100 : 0;
+                return <LtvIndicator ltv={ltv} thresholds={ltvThresholds} />;
+              })()}
+              {collateralAPR != null && (projectedBorrowAPR ?? currentBorrowAPR) != null && childDebtDelta !== null && childDebtDelta > 0n && (() => {
+                const lev = childEstimatedLeverage ?? 1;
+                const borrow = projectedBorrowAPR ?? currentBorrowAPR!;
+                const net = lev * collateralAPR - (lev - 1) * borrow;
+                return (
+                  <div className={cn("text-[10px] mt-0.5", net >= 0 ? "text-green-500" : "text-red-500")}>
+                    {net >= 0 ? "+" : ""}{net.toFixed(2)}% NET
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* Health Bar */}
+          <div className={cn("flex items-center gap-2 px-4 pb-2 h-6 transition-opacity duration-300", positionOpaque ? "opacity-100" : "opacity-0")}>
+            <div className={cn("relative flex-1 h-2 rounded-full bg-[var(--muted)] overflow-hidden", childSettling && "animate-pulse")}>
+              {effectiveEstimatedHealth !== null && (
+                <div
+                  className="absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out"
+                  style={{
+                    width: `${Math.min(Math.max(effectiveEstimatedHealth, 0), 100)}%`,
+                    backgroundColor: effectiveEstimatedHealth < 5 ? "#ef4444" : effectiveEstimatedHealth < 10 ? "#f97316" : effectiveEstimatedHealth < 20 ? "#eab308" : effectiveEstimatedHealth < 40 ? "#84cc16" : "#22c55e",
+                  }}
+                />
+              )}
+            </div>
+            <span
+              className="w-[4ch] text-sm font-medium mono leading-none select-none text-right shrink-0"
+              style={{
+                color: childSettling || effectiveEstimatedHealth === null
+                  ? "var(--muted-foreground)"
+                  : effectiveEstimatedHealth < 5 ? "#ef4444" : effectiveEstimatedHealth < 10 ? "#f97316" : effectiveEstimatedHealth < 20 ? "#eab308" : effectiveEstimatedHealth < 40 ? "#84cc16" : "#22c55e",
+              }}
+            >
+              {childSettling ? (
+                <span className="inline-flex items-center justify-end w-full leading-none"><LoadingDots /></span>
+              ) : effectiveEstimatedHealth === null ? (
+                <span className="block text-center text-xs">—</span>
+              ) : effectiveEstimatedHealth > 999 ? (
+                <span className="text-xl leading-none" style={{ position: "relative", top: "1px" }}>∞</span>
+              ) : (
+                `${Math.round(effectiveEstimatedHealth)}%`
+              )}
+            </span>
+          </div>
+        </>)}
 
         <div className={effectiveTxState || debugApprovalData ? "hidden" : "p-4 space-y-4"}>
           <NewLoanForm
             vault={vault}
             userBalance={userBalance}
             controllerAddress={controllerAddress}
+            oraclePrice={oraclePrice}
             onTransactionSuccess={onTransactionSuccess}
             onEstimatedHealthChange={handleEstimatedHealthChange}
+            onEstimatedLeverageChange={handleEstimatedLeverageChange}
+            onDebtDeltaChange={handleDebtDeltaChange}
+            onCollateralAmountChange={handleCollateralAmountChange}
+            onSettlingChange={handleSettlingChange}
             onTxStateChange={handleTxStateChange}
+            onBandsChange={handleBandsChange}
           />
         </div>
 
@@ -901,18 +1164,19 @@ export function LendingInterface({
               {debugApprovalData.type === "erc20" && debugApprovalData.amount ? (
                 <div className="flex gap-2">
                   <button
+                    onClick={() => setDebugApprovingType("exact")}
                     disabled={debugApprovalData.isApproving}
                     className={cn(
-                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                      "flex-[2] py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
                       debugApprovalData.isApproving
                         ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
                         : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
                     )}
                   >
-                    {debugApprovalData.isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                    {debugApprovalData.isApproving ? "Approving..." : `${Number(formatUnits(debugApprovalData.amount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${debugApprovalData.tokenSymbol}`}
+                    {debugApprovalData.isApproving && debugApprovingType === "exact" ? <>Approving<LoadingDots /></> : `${Number(formatUnits(debugApprovalData.amount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${debugApprovalData.tokenSymbol}`}
                   </button>
                   <button
+                    onClick={() => setDebugApprovingType("unlimited")}
                     disabled={debugApprovalData.isApproving}
                     className={cn(
                       "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
@@ -921,12 +1185,12 @@ export function LendingInterface({
                         : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
                     )}
                   >
-                    {debugApprovalData.isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                    {debugApprovalData.isApproving ? "Approving..." : "Unlimited"}
+                    {debugApprovalData.isApproving && debugApprovingType === "unlimited" ? <>Approving<LoadingDots /></> : "Max"}
                   </button>
                 </div>
               ) : (
                 <button
+                  onClick={() => setDebugApprovingType("single")}
                   disabled={debugApprovalData.isApproving}
                   className={cn(
                     "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
@@ -935,10 +1199,9 @@ export function LendingInterface({
                       : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
                   )}
                 >
-                  {debugApprovalData.isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
                   {debugApprovalData.isApproving
-                    ? "Approving..."
-                    : `Approve yld Zapper (${debugApprovalData.progress.step}/${debugApprovalData.progress.total})`}
+                    ? <>Approving<LoadingDots /></>
+                    : `Approve (${debugApprovalData.progress.step}/${debugApprovalData.progress.total})`}
                 </button>
               )}
             </div>
@@ -953,14 +1216,22 @@ export function LendingInterface({
 
   // --- Has Loan View: Position summary + Health bar + Management tabs ---
   return (
-    <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl">
-      {/* Health Bar — hidden during tx states */}
+    <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl overflow-hidden">
+      {/* Title — hidden during tx states */}
       {!effectiveTxState && (
-        <div className="overflow-hidden rounded-t-xl">
-          <HealthBar
-            currentHealth={position?.healthFull}
-            estimatedHealth={effectiveEstimatedHealth}
-          />
+        <div className="px-4 pt-3 pb-1 flex items-center gap-2">
+          <span className="text-sm font-medium">Position</span>
+          {effectivePosition?.inSoftLiquidation && (
+            effectivePosition.health <= 0 ? (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-500 font-medium">
+                Liquidatable
+              </span>
+            ) : (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-500 font-medium">
+                Soft Liquidation
+              </span>
+            )
+          )}
         </div>
       )}
 
@@ -968,8 +1239,7 @@ export function LendingInterface({
       {!effectiveTxState && (
         <div className={cn(
           "grid gap-x-3 gap-y-0.5 px-4 pt-3 pb-2",
-          effectiveLeverage ? "grid-cols-3" : "grid-cols-2",
-          isEstimating && "estimating"
+          (effectiveLeverage || position?.hasLoan) ? "grid-cols-[5fr_4fr_4fr]" : "grid-cols-2"
         )}>
           <div className="text-[10px] uppercase tracking-wider text-[var(--muted-foreground)]">
             Collateral
@@ -977,7 +1247,7 @@ export function LendingInterface({
           <div className="text-[10px] uppercase tracking-wider text-[var(--muted-foreground)]">
             Debt
           </div>
-          {effectiveLeverage && (
+          {(effectiveLeverage || position?.hasLoan) && (
             <div className="text-[10px] uppercase tracking-wider text-[var(--muted-foreground)] text-right">
               Leverage
             </div>
@@ -987,54 +1257,151 @@ export function LendingInterface({
               {vault.logo && (
                 <Image src={vault.logo} alt="" width={14} height={14} className="rounded-full" />
               )}
-              <span className="mono text-sm font-medium truncate">{positionCollateral}</span>
+              <span className="mono text-sm font-medium">
+                {estimatedCollateral ?? positionCollateral}
+              </span>
+              {position?.hasLoan && position.stablecoin > 0n && (
+                <span className="text-[10px] font-normal text-[var(--muted-foreground)] whitespace-nowrap">({Number(formatUnits(position.stablecoin, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} crvUSD)</span>
+              )}
             </div>
-            {collateralAPR != null && collateralAPR > 0 && (
+            {position?.hasLoan && oraclePrice > 0n && (() => {
+              const coll = childCollateralDelta !== null ? position.collateral + childCollateralDelta : position.collateral;
+              const vaultTokenValue = coll * oraclePrice / (10n ** BigInt(vault.decimals));
+              const totalValue = Number(formatUnits(vaultTokenValue + position.stablecoin, 18));
+              return (
+                <div className="text-[10px] text-[var(--muted-foreground)] mt-0.5">
+                  ${totalValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </div>
+              );
+            })()}
+            {collateralAPR != null && (
               <div className="text-[10px] text-green-500 mt-0.5">
-                +{collateralAPR.toFixed(2)}% APR
+                +{(position?.collateral === 0n ? 0 : collateralAPR).toFixed(2)}% APR
               </div>
             )}
           </div>
           <div>
             <div className="flex items-center gap-1.5">
               <Image src="/tokens/crvusd.png" alt="" width={14} height={14} className="rounded-full" />
-              <span
-                className="mono text-sm font-medium truncate"
-                style={{ opacity: estimatedDebt !== null && estimatedDebt !== positionDebt ? "var(--estimate-pulse)" : undefined }}
-              >
+              <span className="mono text-sm font-medium truncate">
                 {estimatedDebt ?? positionDebt}
               </span>
             </div>
+            {position?.hasLoan && (
+              <div className="text-[10px] text-[var(--muted-foreground)] mt-0.5">
+                ${Number(formatUnits(childDebtDelta !== null ? position.debt + childDebtDelta : position.debt, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </div>
+            )}
             {currentBorrowAPR != null && (
-              <div
-                className="text-[10px] text-red-500 mt-0.5"
-                style={{ opacity: projectedBorrowAPR !== null && projectedBorrowAPR.toFixed(2) !== currentBorrowAPR.toFixed(2) ? "var(--estimate-pulse)" : undefined }}
-              >
+              <div className="text-[10px] text-red-500 mt-0.5">
                 -{(projectedBorrowAPR ?? currentBorrowAPR).toFixed(2)}% APR
               </div>
             )}
           </div>
-          {effectiveLeverage && (
+          {(effectiveLeverage || position?.hasLoan) && (
             <div className="text-right">
-              <div
-                className="mono text-sm font-medium"
-                style={{ opacity: childEstimatedLeverage !== null && childEstimatedLeverage.toFixed(2) !== effectiveLeverage ? "var(--estimate-pulse)" : undefined }}
-              >
-                {childEstimatedLeverage !== null ? childEstimatedLeverage.toFixed(2) : effectiveLeverage}x
-              </div>
-              {currentNetAPR != null && (
-                <div
-                  className={cn(
-                    "text-[10px] mt-0.5",
-                    (projectedNetAPR ?? currentNetAPR) >= 0 ? "text-green-500" : "text-red-500"
-                  )}
-                  style={{ opacity: projectedNetAPR !== null && projectedNetAPR.toFixed(2) !== currentNetAPR.toFixed(2) ? "var(--estimate-pulse)" : undefined }}
-                >
-                  {(projectedNetAPR ?? currentNetAPR) >= 0 ? "+" : ""}{(projectedNetAPR ?? currentNetAPR).toFixed(2)}% NET
+              {effectiveLeverage ? (
+                <div className="mono text-sm font-medium">
+                  {(() => {
+                    const lev = childEstimatedLeverage ?? parseFloat(effectiveLeverage!);
+                    const overMax = maxLeverage != null && lev > maxLeverage;
+                    return (
+                      <>
+                        <span className={overMax ? "text-yellow-500" : ""}>
+                          {childEstimatedLeverage !== null ? childEstimatedLeverage.toFixed(2) : effectiveLeverage}x
+                        </span>
+                        {maxLeverage && !overMax && <span className="text-[var(--muted-foreground)] font-normal">{"\u2009/\u2009"}{maxLeverage.toFixed(2)}x</span>}
+                      </>
+                    );
+                  })()}
                 </div>
+              ) : (
+                <div className="mono text-sm font-medium text-red-500">—</div>
               )}
+              {position?.hasLoan && oraclePrice > 0n && (() => {
+                // Use estimated leverage for LTV when available: LTV = 1 - 1/leverage
+                if (childEstimatedLeverage !== null && childEstimatedLeverage > 1) {
+                  const ltv = (1 - 1 / childEstimatedLeverage) * 100;
+                  return <LtvIndicator ltv={ltv} thresholds={ltvThresholds} hideThresholds={position.inSoftLiquidation} />;
+                }
+                // Use estimated debt/collateral deltas when available
+                const debt = childDebtDelta !== null
+                  ? Number(formatUnits(position.debt + childDebtDelta, 18))
+                  : Number(formatUnits(position.debt, 18));
+                const coll = childCollateralDelta !== null
+                  ? position.collateral + childCollateralDelta
+                  : position.collateral;
+                // Total collateral value: vault token + crvUSD in AMM bands
+                const vaultTokenValue = Number(formatUnits(coll * oraclePrice / (10n ** BigInt(vault.decimals)), 18));
+                const collValue = vaultTokenValue + Number(formatUnits(position.stablecoin, 18));
+                const ltv = collValue > 0 ? (debt / collValue) * 100 : 0;
+                return <LtvIndicator ltv={ltv} thresholds={ltvThresholds} hideThresholds={position.inSoftLiquidation} />;
+              })()}
+              {(() => {
+                const net = projectedNetAPR ?? currentNetAPR ?? (currentBorrowAPR != null ? -currentBorrowAPR : null);
+                if (net == null) return null;
+                return (
+                  <div className={cn("text-[10px] mt-0.5", net >= 0 ? "text-green-500" : "text-red-500")}>
+                    {net >= 0 ? "+" : ""}{net.toFixed(2)}% NET
+                  </div>
+                );
+              })()}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Health Bar — below summary */}
+      {!effectiveTxState && (position?.healthFull !== undefined || effectiveEstimatedHealth !== null) && (
+        <div className="flex items-center gap-2 px-4 pb-2 h-6">
+          <div className="relative flex-1 h-2 rounded-full bg-[var(--muted)] overflow-hidden">
+            {(() => {
+              const displayHealth = effectiveEstimatedHealth ?? position?.healthFull ?? 0;
+              const barColor = displayHealth < 5 ? "#ef4444" : displayHealth < 10 ? "#f97316" : displayHealth < 20 ? "#eab308" : displayHealth < 40 ? "#84cc16" : "#22c55e";
+              const isFlashing = effectiveEstimatedHealth !== null &&
+                position?.healthFull !== undefined &&
+                Math.round(effectiveEstimatedHealth) !== Math.round(position.healthFull) &&
+                !(effectiveEstimatedHealth >= 100 && position.healthFull >= 100);
+              const showGhost = position?.healthFull !== undefined && effectiveEstimatedHealth !== null && Math.round(effectiveEstimatedHealth) !== Math.round(position.healthFull);
+              return (
+                <>
+                  {/* Ghost bar: current health at reduced opacity, same color as estimate */}
+                  {showGhost && (
+                    <div
+                      className="absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out"
+                      style={{
+                        width: `${Math.min(Math.max(position!.healthFull, 0), 100)}%`,
+                        backgroundColor: barColor,
+                        opacity: 0.25,
+                      }}
+                    />
+                  )}
+                  {/* Main bar */}
+                  <div
+                    className="absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out"
+                    style={{
+                      width: `${Math.min(Math.max(displayHealth, 0), 100)}%`,
+                      backgroundColor: barColor,
+                      animation: isFlashing ? "health-pulse 1.2s ease-in-out infinite" : "none",
+                    }}
+                  />
+                </>
+              );
+            })()}
+          </div>
+          {(() => {
+            const displayHealth = effectiveEstimatedHealth ?? position?.healthFull ?? 0;
+            const color = displayHealth < 5 ? "#ef4444" : displayHealth < 10 ? "#f97316" : displayHealth < 20 ? "#eab308" : displayHealth < 40 ? "#84cc16" : "#22c55e";
+            return (
+              <span className="text-sm font-medium mono leading-none select-none min-w-[2ch] text-right" style={{ color }}>
+                {displayHealth > 999
+                  ? <span className="text-xl leading-none" style={{ position: "relative", top: "1px" }}>∞</span>
+                  : displayHealth > 0 && displayHealth < 1
+                    ? `${displayHealth.toFixed(1)}%`
+                    : `${Math.round(displayHealth)}%`}
+              </span>
+            );
+          })()}
         </div>
       )}
 
@@ -1053,7 +1420,7 @@ export function LendingInterface({
                     : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                 )}
               >
-                {tab}
+                {tab === "leverage" && effectivePosition?.inSoftLiquidation ? "liquidate" : tab}
                 {activeTab === tab && (
                   <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--foreground)]" />
                 )}
@@ -1075,46 +1442,52 @@ export function LendingInterface({
               <CollateralTab
                 vault={vault}
                 userBalance={userBalance}
-                position={position}
+                position={effectivePosition}
                 controllerAddress={controllerAddress}
                 onTransactionSuccess={onTransactionSuccess}
                 onEstimatedHealthChange={handleEstimatedHealthChange}
+                onCollateralDeltaChange={handleCollateralDeltaChange}
                 onTxStateChange={handleTxStateChange}
+                onSwitchTab={(t) => setActiveTab(t as Tab)}
               />
             )}
             {activeTab === "borrow" && (
               <BorrowTab
                 vault={vault}
-                position={position}
+                position={effectivePosition}
                 controllerAddress={controllerAddress}
                 onTransactionSuccess={onTransactionSuccess}
                 onEstimatedHealthChange={handleEstimatedHealthChange}
                 onDebtDeltaChange={handleDebtDeltaChange}
                 onTxStateChange={handleTxStateChange}
+                onSwitchTab={(t) => setActiveTab(t as Tab)}
               />
             )}
             {activeTab === "repay" && (
               <RepayTab
                 vault={vault}
-                position={position}
+                position={effectivePosition}
                 controllerAddress={controllerAddress}
                 onTransactionSuccess={onTransactionSuccess}
                 onEstimatedHealthChange={handleEstimatedHealthChange}
                 onDebtDeltaChange={handleDebtDeltaChange}
                 onTxStateChange={handleTxStateChange}
+                onSwitchTab={(t) => setActiveTab(t as Tab)}
               />
             )}
             {activeTab === "leverage" && (
               <LeverageTab
                 vault={vault}
                 userBalance={userBalance}
-                position={position}
+                position={effectivePosition}
                 controllerAddress={controllerAddress}
                 onTransactionSuccess={onTransactionSuccess}
                 onEstimatedHealthChange={handleEstimatedHealthChange}
                 onEstimatedLeverageChange={handleEstimatedLeverageChange}
                 onDebtDeltaChange={handleDebtDeltaChange}
+                onCollateralDeltaChange={handleCollateralDeltaChange}
                 onTxStateChange={handleTxStateChange}
+                onSwitchTab={(t) => setActiveTab(t as Tab)}
               />
             )}
           </div>
@@ -1168,18 +1541,19 @@ export function LendingInterface({
             {debugApprovalData.type === "erc20" && debugApprovalData.amount ? (
               <div className="flex gap-2">
                 <button
+                  onClick={() => setDebugApprovingType("exact")}
                   disabled={debugApprovalData.isApproving}
                   className={cn(
-                    "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                    "flex-[2] py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
                     debugApprovalData.isApproving
                       ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
                       : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
                   )}
                 >
-                  {debugApprovalData.isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                  {debugApprovalData.isApproving ? "Approving..." : `${Number(formatUnits(debugApprovalData.amount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${debugApprovalData.tokenSymbol}`}
+                  {debugApprovalData.isApproving && debugApprovingType === "exact" ? <>Approving<LoadingDots /></> : `${Number(formatUnits(debugApprovalData.amount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${debugApprovalData.tokenSymbol}`}
                 </button>
                 <button
+                  onClick={() => setDebugApprovingType("unlimited")}
                   disabled={debugApprovalData.isApproving}
                   className={cn(
                     "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
@@ -1188,12 +1562,12 @@ export function LendingInterface({
                       : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
                   )}
                 >
-                  {debugApprovalData.isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                  {debugApprovalData.isApproving ? "Approving..." : "Unlimited"}
+                  {debugApprovalData.isApproving && debugApprovingType === "unlimited" ? <>Approving<LoadingDots /></> : "Max"}
                 </button>
               </div>
             ) : (
               <button
+                onClick={() => setDebugApprovingType("single")}
                 disabled={debugApprovalData.isApproving}
                 className={cn(
                   "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
@@ -1202,10 +1576,9 @@ export function LendingInterface({
                     : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
                 )}
               >
-                {debugApprovalData.isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
                 {debugApprovalData.isApproving
-                  ? "Approving..."
-                  : `Approve yld Zapper (${debugApprovalData.progress.step}/${debugApprovalData.progress.total})`}
+                  ? <>Approving<LoadingDots /></>
+                  : `Approve (${debugApprovalData.progress.step}/${debugApprovalData.progress.total})`}
               </button>
             )}
           </div>

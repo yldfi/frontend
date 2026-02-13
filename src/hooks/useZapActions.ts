@@ -3,12 +3,12 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   useAccount,
-  useWriteContract,
   useWaitForTransactionReceipt,
   useReadContract,
-  useSendTransaction,
   usePublicClient,
 } from "wagmi";
+import { useVNetSendTransaction as useSendTransaction } from "@/hooks/useVNetSendTransaction";
+import { useVNetWriteContract as useWriteContract } from "@/hooks/useVNetWriteContract";
 import { parseUnits, maxUint256 } from "viem";
 import type { Hash } from "viem";
 import { ETH_ADDRESS } from "@/lib/enso";
@@ -16,6 +16,7 @@ import { ERC20_APPROVAL_ABI } from "@/lib/abis";
 import { useTenderly } from "@/contexts/TenderlyContext";
 import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
 import type { ZapQuote, SimulationResult } from "@/types/enso";
+import { runVNetSimulation } from "@/lib/vnet-simulation";
 
 export type ZapStatus =
   | "idle"
@@ -120,7 +121,7 @@ function parseErrorMessage(error: Error | null, defaultMsg: string): string | nu
 export function useZapActions(quote: ZapQuote | null | undefined) {
   const { address: userAddress, chainId } = useAccount();
   const publicClient = usePublicClient();
-  const { isTenderlyVNet } = useTenderly();
+  const { isTenderlyVNet, testNetworkType } = useTenderly();
   const { isFlashbotsEnabled, isFlashbotsSupported, toggleFlashbots, sendViaFlashbots } = useFlashbotsProtect();
   const [actionState, setActionState] = useState<"idle" | "approving" | "simulating" | "zapping">("idle");
   const [simulationError, setSimulationError] = useState<string | null>(null);
@@ -344,10 +345,12 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       return null;
     }
 
-    // Skip Tenderly simulation on VNet - it simulates against mainnet, not VNet state
-    const tenderlyPromise = (isTenderlyVNet || chainId === 1337)
-      ? Promise.resolve({ ok: true as const, result: null })
-      : (async () => {
+    // Three-way simulation:
+    // 1. Mainnet → Tenderly REST API
+    // 2. Tenderly VNet → VNet RPC simulation
+    // 3. Anvil / chainId 1337 → skip (eth_call only below)
+    const simPromise = (testNetworkType === null && chainId !== 1337)
+      ? (async () => {
           try {
             const nonceResponse = await fetch("/api/simulate/nonce", {
               method: "GET",
@@ -385,7 +388,6 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
             const result = (await response.json()) as SimulationResult & { retryable?: boolean };
 
-            // Log simulation result to browser console in dev
             if (process.env.NODE_ENV === "development") {
               console.log("[Tenderly Simulation]", {
                 success: result.success,
@@ -412,7 +414,14 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
               retryable: true,
             };
           }
-        })();
+        })()
+      : (testNetworkType === "tenderly" && publicClient)
+        ? runVNetSimulation(
+            publicClient.transport,
+            { from: userAddress, to: quote.tx.to, data: quote.tx.data, value: quote.tx.value ?? "0x0" },
+            userAddress,
+          )
+        : Promise.resolve({ ok: true as const, result: null });
 
     const ethCallPromise = (async () => {
       try {
@@ -432,32 +441,32 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       }
     })();
 
-    const [tenderlyResult, ethCallResult] = await Promise.all([
-      tenderlyPromise,
+    const [simResult, ethCallResult] = await Promise.all([
+      simPromise,
       ethCallPromise,
     ]);
 
     // Store the simulation result for preview mode
-    if (tenderlyResult.result) {
-      setSimulationResult(tenderlyResult.result);
+    if (simResult.result) {
+      setSimulationResult(simResult.result);
     }
 
-    if (!tenderlyResult.ok && !ethCallResult.ok) {
-      const rawMsg = tenderlyResult.retryable
-        ? ethCallResult.errorMessage ?? tenderlyResult.errorMessage
-        : tenderlyResult.errorMessage;
-      const errorMsg = typeof rawMsg === "string" ? rawMsg : rawMsg?.message ?? "Simulation failed";
+    if (!simResult.ok && !ethCallResult.ok) {
+      const rawMsg = (simResult as { retryable?: boolean }).retryable
+        ? ethCallResult.errorMessage ?? simResult.errorMessage
+        : simResult.errorMessage;
+      const errorMsg = typeof rawMsg === "string" ? rawMsg : (rawMsg as { message?: string })?.message ?? "Simulation failed";
       setSimulationError(
         parseErrorMessage(new Error(errorMsg), "Transaction would fail")
       );
       setActionState("idle");
-      return tenderlyResult.result ?? null;
+      return simResult.result ?? null;
     }
 
     // If previewOnly mode, stop here without sending tx and return simulation result
     if (options?.previewOnly) {
       setActionState("idle");
-      return tenderlyResult.result ?? null;
+      return simResult.result ?? null;
     }
 
     // Simulation passed - send the actual transaction
@@ -494,7 +503,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       sendTransaction(txParams);
     }
     return null;
-  }, [quote, userAddress, publicClient, sendTransaction, sendViaFlashbots, isFlashbotsEnabled, chainId, isTenderlyVNet, simulationResult]);
+  }, [quote, userAddress, publicClient, sendTransaction, sendViaFlashbots, isFlashbotsEnabled, chainId, isTenderlyVNet, testNetworkType, simulationResult]);
 
   // Reset state
   const reset = useCallback(() => {

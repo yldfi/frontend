@@ -312,5 +312,10 @@ export async function fetchFromTokenSwapData(params: {
  * @returns Unix timestamp as bigint
  */
 export function getDeadline(minutes: number = 20): bigint {
+  // On Anvil forks with time advances, wall-clock time can be behind block timestamps.
+  // Use a generous deadline to avoid DeadlineExpired reverts during development.
+  if (process.env.NEXT_PUBLIC_ANVIL_RPC) {
+    return BigInt(Math.floor(Date.now() / 1000) + 7 * 86400); // 7 days
+  }
   return BigInt(Math.floor(Date.now() / 1000) + minutes * 60);
 }

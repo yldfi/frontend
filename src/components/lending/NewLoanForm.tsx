@@ -190,9 +190,15 @@ interface NewLoanFormProps {
   vault: VaultConfig;
   userBalance: string; // Vault token balance in wei
   controllerAddress: `0x${string}`;
+  oraclePrice?: bigint; // AMM oracle price (collateral/crvUSD, 18 decimals)
   onTransactionSuccess: () => void;
   onEstimatedHealthChange?: (health: number | null) => void;
+  onEstimatedLeverageChange?: (leverage: number | null) => void;
+  onDebtDeltaChange?: (delta: bigint | null) => void;
+  onCollateralAmountChange?: (amount: bigint | null) => void;
+  onSettlingChange?: (settling: boolean) => void;
   onTxStateChange?: (state: { status: "pending" | "success" | "reverted"; action: string; hash: string; details?: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string } } | null) => void;
+  onBandsChange?: (bands: number) => void;
   defaultToken?: EnsoToken;
 }
 
@@ -200,9 +206,15 @@ export function NewLoanForm({
   vault,
   userBalance,
   controllerAddress,
+  oraclePrice,
   onTransactionSuccess,
   onEstimatedHealthChange,
+  onEstimatedLeverageChange,
+  onDebtDeltaChange,
+  onCollateralAmountChange,
+  onSettlingChange,
   onTxStateChange,
+  onBandsChange,
   defaultToken,
 }: NewLoanFormProps) {
   const { address } = useAccount();
@@ -258,6 +270,7 @@ export function NewLoanForm({
   }, []);
   const [bands, setBands] = useState(10);
   const debouncedBands = useDebouncedValue(bands, 400);
+  useEffect(() => { onBandsChange?.(bands); }, [bands, onBandsChange]);
 
   // Smooth bands animation (YOLO snaps to 4, RESET back to 10)
   const bandsAnimRef = useRef<number | null>(null);
@@ -436,6 +449,12 @@ export function NewLoanForm({
   const lastApprovalRef = useRef(pendingApproval);
   if (pendingApproval) lastApprovalRef.current = pendingApproval;
   const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
+
+  // Track which approval button was clicked (spinner only on that button)
+  const [approvingType, setApprovingType] = useState<"exact" | "unlimited" | "single" | null>(null);
+  useEffect(() => {
+    if (!isApproving) setApprovingType(null);
+  }, [isApproving]);
 
   // Switch between Loan and Leverage tabs
   const switchTab = useCallback((tab: "loan" | "leverage") => {
@@ -846,17 +865,22 @@ export function NewLoanForm({
     prevMaxOutputToken.current = maxOutputTokenEquivalent;
   }, [maxOutputTokenEquivalent, debtInput, hasOutputSwap, loanTab]);
 
-  // Max leverage
+  // Max leverage — uses oracle price to convert collateral to crvUSD value,
+  // plus loop adjustment (borrowed crvUSD → swap → more collateral → more borrowing)
   const maxLeverage = useMemo(() => {
-    if (!estimatedVaultTokenAmount || maxBorrowable === 0n) return 5;
+    if (!estimatedVaultTokenAmount || maxBorrowable === 0n || !oraclePrice || oraclePrice === 0n) return 5;
     try {
       if (estimatedVaultTokenAmount === 0n) return 5;
-      const ratio = Number(formatUnits(maxBorrowable, 18)) / Number(formatUnits(estimatedVaultTokenAmount, vault.decimals));
-      return Math.min(Math.max(1 + ratio, 1.0), 10);
+      const collValue = Number(formatUnits(estimatedVaultTokenAmount * oraclePrice / (10n ** BigInt(vault.decimals)), 18));
+      if (collValue <= 0) return 5;
+      // Loop adjustment: r = LTV ratio, loopMaxD = maxBorrowable / (1 - r), with 0.2% safety margin
+      const r = Number(formatUnits(maxBorrowable, 18)) / collValue;
+      const loopMaxD = r < 0.99 ? Number(formatUnits(maxBorrowable, 18)) / (1 - r) * 0.998 : Number(formatUnits(maxBorrowable, 18));
+      return Math.min(Math.max(1 + loopMaxD / collValue, 1.0), 10);
     } catch {
       return 5;
     }
-  }, [estimatedVaultTokenAmount, maxBorrowable, vault.decimals]);
+  }, [estimatedVaultTokenAmount, maxBorrowable, vault.decimals, oraclePrice]);
 
   // effectiveLeverage: when user hasn't touched slider → 1.0 (no leverage)
   const effectiveLeverage = leverageFollowsBase.current ? 1.0 : leverage;
@@ -887,11 +911,19 @@ export function NewLoanForm({
   const debtAmount = useMemo(() => {
     if (loanTab === "leverage") {
       // Leverage tab: calculate debt from leverage ratio
-      if (!estimatedVaultTokenAmount || effectiveLeverage <= 1) return 0n;
+      // debt = collateralValue_in_crvUSD * (leverage - 1)
+      if (!estimatedVaultTokenAmount || effectiveLeverage <= 1 || !oraclePrice || oraclePrice === 0n) return 0n;
+      const collValue = estimatedVaultTokenAmount * oraclePrice / (10n ** BigInt(vault.decimals));
       const leverageFraction = Math.floor((effectiveLeverage - 1) * 10000);
-      const rawDebt = estimatedVaultTokenAmount * BigInt(leverageFraction) / 10000n;
-      if (maxBorrowable > 0n && rawDebt > maxBorrowable) {
-        return maxBorrowable;
+      const rawDebt = collValue * BigInt(leverageFraction) / 10000n;
+      // Loop-adjusted cap: borrowed crvUSD swaps to more collateral, enabling further borrowing
+      const collValueNum = Number(formatUnits(collValue, 18));
+      const r = collValueNum > 0 ? Number(formatUnits(maxBorrowable, 18)) / collValueNum : 0;
+      const singleStepMax = Number(formatUnits(maxBorrowable, 18));
+      const loopMaxD = r < 0.99 ? singleStepMax / (1 - r) * 0.998 : singleStepMax;
+      const loopMaxWei = parseUnits(loopMaxD.toFixed(6), 18);
+      if (rawDebt > loopMaxWei) {
+        return loopMaxWei;
       }
       return rawDebt;
     }
@@ -906,13 +938,15 @@ export function NewLoanForm({
     } catch {
       return 0n;
     }
-  }, [loanTab, estimatedVaultTokenAmount, effectiveLeverage, maxBorrowable, debtInput, hasOutputSwap, estimatedCrvUsdDebt]);
+  }, [loanTab, estimatedVaultTokenAmount, effectiveLeverage, maxBorrowable, debtInput, hasOutputSwap, estimatedCrvUsdDebt, oraclePrice, vault.decimals]);
 
   // Leverage swap quote: crvUSD → vaultToken (for route display amount)
   const debouncedDebtAmount = useDebouncedValue(debtAmount > 0n ? formatUnits(debtAmount, 18) : "", 500);
   const {
     data: leverageSwapQuote,
     isPending: leverageSwapPending,
+    isFetching: leverageSwapFetching,
+    isPlaceholderData: leverageSwapIsPlaceholder,
   } = useQuery({
     queryKey: [
       "new-loan-leverage-swap-quote",
@@ -997,7 +1031,7 @@ export function NewLoanForm({
   const leverageIsSettling = loanTab === "leverage" && (
     pendingYolo ||
     leverageAnimRef.current !== null ||
-    (effectiveLeverage > 1.005 && (debtAmountStr !== debouncedDebtAmount || leverageSwapPending))
+    (effectiveLeverage > 1.005 && (debtAmountStr !== debouncedDebtAmount || leverageSwapFetching))
   );
 
   // Memoize route steps — only update when all data is settled
@@ -1014,15 +1048,13 @@ export function NewLoanForm({
       amount: estimatedVaultTokenAmount
         ? Number(formatUnits(estimatedVaultTokenAmount, vault.decimals)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
         : undefined,
-      action: "Deposit" as const,
-      description: vault.symbol,
+      action: "Deposit as Collateral" as const,
       protocol: "Curve LlamaLend",
     },
     ...(debtAmount > 0n ? [{
       tokenSymbol: "crvUSD",
       amount: Number(formatUnits(debtAmount, 18)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
       action: "Borrow" as const,
-      description: "crvUSD",
       protocol: "Curve LlamaLend",
     }] : []),
     ...(loanTab === "leverage" && effectiveLeverage > 1.005 && debtAmount > 0n ? [{
@@ -1031,7 +1063,7 @@ export function NewLoanForm({
         ? Number(formatUnits(BigInt(leverageSwapQuote.amountOut), vault.decimals)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
         : undefined,
       action: "Swap" as const,
-      description: `crvUSD for ${vault.symbol}`,
+      description: "from crvUSD",
       protocol: "Enso Router",
     }] : []),
     ...(hasOutputSwap ? [{
@@ -1040,7 +1072,7 @@ export function NewLoanForm({
         ? Number(debtInput).toLocaleString(undefined, { maximumFractionDigits: 4 })
         : undefined,
       action: "Swap" as const,
-      description: `crvUSD for ${outputToken.symbol}`,
+      description: "from crvUSD",
       protocol: "Enso Router",
     }] : []),
   ], [needsSwap, swapQuote, selectedToken.symbol, amount, vault.symbol, vault.decimals, estimatedVaultTokenAmount, debtAmount, loanTab, effectiveLeverage, leverageSwapQuote, hasOutputSwap, outputToken?.symbol, debtInput]);
@@ -1049,6 +1081,16 @@ export function NewLoanForm({
   // Initialize empty so the route panel doesn't open until all data is ready
   const settledRouteRef = useRef<typeof routeSteps>([]);
   const anySettling = isQuoteSettling || leverageIsSettling;
+
+  // Report settling state to parent (for health bar animation)
+  const prevSettling = useRef(false);
+  useEffect(() => {
+    if (anySettling !== prevSettling.current) {
+      prevSettling.current = anySettling;
+      onSettlingChange?.(anySettling);
+    }
+  }, [anySettling, onSettlingChange]);
+
   if (!anySettling && routeSteps.length > 0) {
     settledRouteRef.current = routeSteps;
   }
@@ -1059,7 +1101,10 @@ export function NewLoanForm({
 
   // Estimate health — skip during settling to avoid stale intermediate values
   useEffect(() => {
-    if (isQuoteSettling) return; // don't compute health with stale data
+    if (isQuoteSettling || leverageIsSettling) {
+      setEstimatedHealth(null); // clear stale health so it doesn't flash old value when settling ends
+      return;
+    }
     let cancelled = false;
     async function calcHealth() {
       if (!publicClient || !address || !estimatedVaultTokenAmount || debtAmount === 0n) {
@@ -1068,13 +1113,25 @@ export function NewLoanForm({
       }
 
       try {
+        // For leverage: total collateral = user input + collateral from swap
+        // ONLY use the real swap quote — no oracle fallback — to avoid health jumping
+        let totalCollateral = estimatedVaultTokenAmount;
+        if (loanTab === "leverage" && debtAmount > 0n) {
+          if (!leverageSwapQuote?.amountOut || leverageSwapIsPlaceholder) {
+            // No swap quote yet or stale placeholder — don't estimate health (it will jump)
+            setEstimatedHealth(null);
+            return;
+          }
+          totalCollateral = estimatedVaultTokenAmount + BigInt(leverageSwapQuote.amountOut);
+        }
+
         const health = await publicClient.readContract({
           address: controllerAddress,
           abi: CONTROLLER_ABI,
           functionName: "health_calculator",
           args: [
             address,
-            estimatedVaultTokenAmount,
+            totalCollateral,
             debtAmount,
             true,
             BigInt(debouncedBands),
@@ -1096,19 +1153,74 @@ export function NewLoanForm({
 
     calcHealth();
     return () => { cancelled = true; };
-  }, [publicClient, address, controllerAddress, estimatedVaultTokenAmount, debtAmount, debouncedBands, isQuoteSettling]);
+  }, [publicClient, address, controllerAddress, estimatedVaultTokenAmount, debtAmount, debouncedBands, isQuoteSettling, leverageIsSettling, loanTab, leverageSwapQuote, leverageSwapIsPlaceholder, oraclePrice, vault.decimals]);
 
   // Report estimated health to parent (null if exceeds max borrowable)
   const exceedsBorrow = debtAmount > 0n && maxBorrowableLoaded && maxBorrowable > 0n && debtAmount > maxBorrowable;
-  const healthToReport = isQuoteSettling ? undefined : (exceedsBorrow ? null : estimatedHealth);
+  const healthToReport = (isQuoteSettling || leverageIsSettling) ? undefined : (exceedsBorrow ? null : estimatedHealth);
   const prevHealthReport = useRef<number | null | undefined>(undefined);
   useEffect(() => {
-    // Only report when we have a definitive value (not settling) and it actually changed
-    if (healthToReport === undefined) return;
+    if (healthToReport === undefined) return; // settling — keep parent's old value
     if (healthToReport === prevHealthReport.current) return;
     prevHealthReport.current = healthToReport;
     onEstimatedHealthChange?.(healthToReport);
   }, [healthToReport, onEstimatedHealthChange]);
+
+  // Report collateral amount to parent (for position summary display)
+  // For leverage mode, include the leverage swap collateral (borrowed crvUSD → collateral)
+  const collateralToReport = useMemo(() => {
+    if (isQuoteSettling || !estimatedVaultTokenAmount) return null;
+    if (loanTab === "leverage" && debtAmount > 0n) {
+      // During leverage settling, use oracle estimate for collateral to keep the panel visible
+      // (the actual swap quote will update this when settling completes)
+      const swapCollateral = leverageSwapQuote?.amountOut
+        ? BigInt(leverageSwapQuote.amountOut)
+        : (oraclePrice && oraclePrice > 0n
+          ? debtAmount * (10n ** BigInt(vault.decimals)) / oraclePrice
+          : 0n);
+      return estimatedVaultTokenAmount + swapCollateral;
+    }
+    return estimatedVaultTokenAmount;
+  }, [isQuoteSettling, estimatedVaultTokenAmount, loanTab, debtAmount, leverageSwapQuote, oraclePrice, vault.decimals]);
+
+  const prevCollateralReport = useRef<bigint | null>(null);
+  useEffect(() => {
+    if (collateralToReport === prevCollateralReport.current) return;
+    prevCollateralReport.current = collateralToReport;
+    onCollateralAmountChange?.(collateralToReport);
+  }, [collateralToReport, onCollateralAmountChange]);
+
+  // Report estimated leverage to parent
+  // leverage = collateralValue / (collateralValue - debt)
+  // Uses total collateral (deposit + leverage swap output), not just the deposit
+  const leverageToReport = useMemo(() => {
+    if (isQuoteSettling || leverageIsSettling || !collateralToReport || debtAmount === 0n || !oraclePrice || oraclePrice === 0n) return null;
+    const collValue = Number(formatUnits(collateralToReport * oraclePrice / (10n ** BigInt(vault.decimals)), 18));
+    const debt = Number(formatUnits(debtAmount, 18));
+    if (collValue <= 0 || collValue <= debt) return null;
+    const lev = collValue / (collValue - debt);
+    return lev > 1.005 ? lev : null;
+  }, [isQuoteSettling, leverageIsSettling, collateralToReport, debtAmount, oraclePrice, vault.decimals]);
+
+  const prevLeverageReport = useRef<number | null>(null);
+  useEffect(() => {
+    if (leverageToReport === prevLeverageReport.current) return;
+    prevLeverageReport.current = leverageToReport;
+    onEstimatedLeverageChange?.(leverageToReport);
+  }, [leverageToReport, onEstimatedLeverageChange]);
+
+  // Report debt delta to parent (for projected borrow APR calculation)
+  const debtDeltaToReport = useMemo(() => {
+    if (isQuoteSettling || debtAmount === 0n) return null;
+    return debtAmount;
+  }, [isQuoteSettling, debtAmount]);
+
+  const prevDebtDeltaReport = useRef<bigint | null>(null);
+  useEffect(() => {
+    if (debtDeltaToReport === prevDebtDeltaReport.current) return;
+    prevDebtDeltaReport.current = debtDeltaToReport;
+    onDebtDeltaChange?.(debtDeltaToReport);
+  }, [debtDeltaToReport, onDebtDeltaChange]);
 
   // Report tx state to parent for full-screen overlay
   useEffect(() => {
@@ -1149,7 +1261,7 @@ export function NewLoanForm({
   }, [status, txHash, onTransactionSuccess, reset, refetchBalance]);
 
   useEffect(() => {
-    if (status === "error" && error) {
+    if ((status === "error" || status === "reverted") && error) {
       if (isUserRejection(error)) {
         toast("Transaction cancelled", { id: "new-loan-cancelled", duration: 3000 });
         if (isLeveraged) {
@@ -1243,13 +1355,17 @@ export function NewLoanForm({
 
     const preview = showSimulationPreview;
 
-    // Show simulation modal if preview result is available; returns true if modal was shown
+    // Show simulation modal if preview result is available; returns true to bail from handleSubmit
     const openModalIfPreview = (result: unknown): boolean => {
-      if (result && preview) {
-        simulationBlock.current = currentBlock ?? 0n;
-        setShowSimulationModal(true);
-        fetchEthPrice();
-        return true;
+      if (preview) {
+        if (result) {
+          simulationBlock.current = currentBlock ?? 0n;
+          setShowSimulationModal(true);
+          fetchEthPrice();
+          return true;
+        }
+        // No simulation data (e.g. Anvil/test network) — fall through to execute directly
+        return false;
       }
       return false;
     };
@@ -1329,13 +1445,17 @@ export function NewLoanForm({
 
   const exceedsMaxBorrowable = useMemo(() => {
     if (debtAmount === 0n || maxBorrowable === 0n || !maxBorrowableLoaded) return false;
+    // Leverage tab uses loop-adjusted cap (debtAmount already capped at loopMaxWei),
+    // so single-step maxBorrowable is not the right limit
+    if (loanTab === "leverage") return false;
     return debtAmount > maxBorrowable;
-  }, [debtAmount, maxBorrowable, maxBorrowableLoaded]);
+  }, [debtAmount, maxBorrowable, maxBorrowableLoaded, loanTab]);
 
   const isProcessing =
     status !== "idle" &&
     status !== "success" &&
     status !== "error" &&
+    status !== "reverted" &&
     status !== "needsApproval";
 
   const isFormValid =
@@ -1345,11 +1465,13 @@ export function NewLoanForm({
     !hasInsufficientBalance &&
     !exceedsMaxBorrowable &&
     !isQuoteSettling &&
+    !leverageIsSettling &&
     (isVaultToken || swapQuote !== undefined) &&
     (!hasOutputSwap || outputSwapQuote !== undefined);
 
   const getButtonText = () => {
-    if (status === "building" || status === "simulating") return <>Simulating<LoadingDots /></>;
+    if (status === "building") return <>Building transaction<LoadingDots /></>;
+    if (status === "simulating") return <>Simulating<LoadingDots /></>;
     if (status === "executing") return <>Confirm in wallet<LoadingDots /></>;
     if (status === "waitingTx") return <>Waiting for confirmation<LoadingDots /></>;
     if (hasInsufficientBalance) return "Insufficient balance";
@@ -1358,7 +1480,7 @@ export function NewLoanForm({
     if (maxBorrowableFetching) return <><span>Getting max borrowable</span><LoadingDots /></>;
     if (loanTab !== "leverage" && (!debtInput || Number(debtInput) <= 0)) return "Enter amount";
     if (loanTab === "leverage" && debtAmount <= 0n) return "Increase leverage";
-    if (isQuoteSettling) return <><span>Getting quote</span><LoadingDots /></>;
+    if (isQuoteSettling || leverageIsSettling) return <><span>Getting quote</span><LoadingDots /></>;
     if (exceedsMaxBorrowable) return "Exceeds max borrowable";
 
     if (loanTab === "leverage") {
@@ -1664,7 +1786,7 @@ export function NewLoanForm({
       </div>
 
       {/* Low liquidity warning */}
-      {isLiquidityConstrained && maxBorrowable > 0n && estimatedVaultTokenAmount && (
+      {isLiquidityConstrained && maxBorrowable > 0n && debtAmount > 0n && debtAmount >= maxBorrowable * 90n / 100n && (
         <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-500 text-xs flex items-center gap-2">
           <AlertTriangle size={14} className="shrink-0" />
           <span>
@@ -1726,20 +1848,19 @@ export function NewLoanForm({
               {lastApprovalRef.current!.type !== "controller" && lastApprovalRef.current!.amount ? (
                 <div className="flex gap-2">
                   <button
-                    onClick={() => (isLeveraged ? zapperApprove : lendingApprove)(true)}
+                    onClick={() => { setApprovingType("exact"); (isLeveraged ? zapperApprove : lendingApprove)(true); }}
                     disabled={isApproving}
                     className={cn(
-                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                      "flex-[2] py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
                       isApproving
                         ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
                         : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
                     )}
                   >
-                    {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                    {isApproving ? "Approving..." : `${Number(formatUnits(lastApprovalRef.current!.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${lastApprovalRef.current!.tokenSymbol}`}
+                    {isApproving && approvingType === "exact" ? <>Approving<LoadingDots /></> : `${Number(formatUnits(lastApprovalRef.current!.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${lastApprovalRef.current!.tokenSymbol}`}
                   </button>
                   <button
-                    onClick={() => (isLeveraged ? zapperApprove : lendingApprove)(false)}
+                    onClick={() => { setApprovingType("unlimited"); (isLeveraged ? zapperApprove : lendingApprove)(false); }}
                     disabled={isApproving}
                     className={cn(
                       "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
@@ -1748,13 +1869,12 @@ export function NewLoanForm({
                         : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
                     )}
                   >
-                    {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                    {isApproving ? "Approving..." : "Unlimited"}
+                    {isApproving && approvingType === "unlimited" ? <>Approving<LoadingDots /></> : "Max"}
                   </button>
                 </div>
               ) : (
                 <button
-                  onClick={() => (isLeveraged ? zapperApprove : lendingApprove)()}
+                  onClick={() => { setApprovingType("single"); (isLeveraged ? zapperApprove : lendingApprove)(); }}
                   disabled={isApproving}
                   className={cn(
                     "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
@@ -1763,12 +1883,9 @@ export function NewLoanForm({
                       : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
                   )}
                 >
-                  {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
                   {isApproving
-                    ? "Approving..."
-                    : lastApprovalRef.current!.type === "controller"
-                      ? `Approve yld Zapper${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`
-                      : `Approve ${lastApprovalRef.current!.tokenSymbol}${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`}
+                    ? <>Approving<LoadingDots /></>
+                    : `Approve ${approvalProgress?.steps[approvalProgress.step - 1]?.label ?? ""}`}
                 </button>
               )}
             </div>
@@ -1803,7 +1920,7 @@ export function NewLoanForm({
         <div className="overflow-hidden">
           <button
             onClick={() => {
-              if (status === "error" || status === "success") {
+              if (status === "error" || status === "reverted" || status === "success") {
                 reset();
               } else if (simulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
                 setShowSimulationModal(true);

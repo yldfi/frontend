@@ -80,7 +80,9 @@ interface CollateralTabProps {
   controllerAddress: `0x${string}`;
   onTransactionSuccess: () => void;
   onEstimatedHealthChange?: (health: number | null) => void;
+  onCollateralDeltaChange?: (delta: bigint | null) => void;
   onTxStateChange?: (state: { status: "pending" | "success" | "reverted"; action: string; hash: string; details?: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string } } | null) => void;
+  onSwitchTab?: (tab: string) => void;
 }
 
 export function CollateralTab({
@@ -90,7 +92,9 @@ export function CollateralTab({
   controllerAddress,
   onTransactionSuccess,
   onEstimatedHealthChange,
+  onCollateralDeltaChange,
   onTxStateChange,
+  onSwitchTab,
 }: CollateralTabProps) {
   const { address } = useAccount();
   const publicClient = usePublicClient();
@@ -195,6 +199,12 @@ export function CollateralTab({
   const lastApprovalRef = useRef(pendingApproval);
   if (pendingApproval) lastApprovalRef.current = pendingApproval;
   const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
+
+  // Track which approval button was clicked
+  const [approvingType, setApprovingType] = useState<"exact" | "unlimited" | "single" | null>(null);
+  useEffect(() => {
+    if (!isApproving) setApprovingType(null);
+  }, [isApproving]);
 
   // Read selected token balance (native ETH or ERC20)
   const isEth = selectedToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
@@ -442,6 +452,15 @@ export function CollateralTab({
     onEstimatedHealthChange?.(estimatedHealth);
   }, [estimatedHealth, onEstimatedHealthChange]);
 
+  // Report collateral delta to parent
+  useEffect(() => {
+    if (estimatedVaultTokenAmount && estimatedVaultTokenAmount > 0n) {
+      onCollateralDeltaChange?.(mode === "add" ? estimatedVaultTokenAmount : -estimatedVaultTokenAmount);
+    } else {
+      onCollateralDeltaChange?.(null);
+    }
+  }, [estimatedVaultTokenAmount, mode, onCollateralDeltaChange]);
+
   // Report tx state to parent for full-screen overlay
   useEffect(() => {
     if ((status === "waitingTx" || status === "success" || status === "reverted") && txHash) {
@@ -523,7 +542,7 @@ export function CollateralTab({
   }, [status, txHash, mode, onTransactionSuccess, reset, refetchBalance]);
 
   useEffect(() => {
-    if (status === "error" && error) {
+    if ((status === "error" || status === "reverted") && error) {
       if (isUserRejection(error)) {
         toast("Transaction cancelled", { id: "collateral-cancelled", duration: 3000 });
         clearError();
@@ -594,9 +613,9 @@ export function CollateralTab({
               simulationBlock.current = currentBlock ?? 0n;
               setShowSimulationModal(true);
               fetchEthPrice();
-              return;
+              return; // Modal opened — bail
             }
-            // Preview unavailable (e.g., Anvil fork) — execute directly
+            // No simulation data (e.g. Anvil) — fall through to execute
           }
           await addCollateral(
             vault.address as `0x${string}`,
@@ -617,9 +636,9 @@ export function CollateralTab({
               simulationBlock.current = currentBlock ?? 0n;
               setShowSimulationModal(true);
               fetchEthPrice();
-              return;
+              return; // Modal opened — bail
             }
-            // Preview unavailable — execute directly
+            // No simulation data (e.g. Anvil) — fall through to execute
           }
           await addCollateralWithSwap(
             vault.address as `0x${string}`,
@@ -642,9 +661,9 @@ export function CollateralTab({
               simulationBlock.current = currentBlock ?? 0n;
               setShowSimulationModal(true);
               fetchEthPrice();
-              return;
+              return; // Modal opened — bail
             }
-            // Preview unavailable — execute directly
+            // No simulation data (e.g. Anvil) — fall through to execute
           }
           await removeCollateral(
             vault.address as `0x${string}`,
@@ -664,9 +683,9 @@ export function CollateralTab({
               simulationBlock.current = currentBlock ?? 0n;
               setShowSimulationModal(true);
               fetchEthPrice();
-              return;
+              return; // Modal opened — bail
             }
-            // Preview unavailable — execute directly
+            // No simulation data (e.g. Anvil) — fall through to execute
           }
           await removeCollateralAndSwap(
             vault.address as `0x${string}`,
@@ -718,6 +737,7 @@ export function CollateralTab({
     status !== "idle" &&
     status !== "success" &&
     status !== "error" &&
+    status !== "reverted" &&
     status !== "needsApproval";
 
   const isFormValid =
@@ -729,7 +749,8 @@ export function CollateralTab({
     (isVaultToken || (!quoteLoading && swapQuote !== undefined));
 
   const getButtonText = () => {
-    if (status === "building" || status === "simulating") return <>Simulating<LoadingDots /></>;
+    if (status === "building") return <>Building transaction<LoadingDots /></>;
+    if (status === "simulating") return <>Simulating<LoadingDots /></>;
     if (status === "executing") return <>Confirm in wallet<LoadingDots /></>;
     if (status === "waitingTx") return <>Waiting for confirmation<LoadingDots /></>;
     if (hasInsufficientBalance) return "Insufficient balance";
@@ -744,6 +765,18 @@ export function CollateralTab({
       return "Remove & Swap";
     }
   };
+
+  if (position?.inSoftLiquidation) {
+    return (
+      <div className="py-6 px-2 space-y-2 text-center">
+        <AlertTriangle size={20} className="mx-auto text-yellow-500" />
+        <div className="text-sm font-medium text-[var(--foreground)]">Collateral management unavailable</div>
+        <div className="text-xs text-[var(--muted-foreground)]">
+          Your position is in soft-liquidation.{onSwitchTab ? (<> Use <button type="button" onClick={() => onSwitchTab("repay")} className="underline hover:text-[var(--foreground)] transition-colors">Repay</button> to reduce debt or <button type="button" onClick={() => onSwitchTab("leverage")} className="underline hover:text-[var(--foreground)] transition-colors">Liquidate</button> to close your position.</>) : " Repay debt or close your position."}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -883,20 +916,19 @@ export function CollateralTab({
               {lastApprovalRef.current!.type !== "controller" && lastApprovalRef.current!.amount ? (
                 <div className="flex gap-2">
                   <button
-                    onClick={() => approve(true)}
+                    onClick={() => { setApprovingType("exact"); approve(true); }}
                     disabled={isApproving}
                     className={cn(
-                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
+                      "flex-[2] py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
                       isApproving
                         ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
                         : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
                     )}
                   >
-                    {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                    {isApproving ? "Approving..." : `${Number(formatUnits(lastApprovalRef.current!.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${lastApprovalRef.current!.tokenSymbol}`}
+                    {isApproving && approvingType === "exact" ? <>Approving<LoadingDots /></> : `${Number(formatUnits(lastApprovalRef.current!.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${lastApprovalRef.current!.tokenSymbol}`}
                   </button>
                   <button
-                    onClick={() => approve(false)}
+                    onClick={() => { setApprovingType("unlimited"); approve(false); }}
                     disabled={isApproving}
                     className={cn(
                       "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
@@ -905,13 +937,12 @@ export function CollateralTab({
                         : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
                     )}
                   >
-                    {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                    {isApproving ? "Approving..." : "Unlimited"}
+                    {isApproving && approvingType === "unlimited" ? <>Approving<LoadingDots /></> : "Max"}
                   </button>
                 </div>
               ) : (
                 <button
-                  onClick={() => approve()}
+                  onClick={() => { setApprovingType("single"); approve(); }}
                   disabled={isApproving}
                   className={cn(
                     "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
@@ -920,8 +951,7 @@ export function CollateralTab({
                       : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
                   )}
                 >
-                  {isApproving && <Loader2 className="w-4 h-4 animate-spin" />}
-                  {isApproving ? "Approving..." : `Approve ${lastApprovalRef.current!.tokenSymbol}`}
+                  {isApproving ? <>Approving<LoadingDots /></> : "Approve"}
                 </button>
               )}
             </div>
@@ -957,7 +987,7 @@ export function CollateralTab({
         <div className="overflow-hidden">
           <button
             onClick={() => {
-              if (status === "error" || status === "success") {
+              if (status === "error" || status === "reverted" || status === "success") {
                 reset();
               } else if (simulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
                 setShowSimulationModal(true);
@@ -1086,13 +1116,12 @@ export function CollateralTab({
                                 {
                                   tokenSymbol: selectedToken.symbol,
                                   action: "Swap",
-                                  description: `${selectedToken.symbol} for ${vault.symbol}`,
+                                  description: `for ${vault.symbol}`,
                                   protocol: "Enso Router",
                                 },
                                 {
                                   tokenSymbol: vault.symbol,
                                   action: "Add Collateral",
-                                  description: `Add ${vault.symbol} as collateral`,
                                   protocol: "Curve LlamaLend",
                                 },
                               ]
@@ -1100,13 +1129,12 @@ export function CollateralTab({
                                 {
                                   tokenSymbol: vault.symbol,
                                   action: "Remove Collateral",
-                                  description: `Withdraw ${vault.symbol} collateral`,
                                   protocol: "Curve LlamaLend",
                                 },
                                 {
                                   tokenSymbol: selectedToken.symbol,
                                   action: "Swap",
-                                  description: `${vault.symbol} for ${selectedToken.symbol}`,
+                                  description: `from ${vault.symbol}`,
                                   protocol: "Enso Router",
                                 },
                               ],

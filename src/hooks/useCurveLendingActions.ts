@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useCallback, useMemo, useEffect } from "react";
-import { useAccount, usePublicClient, useSendTransaction, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useAccount, usePublicClient, useWaitForTransactionReceipt } from "wagmi";
+import { useVNetSendTransaction as useSendTransaction } from "@/hooks/useVNetSendTransaction";
+import { useVNetWriteContract as useWriteContract } from "@/hooks/useVNetWriteContract";
 import { maxUint256 } from "viem";
 import {
   fetchAddCollateralWithSwapBundle,
@@ -20,6 +22,8 @@ import { ETH_ADDRESS, ENSO_SHORTCUTS } from "@/lib/enso";
 import { CRVUSD_ADDRESS } from "@/lib/zapper";
 import type { EnsoBundleResponse, SimulationResult } from "@/types/enso";
 import { useTenderly } from "@/contexts/TenderlyContext";
+import { runVNetSimulation } from "@/lib/vnet-simulation";
+import { snapshotTx, logTxDiff } from "@/lib/dev-logging";
 
 async function devEthCall(
   publicClient: ReturnType<typeof usePublicClient>,
@@ -138,19 +142,13 @@ export interface UseCurveLendingActionsResult {
     repayAmount: bigint,
     options?: { previewOnly?: boolean; closeLoan?: boolean }
   ) => Promise<SimulationResult | null>;
-  repayWithRedeem: (
-    controllerAddress: `0x${string}`,
-    vaultTokenAddress: `0x${string}`,
-    redeemAmount: bigint,
-    options?: { previewOnly?: boolean; tokenSymbol?: string }
-  ) => Promise<SimulationResult | null>;
   repayWithSwap: (
     vaultAddress: `0x${string}`,
     tokenIn: string,
     amountIn: string,
     decimals?: number,
     slippage?: number,
-    options?: { previewOnly?: boolean; tokenSymbol?: string }
+    options?: { previewOnly?: boolean; tokenSymbol?: string; inSoftLiquidation?: boolean }
   ) => Promise<SimulationResult | null>;
   borrowAndSwap: (
     vaultAddress: `0x${string}`,
@@ -404,7 +402,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
   const publicClient = usePublicClient();
   const { sendTransactionAsync } = useSendTransaction();
   const { writeContractAsync } = useWriteContract();
-  const { isTenderlyVNet } = useTenderly();
+  const { testNetworkType } = useTenderly();
 
   const [status, setStatus] = useState<LendingStatus>("idle");
   const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
@@ -418,6 +416,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     steps: { label: string; description: string; done: boolean; spender?: string }[];
   } | null>(null);
   const [pendingInputToken, setPendingInputToken] = useState<string | null>(null);
+  const [pendingController, setPendingController] = useState<`0x${string}` | null>(null);
 
   // Approve contract
   const {
@@ -463,6 +462,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     setPendingApproval(null);
     setApprovalProgress(null);
     setPendingInputToken(null);
+    setPendingController(null);
     resetApprove();
   }, [resetApprove]);
 
@@ -512,17 +512,16 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       // Clear approval state
       setPendingApproval(null);
 
-      // Run simulation if not on VNet
-      if (!isTenderlyVNet && chainId !== 1337) {
+      // Simulate: mainnet → REST API, tenderly VNet → RPC sim, anvil → eth_call only
+      const bundleTxParams = {
+        to: pendingBundle.tx.to as `0x${string}`,
+        data: pendingBundle.tx.data as `0x${string}`,
+        value: pendingBundle.tx.value ? BigInt(pendingBundle.tx.value) : 0n,
+      };
+
+      if (testNetworkType === null && chainId !== 1337) {
         setStatus("simulating");
 
-        const txParams = {
-          to: pendingBundle.tx.to as `0x${string}`,
-          data: pendingBundle.tx.data as `0x${string}`,
-          value: pendingBundle.tx.value ? BigInt(pendingBundle.tx.value) : 0n,
-        };
-
-        // Run Tenderly and eth_call in parallel
         const [tenderlyResult, ethCallResult] = await Promise.all([
           runTenderlySimulation(
             address,
@@ -531,14 +530,13 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
             pendingBundle.tx.value || "0",
             pendingInputToken
           ),
-          devEthCall(publicClient, { account: address, ...txParams }),
+          devEthCall(publicClient, { account: address, ...bundleTxParams }),
         ]);
 
         if (tenderlyResult.result) {
           setSimulationResult(tenderlyResult.result);
         }
 
-        // eth_call is the ground truth for the chain we're submitting to
         if (!ethCallResult.ok) {
           const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
@@ -548,19 +546,45 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         if (!tenderlyResult.ok) {
           if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
         }
-      } else if (process.env.NODE_ENV === "development") {
-        const ethCallResult = await devEthCall(publicClient, {
-          account: address,
-          to: pendingBundle.tx.to as `0x${string}`,
-          data: pendingBundle.tx.data as `0x${string}`,
-          value: pendingBundle.tx.value ? BigInt(pendingBundle.tx.value) : 0n,
-        });
+      } else if (testNetworkType === "tenderly") {
+        setStatus("simulating");
+
+        const [vnetResult, ethCallResult] = await Promise.all([
+          runVNetSimulation(
+            publicClient.transport,
+            { from: address, to: pendingBundle.tx.to, data: pendingBundle.tx.data, value: `0x${bundleTxParams.value.toString(16)}` },
+            address,
+          ),
+          devEthCall(publicClient, { account: address, ...bundleTxParams }),
+        ]);
+
+        if (vnetResult.result) {
+          setSimulationResult(vnetResult.result);
+        }
+
         if (!ethCallResult.ok) {
           const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return;
         }
+        if (!vnetResult.ok) {
+          if (process.env.NODE_ENV === "development") console.log("[Simulation] VNet sim failed but eth_call passed, proceeding");
+        }
+      } else {
+        const ethCallResult = await devEthCall(publicClient, { account: address, ...bundleTxParams });
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          setError(parseErrorMessage(new Error(errorMsg)));
+          setStatus("error");
+          return;
+        }
+      }
+
+      // Snapshot position + balances before TX
+      let snapBefore: Awaited<ReturnType<typeof snapshotTx>> | undefined;
+      if (process.env.NODE_ENV === "development" && address) {
+        snapBefore = await snapshotTx(publicClient, address, pendingController, [pendingInputToken]);
       }
 
       // Execute the transaction
@@ -582,7 +606,13 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         pollingInterval: 1_000,
       });
 
-      if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
+      if (process.env.NODE_ENV === "development") {
+        console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
+        if (snapBefore && address) {
+          const snapAfter = await snapshotTx(publicClient, address, pendingController, [pendingInputToken]);
+          logTxDiff("Lending TX", snapBefore, snapAfter);
+        }
+      }
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -593,7 +623,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setError(parseErrorMessage(err));
       setStatus("error");
     }
-  }, [pendingBundle, publicClient, address, pendingInputToken, sendTransactionAsync, isTenderlyVNet, chainId]);
+  }, [pendingBundle, publicClient, address, pendingInputToken, sendTransactionAsync, testNetworkType, chainId, pendingController]);
 
   // Execute a pending bundle after preview confirmation
   const executeAfterPreview = useCallback(async () => {
@@ -604,6 +634,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     }
 
     try {
+      // Snapshot position + balances before TX
+      let snapBefore: Awaited<ReturnType<typeof snapshotTx>> | undefined;
+      if (process.env.NODE_ENV === "development" && address) {
+        snapBefore = await snapshotTx(publicClient, address, pendingController, [pendingInputToken ?? ""]);
+      }
+
       setStatus("executing");
 
       if (process.env.NODE_ENV === "development") console.log("[TX]", { to: pendingBundle.tx.to, selector: (pendingBundle.tx.data as string).slice(0, 10), data: pendingBundle.tx.data });
@@ -622,7 +658,13 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         pollingInterval: 1_000,
       });
 
-      if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
+      if (process.env.NODE_ENV === "development") {
+        console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
+        if (snapBefore && address) {
+          const snapAfter = await snapshotTx(publicClient, address, pendingController, [pendingInputToken ?? ""]);
+          logTxDiff("Lending TX", snapBefore, snapAfter);
+        }
+      }
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -633,7 +675,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setError(parseErrorMessage(err));
       setStatus("error");
     }
-  }, [pendingBundle, publicClient, sendTransactionAsync]);
+  }, [pendingBundle, publicClient, sendTransactionAsync, address, pendingController, pendingInputToken]);
 
   const executeBundle = useCallback(async (
     bundleFn: () => Promise<EnsoBundleResponse>,
@@ -691,62 +733,68 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
       }
 
-      // Run Tenderly simulation + eth_call (skip on VNet or local)
-      if (!isTenderlyVNet && chainId !== 1337) {
+      // Simulate: mainnet → REST API, tenderly VNet → RPC sim, anvil → eth_call only
+      const bundleTxParams = {
+        to: bundle.tx.to as `0x${string}`,
+        data: bundle.tx.data as `0x${string}`,
+        value: bundle.tx.value ? BigInt(bundle.tx.value) : 0n,
+      };
+
+      if (testNetworkType === null && chainId !== 1337) {
         setStatus("simulating");
 
-        const txParams = {
-          to: bundle.tx.to as `0x${string}`,
-          data: bundle.tx.data as `0x${string}`,
-          value: bundle.tx.value ? BigInt(bundle.tx.value) : 0n,
-        };
-
-        // Run Tenderly and eth_call in parallel
-        const tenderlyPromise = runTenderlySimulation(
-          address,
-          bundle.tx.to,
-          bundle.tx.data,
-          bundle.tx.value || "0",
-          inputToken
-        );
-
-        const ethCallPromise = devEthCall(publicClient, { account: address, ...txParams });
-
         const [tenderlyResult, ethCallResult] = await Promise.all([
-          tenderlyPromise,
-          ethCallPromise,
+          runTenderlySimulation(address, bundle.tx.to, bundle.tx.data, bundle.tx.value || "0", inputToken),
+          devEthCall(publicClient, { account: address, ...bundleTxParams }),
         ]);
 
-        if (tenderlyResult.result) {
-          setSimulationResult(tenderlyResult.result);
-        }
+        if (tenderlyResult.result) setSimulationResult(tenderlyResult.result);
 
-        // If previewOnly, stop here and return the result
         if (options?.previewOnly) {
           setStatus("idle");
           return tenderlyResult.result;
         }
 
-        // eth_call is the ground truth for the chain we're submitting to
-        // If eth_call fails, block the transaction regardless of Tenderly result
         if (!ethCallResult.ok) {
           const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return tenderlyResult.result;
         }
-        // If only Tenderly fails but eth_call passes, allow (Tenderly may be stale)
         if (!tenderlyResult.ok) {
           if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
         }
-      } else if (process.env.NODE_ENV === "development") {
+      } else if (testNetworkType === "tenderly") {
         setStatus("simulating");
-        const ethCallResult = await devEthCall(publicClient, {
-          account: address,
-          to: bundle.tx.to as `0x${string}`,
-          data: bundle.tx.data as `0x${string}`,
-          value: bundle.tx.value ? BigInt(bundle.tx.value) : 0n,
-        });
+
+        const [vnetResult, ethCallResult] = await Promise.all([
+          runVNetSimulation(
+            publicClient.transport,
+            { from: address, to: bundle.tx.to, data: bundle.tx.data, value: `0x${bundleTxParams.value.toString(16)}` },
+            address,
+          ),
+          devEthCall(publicClient, { account: address, ...bundleTxParams }),
+        ]);
+
+        if (vnetResult.result) setSimulationResult(vnetResult.result);
+
+        if (options?.previewOnly) {
+          setStatus("idle");
+          return vnetResult.result;
+        }
+
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          setError(parseErrorMessage(new Error(errorMsg)));
+          setStatus("error");
+          return vnetResult.result;
+        }
+        if (!vnetResult.ok) {
+          if (process.env.NODE_ENV === "development") console.log("[Simulation] VNet sim failed but eth_call passed, proceeding");
+        }
+      } else {
+        setStatus("simulating");
+        const ethCallResult = await devEthCall(publicClient, { account: address, ...bundleTxParams });
         if (!ethCallResult.ok) {
           const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
@@ -755,6 +803,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
       }
       // On test networks, no simulation to preview — execute directly
+
+      // Snapshot position + balances before TX
+      let snapBefore: Awaited<ReturnType<typeof snapshotTx>> | undefined;
+      if (process.env.NODE_ENV === "development" && address) {
+        snapBefore = await snapshotTx(publicClient, address, pendingController, [inputToken]);
+      }
 
       // Execute the transaction
       setStatus("executing");
@@ -776,7 +830,13 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         pollingInterval: 1_000,
       });
 
-      if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
+      if (process.env.NODE_ENV === "development") {
+        console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
+        if (snapBefore && address) {
+          const snapAfter = await snapshotTx(publicClient, address, pendingController, [inputToken]);
+          logTxDiff("Lending TX", snapBefore, snapAfter);
+        }
+      }
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -790,7 +850,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, sendTransactionAsync, isTenderlyVNet, chainId, simulationResult]);
+  }, [address, publicClient, sendTransactionAsync, testNetworkType, chainId, simulationResult, pendingController]);
 
   // Direct controller call for create_loan (no Enso bundle needed)
   const createLoan = useCallback(async (
@@ -820,6 +880,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setSimulationResult(null);
       setPendingBundle(null);
       setPendingApproval(null);
+      setPendingController(controllerAddress as `0x${string}`);
 
       const { parseUnits, encodeFunctionData } = await import("viem");
       const amountWei = parseUnits(collateralAmount, 18); // Vault tokens are 18 decimals
@@ -863,8 +924,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         return null;
       }
 
-      // Simulate
-      if (!isTenderlyVNet && chainId !== 1337) {
+      // Simulate: mainnet → REST API, tenderly VNet → RPC sim, anvil → eth_call only
+      if (testNetworkType === null && chainId !== 1337) {
         setStatus("simulating");
 
         const [tenderlyResult, ethCallResult] = await Promise.all([
@@ -879,7 +940,6 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           return tenderlyResult.result;
         }
 
-        // eth_call is the ground truth for the chain we're submitting to
         if (!ethCallResult.ok) {
           const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
@@ -888,6 +948,34 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
         if (!tenderlyResult.ok) {
           if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
+        }
+      } else if (testNetworkType === "tenderly") {
+        setStatus("simulating");
+
+        const [vnetResult, ethCallResult] = await Promise.all([
+          runVNetSimulation(
+            publicClient.transport,
+            { from: address, to: controllerAddress, data: callData },
+            address,
+          ),
+          devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` }),
+        ]);
+
+        if (vnetResult.result) setSimulationResult(vnetResult.result);
+
+        if (options?.previewOnly) {
+          setStatus("idle");
+          return vnetResult.result;
+        }
+
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          setError(parseErrorMessage(new Error(errorMsg)));
+          setStatus("error");
+          return vnetResult.result;
+        }
+        if (!vnetResult.ok) {
+          if (process.env.NODE_ENV === "development") console.log("[Simulation] VNet sim failed but eth_call passed, proceeding");
         }
       } else {
         const ethCallResult = await devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` });
@@ -903,6 +991,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
       }
 
+      // Snapshot position + balances before TX
+      let snapBefore: Awaited<ReturnType<typeof snapshotTx>> | undefined;
+      if (process.env.NODE_ENV === "development" && address) {
+        snapBefore = await snapshotTx(publicClient, address, controllerAddress as `0x${string}`, [vaultAddress]);
+      }
+
       // Execute
       setStatus("executing");
       if (process.env.NODE_ENV === "development") console.log("[TX]", { to: controllerAddress, selector: (callData as string).slice(0, 10), data: callData });
@@ -915,7 +1009,13 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("waitingTx");
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000, pollingInterval: 1_000 });
-      if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
+      if (process.env.NODE_ENV === "development") {
+        console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
+        if (snapBefore && address) {
+          const snapAfter = await snapshotTx(publicClient, address, controllerAddress as `0x${string}`, [vaultAddress]);
+          logTxDiff("createLoan", snapBefore, snapAfter);
+        }
+      }
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -929,7 +1029,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, sendTransactionAsync, isTenderlyVNet, chainId, simulationResult]);
+  }, [address, publicClient, sendTransactionAsync, testNetworkType, chainId, simulationResult]);
 
   // Create loan with swap: tokenIn → vaultToken → create_loan (Enso bundle)
   const createLoanWithSwap = useCallback(async (
@@ -944,6 +1044,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     if (!address) return null;
     const { parseUnits } = await import("viem");
     const amountWei = parseUnits(amountIn, 18);
+    const ctrl = CURVE_CONTROLLERS[vaultAddress as keyof typeof CURVE_CONTROLLERS];
+    if (ctrl) setPendingController(ctrl as `0x${string}`);
     return executeBundle(
       () => fetchCreateLoanWithSwapBundle({
         fromAddress: address,
@@ -976,6 +1078,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     const { parseUnits } = await import("viem");
     const decimals = tokenIn ? 18 : 18; // vault tokens are always 18 decimals
     const amountWei = parseUnits(amountIn, decimals);
+    const ctrl = CURVE_CONTROLLERS[vaultAddress as keyof typeof CURVE_CONTROLLERS];
+    if (ctrl) setPendingController(ctrl as `0x${string}`);
     return executeBundle(
       () => fetchCreateLoanWithOutputSwapBundle({
         fromAddress: address,
@@ -1019,6 +1123,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setSimulationResult(null);
       setPendingBundle(null);
       setPendingApproval(null);
+      setPendingController(controllerAddress as `0x${string}`);
 
       const { parseUnits, encodeFunctionData } = await import("viem");
       const amountWei = parseUnits(collateralAmount, 18);
@@ -1061,8 +1166,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         return null;
       }
 
-      // Simulate
-      if (!isTenderlyVNet && chainId !== 1337) {
+      // Simulate: mainnet → REST API, tenderly VNet → RPC sim, anvil → eth_call only
+      if (testNetworkType === null && chainId !== 1337) {
         setStatus("simulating");
 
         const [tenderlyResult, ethCallResult] = await Promise.all([
@@ -1077,7 +1182,6 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           return tenderlyResult.result;
         }
 
-        // eth_call is the ground truth for the chain we're submitting to
         if (!ethCallResult.ok) {
           const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
@@ -1086,6 +1190,34 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
         if (!tenderlyResult.ok) {
           if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
+        }
+      } else if (testNetworkType === "tenderly") {
+        setStatus("simulating");
+
+        const [vnetResult, ethCallResult] = await Promise.all([
+          runVNetSimulation(
+            publicClient.transport,
+            { from: address, to: controllerAddress, data: callData },
+            address,
+          ),
+          devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` }),
+        ]);
+
+        if (vnetResult.result) setSimulationResult(vnetResult.result);
+
+        if (options?.previewOnly) {
+          setStatus("idle");
+          return vnetResult.result;
+        }
+
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          setError(parseErrorMessage(new Error(errorMsg)));
+          setStatus("error");
+          return vnetResult.result;
+        }
+        if (!vnetResult.ok) {
+          if (process.env.NODE_ENV === "development") console.log("[Simulation] VNet sim failed but eth_call passed, proceeding");
         }
       } else {
         const ethCallResult = await devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` });
@@ -1102,6 +1234,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       }
 
       // Execute
+      // Snapshot position + balances before TX
+      let snapBefore: Awaited<ReturnType<typeof snapshotTx>> | undefined;
+      if (process.env.NODE_ENV === "development" && address) {
+        snapBefore = await snapshotTx(publicClient, address, controllerAddress as `0x${string}`, [vaultAddress]);
+      }
+
       setStatus("executing");
       if (process.env.NODE_ENV === "development") console.log("[TX]", { to: controllerAddress, selector: (callData as string).slice(0, 10), data: callData });
       const hash = await sendTransactionAsync({
@@ -1113,7 +1251,13 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("waitingTx");
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000, pollingInterval: 1_000 });
-      if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
+      if (process.env.NODE_ENV === "development") {
+        console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
+        if (snapBefore && address) {
+          const snapAfter = await snapshotTx(publicClient, address, controllerAddress as `0x${string}`, [vaultAddress]);
+          logTxDiff("addCollateral", snapBefore, snapAfter);
+        }
+      }
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -1127,7 +1271,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, sendTransactionAsync, isTenderlyVNet, chainId, simulationResult]);
+  }, [address, publicClient, sendTransactionAsync, testNetworkType, chainId, simulationResult]);
 
   // Direct controller call for remove_collateral (no Enso bundle needed)
   const removeCollateral = useCallback(async (
@@ -1155,6 +1299,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setSimulationResult(null);
       setPendingBundle(null);
       setPendingApproval(null);
+      setPendingController(controllerAddress as `0x${string}`);
 
       const { parseUnits, encodeFunctionData } = await import("viem");
       const amountWei = parseUnits(collateralAmount, 18);
@@ -1183,8 +1328,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
       // No approval needed for removing collateral (we receive tokens)
 
-      // Simulate
-      if (!isTenderlyVNet && chainId !== 1337) {
+      // Simulate: mainnet → REST API, tenderly VNet → RPC sim, anvil → eth_call only
+      if (testNetworkType === null && chainId !== 1337) {
         setStatus("simulating");
 
         const [tenderlyResult, ethCallResult] = await Promise.all([
@@ -1199,7 +1344,6 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           return tenderlyResult.result;
         }
 
-        // eth_call is the ground truth for the chain we're submitting to
         if (!ethCallResult.ok) {
           const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
@@ -1208,6 +1352,34 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
         if (!tenderlyResult.ok) {
           if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
+        }
+      } else if (testNetworkType === "tenderly") {
+        setStatus("simulating");
+
+        const [vnetResult, ethCallResult] = await Promise.all([
+          runVNetSimulation(
+            publicClient.transport,
+            { from: address, to: controllerAddress, data: callData },
+            address,
+          ),
+          devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` }),
+        ]);
+
+        if (vnetResult.result) setSimulationResult(vnetResult.result);
+
+        if (options?.previewOnly) {
+          setStatus("idle");
+          return vnetResult.result;
+        }
+
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          setError(parseErrorMessage(new Error(errorMsg)));
+          setStatus("error");
+          return vnetResult.result;
+        }
+        if (!vnetResult.ok) {
+          if (process.env.NODE_ENV === "development") console.log("[Simulation] VNet sim failed but eth_call passed, proceeding");
         }
       } else {
         const ethCallResult = await devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` });
@@ -1223,6 +1395,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
       }
 
+      // Snapshot position + balances before TX
+      let snapBefore: Awaited<ReturnType<typeof snapshotTx>> | undefined;
+      if (process.env.NODE_ENV === "development" && address) {
+        snapBefore = await snapshotTx(publicClient, address, controllerAddress as `0x${string}`, [vaultAddress]);
+      }
+
       // Execute
       setStatus("executing");
       if (process.env.NODE_ENV === "development") console.log("[TX]", { to: controllerAddress, selector: (callData as string).slice(0, 10), data: callData });
@@ -1235,7 +1413,13 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("waitingTx");
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000, pollingInterval: 1_000 });
-      if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
+      if (process.env.NODE_ENV === "development") {
+        console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
+        if (snapBefore && address) {
+          const snapAfter = await snapshotTx(publicClient, address, controllerAddress as `0x${string}`, [vaultAddress]);
+          logTxDiff("removeCollateral", snapBefore, snapAfter);
+        }
+      }
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -1249,7 +1433,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, sendTransactionAsync, isTenderlyVNet, chainId, simulationResult]);
+  }, [address, publicClient, sendTransactionAsync, testNetworkType, chainId, simulationResult]);
 
   const addCollateralWithSwap = useCallback(async (
     vaultAddress: `0x${string}`,
@@ -1261,6 +1445,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     if (!address) return null;
     const { parseUnits } = await import("viem");
     const amountWei = parseUnits(amountIn, 18);
+    const ctrl = CURVE_CONTROLLERS[vaultAddress as keyof typeof CURVE_CONTROLLERS];
+    if (ctrl) setPendingController(ctrl as `0x${string}`);
     return executeBundle(
       () => fetchAddCollateralWithSwapBundle({
         fromAddress: address,
@@ -1275,6 +1461,9 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     );
   }, [address, executeBundle]);
 
+  // Remove collateral + swap to any token in a single Enso bundle.
+  // Uses the "recursive routeMulti" pattern with 2-arg remove_collateral(amount, _for).
+  // Requires one-time controller approval + vault token approval for ENSO_SHORTCUTS.
   const removeCollateralAndSwap = useCallback(async (
     vaultAddress: `0x${string}`,
     collateralAmount: string,
@@ -1282,10 +1471,81 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     slippage: number = 100,
     options?: { previewOnly?: boolean; tokenSymbol?: string }
   ): Promise<SimulationResult | null> => {
-    if (!address) return null;
+    if (!address || !publicClient) {
+      setError("Wallet not connected");
+      setStatus("error");
+      return null;
+    }
+
+    const controllerAddress = CURVE_CONTROLLERS[vaultAddress as keyof typeof CURVE_CONTROLLERS];
+    if (!controllerAddress) {
+      setError("Controller not found for this vault");
+      setStatus("error");
+      return null;
+    }
+
     const { parseUnits } = await import("viem");
     const amountWei = parseUnits(collateralAmount, 18);
-    // No input amount for approval — we're removing collateral (receiving, not sending)
+    setPendingController(controllerAddress as `0x${string}`);
+
+    // Check ALL approvals in parallel (controller + vault token for ENSO_SHORTCUTS)
+    setStatus("building");
+    setError(null);
+
+    const [controllerApproved, vaultTokenAllowance] = await Promise.all([
+      publicClient.readContract({
+        address: controllerAddress as `0x${string}`,
+        abi: CONTROLLER_APPROVE_ABI,
+        functionName: "approval",
+        args: [address, ENSO_SHORTCUTS as `0x${string}`],
+      }).catch(() => true) as Promise<boolean>,
+      checkAllowance(publicClient, address, vaultAddress, ENSO_SHORTCUTS as `0x${string}`),
+    ]);
+
+    const tokenSymbol = options?.tokenSymbol ?? "token";
+    const allApprovals: { approval: PendingApproval; needed: boolean; label: string; description: string; spender: string }[] = [
+      {
+        approval: {
+          type: "controller",
+          token: controllerAddress as `0x${string}`,
+          tokenSymbol: "Controller",
+          spender: ENSO_SHORTCUTS as `0x${string}`,
+        },
+        needed: !controllerApproved,
+        label: "Lending Access",
+        description: "Approve Enso Router to manage collateral on your behalf",
+        spender: ENSO_SHORTCUTS,
+      },
+      {
+        approval: {
+          token: vaultAddress,
+          tokenSymbol: tokenSymbol,
+          spender: ENSO_SHORTCUTS as `0x${string}`,
+          amount: amountWei,
+        },
+        needed: vaultTokenAllowance < amountWei,
+        label: tokenSymbol,
+        description: `Approve ${tokenSymbol} for swap routing`,
+        spender: ENSO_SHORTCUTS,
+      },
+    ];
+
+    const total = allApprovals.length;
+    const steps = allApprovals.map((a) => ({ label: a.label, description: a.description, done: !a.needed, spender: a.spender }));
+    const firstNeededIdx = allApprovals.findIndex((a) => a.needed);
+
+    if (firstNeededIdx >= 0) {
+      const step = firstNeededIdx + 1;
+      setApprovalProgress({ step, total, steps });
+      setPendingApproval(allApprovals[firstNeededIdx].approval);
+      setStatus("needsApproval");
+      return null;
+    }
+
+    // All approvals satisfied — clear progress
+    setApprovalProgress(null);
+
+    // Pass inputAmount=0n to skip executeBundle's built-in approval check
     return executeBundle(
       () => fetchRemoveCollateralAndSwapBundle({
         fromAddress: address,
@@ -1298,7 +1558,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       0n,
       options
     );
-  }, [address, executeBundle]);
+  }, [address, publicClient, executeBundle]);
 
   // Direct contract call to controller.borrow_more(collateral, debt)
   // User IS msg.sender — no Enso bundle needed, no controller approval needed.
@@ -1328,6 +1588,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setSimulationResult(null);
       setPendingBundle(null);
       setPendingApproval(null);
+      setPendingController(controllerAddress as `0x${string}`);
 
       const { parseUnits, encodeFunctionData } = await import("viem");
       const collateralWei = additionalCollateral ? parseUnits(additionalCollateral, 18) : 0n;
@@ -1371,8 +1632,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
       }
 
-      // Simulate
-      if (!isTenderlyVNet && chainId !== 1337) {
+      // Simulate: mainnet → REST API, tenderly VNet → RPC sim, anvil → eth_call only
+      if (testNetworkType === null && chainId !== 1337) {
         setStatus("simulating");
 
         const [tenderlyResult, ethCallResult] = await Promise.all([
@@ -1387,7 +1648,6 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           return tenderlyResult.result;
         }
 
-        // eth_call is the ground truth for the chain we're submitting to
         if (!ethCallResult.ok) {
           const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
@@ -1396,6 +1656,34 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
         if (!tenderlyResult.ok) {
           if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
+        }
+      } else if (testNetworkType === "tenderly") {
+        setStatus("simulating");
+
+        const [vnetResult, ethCallResult] = await Promise.all([
+          runVNetSimulation(
+            publicClient.transport,
+            { from: address, to: controllerAddress, data: callData },
+            address,
+          ),
+          devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` }),
+        ]);
+
+        if (vnetResult.result) setSimulationResult(vnetResult.result);
+
+        if (options?.previewOnly) {
+          setStatus("idle");
+          return vnetResult.result;
+        }
+
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          setError(parseErrorMessage(new Error(errorMsg)));
+          setStatus("error");
+          return vnetResult.result;
+        }
+        if (!vnetResult.ok) {
+          if (process.env.NODE_ENV === "development") console.log("[Simulation] VNet sim failed but eth_call passed, proceeding");
         }
       } else {
         const ethCallResult = await devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` });
@@ -1411,6 +1699,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
       }
 
+      // Snapshot position + balances before TX
+      let snapBefore: Awaited<ReturnType<typeof snapshotTx>> | undefined;
+      if (process.env.NODE_ENV === "development" && address) {
+        snapBefore = await snapshotTx(publicClient, address, controllerAddress as `0x${string}`, [vaultAddress]);
+      }
+
       // Execute
       setStatus("executing");
       if (process.env.NODE_ENV === "development") console.log("[TX]", { to: controllerAddress, selector: (callData as string).slice(0, 10), data: callData });
@@ -1423,7 +1717,13 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("waitingTx");
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000, pollingInterval: 1_000 });
-      if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
+      if (process.env.NODE_ENV === "development") {
+        console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
+        if (snapBefore && address) {
+          const snapAfter = await snapshotTx(publicClient, address, controllerAddress as `0x${string}`, [vaultAddress]);
+          logTxDiff("borrowMore", snapBefore, snapAfter);
+        }
+      }
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -1437,7 +1737,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, sendTransactionAsync, isTenderlyVNet, chainId, simulationResult]);
+  }, [address, publicClient, sendTransactionAsync, testNetworkType, chainId, simulationResult]);
 
   const repay = useCallback(async (
     vaultAddress: `0x${string}`,
@@ -1447,6 +1747,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     if (!address) return null;
     const { parseUnits } = await import("viem");
     const amountWei = parseUnits(repayAmount, 18);
+    const ctrl = CURVE_CONTROLLERS[vaultAddress as keyof typeof CURVE_CONTROLLERS];
+    if (ctrl) setPendingController(ctrl as `0x${string}`);
     return executeBundle(
       () => fetchRepayBundle({
         fromAddress: address,
@@ -1480,6 +1782,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setSimulationResult(null);
       setPendingBundle(null);
       setPendingApproval(null);
+      setPendingController(controllerAddress);
 
       // Encode controller.repay(_d_debt, _for, max_active_band)
       // When closing loan, pass maxUint256 as _d_debt so interest accrual
@@ -1531,8 +1834,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         return null;
       }
 
-      // Simulate via Tenderly
-      if (!isTenderlyVNet && chainId !== 1337) {
+      // Simulate: mainnet → REST API, tenderly VNet → RPC sim, anvil → eth_call only
+      if (testNetworkType === null && chainId !== 1337) {
         setStatus("simulating");
 
         const [tenderlyResult, ethCallResult] = await Promise.all([
@@ -1540,16 +1843,13 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           devEthCall(publicClient, { account: address, to: controllerAddress, data: callData as `0x${string}` }),
         ]);
 
-        if (tenderlyResult.result) {
-          setSimulationResult(tenderlyResult.result);
-        }
+        if (tenderlyResult.result) setSimulationResult(tenderlyResult.result);
 
         if (options?.previewOnly) {
           setStatus("idle");
           return tenderlyResult.result;
         }
 
-        // eth_call is the ground truth for the chain we're submitting to
         if (!ethCallResult.ok) {
           const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
@@ -1558,6 +1858,34 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
         if (!tenderlyResult.ok) {
           if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
+        }
+      } else if (testNetworkType === "tenderly") {
+        setStatus("simulating");
+
+        const [vnetResult, ethCallResult] = await Promise.all([
+          runVNetSimulation(
+            publicClient.transport,
+            { from: address, to: controllerAddress, data: callData },
+            address,
+          ),
+          devEthCall(publicClient, { account: address, to: controllerAddress, data: callData as `0x${string}` }),
+        ]);
+
+        if (vnetResult.result) setSimulationResult(vnetResult.result);
+
+        if (options?.previewOnly) {
+          setStatus("idle");
+          return vnetResult.result;
+        }
+
+        if (!ethCallResult.ok) {
+          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          setError(parseErrorMessage(new Error(errorMsg)));
+          setStatus("error");
+          return vnetResult.result;
+        }
+        if (!vnetResult.ok) {
+          if (process.env.NODE_ENV === "development") console.log("[Simulation] VNet sim failed but eth_call passed, proceeding");
         }
       } else {
         const ethCallResult = await devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` });
@@ -1571,6 +1899,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           setStatus("idle");
           return null;
         }
+      }
+
+      // Snapshot position + balances before TX
+      let snapBefore: Awaited<ReturnType<typeof snapshotTx>> | undefined;
+      if (process.env.NODE_ENV === "development" && address) {
+        snapBefore = await snapshotTx(publicClient, address, controllerAddress, [CRVUSD]);
       }
 
       // Execute the transaction
@@ -1591,7 +1925,13 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         pollingInterval: 1_000,
       });
 
-      if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
+      if (process.env.NODE_ENV === "development") {
+        console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
+        if (snapBefore && address) {
+          const snapAfter = await snapshotTx(publicClient, address, controllerAddress, [CRVUSD]);
+          logTxDiff("repayDirect", snapBefore, snapAfter);
+        }
+      }
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -1605,181 +1945,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, sendTransactionAsync, isTenderlyVNet, chainId, simulationResult]);
-
-  // Redeem a vault token (e.g., scrvUSD) to crvUSD, then repay controller directly.
-  // Bypasses Enso — two sequential transactions. Used for vault tokens with crvUSD underlying.
-  const repayWithRedeem = useCallback(async (
-    controllerAddress: `0x${string}`,
-    vaultTokenAddress: `0x${string}`,
-    redeemAmount: bigint,
-    options?: { previewOnly?: boolean; tokenSymbol?: string }
-  ): Promise<SimulationResult | null> => {
-    if (!address || !publicClient) {
-      setError("Wallet not connected");
-      setStatus("error");
-      return null;
-    }
-
-    try {
-      setStatus("building");
-      setError(null);
-      setTxHash(null);
-      setSimulationResult(null);
-      setPendingBundle(null);
-      setPendingApproval(null);
-
-      const { encodeFunctionData } = await import("viem");
-
-      // Step 1: Preview how much crvUSD we'll get from redeeming
-      const crvUsdOut = await publicClient.readContract({
-        address: vaultTokenAddress,
-        abi: [{
-          name: "previewRedeem",
-          type: "function",
-          stateMutability: "view",
-          inputs: [{ name: "shares", type: "uint256" }],
-          outputs: [{ name: "assets", type: "uint256" }],
-        }],
-        functionName: "previewRedeem",
-        args: [redeemAmount],
-      });
-
-      if (process.env.NODE_ENV === "development") {
-        console.log("[Redeem+Repay] Preview redeem:", { shares: redeemAmount.toString(), crvUsdOut: crvUsdOut.toString() });
-      }
-
-      // Step 2: Check vault token allowance — ERC4626 redeem from own shares doesn't need approval
-      // (owner=msg.sender), so we skip this check
-
-      // Step 3: Redeem vault token → crvUSD
-      const redeemData = encodeFunctionData({
-        abi: [{
-          name: "redeem",
-          type: "function",
-          stateMutability: "nonpayable",
-          inputs: [
-            { name: "shares", type: "uint256" },
-            { name: "receiver", type: "address" },
-            { name: "owner", type: "address" },
-          ],
-          outputs: [{ name: "assets", type: "uint256" }],
-        }],
-        functionName: "redeem",
-        args: [redeemAmount, address, address],
-      });
-
-      // Step 4: Build repay calldata (with the crvUSD we'll get)
-      const repayData = encodeFunctionData({
-        abi: [{
-          name: "repay",
-          type: "function",
-          stateMutability: "nonpayable",
-          inputs: [
-            { name: "_d_debt", type: "uint256" },
-            { name: "_for", type: "address" },
-            { name: "max_active_band", type: "int256" },
-          ],
-          outputs: [],
-        }],
-        functionName: "repay",
-        args: [crvUsdOut, address, 2n ** 255n - 1n],
-      });
-
-      // Step 5: Check crvUSD allowance to controller
-      const currentAllowance = await checkAllowance(
-        publicClient,
-        address,
-        CRVUSD_ADDRESS,
-        controllerAddress
-      );
-
-      if (currentAllowance < crvUsdOut) {
-        // Need crvUSD approval — store redeem tx as pending so we can resume after
-        setPendingBundle({
-          tx: { to: vaultTokenAddress, data: redeemData, value: "0" },
-          gas: "0",
-          createdAt: Date.now(),
-          // Stash repay info for after approval
-          _repayAfter: { controllerAddress, repayData, crvUsdOut: crvUsdOut.toString() },
-        } as unknown as EnsoBundleResponse);
-        setPendingInputToken(CRVUSD_ADDRESS);
-        setPendingApproval({
-          token: CRVUSD_ADDRESS,
-          tokenSymbol: "crvUSD",
-          spender: controllerAddress,
-          amount: crvUsdOut,
-        });
-        setStatus("needsApproval");
-        return null;
-      }
-
-      // Skip simulation for local/VNet
-      if (options?.previewOnly) {
-        setStatus("idle");
-        return null;
-      }
-
-      // Step 6: Execute redeem transaction
-      setStatus("executing");
-      if (process.env.NODE_ENV === "development") console.log("[TX] Redeem", { to: vaultTokenAddress, shares: redeemAmount.toString() });
-
-      const redeemHash = await sendTransactionAsync({
-        to: vaultTokenAddress,
-        data: redeemData as `0x${string}`,
-      });
-
-      setTxHash(redeemHash);
-      setStatus("waitingTx");
-
-      const redeemReceipt = await publicClient.waitForTransactionReceipt({
-        hash: redeemHash,
-        timeout: 60_000,
-        pollingInterval: 1_000,
-      });
-
-      if (process.env.NODE_ENV === "development") console.log("[TX Receipt] Redeem", { hash: redeemHash, status: redeemReceipt.status });
-
-      if (redeemReceipt.status !== "success") {
-        setStatus("reverted");
-        setError("Redeem transaction reverted");
-        return null;
-      }
-
-      // Step 7: Execute repay transaction
-      setStatus("executing");
-      if (process.env.NODE_ENV === "development") console.log("[TX] Repay", { to: controllerAddress, amount: crvUsdOut.toString() });
-
-      const repayHash = await sendTransactionAsync({
-        to: controllerAddress,
-        data: repayData as `0x${string}`,
-      });
-
-      setTxHash(repayHash);
-      setStatus("waitingTx");
-
-      const repayReceipt = await publicClient.waitForTransactionReceipt({
-        hash: repayHash,
-        timeout: 60_000,
-        pollingInterval: 1_000,
-      });
-
-      if (process.env.NODE_ENV === "development") console.log("[TX Receipt] Repay", { hash: repayHash, status: repayReceipt.status });
-
-      if (repayReceipt.status === "success") {
-        setStatus("success");
-      } else {
-        setStatus("reverted");
-        setError("Repay transaction reverted");
-      }
-
-      return null;
-    } catch (err) {
-      setError(parseErrorMessage(err));
-      setStatus("error");
-      return null;
-    }
-  }, [address, publicClient, sendTransactionAsync]);
+  }, [address, publicClient, sendTransactionAsync, testNetworkType, chainId, simulationResult]);
 
   const repayWithSwap = useCallback(async (
     vaultAddress: `0x${string}`,
@@ -1787,11 +1953,13 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     amountIn: string,
     decimals: number = 18,
     slippage: number = 100,
-    options?: { previewOnly?: boolean; tokenSymbol?: string }
+    options?: { previewOnly?: boolean; tokenSymbol?: string; inSoftLiquidation?: boolean }
   ): Promise<SimulationResult | null> => {
     if (!address) return null;
     const { parseUnits } = await import("viem");
     const amountWei = parseUnits(amountIn, decimals);
+    const ctrl = CURVE_CONTROLLERS[vaultAddress as keyof typeof CURVE_CONTROLLERS];
+    if (ctrl) setPendingController(ctrl as `0x${string}`);
     return executeBundle(
       () => fetchRepayWithSwapBundle({
         fromAddress: address,
@@ -1799,6 +1967,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         tokenIn,
         amountIn: amountWei.toString(),
         slippage,
+        inSoftLiquidation: options?.inSoftLiquidation,
       }),
       tokenIn, // The token being swapped is the input
       amountWei,
@@ -1831,6 +2000,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
     const { parseUnits } = await import("viem");
     const debtWei = parseUnits(debtAmount, 18);
+    setPendingController(controllerAddress as `0x${string}`);
 
     // Check ALL approvals in parallel (controller, crvUSD, swap target).
     // This lets us show "Step X of Y" progress instead of discovering them one-by-one.
@@ -1962,6 +2132,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setError(null);
       setTxHash(null);
       setSimulationResult(null);
+      setPendingController(controllerAddress as `0x${string}`);
 
       // Get user state to calculate min_x
       const userState = await publicClient.readContract({
@@ -2001,8 +2172,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         args: [address, minX],
       });
 
-      // Run simulation if not on VNet
-      if (!isTenderlyVNet && chainId !== 1337) {
+      // Simulate: mainnet → REST API, tenderly VNet → RPC sim, anvil → eth_call only
+      if (testNetworkType === null && chainId !== 1337) {
         setStatus("simulating");
 
         const simResult = await runTenderlySimulation(
@@ -2021,6 +2192,23 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           setStatus("idle");
           return simResult.result;
         }
+      } else if (testNetworkType === "tenderly") {
+        setStatus("simulating");
+
+        const vnetResult = await runVNetSimulation(
+          publicClient.transport,
+          { from: address, to: controllerAddress, data: callData },
+          address,
+        );
+
+        if (vnetResult.result) {
+          setSimulationResult(vnetResult.result);
+        }
+
+        if (options?.previewOnly) {
+          setStatus("idle");
+          return vnetResult.result;
+        }
       } else {
         if (process.env.NODE_ENV === "development") {
           await devEthCall(publicClient, { account: address, to: controllerAddress as `0x${string}`, data: callData as `0x${string}` });
@@ -2029,6 +2217,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           setStatus("idle");
           return null;
         }
+      }
+
+      // Snapshot position + balances before TX
+      let snapBefore: Awaited<ReturnType<typeof snapshotTx>> | undefined;
+      if (process.env.NODE_ENV === "development" && address) {
+        snapBefore = await snapshotTx(publicClient, address, controllerAddress as `0x${string}`, [vaultAddress]);
       }
 
       setStatus("executing");
@@ -2061,7 +2255,13 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         pollingInterval: 1_000,
       });
 
-      if (process.env.NODE_ENV === "development") console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
+      if (process.env.NODE_ENV === "development") {
+        console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
+        if (snapBefore && address) {
+          const snapAfter = await snapshotTx(publicClient, address, controllerAddress as `0x${string}`, [vaultAddress]);
+          logTxDiff("selfLiquidate", snapBefore, snapAfter);
+        }
+      }
       if (receipt.status === "success") {
         setStatus("success");
       } else {
@@ -2075,7 +2275,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, writeContractAsync, isTenderlyVNet, chainId, simulationResult]);
+  }, [address, publicClient, writeContractAsync, testNetworkType, chainId, simulationResult]);
 
   return {
     createLoan,
@@ -2088,7 +2288,6 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     borrowMore,
     repay,
     repayDirect,
-    repayWithRedeem,
     repayWithSwap,
     borrowAndSwap,
     selfLiquidate,
