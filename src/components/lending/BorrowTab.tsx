@@ -7,14 +7,15 @@ import { toast } from "sonner";
 import { isUserRejection } from "@/lib/analytics";
 import {
   Loader2,
-  Check,
   AlertTriangle,
   ArrowRightLeft,
   Route,
   RouteOff,
-  ExternalLink,
+  Plus,
+  X,
 } from "lucide-react";
-import { useAccount, usePublicClient, useGasPrice, useBlockNumber } from "wagmi";
+import { ApprovalCard } from "@/components/ApprovalCard";
+import { useAccount, usePublicClient, useGasPrice, useBlockNumber, useBalance } from "wagmi";
 import { formatUnits, parseUnits } from "viem";
 import { useQuery } from "@tanstack/react-query";
 import type { VaultConfig } from "@/config/vaults";
@@ -26,7 +27,7 @@ import { RouteDisplay } from "@/components/RouteDisplay";
 import { MaxButton } from "@/components/MaxButton";
 import { cn } from "@/lib/utils";
 import { sanitizeAmount } from "@/lib/sanitize";
-import { fetchRoute, fetchTokenPrices } from "@/lib/enso";
+import { fetchRoute, fetchTokenPrices, ETH_ADDRESS } from "@/lib/enso";
 import { CRVUSD_ADDRESS } from "@/lib/zapper";
 import { CURVE_SAVINGS, TOKENS, TANGENT } from "@/config/vaults";
 import { getVaultInfo } from "@/lib/curve-lending";
@@ -131,6 +132,7 @@ interface BorrowTabProps {
   vault: VaultConfig;
   position: LendingPosition | null;
   controllerAddress: `0x${string}`;
+  userBalance: string; // Vault token balance in wei
   onTransactionSuccess: () => void;
   onEstimatedHealthChange?: (health: number | null) => void;
   onDebtDeltaChange?: (delta: bigint | null) => void;
@@ -142,6 +144,7 @@ export function BorrowTab({
   vault,
   position,
   controllerAddress,
+  userBalance,
   onTransactionSuccess,
   onEstimatedHealthChange,
   onDebtDeltaChange,
@@ -150,6 +153,108 @@ export function BorrowTab({
 }: BorrowTabProps) {
   const { address } = useAccount();
   const publicClient = usePublicClient();
+
+  // Optional collateral addition with token selection (like LeverageTab)
+  const vaultToken: EnsoToken = useMemo(() => ({
+    address: vault.address,
+    chainId: 1,
+    name: vault.name,
+    symbol: vault.symbol,
+    decimals: vault.decimals,
+    logoURI: vault.logoSmall,
+    type: "defi" as const,
+  }), [vault]);
+
+  const [collateralToken, setCollateralToken] = useState<EnsoToken>(vaultToken);
+  const isCollateralToken = collateralToken.address.toLowerCase() === vault.address.toLowerCase();
+  const [showCollateralInput, setShowCollateralInput] = useState(false);
+  const [collateralAmount, setCollateralAmountState] = useState("");
+  const setCollateralAmount = useCallback(
+    (v: string) => setCollateralAmountState(sanitizeAmount(v)),
+    []
+  );
+
+  // Balance for non-vault collateral tokens
+  const { data: altTokenBalance } = useBalance({
+    address,
+    token: collateralToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase()
+      ? undefined
+      : collateralToken.address as `0x${string}`,
+    query: { enabled: !!address && !isCollateralToken },
+  });
+  const userBalanceBn = useMemo(() => {
+    try { return BigInt(userBalance); } catch { return 0n; }
+  }, [userBalance]);
+  const effectiveCollateralBalance = isCollateralToken ? userBalanceBn : (altTokenBalance?.value ?? 0n);
+  const effectiveCollateralDecimals = isCollateralToken ? vault.decimals : (altTokenBalance?.decimals ?? collateralToken.decimals);
+
+  // Swap quote: collateral token → vault token (for non-vault tokens)
+  const debouncedCollateral = useDebouncedValue(collateralAmount, 500);
+  const { data: collateralSwapQuote, isLoading: collateralSwapLoading } = useQuery({
+    queryKey: ["borrow-collateral-swap", collateralToken.address, debouncedCollateral, address],
+    queryFn: async () => {
+      if (!address) throw new Error("No address");
+      const amountWei = parseUnits(debouncedCollateral, effectiveCollateralDecimals).toString();
+      return fetchRoute({
+        fromAddress: address,
+        tokenIn: collateralToken.address,
+        tokenOut: vault.address,
+        amountIn: amountWei,
+        slippage: "300",
+      });
+    },
+    enabled: !isCollateralToken && !!address && !!debouncedCollateral && Number(debouncedCollateral) > 0,
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+    retry: 1,
+  });
+
+  // Effective collateral in vault token terms (for health calc + maxBorrowable)
+  const collateralWei = useMemo(() => {
+    if (!collateralAmount || Number(collateralAmount) <= 0) return 0n;
+    if (isCollateralToken) {
+      try { return parseUnits(collateralAmount, vault.decimals); } catch { return 0n; }
+    }
+    // Non-vault token: use swap quote output (vault token amount)
+    if (collateralSwapQuote?.amountOut) return BigInt(collateralSwapQuote.amountOut);
+    return 0n;
+  }, [collateralAmount, vault.decimals, isCollateralToken, collateralSwapQuote]);
+
+  const formattedCollateralBalance = useMemo(() => {
+    try {
+      return Number(formatUnits(effectiveCollateralBalance, effectiveCollateralDecimals))
+        .toLocaleString(undefined, { maximumFractionDigits: 4 });
+    } catch { return "0"; }
+  }, [effectiveCollateralBalance, effectiveCollateralDecimals]);
+
+  const hasInsufficientCollateral = useMemo(() => {
+    if (!collateralAmount || Number(collateralAmount) <= 0) return false;
+    try {
+      const inputWei = parseUnits(collateralAmount, effectiveCollateralDecimals);
+      return inputWei > effectiveCollateralBalance;
+    } catch { return false; }
+  }, [collateralAmount, effectiveCollateralDecimals, effectiveCollateralBalance]);
+
+  // Collateral swap exchange rate: 1 inputToken = X vaultToken
+  const collateralExchangeRate = useMemo(() => {
+    if (isCollateralToken || !debouncedCollateral || Number(debouncedCollateral) === 0) return null;
+    if (!collateralSwapQuote?.amountOut) return null;
+    const outFormatted = Number(formatUnits(BigInt(collateralSwapQuote.amountOut), vault.decimals));
+    if (outFormatted === 0) return null;
+    return outFormatted / Number(debouncedCollateral);
+  }, [isCollateralToken, debouncedCollateral, collateralSwapQuote, vault.decimals]);
+
+  // Collateral swap price impact from Enso quote
+  const collateralPriceImpact = useMemo(() => {
+    if (isCollateralToken || collateralSwapLoading) return null;
+    if (!collateralSwapQuote?.priceImpact) return null;
+    return Number(collateralSwapQuote.priceImpact);
+  }, [isCollateralToken, collateralSwapLoading, collateralSwapQuote]);
+
+  // Token selection (default: crvUSD) — declared here so maxBorrowable can depend on it
+  const [borrowToken, setBorrowToken] = useState<EnsoToken>(CRVUSD_TOKEN);
+  const isCrvUsd =
+    borrowToken.address.toLowerCase() === CRVUSD_ADDRESS.toLowerCase();
 
   // Max additional crvUSD the user can borrow (max_borrowable - current debt)
   // null = not yet calculated, 0n = truly zero capacity
@@ -164,11 +269,12 @@ export function BorrowTab({
 
       try {
         const N = BigInt(position.N);
+        const totalCollateral = position.collateral + collateralWei;
         const maxTotal = await publicClient.readContract({
           address: controllerAddress,
           abi: CONTROLLER_ABI,
           functionName: "max_borrowable",
-          args: [position.collateral, N, position.debt],
+          args: [totalCollateral, N, position.debt],
         });
         const additional = maxTotal > position.debt ? maxTotal - position.debt : 0n;
         setMaxBorrowable(additional);
@@ -178,7 +284,7 @@ export function BorrowTab({
     }
 
     calculateMaxBorrowable();
-  }, [publicClient, controllerAddress, position]);
+  }, [publicClient, controllerAddress, position, collateralWei]);
 
   // Controller's available crvUSD — detects when pool liquidity is the borrowing constraint
   const { data: controllerCrvUsdBalance } = useQuery({
@@ -203,11 +309,6 @@ export function BorrowTab({
     const threshold = controllerCrvUsdBalance * 105n / 100n;
     return maxBorrowable <= threshold;
   }, [controllerCrvUsdBalance, maxBorrowable]);
-
-  // Token selection (default: crvUSD)
-  const [borrowToken, setBorrowToken] = useState<EnsoToken>(CRVUSD_TOKEN);
-  const isCrvUsd =
-    borrowToken.address.toLowerCase() === CRVUSD_ADDRESS.toLowerCase();
 
   // Form state — amount is in the selected token's denomination
   // crvUSD: amount of crvUSD debt to create
@@ -237,6 +338,7 @@ export function BorrowTab({
 
   // Rate inversion toggle
   const [rateInverted, setRateInverted] = useState(false);
+  const [collateralRateInverted, setCollateralRateInverted] = useState(false);
 
   // Health estimation
   const [estimatedHealth, setEstimatedHealth] = useState<number | null>(null);
@@ -262,6 +364,7 @@ export function BorrowTab({
   // Lending actions
   const {
     borrowMore,
+    borrowMoreWithSwap,
     borrowAndSwap,
     pendingApproval,
     approvalProgress,
@@ -283,11 +386,6 @@ export function BorrowTab({
   if (pendingApproval) lastApprovalRef.current = pendingApproval;
   const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
 
-  // Track which approval button was clicked (spinner only on that button)
-  const [approvingType, setApprovingType] = useState<"exact" | "unlimited" | "single" | null>(null);
-  useEffect(() => {
-    if (!isApproving) setApprovingType(null);
-  }, [isApproving]);
 
   // Simulation toggle from settings
   const [showSimulationPreview, setShowSimulationPreview] = useState(() => {
@@ -310,7 +408,7 @@ export function BorrowTab({
       setShowSimulationModal(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [borrowAmount, borrowToken.address]);
+  }, [borrowAmount, borrowToken.address, collateralAmount, collateralToken.address]);
 
   // Toast notifications
   useEffect(() => {
@@ -491,11 +589,12 @@ export function BorrowTab({
   });
 
 
-  // Intermediate amounts for cvgCVX route display (set during swap quote)
+  // Intermediate amounts for route display (set during swap quote)
   const [cvgCvxRouteAmounts, setCvgCvxRouteAmounts] = useState<{
     cvgCvx: string;
     cvx: string;
   } | null>(null);
+  const [swapIntermediateAmount, setSwapIntermediateAmount] = useState<string | null>(null);
 
   // Reverse quote for non-crvUSD tokens: selectedToken → crvUSD
   // User enters desired token amount; quote tells us how much crvUSD debt is needed
@@ -553,6 +652,10 @@ export function BorrowTab({
           functionName: "previewRedeem",
           args: [BigInt(amountWei)],
         });
+        // Store intermediate amount for route display
+        setSwapIntermediateAmount(
+          Number(formatUnits(underlyingAmount, 18)).toLocaleString(undefined, { maximumFractionDigits: 4 })
+        );
         return fetchRoute({
           fromAddress: address,
           tokenIn: vaultInfo.underlying,
@@ -562,6 +665,7 @@ export function BorrowTab({
         });
       }
 
+      setSwapIntermediateAmount(null);
       // Regular token: quote selectedToken → crvUSD
       return fetchRoute({
         fromAddress: address,
@@ -671,7 +775,7 @@ export function BorrowTab({
           address: controllerAddress,
           abi: CONTROLLER_ABI,
           functionName: "health_calculator",
-          args: [address, 0n, estimatedCrvUsdBorrow, true, 0n],
+          args: [address, collateralWei, estimatedCrvUsdBorrow, true, 0n],
         });
 
         setEstimatedHealth(Number(health) / 1e16);
@@ -686,7 +790,7 @@ export function BorrowTab({
 
     const timer = setTimeout(calculateHealth, 300);
     return () => clearTimeout(timer);
-  }, [publicClient, controllerAddress, address, position, estimatedCrvUsdBorrow]);
+  }, [publicClient, controllerAddress, address, position, estimatedCrvUsdBorrow, collateralWei]);
 
   // Report estimated health to parent
   useEffect(() => {
@@ -762,8 +866,28 @@ export function BorrowTab({
       if (isCrvUsd) {
         // Path A: direct controller.borrow_more()
         const debtWei = parseUnits(borrowAmount, 18).toString();
+
+        // Non-vault collateral token: use Enso bundle (swap → borrow_more)
+        const hasSwapCollateral = !isCollateralToken && collateralAmount && Number(collateralAmount) > 0;
+
+        const executeBorrow = async (previewOnly: boolean) => {
+          if (hasSwapCollateral) {
+            return borrowMoreWithSwap(
+              vault.address as `0x${string}`,
+              collateralToken.address,
+              collateralAmount,
+              debtWei,
+              effectiveCollateralDecimals,
+              Number(slippage),
+              { previewOnly, tokenSymbol: collateralToken.symbol }
+            );
+          }
+          const collateral = collateralWei > 0n ? formatUnits(collateralWei, vault.decimals) : "0";
+          return borrowMore(vault.address as `0x${string}`, collateral, debtWei, { previewOnly });
+        };
+
         if (showSimulationPreview) {
-          const result = await borrowMore(vault.address as `0x${string}`, "0", debtWei, { previewOnly: true });
+          const result = await executeBorrow(true);
           if (result) {
             simulationBlock.current = currentBlock ?? 0n;
             setShowSimulationModal(true);
@@ -792,13 +916,17 @@ export function BorrowTab({
           if (result) return; // Modal opened — bail
           // No simulation data (e.g. Anvil) — fall through to execute
         }
-        await borrowMore(vault.address as `0x${string}`, "0", debtWei);
+        await executeBorrow(false);
       } else {
-        // Path B: borrow crvUSD + swap
+        // Path B: borrow crvUSD + swap (with optional collateral)
         if (!estimatedCrvUsdBorrow) return;
         const debtHumanReadable = formatUnits(estimatedCrvUsdBorrow, 18);
         const swapOutputEstimate = borrowAmount
           ? parseUnits(borrowAmount, borrowToken.decimals)
+          : undefined;
+        // Include vault token collateral if entered (only for vault token, not swapped tokens)
+        const collateralForBundle = isCollateralToken && collateralWei > 0n
+          ? collateralWei.toString()
           : undefined;
         if (showSimulationPreview) {
           const result = await borrowAndSwap(
@@ -806,7 +934,7 @@ export function BorrowTab({
             borrowToken.address,
             debtHumanReadable,
             Number(slippage),
-            { previewOnly: true, tokenSymbol: borrowToken.symbol, estimatedSwapOutput: swapOutputEstimate }
+            { previewOnly: true, tokenSymbol: borrowToken.symbol, estimatedSwapOutput: swapOutputEstimate, collateralAmount: collateralForBundle }
           );
           if (result) {
             simulationBlock.current = currentBlock ?? 0n;
@@ -841,7 +969,7 @@ export function BorrowTab({
           borrowToken.address,
           debtHumanReadable,
           Number(slippage),
-          { tokenSymbol: borrowToken.symbol, estimatedSwapOutput: swapOutputEstimate }
+          { tokenSymbol: borrowToken.symbol, estimatedSwapOutput: swapOutputEstimate, collateralAmount: collateralForBundle }
         );
       }
     } catch (err) {
@@ -871,12 +999,16 @@ export function BorrowTab({
     status !== "reverted" &&
     status !== "needsApproval";
 
+  const collateralSwapPending = !isCollateralToken && !!collateralAmount && Number(collateralAmount) > 0 && collateralSwapLoading;
+
   const isFormValid =
     !!borrowAmount &&
     Number(borrowAmount) > 0 &&
     position?.hasLoan &&
     !exceedsMax &&
     !debtTooHigh &&
+    !hasInsufficientCollateral &&
+    !collateralSwapPending &&
     (isCrvUsd || (!quoteLoading && estimatedCrvUsdBorrow !== null));
 
   const getButtonText = () => {
@@ -884,9 +1016,10 @@ export function BorrowTab({
     if (status === "simulating") return <>Simulating<LoadingDots /></>;
     if (status === "executing") return <>Confirm in wallet<LoadingDots /></>;
     if (status === "waitingTx") return <>Waiting for confirmation<LoadingDots /></>;
+    if (hasInsufficientCollateral) return "Insufficient collateral balance";
     if (debtTooHigh || exceedsMax) return "Exceeds max borrowable";
 
-    if (isCrvUsd) return "Borrow crvUSD";
+    if (isCrvUsd) return collateralWei > 0n ? "Add Collateral & Borrow" : "Borrow crvUSD";
     if (isVaultWithCrvUsdUnderlying) return "Borrow & Deposit";
     return "Borrow & Swap";
   };
@@ -905,7 +1038,7 @@ export function BorrowTab({
 
   return (
     <div className="space-y-4">
-      {/* Amount Input + Token Selector */}
+      {/* Borrow Amount + Token Selector */}
       <div>
         <div className="flex items-center justify-between mb-2">
           <label className="text-sm text-[var(--muted-foreground)]">
@@ -950,7 +1083,6 @@ export function BorrowTab({
           )}
         </div>
       </div>
-
 
       {/* Quote details (non-crvUSD, when amount entered and quote loaded) */}
       {!isCrvUsd && borrowAmount && Number(borrowAmount) > 0 && (
@@ -1046,6 +1178,113 @@ export function BorrowTab({
         </>
       )}
 
+      {/* Add Collateral toggle + panel */}
+      <div>
+        <button
+          type="button"
+          onClick={() => {
+            if (showCollateralInput) {
+              setCollateralAmountState("");
+              setCollateralToken(vaultToken);
+            }
+            setShowCollateralInput(v => !v);
+          }}
+          className="flex items-center gap-1 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+        >
+          {showCollateralInput ? <X size={12} /> : <Plus size={12} />}
+          {showCollateralInput ? "Cancel" : "Add collateral"}
+        </button>
+        <div
+          className="grid transition-[grid-template-rows] duration-300 ease-in-out"
+          style={{ gridTemplateRows: showCollateralInput ? "1fr" : "0fr" }}
+        >
+          <div className="overflow-hidden">
+            <div className="pt-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-sm text-[var(--muted-foreground)]">
+                  Add {isCollateralToken ? "Collateral" : "Input"}
+                </label>
+                <span className="text-xs text-[var(--muted-foreground)]">
+                  Max: {formattedCollateralBalance}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--muted)] border border-[var(--border)] focus-within:ring-2 focus-within:ring-inset focus-within:ring-[var(--accent)] transition-shadow">
+                <input
+                  type="text"
+                  value={collateralAmount}
+                  onChange={(e) => setCollateralAmount(e.target.value)}
+                  placeholder="0.0"
+                  className="flex-1 min-w-0 bg-transparent mono text-sm outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
+                />
+                <TokenSelector
+                  selectedToken={collateralToken}
+                  onSelect={(token) => { setCollateralToken(token); setCollateralAmountState(""); }}
+                  priorityTokens={[vaultToken]}
+                  excludeDefiTokens
+                />
+                {isCollateralToken ? (
+                  <MaxButton
+                    balance={formatUnits(effectiveCollateralBalance, effectiveCollateralDecimals)}
+                    onSelect={setCollateralAmount}
+                  />
+                ) : altTokenBalance ? (
+                  <MaxButton
+                    balance={formatUnits(altTokenBalance.value, altTokenBalance.decimals)}
+                    onSelect={setCollateralAmount}
+                  />
+                ) : (
+                  <span className="shrink-0 px-2 py-1 text-xs font-medium text-[var(--muted-foreground)] animate-pulse">
+                    MAX
+                  </span>
+                )}
+              </div>
+              {/* Collateral swap quote details */}
+              {!isCollateralToken && collateralAmount && Number(collateralAmount) > 0 && !collateralSwapLoading && collateralSwapQuote?.amountOut && (
+                <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-[var(--muted-foreground)]">Depositing</span>
+                    <span className="mono">
+                      ≈ {Number(formatUnits(BigInt(collateralSwapQuote.amountOut), vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })} {vault.symbol}
+                    </span>
+                  </div>
+                  {collateralExchangeRate !== null && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-[var(--muted-foreground)]">Rate</span>
+                      <button
+                        type="button"
+                        onClick={() => setCollateralRateInverted(v => !v)}
+                        className="flex items-center gap-1 mono hover:text-[var(--accent)] transition-colors"
+                      >
+                        {collateralRateInverted
+                          ? <>1 {vault.symbol} = {(1 / collateralExchangeRate).toLocaleString(undefined, { maximumFractionDigits: 4 })} {collateralToken.symbol}</>
+                          : <>1 {collateralToken.symbol} = {collateralExchangeRate.toLocaleString(undefined, { maximumFractionDigits: 4 })} {vault.symbol}</>
+                        }
+                        <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
+                      </button>
+                    </div>
+                  )}
+                  {collateralPriceImpact !== null && (
+                    <div className="flex justify-between">
+                      <span className="text-[var(--muted-foreground)]">Price Impact</span>
+                      <span className={cn(
+                        "mono",
+                        collateralPriceImpact <= 0
+                          ? "text-green-500"
+                          : collateralPriceImpact < 3
+                            ? "text-yellow-500"
+                            : "text-red-500"
+                      )}>
+                        {collateralPriceImpact > 0 ? "" : "+"}{(-collateralPriceImpact).toFixed(2)}%
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Low liquidity warning */}
       {isLiquidityConstrained && maxBorrowable && maxBorrowable > 0n && estimatedCrvUsdBorrow && estimatedCrvUsdBorrow >= maxBorrowable * 90n / 100n && (
         <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-500 text-xs flex items-center gap-2">
@@ -1057,116 +1296,36 @@ export function BorrowTab({
       )}
 
       {/* Approval Flow */}
-      <div
-        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
-        style={{ gridTemplateRows: showApprovalCard ? "1fr" : "0fr" }}
-      >
-        <div className="overflow-hidden">
-          {lastApprovalRef.current && (
-            <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-3">
-              <div className="text-sm font-medium">Approvals Required</div>
-              {approvalProgress && (
-                <div className="space-y-2">
-                  {approvalProgress.steps.map((s, i) => (
-                    <div key={i} className="flex items-start gap-2">
-                      <div className="mt-0.5">
-                        {s.done ? (
-                          <Check size={14} className="text-green-500 shrink-0" />
-                        ) : i === approvalProgress.step - 1 ? (
-                          <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)] shrink-0" />
-                        ) : (
-                          <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)]/30 shrink-0" />
-                        )}
-                      </div>
-                      <div>
-                        <div className={cn(
-                          "text-sm",
-                          s.done
-                            ? "text-[var(--muted-foreground)] line-through"
-                            : i === approvalProgress.step - 1
-                              ? "text-[var(--foreground)] font-medium"
-                              : "text-[var(--muted-foreground)]"
-                        )}>
-                          {s.label}
-                        </div>
-                        <div className={cn(
-                          "text-xs",
-                          i === approvalProgress.step - 1
-                            ? "text-[var(--muted-foreground)]"
-                            : "text-[var(--muted-foreground)]/60"
-                        )}>
-                          {s.description}{s.spender && <>{" "}<a href={`https://etherscan.io/address/${s.spender}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={10} className="!inline -mt-0.5" /></a></>}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {lastApprovalRef.current!.type !== "controller" && lastApprovalRef.current!.amount ? (
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => { setApprovingType("exact"); approve(true); }}
-                    disabled={isApproving}
-                    className={cn(
-                      "flex-[2] py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                      isApproving
-                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                        : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
-                    )}
-                  >
-                    {isApproving && approvingType === "exact" ? <>Approving<LoadingDots /></> : `${Number(formatUnits(lastApprovalRef.current!.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${lastApprovalRef.current!.tokenSymbol}`}
-                  </button>
-                  <button
-                    onClick={() => { setApprovingType("unlimited"); approve(false); }}
-                    disabled={isApproving}
-                    className={cn(
-                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                      isApproving
-                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                        : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
-                    )}
-                  >
-                    {isApproving && approvingType === "unlimited" ? <>Approving<LoadingDots /></> : "Max"}
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => { setApprovingType("single"); approve(); }}
-                  disabled={isApproving}
-                  className={cn(
-                    "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
-                    isApproving
-                      ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                      : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
-                  )}
-                >
-                  {isApproving
-                    ? <>Approving<LoadingDots /></>
-                    : `Approve${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`}
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
+      <ApprovalCard
+        show={showApprovalCard}
+        pendingApproval={lastApprovalRef.current}
+        approvalProgress={approvalProgress}
+        isApproving={isApproving}
+        onApprove={(exact) => approve(exact)}
+      />
 
       {/* Simulation Modal */}
       {showSimulationModal && simulationResult && (() => {
-        // Filter asset changes to show only net result:
-        // - "borrow" entries (crvUSD debt created)
-        // - "receive" entries that don't also appear as "send" (skip intermediates)
+        // Filter asset changes to show net result, hiding intermediates:
+        // - "borrow" → always (crvUSD debt created)
+        // - "deposit" → always (collateral added to loan / AMM)
+        // - "send" → only if symbol isn't in borrow/receive/deposit (net wallet outflow, e.g. swap input token)
+        // - "receive" → only if symbol isn't in send/deposit/borrow (net wallet inflow, e.g. swap output token)
         const changes = simulationResult.assetChanges ?? [];
-        const sendSymbols = new Set(
-          changes
-            .filter((c) => c.type === "send")
-            .map((c) => c.symbol.toLowerCase())
+        const symSet = (type: string) => new Set(
+          changes.filter((c) => c.type === type).map((c) => c.symbol.toLowerCase())
         );
-        const filteredChanges = changes.filter(
-          (c) =>
-            c.type === "borrow" ||
-            (c.type === "receive" && !sendSymbols.has(c.symbol.toLowerCase()))
-        );
+        const borrowSyms = symSet("borrow");
+        const sendSyms = symSet("send");
+        const receiveSyms = symSet("receive");
+        const depositSyms = symSet("deposit");
+        const filteredChanges = changes.filter((c) => {
+          const s = c.symbol.toLowerCase();
+          if (c.type === "borrow" || c.type === "deposit") return true;
+          if (c.type === "send") return !borrowSyms.has(s) && !receiveSyms.has(s) && !depositSyms.has(s);
+          if (c.type === "receive") return !sendSyms.has(s) && !depositSyms.has(s) && !borrowSyms.has(s);
+          return true;
+        });
         return (
           <SimulationModal
             isOpen={showSimulationModal}
@@ -1223,10 +1382,10 @@ export function BorrowTab({
         </div>
       </div>
 
-      {/* Settings icon for direct crvUSD path */}
+      {/* Settings icon for direct path (no swaps) */}
       <div
         className="grid transition-[grid-template-rows] duration-300 ease-in-out"
-        style={{ gridTemplateRows: isCrvUsd ? "1fr" : "0fr" }}
+        style={{ gridTemplateRows: isCrvUsd && isCollateralToken ? "1fr" : "0fr" }}
       >
         <div className="overflow-hidden">
           <div className="flex items-center justify-end">
@@ -1249,7 +1408,7 @@ export function BorrowTab({
       {/* Enso Attribution + Route Toggle + Slippage Settings */}
       <div
         className="grid transition-[grid-template-rows] duration-300 ease-in-out"
-        style={{ gridTemplateRows: !isCrvUsd ? "1fr" : "0fr" }}
+        style={{ gridTemplateRows: (!isCrvUsd || !isCollateralToken) ? "1fr" : "0fr" }}
       >
         <div className="overflow-hidden">
           <div className="flex items-center justify-between pt-2">
@@ -1310,7 +1469,10 @@ export function BorrowTab({
         className="grid transition-[grid-template-rows] duration-300 ease-in-out"
         style={{
           gridTemplateRows:
-            showRoute && borrowAmount && Number(borrowAmount) > 0 && (swapQuote || quoteLoading || (isVaultWithCrvUsdUnderlying && estimatedCrvUsdBorrow !== null)) ? "1fr" : "0fr",
+            showRoute && (
+              (borrowAmount && Number(borrowAmount) > 0 && (swapQuote || quoteLoading || (isVaultWithCrvUsdUnderlying && estimatedCrvUsdBorrow !== null))) ||
+              (!isCollateralToken && collateralAmount && Number(collateralAmount) > 0 && (collateralSwapQuote || collateralSwapLoading))
+            ) ? "1fr" : "0fr",
         }}
       >
         <div className="overflow-hidden">
@@ -1319,90 +1481,71 @@ export function BorrowTab({
                   Route
                 </div>
                 <RouteDisplay
-                  routeInfo={
-                    isVaultWithCrvUsdUnderlying && estimatedCrvUsdBorrow !== null
-                      ? {
-                          steps: [
-                            {
-                              tokenSymbol: "crvUSD",
-                              action: "Borrow",
-                              protocol: "Curve LlamaLend",
-                            },
-                            {
-                              tokenSymbol: borrowToken.symbol,
-                              action: "Deposit",
-                              description: "from crvUSD",
-                              protocol: "Curve Savings",
-                            },
-                          ],
-                        }
-                      : swapQuote
-                      ? {
-                          steps: [
-                            {
-                              tokenSymbol: "crvUSD",
-                              action: "Borrow",
-                              protocol: "Curve LlamaLend",
-                            },
-                            ...(isCvgCvxVault
-                              ? [
-                                  {
-                                    tokenSymbol: "CVX",
-                                    amount: cvgCvxRouteAmounts?.cvx,
-                                    action: "Swap",
-                                    description: "from crvUSD",
-                                    protocol: "Enso Router",
-                                  },
-                                  {
-                                    tokenSymbol: "cvgCVX",
-                                    amount: cvgCvxRouteAmounts?.cvgCvx,
-                                    action: "Swap",
-                                    description: "CVX → CVX1 → cvgCVX",
-                                    protocol: "LiquidBoost",
-                                  },
-                                  {
-                                    tokenSymbol: borrowToken.symbol,
-                                    action: "Deposit",
-                                    protocol: "yld",
-                                  },
-                                ]
-                              : vaultInfo
-                                ? [
-                                    {
-                                      tokenSymbol: vaultInfo.underlyingSymbol,
-                                      action: "Swap",
-                                      description: "from crvUSD",
-                                      protocol: "Enso Router",
-                                    },
-                                    {
-                                      tokenSymbol: borrowToken.symbol,
-                                      action: "Deposit",
-                                      protocol: "yld",
-                                    },
-                                  ]
-                                : [
-                                    {
-                                      tokenSymbol: borrowToken.symbol,
-                                      action: "Swap",
-                                      description: "from crvUSD",
-                                      protocol: "Enso Router",
-                                    },
-                                  ]),
-                          ],
-                        }
-                      : undefined
-                  }
-                  inputSymbol="crvUSD"
-                  outputSymbol={borrowToken.symbol}
+                  routeInfo={(() => {
+                    // Build route steps dynamically to include both collateral and borrow swaps
+                    const steps: Array<{ tokenSymbol: string; amount?: string; action: string; description?: string; protocol: string }> = [];
+
+                    // Collateral swap steps (when non-vault collateral token)
+                    if (!isCollateralToken && collateralAmount && Number(collateralAmount) > 0 && collateralSwapQuote?.amountOut) {
+                      steps.push({
+                        tokenSymbol: collateralToken.symbol,
+                        action: "Swap",
+                        description: `for ${vault.symbol}`,
+                        protocol: "Enso Router",
+                      });
+                      steps.push({
+                        tokenSymbol: vault.symbol,
+                        amount: Number(formatUnits(BigInt(collateralSwapQuote.amountOut), vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 }),
+                        action: "Deposit",
+                        description: "as collateral",
+                        protocol: "Curve LlamaLend",
+                      });
+                    }
+
+                    // Borrow + output swap steps
+                    if (isVaultWithCrvUsdUnderlying && estimatedCrvUsdBorrow !== null) {
+                      steps.push(
+                        { tokenSymbol: "crvUSD", action: "Borrow", protocol: "Curve LlamaLend" },
+                        { tokenSymbol: borrowToken.symbol, action: "Deposit", description: "from crvUSD", protocol: "Curve Savings" },
+                      );
+                    } else if (swapQuote) {
+                      steps.push({ tokenSymbol: "crvUSD", action: "Borrow", protocol: "Curve LlamaLend" });
+                      if (isCvgCvxVault) {
+                        steps.push(
+                          { tokenSymbol: "CVX", amount: cvgCvxRouteAmounts?.cvx, action: "Swap", description: "from crvUSD", protocol: "Enso Router" },
+                          { tokenSymbol: "cvgCVX", amount: cvgCvxRouteAmounts?.cvgCvx, action: "Swap", description: "CVX → CVX1 → cvgCVX", protocol: "LiquidBoost" },
+                          { tokenSymbol: borrowToken.symbol, action: "Deposit", protocol: "yld" },
+                        );
+                      } else if (vaultInfo) {
+                        steps.push(
+                          { tokenSymbol: vaultInfo.underlyingSymbol, amount: swapIntermediateAmount ?? undefined, action: "Swap", description: "from crvUSD", protocol: "Enso Router" },
+                          { tokenSymbol: borrowToken.symbol, action: "Deposit", protocol: "yld" },
+                        );
+                      } else {
+                        steps.push(
+                          { tokenSymbol: borrowToken.symbol, action: "Swap", description: "from crvUSD", protocol: "Enso Router" },
+                        );
+                      }
+                    } else if (isCrvUsd && borrowAmount && Number(borrowAmount) > 0 && steps.length > 0) {
+                      // Direct crvUSD borrow — only show borrow step when collateral swap is also in the route
+                      steps.push({ tokenSymbol: "crvUSD", action: "Borrow", protocol: "Curve LlamaLend" });
+                    }
+
+                    return steps.length > 0 ? { steps } : undefined;
+                  })()}
+                  inputSymbol={!isCollateralToken && collateralAmount && Number(collateralAmount) > 0 ? collateralToken.symbol : "crvUSD"}
+                  outputSymbol={isCrvUsd ? "crvUSD" : borrowToken.symbol}
                   inputAmount={
-                    estimatedCrvUsdBorrow
-                      ? Number(formatUnits(estimatedCrvUsdBorrow, 18)).toFixed(2)
-                      : undefined
+                    !isCollateralToken && collateralAmount && Number(collateralAmount) > 0
+                      ? Number(collateralAmount).toFixed(4)
+                      : estimatedCrvUsdBorrow
+                        ? Number(formatUnits(estimatedCrvUsdBorrow, 18)).toFixed(2)
+                        : undefined
                   }
                   outputAmount={
                     borrowAmount ? Number(borrowAmount).toFixed(4) : undefined
                   }
-                  isLoading={quoteLoading}
+                  isLoading={quoteLoading || collateralSwapLoading}
                 />
           </div>
         </div>

@@ -191,8 +191,8 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
             </div>
 
             {/* Right column - Lending Panel */}
-            <div className="lg:col-span-2">
-              <div className="sticky top-28">
+            <div className="lg:col-span-2 lg:self-start">
+              <div>
                 <LendingInterface
                   vault={vault}
                   userBalance={String(balance ?? 0n)}

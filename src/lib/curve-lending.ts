@@ -6,7 +6,7 @@ import { CURVE_CONTROLLERS, VAULTS, EXTERNAL_VAULT_CONFIG, TOKENS, PIREX, LLAMA_
 import { calculateMinDy } from "@/lib/curve";
 import { getLpxCvxToCvxSwapRate, ENSO_SHORTCUTS, ENSO_ROUTER_EXECUTOR, fetchRoute } from "@/lib/enso";
 import { previewRedeem } from "@/lib/curve/rpc";
-import { CRVUSD_ADDRESS, ZAPPER_ADDRESS } from "@/lib/zapper";
+import { CRVUSD_ADDRESS, ZAPPER_V2_ADDRESS } from "@/lib/zapper";
 import { decodeFunctionData } from "viem";
 
 const CRVUSD = CRVUSD_ADDRESS;
@@ -64,8 +64,13 @@ const CONTROLLER_CREATE_LOAN_ABI = "function create_loan(uint256 collateral, uin
 const CONTROLLER_ADD_COLLATERAL_ABI = "function add_collateral(uint256 collateral, address _for)";
 // remove_collateral ABI - single param (no use_eth on this controller)
 const CONTROLLER_REMOVE_COLLATERAL_ABI = "function remove_collateral(uint256 collateral)";
+// remove_collateral ABI - 2-param version for router mode (msg.sender != user)
+const CONTROLLER_REMOVE_COLLATERAL_FOR_ABI = "function remove_collateral(uint256 collateral, address _for)";
 // Repay ABI - uses 3-param overload (no use_eth on this controller)
 const CONTROLLER_REPAY_ABI = "function repay(uint256 _d_debt, address _for, int256 max_active_band)";
+// Repay ABI - 2-param version (for Enso bundle direct call)
+const CONTROLLER_REPAY_2ARG_ABI = "function repay(uint256 _d_debt, address _for)";
+const CONTROLLER_BORROW_MORE_ABI = "function borrow_more(uint256 collateral, uint256 debt)";
 const CONTROLLER_LIQUIDATE_ABI = "function liquidate(address user, uint256 min_x)";
 
 // Import the fetchBundle function from enso.ts
@@ -247,6 +252,85 @@ export async function fetchRepayBundle(params: {
 }
 
 /**
+ * Repay crvUSD debt AND withdraw collateral in a single Enso bundle.
+ * Uses `call` actions (not `curve-lending/repay`) for controller.repay() + controller.remove_collateral().
+ *
+ * Prerequisites (checked by useCurveLendingActions.repayAndWithdraw):
+ * - crvUSD.approve(ENSO_SHORTCUTS, repayAmount) — for Enso to pull crvUSD
+ * - controller.approve(ENSO_SHORTCUTS, true) — for 2-arg remove_collateral
+ */
+export async function fetchRepayAndWithdrawBundle(params: {
+  fromAddress: string;
+  vaultAddress: `0x${string}`;
+  repayAmount: string;      // crvUSD wei
+  withdrawAmount: string;   // collateral wei
+  closeLoan?: boolean;
+  withdrawTokenOut?: string; // If different from collateral, swap after withdrawal
+}): Promise<EnsoBundleResponse> {
+  const controllerAddress = CURVE_CONTROLLERS[params.vaultAddress as keyof typeof CURVE_CONTROLLERS];
+  if (!controllerAddress) {
+    throw new Error(`No controller found for vault ${params.vaultAddress}`);
+  }
+
+  // When closing loan, pass max uint256 so interest accrual doesn't prevent closure
+  const repayArg = params.closeLoan ? MAX_INT256 : params.repayAmount;
+
+  const actions: EnsoBundleAction[] = [
+    // 1. Approve crvUSD to controller
+    {
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: CRVUSD,
+        spender: controllerAddress,
+        amount: params.repayAmount,
+      },
+    },
+    // 2. Repay debt
+    {
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: controllerAddress.toLowerCase(),
+        method: "repay",
+        abi: CONTROLLER_REPAY_2ARG_ABI,
+        args: [repayArg, params.fromAddress],
+      },
+    },
+    // 3. Remove collateral — 2-arg version sends to _for (user)
+    {
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: controllerAddress.toLowerCase(),
+        method: "remove_collateral",
+        abi: CONTROLLER_REMOVE_COLLATERAL_FOR_ABI,
+        args: [params.withdrawAmount, params.fromAddress],
+      },
+    },
+  ];
+
+  // 4. If withdrawing to a different token, swap collateral → desired token
+  if (params.withdrawTokenOut && params.withdrawTokenOut.toLowerCase() !== params.vaultAddress.toLowerCase()) {
+    actions.push({
+      protocol: "enso",
+      action: "route",
+      args: {
+        tokenIn: params.vaultAddress,
+        tokenOut: params.withdrawTokenOut,
+        amountIn: params.withdrawAmount,
+      },
+    });
+  }
+
+  return fetchBundle({
+    fromAddress: params.fromAddress,
+    actions,
+    routingStrategy: "router",
+  });
+}
+
+/**
  * Repay debt using any token (swaps to crvUSD first via Enso routing)
  * For when user wants to repay with a token other than crvUSD
  *
@@ -297,6 +381,8 @@ export async function fetchRepayWithSwapBundle(params: {
   slippage?: number; // Slippage in basis points (default 100 = 1%)
   maxRepayAmount?: string; // Optional cap on repay amount (for closing loans)
   inSoftLiquidation?: boolean; // Use direct repay() call instead of curve-lending/repay
+  withdrawAmount?: string; // Optional: collateral wei to withdraw after repay
+  withdrawTokenOut?: string; // If different from collateral, swap after withdrawal
 }): Promise<EnsoBundleResponse> {
   const controllerAddress = CURVE_CONTROLLERS[params.vaultAddress as keyof typeof CURVE_CONTROLLERS];
   if (!controllerAddress) {
@@ -411,6 +497,31 @@ export async function fetchRepayWithSwapBundle(params: {
             }]),
       ];
 
+      // Optional: withdraw collateral after repay
+      if (params.withdrawAmount && params.withdrawAmount !== "0") {
+        actions.push({
+          protocol: "enso",
+          action: "call",
+          args: {
+            address: controllerAddress.toLowerCase(),
+            method: "remove_collateral",
+            abi: CONTROLLER_REMOVE_COLLATERAL_FOR_ABI,
+            args: [params.withdrawAmount, params.fromAddress],
+          },
+        });
+        if (params.withdrawTokenOut && params.withdrawTokenOut.toLowerCase() !== params.vaultAddress.toLowerCase()) {
+          actions.push({
+            protocol: "enso",
+            action: "route",
+            args: {
+              tokenIn: params.vaultAddress,
+              tokenOut: params.withdrawTokenOut,
+              amountIn: params.withdrawAmount,
+            },
+          });
+        }
+      }
+
       return fetchBundle({
         fromAddress: params.fromAddress,
         actions,
@@ -479,6 +590,31 @@ export async function fetchRepayWithSwapBundle(params: {
         });
       }
 
+      // Optional: withdraw collateral after repay
+      if (params.withdrawAmount && params.withdrawAmount !== "0") {
+        actions.push({
+          protocol: "enso",
+          action: "call",
+          args: {
+            address: controllerAddress.toLowerCase(),
+            method: "remove_collateral",
+            abi: CONTROLLER_REMOVE_COLLATERAL_FOR_ABI,
+            args: [params.withdrawAmount, params.fromAddress],
+          },
+        });
+        if (params.withdrawTokenOut && params.withdrawTokenOut.toLowerCase() !== params.vaultAddress.toLowerCase()) {
+          actions.push({
+            protocol: "enso",
+            action: "route",
+            args: {
+              tokenIn: params.vaultAddress,
+              tokenOut: params.withdrawTokenOut,
+              amountIn: params.withdrawAmount,
+            },
+          });
+        }
+      }
+
       return fetchBundle({
         fromAddress: params.fromAddress,
         actions,
@@ -512,6 +648,31 @@ export async function fetchRepayWithSwapBundle(params: {
           onBehalfOf: params.fromAddress,
         },
       });
+    }
+
+    // Optional: withdraw collateral after repay
+    if (params.withdrawAmount && params.withdrawAmount !== "0") {
+      actions.push({
+        protocol: "enso",
+        action: "call",
+        args: {
+          address: controllerAddress.toLowerCase(),
+          method: "remove_collateral",
+          abi: CONTROLLER_REMOVE_COLLATERAL_FOR_ABI,
+          args: [params.withdrawAmount, params.fromAddress],
+        },
+      });
+      if (params.withdrawTokenOut && params.withdrawTokenOut.toLowerCase() !== params.vaultAddress.toLowerCase()) {
+        actions.push({
+          protocol: "enso",
+          action: "route",
+          args: {
+            tokenIn: params.vaultAddress,
+            tokenOut: params.withdrawTokenOut,
+            amountIn: params.withdrawAmount,
+          },
+        });
+      }
     }
 
     return fetchBundle({
@@ -550,6 +711,31 @@ export async function fetchRepayWithSwapBundle(params: {
         onBehalfOf: params.fromAddress,
       },
     });
+  }
+
+  // Optional: withdraw collateral after repay
+  if (params.withdrawAmount && params.withdrawAmount !== "0") {
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: controllerAddress.toLowerCase(),
+        method: "remove_collateral",
+        abi: CONTROLLER_REMOVE_COLLATERAL_FOR_ABI,
+        args: [params.withdrawAmount, params.fromAddress],
+      },
+    });
+    if (params.withdrawTokenOut && params.withdrawTokenOut.toLowerCase() !== params.vaultAddress.toLowerCase()) {
+      actions.push({
+        protocol: "enso",
+        action: "route",
+        args: {
+          tokenIn: params.vaultAddress,
+          tokenOut: params.withdrawTokenOut,
+          amountIn: params.withdrawAmount,
+        },
+      });
+    }
   }
 
   return fetchBundle({
@@ -626,6 +812,7 @@ export async function fetchBorrowAndSwapBundle(params: {
   vaultAddress: `0x${string}`;
   tokenOut: string; // Desired output token
   debtAmount: string; // crvUSD to borrow (wei)
+  collateralAmount?: string; // Optional: vault token collateral to add (wei)
   slippage?: number; // Basis points (default 100 = 1%)
 }): Promise<EnsoBundleResponse> {
   const controllerAddress = CURVE_CONTROLLERS[params.vaultAddress as keyof typeof CURVE_CONTROLLERS];
@@ -636,8 +823,33 @@ export async function fetchBorrowAndSwapBundle(params: {
   const slippage = (params.slippage ?? 100).toString();
   const actions: EnsoBundleAction[] = [];
   const vaultInfo = getVaultInfo(params.tokenOut);
+  const hasCollateral = params.collateralAmount && params.collateralAmount !== "0";
 
-  // Action 0: borrow_more — borrows crvUSD, sent to _for (user's wallet, NOT msg.sender)
+  // If adding collateral: pull vault tokens from user to ENSO_SHORTCUTS, approve to controller
+  if (hasCollateral) {
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: params.vaultAddress.toLowerCase(),
+        method: "transferFrom",
+        abi: "function transferFrom(address from, address to, uint256 amount) returns (bool)",
+        args: [params.fromAddress, ENSO_SHORTCUTS, params.collateralAmount],
+      },
+    });
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: params.vaultAddress.toLowerCase(),
+        method: "approve",
+        abi: "function approve(address spender, uint256 amount) returns (bool)",
+        args: [controllerAddress.toLowerCase(), params.collateralAmount],
+      },
+    });
+  }
+
+  // borrow_more — adds collateral (if any) and borrows crvUSD, sent to _for (user)
   actions.push({
     protocol: "enso",
     action: "call",
@@ -645,7 +857,7 @@ export async function fetchBorrowAndSwapBundle(params: {
       address: controllerAddress.toLowerCase(),
       method: "borrow_more",
       abi: "function borrow_more(uint256 collateral, uint256 debt, address _for)",
-      args: ["0", params.debtAmount, params.fromAddress],
+      args: [hasCollateral ? params.collateralAmount : "0", params.debtAmount, params.fromAddress],
     },
   });
 
@@ -881,7 +1093,7 @@ export async function fetchBorrowAndSwapBundle(params: {
 
     // Fetch standalone Enso route for the swap calldata
     const route = await fetchRoute({
-      fromAddress: ZAPPER_ADDRESS,
+      fromAddress: ZAPPER_V2_ADDRESS,
       tokenIn: CRVUSD,
       tokenOut: params.tokenOut,
       amountIn: params.debtAmount,
@@ -1081,6 +1293,71 @@ export async function fetchAddCollateralWithSwapBundle(params: {
 }
 
 /**
+ * Swap any token to vault collateral and borrow additional crvUSD in one Enso bundle.
+ *
+ * Route: tokenIn → vaultToken (route) → approve to controller → borrow_more(swappedAmount, debtAmount)
+ *
+ * Uses delegate mode so msg.sender = user for borrow_more (which checks msg.sender's loan).
+ * The user needs ERC20 approval of tokenIn to ENSO_SHORTCUTS.
+ */
+export async function fetchBorrowWithSwapCollateralBundle(params: {
+  fromAddress: string;
+  vaultAddress: `0x${string}`;
+  tokenIn: string;
+  amountIn: string; // wei of input token
+  debtAmount: string; // wei of crvUSD to borrow
+  slippage?: number;
+}): Promise<EnsoBundleResponse> {
+  const controllerAddress = CURVE_CONTROLLERS[params.vaultAddress as keyof typeof CURVE_CONTROLLERS];
+  if (!controllerAddress) {
+    throw new Error(`No controller found for vault ${params.vaultAddress}`);
+  }
+
+  const slippage = (params.slippage ?? 100).toString();
+
+  const actions: EnsoBundleAction[] = [
+    // 1. Route input token → vault token (collateral)
+    {
+      protocol: "enso",
+      action: "route",
+      args: {
+        tokenIn: params.tokenIn,
+        tokenOut: params.vaultAddress,
+        amountIn: params.amountIn,
+        slippage,
+      },
+    },
+    // 2. Approve vault tokens to controller
+    {
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: params.vaultAddress,
+        spender: controllerAddress,
+        amount: { useOutputOfCallAt: 0 },
+      },
+    },
+    // 3. borrow_more(collateral, debt) — adds swapped collateral + borrows crvUSD
+    {
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: controllerAddress.toLowerCase(),
+        method: "borrow_more",
+        abi: CONTROLLER_BORROW_MORE_ABI,
+        args: [{ useOutputOfCallAt: 0 }, params.debtAmount],
+      },
+    },
+  ];
+
+  return fetchBundle({
+    fromAddress: params.fromAddress,
+    actions,
+    routingStrategy: "delegate",
+  });
+}
+
+/**
  * Remove collateral from an existing loan and swap vault token to any output token.
  *
  * Uses the 2-arg remove_collateral(amount, _for) overload in router mode.
@@ -1107,10 +1384,10 @@ export async function fetchRemoveCollateralAndSwapBundle(params: {
   const slippage = (params.slippage ?? 100).toString();
 
   // Fetch standalone Enso route for vault token → output token
-  // fromAddress=ZAPPER_ADDRESS so tokens are treated as coming from ENSO_SHORTCUTS context
+  // fromAddress=ZAPPER_V2_ADDRESS so tokens are treated as coming from ENSO_SHORTCUTS context
   // receiver=user so output goes directly to user
   const route = await fetchRoute({
-    fromAddress: ZAPPER_ADDRESS,
+    fromAddress: ZAPPER_V2_ADDRESS,
     tokenIn: params.vaultAddress,
     tokenOut: params.tokenOut,
     amountIn: params.collateralAmount,
@@ -1179,7 +1456,7 @@ export async function fetchRemoveCollateralAndSwapBundle(params: {
  * - tokenIn undefined: vaultToken is the input (direct collateral)
  * - tokenIn specified: swap tokenIn → vaultToken first, then create loan
  *
- * The output swap route uses fromAddress=ZAPPER_ADDRESS, receiver=user so
+ * The output swap route uses fromAddress=ZAPPER_V2_ADDRESS, receiver=user so
  * output tokens go directly to the user's wallet.
  */
 export async function fetchCreateLoanWithOutputSwapBundle(params: {
@@ -1243,10 +1520,10 @@ export async function fetchCreateLoanWithOutputSwapBundle(params: {
   });
 
   // Fetch route for crvUSD → tokenOut
-  // fromAddress=ZAPPER_ADDRESS (tokens are in ENSO_SHORTCUTS, same as zapper patterns)
+  // fromAddress=ZAPPER_V2_ADDRESS (tokens are in ENSO_SHORTCUTS, same as zapper patterns)
   // receiver=user so output goes directly to user
   const route = await fetchRoute({
-    fromAddress: ZAPPER_ADDRESS,
+    fromAddress: ZAPPER_V2_ADDRESS,
     tokenIn: CRVUSD,
     tokenOut: params.tokenOut,
     amountIn: params.debtAmount,

@@ -818,6 +818,7 @@ export async function fetchZapOutRoute(params: {
     fromAddress: params.fromAddress,
     actions,
     receiver: params.fromAddress,
+    skipQuote: false, // Standard zap doesn't depend on account state — need amountsOut
   });
 }
 
@@ -865,6 +866,7 @@ export async function fetchZapInRoute(params: {
     fromAddress: params.fromAddress,
     actions,
     receiver: params.fromAddress,
+    skipQuote: false, // Standard zap doesn't depend on account state — need amountsOut
   });
 }
 
@@ -926,6 +928,7 @@ export async function fetchVaultToVaultRoute(params: {
       fromAddress: params.fromAddress,
       actions,
       receiver: params.fromAddress,
+      skipQuote: false, // Standard V2V doesn't depend on account state — need amountsOut
     });
   }
 
@@ -1031,6 +1034,7 @@ export async function fetchVaultToVaultRoute(params: {
     fromAddress: params.fromAddress,
     actions,
     receiver: params.fromAddress,
+    skipQuote: false, // Standard V2V doesn't depend on account state — need amountsOut
   });
 }
 

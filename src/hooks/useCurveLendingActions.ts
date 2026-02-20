@@ -12,7 +12,9 @@ import {
   fetchRemoveCollateralAndSwapBundle,
   fetchRepayBundle,
   fetchRepayWithSwapBundle,
+  fetchRepayAndWithdrawBundle,
   fetchBorrowAndSwapBundle,
+  fetchBorrowWithSwapCollateralBundle,
   getVaultInfo,
   CURVE_CONTROLLERS,
 } from "@/lib/curve-lending";
@@ -66,13 +68,8 @@ export type LendingStatus =
   | "reverted"
   | "error";
 
-export interface PendingApproval {
-  type?: "erc20" | "controller"; // defaults to "erc20"
-  token: `0x${string}`;
-  tokenSymbol: string;
-  spender: `0x${string}`;
-  amount?: bigint; // not needed for controller approval
-}
+export type { PendingApproval } from "@/types/approval";
+import type { PendingApproval } from "@/types/approval";
 
 export interface UseCurveLendingActionsResult {
   // Action functions - now support previewOnly option
@@ -132,6 +129,15 @@ export interface UseCurveLendingActionsResult {
     additionalDebt: string,
     options?: { previewOnly?: boolean; tokenSymbol?: string }
   ) => Promise<SimulationResult | null>;
+  borrowMoreWithSwap: (
+    vaultAddress: `0x${string}`,
+    tokenIn: string,
+    amountIn: string,
+    additionalDebt: string,
+    decimals?: number,
+    slippage?: number,
+    options?: { previewOnly?: boolean; tokenSymbol?: string }
+  ) => Promise<SimulationResult | null>;
   repay: (
     vaultAddress: `0x${string}`,
     repayAmount: string,
@@ -148,14 +154,21 @@ export interface UseCurveLendingActionsResult {
     amountIn: string,
     decimals?: number,
     slippage?: number,
-    options?: { previewOnly?: boolean; tokenSymbol?: string; inSoftLiquidation?: boolean }
+    options?: { previewOnly?: boolean; tokenSymbol?: string; inSoftLiquidation?: boolean; withdrawAmount?: string; withdrawTokenOut?: string; withdrawTokenSymbol?: string }
+  ) => Promise<SimulationResult | null>;
+  repayAndWithdraw: (
+    controllerAddress: `0x${string}`,
+    repayAmount: bigint,
+    withdrawAmount: bigint,
+    vaultAddress: `0x${string}`,
+    options?: { previewOnly?: boolean; closeLoan?: boolean; withdrawTokenOut?: string; withdrawTokenSymbol?: string }
   ) => Promise<SimulationResult | null>;
   borrowAndSwap: (
     vaultAddress: `0x${string}`,
     tokenOut: string,
     debtAmount: string,
     slippage: number,
-    options?: { previewOnly?: boolean; tokenSymbol?: string; estimatedSwapOutput?: bigint }
+    options?: { previewOnly?: boolean; tokenSymbol?: string; estimatedSwapOutput?: bigint; collateralAmount?: string }
   ) => Promise<SimulationResult | null>;
   selfLiquidate: (
     vaultAddress: `0x${string}`,
@@ -726,6 +739,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
             token: inputToken as `0x${string}`,
             tokenSymbol: options?.tokenSymbol ?? "tokens",
             spender,
+            spenderName: "Enso Shortcuts",
             amount: inputAmount,
           });
           setStatus("needsApproval");
@@ -918,6 +932,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           token: vaultAddress,
           tokenSymbol: options?.tokenSymbol ?? "collateral",
           spender: controllerAddress as `0x${string}`,
+          spenderName: "Curve Controller",
           amount: amountWei,
         });
         setStatus("needsApproval");
@@ -1160,6 +1175,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           token: vaultAddress,
           tokenSymbol: options?.tokenSymbol ?? "collateral",
           spender: controllerAddress as `0x${string}`,
+          spenderName: "Curve Controller",
           amount: amountWei,
         });
         setStatus("needsApproval");
@@ -1609,22 +1625,25 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         args: [collateralWei, debtWei],
       });
 
+      // Store pending tx for executeAfterPreview / executeAfterApproval
+      setPendingBundle({
+        tx: { to: controllerAddress, data: callData, value: "0", from: address },
+        gas: "0",
+        amountsOut: {},
+      });
+      setPendingInputToken(vaultAddress);
+
       // Check collateral token allowance to controller (only if adding collateral)
       if (collateralWei > 0n) {
         const currentAllowance = await checkAllowance(
           publicClient, address, vaultAddress, controllerAddress as `0x${string}`
         );
         if (currentAllowance < collateralWei) {
-          setPendingBundle({
-            tx: { to: controllerAddress, data: callData, value: "0", from: address },
-            gas: "0",
-            amountsOut: {},
-          });
-          setPendingInputToken(vaultAddress);
           setPendingApproval({
             token: vaultAddress,
             tokenSymbol: options?.tokenSymbol ?? "collateral",
             spender: controllerAddress as `0x${string}`,
+            spenderName: "Curve Controller",
             amount: collateralWei,
           });
           setStatus("needsApproval");
@@ -1739,6 +1758,38 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     }
   }, [address, publicClient, sendTransactionAsync, testNetworkType, chainId, simulationResult]);
 
+  // Swap any token to vault collateral + borrow_more in a single Enso bundle (delegate mode).
+  // User provides tokenIn (e.g., ETH, USDC) which gets swapped to vault token, then
+  // borrow_more(swappedCollateral, debtAmount) adds collateral and borrows crvUSD atomically.
+  const borrowMoreWithSwap = useCallback(async (
+    vaultAddress: `0x${string}`,
+    tokenIn: string,
+    amountIn: string,
+    additionalDebt: string,
+    decimals: number = 18,
+    slippage: number = 100,
+    options?: { previewOnly?: boolean; tokenSymbol?: string }
+  ): Promise<SimulationResult | null> => {
+    if (!address) return null;
+    const { parseUnits: pu } = await import("viem");
+    const amountWei = pu(amountIn, decimals);
+    const ctrl = CURVE_CONTROLLERS[vaultAddress as keyof typeof CURVE_CONTROLLERS];
+    if (ctrl) setPendingController(ctrl as `0x${string}`);
+    return executeBundle(
+      () => fetchBorrowWithSwapCollateralBundle({
+        fromAddress: address,
+        vaultAddress,
+        tokenIn,
+        amountIn: amountWei.toString(),
+        debtAmount: additionalDebt,
+        slippage,
+      }),
+      tokenIn,
+      amountWei,
+      options
+    );
+  }, [address, executeBundle]);
+
   const repay = useCallback(async (
     vaultAddress: `0x${string}`,
     repayAmount: string,
@@ -1828,6 +1879,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           token: CRVUSD,
           tokenSymbol: "crvUSD",
           spender: controllerAddress,
+          spenderName: "Curve Controller",
           amount: repayAmount,
         });
         setStatus("needsApproval");
@@ -1947,19 +1999,221 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     }
   }, [address, publicClient, sendTransactionAsync, testNetworkType, chainId, simulationResult]);
 
+  // Repay crvUSD debt + withdraw collateral in a single Enso bundle.
+  // Requires controller approval + crvUSD approval for ENSO_SHORTCUTS.
+  const repayAndWithdraw = useCallback(async (
+    controllerAddress: `0x${string}`,
+    repayAmount: bigint,
+    withdrawAmount: bigint,
+    vaultAddress: `0x${string}`,
+    options?: { previewOnly?: boolean; closeLoan?: boolean; withdrawTokenOut?: string; withdrawTokenSymbol?: string }
+  ): Promise<SimulationResult | null> => {
+    if (!address || !publicClient) {
+      setError("Wallet not connected");
+      setStatus("error");
+      return null;
+    }
+
+    setPendingController(controllerAddress);
+
+    // Determine if withdrawal needs a swap (output token differs from collateral)
+    const isWithdrawSwap = options?.withdrawTokenOut && options.withdrawTokenOut.toLowerCase() !== vaultAddress.toLowerCase();
+
+    // Check ALL approvals in parallel (controller + crvUSD + optional collateral for swap)
+    setStatus("building");
+    setError(null);
+
+    const [controllerApproved, crvUsdAllowance, collateralAllowance] = await Promise.all([
+      publicClient.readContract({
+        address: controllerAddress,
+        abi: CONTROLLER_APPROVE_ABI,
+        functionName: "approval",
+        args: [address, ENSO_SHORTCUTS as `0x${string}`],
+      }).catch(() => true) as Promise<boolean>,
+      checkAllowance(publicClient, address, CRVUSD_ADDRESS as `0x${string}`, ENSO_SHORTCUTS as `0x${string}`),
+      isWithdrawSwap
+        ? checkAllowance(publicClient, address, vaultAddress, ENSO_SHORTCUTS as `0x${string}`)
+        : Promise.resolve(BigInt("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")),
+    ]);
+
+    const allApprovals: { approval: PendingApproval; needed: boolean; label: string; description: string; spender: string }[] = [
+      {
+        approval: {
+          type: "controller",
+          token: controllerAddress,
+          tokenSymbol: "Controller",
+          spender: ENSO_SHORTCUTS as `0x${string}`,
+        },
+        needed: !controllerApproved,
+        label: "Lending Access",
+        description: "Approve Enso Router to manage your loan",
+        spender: ENSO_SHORTCUTS,
+      },
+      {
+        approval: {
+          token: CRVUSD_ADDRESS as `0x${string}`,
+          tokenSymbol: "crvUSD",
+          spender: ENSO_SHORTCUTS as `0x${string}`,
+          amount: repayAmount,
+        },
+        needed: crvUsdAllowance < repayAmount,
+        label: "crvUSD",
+        description: "Approve crvUSD for debt repayment",
+        spender: ENSO_SHORTCUTS,
+      },
+      ...(isWithdrawSwap ? [{
+        approval: {
+          token: vaultAddress,
+          tokenSymbol: options?.withdrawTokenSymbol ?? "Collateral",
+          spender: ENSO_SHORTCUTS as `0x${string}`,
+          amount: withdrawAmount,
+        },
+        needed: collateralAllowance < withdrawAmount,
+        label: options?.withdrawTokenSymbol ?? "Collateral",
+        description: "Approve collateral for swap routing",
+        spender: ENSO_SHORTCUTS,
+      }] : []),
+    ];
+
+    const total = allApprovals.length;
+    const steps = allApprovals.map((a) => ({ label: a.label, description: a.description, done: !a.needed, spender: a.spender }));
+    const firstNeededIdx = allApprovals.findIndex((a) => a.needed);
+
+    if (firstNeededIdx >= 0) {
+      const step = firstNeededIdx + 1;
+      setApprovalProgress({ step, total, steps });
+      setPendingApproval(allApprovals[firstNeededIdx].approval);
+      setStatus("needsApproval");
+      return null;
+    }
+
+    // All approvals satisfied — clear progress
+    setApprovalProgress(null);
+
+    // Pass inputAmount=0n to skip executeBundle's built-in approval check
+    return executeBundle(
+      () => fetchRepayAndWithdrawBundle({
+        fromAddress: address,
+        vaultAddress,
+        repayAmount: repayAmount.toString(),
+        withdrawAmount: withdrawAmount.toString(),
+        closeLoan: options?.closeLoan,
+        withdrawTokenOut: options?.withdrawTokenOut,
+      }),
+      CRVUSD_ADDRESS,
+      0n,
+      options
+    );
+  }, [address, publicClient, executeBundle]);
+
   const repayWithSwap = useCallback(async (
     vaultAddress: `0x${string}`,
     tokenIn: string,
     amountIn: string,
     decimals: number = 18,
     slippage: number = 100,
-    options?: { previewOnly?: boolean; tokenSymbol?: string; inSoftLiquidation?: boolean }
+    options?: { previewOnly?: boolean; tokenSymbol?: string; inSoftLiquidation?: boolean; withdrawAmount?: string; withdrawTokenOut?: string; withdrawTokenSymbol?: string }
   ): Promise<SimulationResult | null> => {
-    if (!address) return null;
+    if (!address || !publicClient) return null;
     const { parseUnits } = await import("viem");
     const amountWei = parseUnits(amountIn, decimals);
     const ctrl = CURVE_CONTROLLERS[vaultAddress as keyof typeof CURVE_CONTROLLERS];
     if (ctrl) setPendingController(ctrl as `0x${string}`);
+
+    const hasWithdrawal = options?.withdrawAmount && options.withdrawAmount !== "0";
+    const isWithdrawSwap = options?.withdrawTokenOut && options.withdrawTokenOut.toLowerCase() !== vaultAddress.toLowerCase();
+
+    // When withdrawing collateral, need controller approval for ENSO_SHORTCUTS
+    if (hasWithdrawal && ctrl) {
+      setStatus("building");
+      setError(null);
+
+      const withdrawAmountWei = parseUnits(options.withdrawAmount!, 18);
+
+      const [controllerApproved, tokenAllowance, collateralAllowance] = await Promise.all([
+        publicClient.readContract({
+          address: ctrl as `0x${string}`,
+          abi: CONTROLLER_APPROVE_ABI,
+          functionName: "approval",
+          args: [address, ENSO_SHORTCUTS as `0x${string}`],
+        }).catch(() => true) as Promise<boolean>,
+        checkAllowance(publicClient, address, tokenIn as `0x${string}`, ENSO_SHORTCUTS as `0x${string}`),
+        isWithdrawSwap
+          ? checkAllowance(publicClient, address, vaultAddress, ENSO_SHORTCUTS as `0x${string}`)
+          : Promise.resolve(BigInt("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")),
+      ]);
+
+      const tokenSymbol = options?.tokenSymbol ?? "token";
+      const allApprovals: { approval: PendingApproval; needed: boolean; label: string; description: string; spender: string }[] = [
+        {
+          approval: {
+            type: "controller",
+            token: ctrl as `0x${string}`,
+            tokenSymbol: "Controller",
+            spender: ENSO_SHORTCUTS as `0x${string}`,
+          },
+          needed: !controllerApproved,
+          label: "Lending Access",
+          description: "Approve Enso Router to manage your loan",
+          spender: ENSO_SHORTCUTS,
+        },
+        {
+          approval: {
+            token: tokenIn as `0x${string}`,
+            tokenSymbol,
+            spender: ENSO_SHORTCUTS as `0x${string}`,
+            amount: amountWei,
+          },
+          needed: tokenAllowance < amountWei,
+          label: tokenSymbol,
+          description: `Approve ${tokenSymbol} for swap routing`,
+          spender: ENSO_SHORTCUTS,
+        },
+        ...(isWithdrawSwap ? [{
+          approval: {
+            token: vaultAddress as `0x${string}`,
+            tokenSymbol: options?.withdrawTokenSymbol ?? "Collateral",
+            spender: ENSO_SHORTCUTS as `0x${string}`,
+            amount: withdrawAmountWei,
+          },
+          needed: collateralAllowance < withdrawAmountWei,
+          label: options?.withdrawTokenSymbol ?? "Collateral",
+          description: "Approve collateral for swap routing",
+          spender: ENSO_SHORTCUTS,
+        }] : []),
+      ];
+
+      const total = allApprovals.length;
+      const steps = allApprovals.map((a) => ({ label: a.label, description: a.description, done: !a.needed, spender: a.spender }));
+      const firstNeededIdx = allApprovals.findIndex((a) => a.needed);
+
+      if (firstNeededIdx >= 0) {
+        const step = firstNeededIdx + 1;
+        setApprovalProgress({ step, total, steps });
+        setPendingApproval(allApprovals[firstNeededIdx].approval);
+        setStatus("needsApproval");
+        return null;
+      }
+
+      setApprovalProgress(null);
+
+      return executeBundle(
+        () => fetchRepayWithSwapBundle({
+          fromAddress: address,
+          vaultAddress,
+          tokenIn,
+          amountIn: amountWei.toString(),
+          slippage,
+          inSoftLiquidation: options?.inSoftLiquidation,
+          withdrawAmount: options.withdrawAmount,
+          withdrawTokenOut: options?.withdrawTokenOut,
+        }),
+        tokenIn,
+        0n, // skip built-in approval check
+        options
+      );
+    }
+
     return executeBundle(
       () => fetchRepayWithSwapBundle({
         fromAddress: address,
@@ -1973,7 +2227,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       amountWei,
       options
     );
-  }, [address, executeBundle]);
+  }, [address, publicClient, executeBundle]);
 
   // Borrow crvUSD + swap to any token in a single Enso bundle.
   // Uses the "recursive routeMulti" pattern to bypass routeSingle's token pull.
@@ -1983,7 +2237,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     tokenOut: string,
     debtAmount: string, // crvUSD amount (human readable)
     slippage: number = 100,
-    options?: { previewOnly?: boolean; tokenSymbol?: string; estimatedSwapOutput?: bigint }
+    options?: { previewOnly?: boolean; tokenSymbol?: string; estimatedSwapOutput?: bigint; collateralAmount?: string }
   ): Promise<SimulationResult | null> => {
     if (!address || !publicClient) {
       setError("Wallet not connected");
@@ -2002,7 +2256,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     const debtWei = parseUnits(debtAmount, 18);
     setPendingController(controllerAddress as `0x${string}`);
 
-    // Check ALL approvals in parallel (controller, crvUSD, swap target).
+    // Check ALL approvals in parallel (controller, crvUSD, swap target, vault token).
     // This lets us show "Step X of Y" progress instead of discovering them one-by-one.
     setStatus("building");
     setError(null);
@@ -2016,7 +2270,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       ? (isCvgCvxVault ? TOKENS.CVX : vaultInfo!.underlying)
       : null;
 
-    const [controllerApproved, crvUsdAllowance, swapTargetAllowance] = await Promise.all([
+    // Collateral: vault token amount (wei string) to include in borrow_more
+    const collateralWei = options?.collateralAmount
+      ? BigInt(options.collateralAmount)
+      : 0n;
+
+    const [controllerApproved, crvUsdAllowance, swapTargetAllowance, vaultTokenAllowance] = await Promise.all([
       publicClient.readContract({
         address: controllerAddress as `0x${string}`,
         abi: CONTROLLER_APPROVE_ABI,
@@ -2026,6 +2285,9 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       checkAllowance(publicClient, address, CRVUSD_ADDRESS as `0x${string}`, ENSO_SHORTCUTS as `0x${string}`),
       swapTarget
         ? checkAllowance(publicClient, address, swapTarget as `0x${string}`, ENSO_SHORTCUTS as `0x${string}`)
+        : Promise.resolve(maxUint256),
+      collateralWei > 0n
+        ? checkAllowance(publicClient, address, vaultAddress, ENSO_SHORTCUTS as `0x${string}`)
         : Promise.resolve(maxUint256),
     ]);
 
@@ -2060,6 +2322,25 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         spender: ENSO_SHORTCUTS,
       },
     ];
+    if (collateralWei > 0n) {
+      // Vault token needs approval for ENSO_SHORTCUTS to pull collateral
+      const vault = Object.values(TOKENS).find(
+        (t) => typeof t === "string" && t.toLowerCase() === vaultAddress.toLowerCase()
+      );
+      const vaultSymbol = vault ? "vault token" : "collateral";
+      allApprovals.push({
+        approval: {
+          token: vaultAddress,
+          tokenSymbol: vaultSymbol,
+          spender: ENSO_SHORTCUTS as `0x${string}`,
+          amount: collateralWei,
+        },
+        needed: vaultTokenAllowance < collateralWei,
+        label: "Collateral",
+        description: "Approve collateral transfer for lending",
+        spender: ENSO_SHORTCUTS,
+      });
+    }
     if (swapTarget) {
       // Use estimated swap output + 5% buffer for exact approval option
       const swapAmount = options?.estimatedSwapOutput
@@ -2101,6 +2382,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         vaultAddress,
         tokenOut,
         debtAmount: debtWei.toString(),
+        collateralAmount: collateralWei > 0n ? collateralWei.toString() : undefined,
         slippage,
       }),
       CRVUSD_ADDRESS,
@@ -2286,8 +2568,10 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     addCollateralWithSwap,
     removeCollateralAndSwap,
     borrowMore,
+    borrowMoreWithSwap,
     repay,
     repayDirect,
+    repayAndWithdraw,
     repayWithSwap,
     borrowAndSwap,
     selfLiquidate,

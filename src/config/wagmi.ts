@@ -21,7 +21,6 @@ const normalTransport = anvilRpc
       http(PUBLIC_RPC_URLS.drpc),
       http(PUBLIC_RPC_URLS.cloudflare),
       unstable_connector(injected),
-      http(), // Default RPC as last fallback
     ]);
 
 // Switchable transport: checks localStorage on every request to route to VNet or normal RPC.

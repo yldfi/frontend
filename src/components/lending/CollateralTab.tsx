@@ -13,8 +13,8 @@ import {
   Plus,
   Minus,
   ArrowRightLeft,
-  ExternalLink,
 } from "lucide-react";
+import { ApprovalCard } from "@/components/ApprovalCard";
 import { useAccount, usePublicClient, useBalance, useGasPrice, useBlockNumber } from "wagmi";
 import { formatUnits, parseUnits } from "viem";
 import { useQuery } from "@tanstack/react-query";
@@ -199,12 +199,6 @@ export function CollateralTab({
   const lastApprovalRef = useRef(pendingApproval);
   if (pendingApproval) lastApprovalRef.current = pendingApproval;
   const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
-
-  // Track which approval button was clicked
-  const [approvingType, setApprovingType] = useState<"exact" | "unlimited" | "single" | null>(null);
-  useEffect(() => {
-    if (!isApproving) setApprovingType(null);
-  }, [isApproving]);
 
   // Read selected token balance (native ETH or ERC20)
   const isEth = selectedToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
@@ -899,65 +893,13 @@ export function CollateralTab({
       )}
 
       {/* Approval Flow */}
-      <div
-        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
-        style={{ gridTemplateRows: showApprovalCard ? "1fr" : "0fr" }}
-      >
-        <div className="overflow-hidden">
-          {lastApprovalRef.current && (
-            <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-3">
-              <div className="text-sm font-medium">Approval Required</div>
-              <div className="text-sm text-[var(--muted-foreground)]">
-                {lastApprovalRef.current!.type === "controller"
-                  ? <>Allow yld Zapper to manage position on LlamaLend{" "}<span className="whitespace-nowrap">controller <a href={`https://etherscan.io/address/${lastApprovalRef.current!.spender}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={12} className="!inline -mt-0.5" /></a></span></>
-                  : <>Allow yld Zapper to spend {lastApprovalRef.current!.tokenSymbol}{" "}<span className="whitespace-nowrap"><a href={`https://etherscan.io/address/${lastApprovalRef.current!.spender}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={12} className="!inline -mt-0.5" /></a></span></>
-                }
-              </div>
-              {lastApprovalRef.current!.type !== "controller" && lastApprovalRef.current!.amount ? (
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => { setApprovingType("exact"); approve(true); }}
-                    disabled={isApproving}
-                    className={cn(
-                      "flex-[2] py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                      isApproving
-                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                        : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
-                    )}
-                  >
-                    {isApproving && approvingType === "exact" ? <>Approving<LoadingDots /></> : `${Number(formatUnits(lastApprovalRef.current!.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${lastApprovalRef.current!.tokenSymbol}`}
-                  </button>
-                  <button
-                    onClick={() => { setApprovingType("unlimited"); approve(false); }}
-                    disabled={isApproving}
-                    className={cn(
-                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                      isApproving
-                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                        : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
-                    )}
-                  >
-                    {isApproving && approvingType === "unlimited" ? <>Approving<LoadingDots /></> : "Max"}
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => { setApprovingType("single"); approve(); }}
-                  disabled={isApproving}
-                  className={cn(
-                    "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
-                    isApproving
-                      ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                      : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
-                  )}
-                >
-                  {isApproving ? <>Approving<LoadingDots /></> : "Approve"}
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+      <ApprovalCard
+        show={showApprovalCard}
+        pendingApproval={lastApprovalRef.current}
+        approvalProgress={null}
+        isApproving={isApproving}
+        onApprove={(exact) => approve(exact)}
+      />
 
       {/* Simulation Modal */}
       {showSimulationModal && simulationResult && (
