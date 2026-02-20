@@ -13,9 +13,8 @@ import {
   ArrowRightLeft,
   Landmark,
   TrendingUp,
-  Check,
-  ExternalLink,
 } from "lucide-react";
+import { ApprovalCard } from "@/components/ApprovalCard";
 import { useAccount, usePublicClient, useBalance, useGasPrice, useBlockNumber } from "wagmi";
 import { formatUnits, parseUnits } from "viem";
 import { useQuery } from "@tanstack/react-query";
@@ -449,12 +448,6 @@ export function NewLoanForm({
   const lastApprovalRef = useRef(pendingApproval);
   if (pendingApproval) lastApprovalRef.current = pendingApproval;
   const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
-
-  // Track which approval button was clicked (spinner only on that button)
-  const [approvingType, setApprovingType] = useState<"exact" | "unlimited" | "single" | null>(null);
-  useEffect(() => {
-    if (!isApproving) setApprovingType(null);
-  }, [isApproving]);
 
   // Switch between Loan and Leverage tabs
   const switchTab = useCallback((tab: "loan" | "leverage") => {
@@ -1795,103 +1788,14 @@ export function NewLoanForm({
         </div>
       )}
 
-{/* Approval Flow */}
-      <div
-        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
-        style={{ gridTemplateRows: showApprovalCard ? "1fr" : "0fr" }}
-      >
-        <div className="overflow-hidden">
-          {lastApprovalRef.current && (
-            <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-3">
-              <div className="text-sm font-medium">{approvalProgress && approvalProgress.total > 1 ? "Approvals Required" : "Approval Required"}</div>
-              {approvalProgress && approvalProgress.total > 1 ? (
-                <div className="space-y-2">
-                  {approvalProgress.steps.map((s, i) => (
-                    <div key={i} className="flex items-start gap-2">
-                      <div className="mt-0.5">
-                        {s.done ? (
-                          <Check size={14} className="text-green-500 shrink-0" />
-                        ) : i === approvalProgress.step - 1 ? (
-                          <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)] shrink-0" />
-                        ) : (
-                          <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)]/30 shrink-0" />
-                        )}
-                      </div>
-                      <div>
-                        <div className={cn(
-                          "text-sm",
-                          s.done
-                            ? "text-[var(--muted-foreground)] line-through"
-                            : i === approvalProgress.step - 1
-                              ? "text-[var(--foreground)] font-medium"
-                              : "text-[var(--muted-foreground)]"
-                        )}>
-                          {s.label}
-                        </div>
-                        <div className={cn(
-                          "text-xs",
-                          i === approvalProgress.step - 1
-                            ? "text-[var(--muted-foreground)]"
-                            : "text-[var(--muted-foreground)]/60"
-                        )}>
-                          {s.description}{s.spender && <>{" "}<a href={`https://etherscan.io/address/${s.spender}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={10} className="!inline -mt-0.5" /></a></>}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-sm text-[var(--muted-foreground)]">
-                  Allow yld Zapper to manage position on LlamaLend{" "}<span className="whitespace-nowrap">controller <a href={`https://etherscan.io/address/${lastApprovalRef.current!.spender}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={12} className="!inline -mt-0.5" /></a></span>
-                </div>
-              )}
-              {lastApprovalRef.current!.type !== "controller" && lastApprovalRef.current!.amount ? (
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => { setApprovingType("exact"); (isLeveraged ? zapperApprove : lendingApprove)(true); }}
-                    disabled={isApproving}
-                    className={cn(
-                      "flex-[2] py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                      isApproving
-                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                        : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
-                    )}
-                  >
-                    {isApproving && approvingType === "exact" ? <>Approving<LoadingDots /></> : `${Number(formatUnits(lastApprovalRef.current!.amount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${lastApprovalRef.current!.tokenSymbol}`}
-                  </button>
-                  <button
-                    onClick={() => { setApprovingType("unlimited"); (isLeveraged ? zapperApprove : lendingApprove)(false); }}
-                    disabled={isApproving}
-                    className={cn(
-                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                      isApproving
-                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                        : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
-                    )}
-                  >
-                    {isApproving && approvingType === "unlimited" ? <>Approving<LoadingDots /></> : "Max"}
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => { setApprovingType("single"); (isLeveraged ? zapperApprove : lendingApprove)(); }}
-                  disabled={isApproving}
-                  className={cn(
-                    "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
-                    isApproving
-                      ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                      : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
-                  )}
-                >
-                  {isApproving
-                    ? <>Approving<LoadingDots /></>
-                    : `Approve ${approvalProgress?.steps[approvalProgress.step - 1]?.label ?? ""}`}
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+      {/* Approval Flow */}
+      <ApprovalCard
+        show={showApprovalCard}
+        pendingApproval={lastApprovalRef.current}
+        approvalProgress={approvalProgress}
+        isApproving={isApproving}
+        onApprove={(exact) => (isLeveraged ? zapperApprove : lendingApprove)(exact)}
+      />
 
       {/* Simulation Modal */}
       {showSimulationModal && simulationResult && (

@@ -223,11 +223,11 @@ export function SimulationModal({
           );
           return (
             <div className="space-y-3">
-              <AssetChangesSection title="You Borrow" changes={filteredChanges} type="borrow" />
+              <AssetChangesSection title="You Deposit" changes={filteredChanges} type="deposit" />
               <AssetChangesSection title="You Send" changes={filteredChanges} type="send" />
+              <AssetChangesSection title="You Borrow" changes={filteredChanges} type="borrow" />
               <AssetChangesSection title="You Receive" changes={filteredChanges} type="receive" />
               <AssetChangesSection title="You Repay" changes={filteredChanges} type="repay" />
-              <AssetChangesSection title="You Deposit into Curve LlamaLend" changes={filteredChanges} type="deposit" />
             </div>
           );
         })()}
@@ -341,10 +341,10 @@ export function SimulationModal({
               "flex-1 py-3 rounded-lg font-medium transition-all",
               simulationResult.success && !confirmDisabled
                 ? "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer"
-                : "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                : "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed opacity-50"
             )}
           >
-            {confirmText}
+            {simulationResult.success ? confirmText : "Cannot Execute"}
           </button>
         </div>
       </div>

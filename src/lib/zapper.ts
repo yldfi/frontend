@@ -1,16 +1,14 @@
-// LlamaLendZapper contract integration
-// Contract: https://etherscan.io/address/0x18Fb52A4D65E03ebD25FbD2Fae60452c286eC5F1
+// LlamaLendZapperV2 contract integration
+// Contract: https://etherscan.io/address/0x39F2a82b6CE1631128829c5Bb7449Cc7a40d2a47
 // Enables leveraged Curve LlamaLend operations via Enso Router swaps
 
 import { fetchRoute } from "@/lib/enso";
 
-// LlamaLendZapper contract address (mainnet V1)
+// LlamaLendZapper V1 contract address (mainnet, deprecated)
 export const ZAPPER_ADDRESS = "0x18Fb52A4D65E03ebD25FbD2Fae60452c286eC5F1" as const;
 
-// ZapperV2 address — overridable via env for local fork testing
-export const ZAPPER_V2_ADDRESS = (
-  process.env.NEXT_PUBLIC_ZAPPER_V2_ADDRESS || ZAPPER_ADDRESS
-) as `0x${string}`;
+// LlamaLendZapperV2 contract address (mainnet)
+export const ZAPPER_V2_ADDRESS = "0x39F2a82b6CE1631128829c5Bb7449Cc7a40d2a47" as const;
 
 // crvUSD token address
 export const CRVUSD_ADDRESS = "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E" as const;
@@ -97,7 +95,7 @@ export const ZAPPER_ABI = [
     ],
     outputs: [{ name: "", type: "bool" }],
   },
-  // ZapperV2 — FromToken/ToToken operations (not yet deployed)
+  // ZapperV2 — FromToken/ToToken operations
   {
     name: "createLeveragedLoanFromToken",
     type: "function",
@@ -242,7 +240,7 @@ export const CONTROLLER_APPROVE_ABI = [
 
 /**
  * Fetch swap data from Enso route for zapper operations.
- * The zapper holds tokens during callbacks, so fromAddress = ZAPPER_ADDRESS.
+ * The zapper holds tokens during callbacks, so fromAddress = ZAPPER_V2_ADDRESS.
  */
 export async function fetchZapperSwapData(params: {
   tokenIn: string;
@@ -251,8 +249,8 @@ export async function fetchZapperSwapData(params: {
   slippage?: string;
 }): Promise<{ swapData: string; expectedOut: string }> {
   const route = await fetchRoute({
-    fromAddress: ZAPPER_ADDRESS,
-    receiver: ZAPPER_ADDRESS,
+    fromAddress: ZAPPER_V2_ADDRESS,
+    receiver: ZAPPER_V2_ADDRESS,
     tokenIn: params.tokenIn,
     tokenOut: params.tokenOut,
     amountIn: params.amountIn,
@@ -270,7 +268,7 @@ export async function fetchZapperSwapData(params: {
  *  1. inputSwapData: inputToken → collateral (pre-swap)
  *  2. leverageSwapData: crvUSD → collateral (callback loop)
  *
- * The zapper holds tokens during callbacks, so fromAddress = ZAPPER_ADDRESS for both.
+ * The zapper holds tokens during callbacks, so fromAddress = ZAPPER_V2_ADDRESS for both.
  */
 export async function fetchFromTokenSwapData(params: {
   inputToken: string;

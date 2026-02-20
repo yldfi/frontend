@@ -18,11 +18,12 @@ export function MaxButton({ balance, onSelect, showClose, onClose }: MaxButtonPr
   const handlePercentage = (percent: number) => {
     if (percent === 0) {
       onSelect("");
-    } else if (percent === 100) {
-      onSelect(balance);
     } else {
       const amount = balanceNum * (percent / 100);
-      onSelect(amount.toString());
+      // Cap to 8 decimal places to avoid display overflow
+      const dot = balance.indexOf(".");
+      const maxDecimals = dot === -1 ? 0 : Math.min(balance.length - dot - 1, 8);
+      onSelect(maxDecimals > 0 ? amount.toFixed(maxDecimals) : amount.toString());
     }
     // Hide menu after selection
     setIsHovered(false);
@@ -49,7 +50,7 @@ export function MaxButton({ balance, onSelect, showClose, onClose }: MaxButtonPr
       {/* Unified semi-transparent backdrop - spans all buttons on hover */}
       <div
         className={cn(
-          "absolute right-0 rounded-lg bg-[var(--background)]/40 transition-opacity duration-200 z-0 pointer-events-none",
+          "absolute right-0 rounded-lg bg-[var(--background)]/40 transition-opacity duration-200 z-30 pointer-events-none",
           showClose ? "-top-[116px] -bottom-[28px] -left-1.5 -right-1.5" : "-top-[116px] -bottom-1.5 -left-1.5 -right-1.5",
           isHovered ? "opacity-100" : "opacity-0"
         )}
@@ -58,7 +59,7 @@ export function MaxButton({ balance, onSelect, showClose, onClose }: MaxButtonPr
       {/* Floating percentage options - stacked vertically above MAX */}
       <div
         className={cn(
-          "absolute bottom-full right-0 pb-1 flex flex-col gap-1 transition-[opacity,transform] duration-200 ease-out z-10",
+          "absolute bottom-full right-0 pb-1 flex flex-col gap-1 transition-[opacity,transform] duration-200 ease-out z-40",
           isHovered ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1 pointer-events-none"
         )}
         onMouseEnter={handleMouseEnter}
@@ -86,7 +87,7 @@ export function MaxButton({ balance, onSelect, showClose, onClose }: MaxButtonPr
         onClick={() => handlePercentage(100)}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
-        className="relative z-10 shrink-0 px-2 py-1 text-xs font-medium bg-[var(--background)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded transition-colors cursor-pointer"
+        className="relative z-40 shrink-0 px-2 py-1 text-xs font-medium bg-[var(--background)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded transition-colors cursor-pointer"
       >
         MAX
       </button>
@@ -95,7 +96,7 @@ export function MaxButton({ balance, onSelect, showClose, onClose }: MaxButtonPr
       {showClose && onClose && (
         <div
           className={cn(
-            "absolute top-full right-0 pt-1 transition-[opacity,transform] duration-200 ease-out z-10",
+            "absolute top-full right-0 pt-1 transition-[opacity,transform] duration-200 ease-out z-40",
             isHovered ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1 pointer-events-none"
           )}
           onMouseEnter={handleMouseEnter}

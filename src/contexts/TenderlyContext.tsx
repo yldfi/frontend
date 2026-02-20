@@ -142,6 +142,12 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    // When VNet toggle is on, we force testNetworkType="tenderly" — skip probing
+    if (vnetEnabled) {
+      setIsDetecting(false);
+      return;
+    }
+
     let cancelled = false;
 
     // Only show detecting state on initial detection, not during polling
@@ -197,8 +203,9 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
           } else {
             // Wallet provider rejected evm_snapshot — could be real mainnet,
             // or wallet filtering methods (e.g. Rabby returns -32601 even on Anvil).
-            // Always check wagmi transport as fallback (uses NEXT_PUBLIC_ANVIL_RPC directly).
-            if (publicClient) {
+            // Only probe wagmi transport when Anvil env var is set (transport routes to Anvil).
+            // Without it, probing hits public RPCs (drpc/cloudflare) causing 400 error spam.
+            if (anvilActive && publicClient) {
               try {
                 await publicClient.transport.request({ method: "evm_snapshot", params: [] });
                 if (cancelled) return;
@@ -241,7 +248,7 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
     detect();
 
     return () => { cancelled = true; };
-  }, [isConnected, connector, publicClient, detectTrigger]);
+  }, [isConnected, connector, publicClient, detectTrigger, vnetEnabled, anvilActive]);
 
   // Re-run detection periodically when tab is focused
   // This handles cases where user changes RPC without disconnecting
@@ -253,7 +260,7 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
     const startPolling = () => {
       intervalId = setInterval(() => {
         setDetectTrigger((t) => t + 1);
-      }, 1_000);
+      }, 10_000);
     };
 
     const stopPolling = () => {

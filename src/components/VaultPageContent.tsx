@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { notFound, useRouter } from "next/navigation";
 import { useAccount, useBalance, useBlockNumber, useGasPrice, usePublicClient } from "wagmi";
@@ -12,6 +12,7 @@ import { ArrowUpRight, ExternalLink, Loader2, Search, Route, RouteOff, Copy, Che
 import { RouteDisplay } from "@/components/RouteDisplay";
 import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
+import { ApprovalCard } from "@/components/ApprovalCard";
 
 // Animated loading dots for quote fetching
 function LoadingDots() {
@@ -399,6 +400,26 @@ export function VaultPageContent({ id }: { id: string }) {
     prevIdRef.current = id;
   }, [id]);
 
+  // Guard: reset zap input/output tokens if they match the vault or underlying tokens
+  // (can happen from stale localStorage values)
+  const excludedZapAddresses = useMemo(() => {
+    const set = new Set([...VAULT_UNDERLYING_TOKENS.map(a => a.toLowerCase())]);
+    if (vault?.address) set.add(vault.address.toLowerCase());
+    return set;
+  }, [vault?.address]);
+
+  useEffect(() => {
+    if (zapInputToken && excludedZapAddresses.has(zapInputToken.address.toLowerCase())) {
+      setZapInputToken(DEFAULT_ETH_TOKEN);
+    }
+  }, [zapInputToken, excludedZapAddresses]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (zapOutputToken && excludedZapAddresses.has(zapOutputToken.address.toLowerCase())) {
+      setZapOutputToken(DEFAULT_ETH_TOKEN);
+    }
+  }, [zapOutputToken, excludedZapAddresses]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Clear form state when navigating away (but preserve on refresh)
   useClearOnNavigation([
     `yldfi-zap-amount-${id}`,
@@ -708,11 +729,19 @@ export function VaultPageContent({ id }: { id: string }) {
     isSuccess: zapIsSuccess,
     isReverted: zapIsReverted,
     zapHash,
+    pendingApproval: zapPendingApproval,
+    approvalProgress: zapApprovalProgress,
+    isApproving: zapIsApproving,
     isFlashbotsEnabled,
     isFlashbotsSupported,
     toggleFlashbots,
     simulationResult,
   } = useZapActions(zapQuote);
+
+  // Preserve last zap approval data so content stays in DOM during close animation
+  const lastZapApprovalRef = useRef(zapPendingApproval);
+  if (zapPendingApproval) lastZapApprovalRef.current = zapPendingApproval;
+  const showZapApprovalCard = !!(zapPendingApproval && (zapStatus === "needsApproval" || zapStatus === "approving" || zapStatus === "waitingApproval"));
 
   // Sync zapInProgress with zapIsLoading to pause quote fetching during transaction
   useEffect(() => {
@@ -994,35 +1023,6 @@ export function VaultPageContent({ id }: { id: string }) {
       }, 0);
     }
   }, [isSuccess, isReverted, depositHash, withdrawHash, refetchTokenBalance, refetchVaultBalance, resetVaultActions]);
-
-  // Auto-execute zap after approval succeeds (for multi-step transactions)
-  // When zapStatus goes from "waitingApproval" to "idle" with pendingMultiStep active, execute zap
-  const prevZapStatus = useRef<string | null>(null);
-  useEffect(() => {
-    // Check if we just completed approval (status transitioned from waitingApproval to idle)
-    if (
-      pendingMultiStep?.type === "zap" &&
-      pendingMultiStep.step === 1 &&
-      prevZapStatus.current === "waitingApproval" &&
-      zapStatus === "idle"
-    ) {
-      // Approval succeeded - auto-execute the zap
-      setPendingMultiStep(prev => prev ? { ...prev, step: 2 } : null);
-      // Small delay to ensure allowance is refetched
-      setTimeout(() => {
-        executeZap();
-      }, 100);
-    }
-    prevZapStatus.current = zapStatus;
-  }, [zapStatus, pendingMultiStep, executeZap]);
-
-  // Clear multi-step state on error or user cancellation (zap)
-  useEffect(() => {
-    if (pendingMultiStep && (zapStatus === "error" || zapActionError)) {
-      setPendingMultiStep(null);
-      setPendingTxDetails(null);
-    }
-  }, [zapStatus, zapActionError, pendingMultiStep]);
 
   // Auto-execute deposit after vault approval succeeds (for multi-step transactions)
   const prevTxStatusRef = useRef<string | null>(null);
@@ -1510,7 +1510,7 @@ export function VaultPageContent({ id }: { id: string }) {
 
             {/* Right column - Action Card */}
             <div className="lg:col-span-2 min-w-0">
-              <div className="sticky border border-[var(--border)] rounded-xl overflow-hidden w-full" style={{ top: "calc(6rem + var(--test-banner-height))" }}>
+              <div className="sticky border border-[var(--border)] rounded-xl overflow-x-hidden overflow-y-auto w-full" style={{ top: "calc(6rem + var(--test-banner-height))", maxHeight: "calc(100vh - 7rem - var(--test-banner-height))" }}>
                 {/* Your Wallet - Always visible when connected with balance */}
                 {isConnected && vaultBalance > 0 && (
                   <div className="bg-[var(--muted)]/30 p-5 border-b border-[var(--border)]">
@@ -1550,8 +1550,8 @@ export function VaultPageContent({ id }: { id: string }) {
                   </div>
                 )}
 
-                {/* Tabs - hidden for non-deployed vaults and during pending/success/reverted/approval states */}
-                {isVaultDeployed && debugTxState === "none" && !pendingMultiStep && txStatus === "idle" && zapStatus === "idle" && !showTxSuccess?.show && !showTxReverted?.show && (
+                {/* Tabs - hidden during waitingTx (vault or zap)/pendingMultiStep/success/reverted states (visible during wallet signing & simulation) */}
+                {isVaultDeployed && debugTxState === "none" && !pendingMultiStep && txStatus !== "waitingTx" && zapStatus !== "waitingTx" && !showTxSuccess?.show && !showTxReverted?.show && (
                 <div className="p-5 pb-0">
                   <div className="flex border-b border-[var(--border)]">
                     {(["deposit", "withdraw", "zap"] as const).map((tab) => {
@@ -1799,10 +1799,10 @@ export function VaultPageContent({ id }: { id: string }) {
                         </div>
                         <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2 focus-within:ring-2 focus-within:ring-[var(--accent)] transition-shadow">
                           <input
-                            type="number"
+                            type="text"
+                            inputMode="decimal"
                             value={amount}
                             onChange={(e) => setAmount(e.target.value)}
-                            onWheel={(e) => e.currentTarget.blur()}
                             placeholder="0.00"
                             className="flex-1 min-w-0 bg-transparent mono text-base outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
                           />
@@ -1933,30 +1933,28 @@ export function VaultPageContent({ id }: { id: string }) {
                               handleSubmit();
                             }
                           }}
-                          disabled={!inputAmount || hasInsufficientBalance || isLoading || isSimulatingPreview}
+                          disabled={!inputAmount || hasInsufficientBalance || isLoading || isSimulatingPreview || showSimulationModal}
                           className={cn(
                             "w-full py-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-base",
-                            !inputAmount || hasInsufficientBalance
+                            !inputAmount || hasInsufficientBalance || isLoading || isSimulatingPreview || showSimulationModal
                               ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
                               : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer"
                           )}
                         >
-                          {isSimulatingPreview ? (
+                          {isSimulatingPreview || showSimulationModal ? (
                             <>Simulating<LoadingDots /></>
                           ) : isLoading ? (
                             <>
                               {txStatus === "approving" || txStatus === "waitingApproval"
                                 ? <>Approving<LoadingDots /></>
-                                : txStatus === "depositing" || txStatus === "withdrawing"
-                                ? <>Confirming<LoadingDots /></>
-                                : <>Processing<LoadingDots /></>}
+                                : <>Confirm in wallet<LoadingDots /></>}
                             </>
                           ) : !inputAmount ? (
                             "Enter amount"
                           ) : hasInsufficientBalance ? (
                             "Insufficient balance"
                           ) : (
-                            showSimulationPreview && vaultSimulationResult && currentBlock === simulationBlock.current ? "Review Simulation" : (activeTab === "deposit" ? "Deposit" : "Withdraw")
+                            activeTab === "deposit" ? "Deposit" : "Withdraw"
                           )}
                         </button>
                         )
@@ -1996,67 +1994,6 @@ export function VaultPageContent({ id }: { id: string }) {
                     </>
                   )}
 
-                  {/* Multi-Step Transaction Pending State - Approval + Zap */}
-                  {isVaultDeployed && pendingMultiStep?.type === "zap" && (zapStatus === "approving" || zapStatus === "waitingApproval" || (zapStatus === "idle" && pendingMultiStep.step === 1)) && (
-                    <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
-                      <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
-                        <Loader2 className="w-8 h-8 text-[var(--accent)] animate-spin" />
-                      </div>
-                      <h3 className="text-lg font-medium mb-4">Transaction in Progress</h3>
-                      {/* Multi-Step List */}
-                      <div className="flex flex-col gap-3 mb-4 w-full max-w-xs">
-                        {/* Step 1: Approval */}
-                        <div className={cn(
-                          "flex items-center gap-3 px-4 py-3 rounded-lg transition-colors",
-                          pendingMultiStep.step === 1
-                            ? "bg-[var(--accent)]/10 border border-[var(--accent)]/30"
-                            : "bg-[var(--muted)]"
-                        )}>
-                          <div className={cn(
-                            "w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold",
-                            pendingMultiStep.step === 1
-                              ? "bg-[var(--accent)] text-[var(--background)]"
-                              : "bg-green-500 text-white"
-                          )}>
-                            {pendingMultiStep.step === 1 ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Check className="w-4 h-4" />
-                            )}
-                          </div>
-                          <span className={cn(
-                            "text-sm",
-                            pendingMultiStep.step === 1 ? "text-[var(--foreground)]" : "text-[var(--muted-foreground)]"
-                          )}>
-                            Approve {pendingMultiStep.approvalToken} for {pendingMultiStep.spenderName}
-                          </span>
-                        </div>
-                        {/* Step 2: Swap */}
-                        <div className={cn(
-                          "flex items-center gap-3 px-4 py-3 rounded-lg",
-                          "bg-[var(--muted)] opacity-60"
-                        )}>
-                          <div className="w-6 h-6 flex-shrink-0 rounded-full bg-[var(--border)] flex items-center justify-center text-[var(--muted-foreground)]">
-                            <Clock className="w-3.5 h-3.5" />
-                          </div>
-                          {pendingTxDetails && (
-                            <div className="flex items-center gap-1.5 text-sm text-[var(--muted-foreground)]">
-                              <span>Swap</span>
-                              <img src={pendingTxDetails.fromLogo} alt={pendingTxDetails.fromSymbol} className="w-4 h-4 rounded-full" />
-                              <span className="mono">{pendingTxDetails.fromAmount} {pendingTxDetails.fromSymbol}</span>
-                              <span>→</span>
-                              <img src={pendingTxDetails.toLogo} alt={pendingTxDetails.toSymbol} className="w-4 h-4 rounded-full" />
-                              <span className="mono">{pendingTxDetails.toAmount} {pendingTxDetails.toSymbol}</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      <p className="text-sm text-[var(--muted-foreground)] max-w-xs">
-                        Confirm the approval in your wallet. The swap will start automatically once approved.
-                      </p>
-                    </div>
-                  )}
-
                   {/* Transaction Pending State - Zap */}
                   {isVaultDeployed && ((isDebugZap && isDebugPending) || (zapStatus === "waitingTx" && zapHash)) && (
                     <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
@@ -2064,36 +2001,8 @@ export function VaultPageContent({ id }: { id: string }) {
                         <Loader2 className="w-8 h-8 text-[var(--accent)] animate-spin" />
                       </div>
                       <h3 className="text-lg font-medium mb-2">Awaiting Confirmation</h3>
-                      {/* Multi-Step List (when in multi-step mode) */}
-                      {pendingMultiStep?.type === "zap" && pendingMultiStep.step === 2 && pendingTxDetails && (
-                        <div className="flex flex-col gap-3 mb-4 w-full max-w-xs">
-                          {/* Step 1: Approval (completed) */}
-                          <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-[var(--muted)]">
-                            <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center">
-                              <Check className="w-4 h-4 text-white" />
-                            </div>
-                            <span className="text-sm text-[var(--muted-foreground)]">
-                              Approve {pendingMultiStep.approvalToken} for {pendingMultiStep.spenderName}
-                            </span>
-                          </div>
-                          {/* Step 2: Swap (active) */}
-                          <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/30">
-                            <div className="w-6 h-6 flex-shrink-0 rounded-full bg-[var(--accent)] flex items-center justify-center text-[var(--background)]">
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            </div>
-                            <div className="flex items-center gap-1.5 text-sm">
-                              <span>Swap</span>
-                              <img src={pendingTxDetails.fromLogo} alt={pendingTxDetails.fromSymbol} className="w-4 h-4 rounded-full" />
-                              <span className="mono">{pendingTxDetails.fromAmount} {pendingTxDetails.fromSymbol}</span>
-                              <span>→</span>
-                              <img src={pendingTxDetails.toLogo} alt={pendingTxDetails.toSymbol} className="w-4 h-4 rounded-full" />
-                              <span className="mono">{pendingTxDetails.toAmount} {pendingTxDetails.toSymbol}</span>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                      {/* Single Transaction Details (when not in multi-step mode) */}
-                      {!pendingMultiStep && (() => {
+                      {/* Transaction Details */}
+                      {(() => {
                         const details = isDebugZap ? debugTxDetails : pendingTxDetails;
                         return details && (
                           <div className="flex items-center gap-2 mb-3 px-4 py-2 bg-[var(--muted)] rounded-lg">
@@ -2212,17 +2121,17 @@ export function VaultPageContent({ id }: { id: string }) {
                             </div>
                             <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2 focus-within:ring-2 focus-within:ring-[var(--accent)] transition-shadow">
                               <input
-                                type="number"
+                                type="text"
+                                inputMode="decimal"
                                 value={zapAmount}
                                 onChange={(e) => setZapAmount(e.target.value)}
-                                onWheel={(e) => e.currentTarget.blur()}
                                 placeholder="0.00"
                                 className="flex-1 min-w-0 bg-transparent mono text-base outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
                               />
                               <TokenSelector
                                 selectedToken={zapInputToken}
                                 onSelect={handleZapInputTokenChange}
-                                excludeTokens={[...VAULT_UNDERLYING_TOKENS, vault?.address ?? ""]} // Exclude underlying tokens + current vault
+                                excludeTokens={[...excludedZapAddresses]}
                               />
                               <MaxButton
                                 balance={zapInputBalanceFormatted}
@@ -2266,10 +2175,10 @@ export function VaultPageContent({ id }: { id: string }) {
                             </div>
                             <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2 focus-within:ring-2 focus-within:ring-[var(--accent)] transition-shadow">
                               <input
-                                type="number"
+                                type="text"
+                                inputMode="decimal"
                                 value={zapAmount}
                                 onChange={(e) => setZapAmount(e.target.value)}
-                                onWheel={(e) => e.currentTarget.blur()}
                                 placeholder="0.00"
                                 className="flex-1 min-w-0 bg-transparent mono text-base outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
                               />
@@ -2302,7 +2211,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               <TokenSelector
                                 selectedToken={zapOutputToken}
                                 onSelect={handleZapOutputTokenChange}
-                                excludeTokens={[...VAULT_UNDERLYING_TOKENS, ...EXTERNAL_VAULT_TOKENS.filter(a => a.toLowerCase() !== CURVE_SAVINGS.SCRVUSD.toLowerCase()), vault?.address ?? ""]}
+                                excludeTokens={[...excludedZapAddresses, ...EXTERNAL_VAULT_TOKENS.filter(a => a.toLowerCase() !== CURVE_SAVINGS.SCRVUSD.toLowerCase())]}
                               />
                             </div>
                           </div>
@@ -2364,62 +2273,18 @@ export function VaultPageContent({ id }: { id: string }) {
                         </div>
                       </div>
 
+                      {/* Zap Approval Card */}
+                      <ApprovalCard
+                        show={showZapApprovalCard}
+                        pendingApproval={lastZapApprovalRef.current}
+                        approvalProgress={zapApprovalProgress}
+                        decimals={zapDirection === "in" ? (zapInputToken?.decimals ?? 18) : 18}
+                        isApproving={zapIsApproving}
+                        onApprove={(exact) => zapApprove(exact)}
+                      />
+
                       {/* Zap Action Button */}
                       {isConnected ? (
-                        zapNeedsApproval() && !zapIsLoading && !zapQuoteLoading && !isSimulatingPreview && zapQuote ? (
-                          /* Zap approval choice: Exact or Unlimited */
-                          <div className="space-y-2">
-                            <div className="text-sm text-[var(--muted-foreground)]">
-                              Approve {zapDirection === "in" ? zapInputToken?.symbol : vault.symbol}{" "}<span className="whitespace-nowrap">spending {zapQuote?.tx?.to && <a href={`https://etherscan.io/address/${zapQuote.tx.to}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={12} className="!inline -mt-0.5" /></a>}</span>
-                            </div>
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => {
-                                  const decimals = zapDirection === "in" ? (zapInputToken?.decimals ?? 18) : 18;
-                                  const exactAmount = parseUnits(zapAmount, decimals);
-                                  setZapPendingDetails();
-                                  setPendingMultiStep({
-                                    type: "zap",
-                                    step: 1,
-                                    approvalToken: zapDirection === "in" ? (zapInputToken?.symbol ?? "Token") : vault.symbol,
-                                    spenderName: "Enso",
-                                  });
-                                  zapApprove(exactAmount);
-                                }}
-                                disabled={zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance}
-                                className={cn(
-                                  "flex-1 py-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                                  (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance)
-                                    ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                                    : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10 cursor-pointer"
-                                )}
-                              >
-                                {Number(zapAmount).toLocaleString(undefined, { maximumFractionDigits: 2 })} {zapDirection === "in" ? (zapInputToken?.symbol ?? "Token") : vault.symbol}
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setZapPendingDetails();
-                                  setPendingMultiStep({
-                                    type: "zap",
-                                    step: 1,
-                                    approvalToken: zapDirection === "in" ? (zapInputToken?.symbol ?? "Token") : vault.symbol,
-                                    spenderName: "Enso",
-                                  });
-                                  zapApprove();
-                                }}
-                                disabled={zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance}
-                                className={cn(
-                                  "flex-1 py-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                                  (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance)
-                                    ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                                    : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer"
-                                )}
-                              >
-                                Unlimited
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
                         <button
                           onClick={() => {
                             if (showSimulationPreview && effectiveSimulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
@@ -2437,22 +2302,18 @@ export function VaultPageContent({ id }: { id: string }) {
                               executeZap();
                             }
                           }}
-                          disabled={!zapQuote || zapIsLoading || zapQuoteLoading || isSimulatingPreview || (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance)}
+                          disabled={showZapApprovalCard || !zapQuote || zapIsLoading || zapQuoteLoading || isSimulatingPreview || showSimulationModal || (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance)}
                           className={cn(
                             "w-full py-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-base",
-                            !zapQuote || zapIsLoading || zapQuoteLoading || (zapAmount && (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance))
+                            showZapApprovalCard || !zapQuote || zapIsLoading || zapQuoteLoading || isSimulatingPreview || showSimulationModal || (zapAmount && (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance))
                               ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
                               : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer"
                           )}
                         >
-                          {isSimulatingPreview ? (
+                          {isSimulatingPreview || showSimulationModal ? (
                             <>Simulating<LoadingDots /></>
                           ) : zapIsLoading ? (
-                            <>
-                              {zapStatus === "approving" || zapStatus === "waitingApproval"
-                                ? <>Approving<LoadingDots /></>
-                                : <>Zapping<LoadingDots /></>}
-                            </>
+                            <>Confirm in wallet<LoadingDots /></>
                           ) : zapQuoteLoading ? (
                             <>Getting quote<LoadingDots /></>
                           ) : !zapAmount || Number(zapAmount) === 0 ? (
@@ -2465,7 +2326,6 @@ export function VaultPageContent({ id }: { id: string }) {
                             `Zap ${zapDirection === "in" ? "In" : "Out"}`
                           )}
                         </button>
-                        )
                       ) : (
                         <button
                           onClick={openConnectModal}
@@ -2630,8 +2490,8 @@ export function VaultPageContent({ id }: { id: string }) {
         </div>
       )}
 
-      {/* Simulation Modal */}
-      {showSimulationModal && effectiveSimulationResult && (
+      {/* Simulation Modal (Zap only — deposit/withdraw has its own modal inline) */}
+      {activeTab === "zap" && showSimulationModal && effectiveSimulationResult && (
         <SimulationModal
           isOpen={showSimulationModal}
           onClose={() => setShowSimulationModal(false)}

@@ -160,7 +160,7 @@ export function TokenSelector({
   );
 
   // Filter out excluded tokens and optionally DeFi tokens
-  const excludeSet = new Set((excludeTokens || []).map(addr => addr.toLowerCase()));
+  const excludeSet = useMemo(() => new Set((excludeTokens || []).map(addr => addr.toLowerCase())), [excludeTokens]);
   const filteredTokens = tokens.filter((t) => {
     // Exclude specific token addresses
     if (excludeSet.has(t.address.toLowerCase())) {
@@ -180,7 +180,7 @@ export function TokenSelector({
     const extra = [
       ...(priorityTokens || []),
       ...FEATURED_VAULT_TOKENS,
-    ].filter(t => !seen.has(t.address.toLowerCase()));
+    ].filter(t => !seen.has(t.address.toLowerCase()) && !excludeSet.has(t.address.toLowerCase()));
     // Deduplicate extras
     const extraSeen = new Set<string>();
     const uniqueExtra = extra.filter(t => {
@@ -190,7 +190,7 @@ export function TokenSelector({
       return true;
     });
     return uniqueExtra.length > 0 ? [...filteredTokens, ...uniqueExtra] : filteredTokens;
-  }, [filteredTokens, priorityTokens]);
+  }, [filteredTokens, priorityTokens, excludeSet]);
 
   // Sort tokens by balance (tokens with balance first), get prices
   const { sortedTokens, balanceMap, priceMap } = useTokenBalances(tokensForBalances);

@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { Loader2, Check, AlertTriangle, TrendingUp, TrendingDown, Route as RouteIcon, RouteOff, ExternalLink } from "lucide-react";
+import { Loader2, AlertTriangle, TrendingUp, TrendingDown, Route as RouteIcon, RouteOff } from "lucide-react";
+import { ApprovalCard } from "@/components/ApprovalCard";
 import { useAccount, usePublicClient, useGasPrice, useBlockNumber, useBalance } from "wagmi";
 import { SimulationModal } from "@/components/SimulationModal";
 import { toast } from "sonner";
@@ -11,7 +12,7 @@ import type { VaultConfig } from "@/config/vaults";
 import { CURVE_CONTROLLERS } from "@/config/vaults";
 import type { LendingPosition } from "@/hooks/useCurveLendingPosition";
 import { useZapperActions } from "@/hooks/useZapperActions";
-import { ZAPPER_ABI, CRVUSD_ADDRESS, ZAPPER_ADDRESS, ZAPPER_V2_ADDRESS } from "@/lib/zapper";
+import { ZAPPER_ABI, CRVUSD_ADDRESS, ZAPPER_V2_ADDRESS } from "@/lib/zapper";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS, fetchRoute } from "@/lib/enso";
 import type { EnsoToken, RouteInfo } from "@/types/enso";
@@ -417,7 +418,7 @@ export function LeverageTab({
   const deleverageDebounce = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [withdrawAmount, setWithdrawAmountRaw] = useState("");
   const setWithdrawAmount = useCallback((v: string) => setWithdrawAmountRaw(sanitizeAmount(v)), []);
-  const isV2Available = ZAPPER_V2_ADDRESS !== ZAPPER_ADDRESS;
+  const isV2Available = true;
   // Output token for withdrawal — defaults to vault token (collateral)
   const [withdrawToken, setWithdrawToken] = useState<EnsoToken | null>(null); // null = vault token
   const isWithdrawToOtherToken = withdrawToken !== null && withdrawToken.address.toLowerCase() !== vault.address.toLowerCase();
@@ -550,12 +551,6 @@ export function LeverageTab({
   const lastApprovalRef = useRef(pendingApproval);
   if (pendingApproval) lastApprovalRef.current = pendingApproval;
   const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
-
-  // Track which approval button was clicked (spinner only on that button)
-  const [approvingType, setApprovingType] = useState<"exact" | "unlimited" | "single" | null>(null);
-  useEffect(() => {
-    if (!isApproving) setApprovingType(null);
-  }, [isApproving]);
 
   // Collateral token is the vault address
   const collateralToken = vault.address as `0x${string}`;
@@ -1852,98 +1847,14 @@ export function LeverageTab({
       )}
 
       {/* Approval Flow */}
-      <div
-        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
-        style={{ gridTemplateRows: showApprovalCard ? "1fr" : "0fr" }}
-      >
-        <div className="overflow-hidden">
-          {lastApprovalRef.current && (
-            <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-3">
-              <div className="text-sm font-medium">Approvals Required</div>
-              {approvalProgress && (
-                <div className="space-y-2">
-                  {approvalProgress.steps.map((s, i) => (
-                    <div key={i} className="flex items-start gap-2">
-                      <div className="mt-0.5">
-                        {s.done ? (
-                          <Check size={14} className="text-green-500 shrink-0" />
-                        ) : i === approvalProgress.step - 1 ? (
-                          <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)] shrink-0" />
-                        ) : (
-                          <div className="w-3.5 h-3.5 rounded-full border-2 border-[var(--foreground)]/30 shrink-0" />
-                        )}
-                      </div>
-                      <div>
-                        <div className={cn(
-                          "text-sm",
-                          s.done
-                            ? "text-[var(--muted-foreground)] line-through"
-                            : i === approvalProgress.step - 1
-                              ? "text-[var(--foreground)] font-medium"
-                              : "text-[var(--muted-foreground)]"
-                        )}>
-                          {s.label}
-                        </div>
-                        <div className={cn(
-                          "text-xs",
-                          i === approvalProgress.step - 1
-                            ? "text-[var(--muted-foreground)]"
-                            : "text-[var(--muted-foreground)]/60"
-                        )}>
-                          {s.description}{s.spender && <>{" "}<a href={`https://etherscan.io/address/${s.spender}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={10} className="!inline -mt-0.5" /></a></>}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {lastApprovalRef.current!.type === "erc20" && lastApprovalRef.current!.amount ? (
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => { setApprovingType("exact"); approve(true); }}
-                    disabled={isApproving}
-                    className={cn(
-                      "flex-[2] py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                      isApproving
-                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                        : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
-                    )}
-                  >
-                    {isApproving && approvingType === "exact" ? <>Approving<LoadingDots /></> : `${Number(formatUnits(lastApprovalRef.current!.amount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${lastApprovalRef.current!.tokenSymbol}`}
-                  </button>
-                  <button
-                    onClick={() => { setApprovingType("unlimited"); approve(false); }}
-                    disabled={isApproving}
-                    className={cn(
-                      "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
-                      isApproving
-                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                        : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
-                    )}
-                  >
-                    {isApproving && approvingType === "unlimited" ? <>Approving<LoadingDots /></> : "Max"}
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => { setApprovingType("single"); approve(); }}
-                  disabled={isApproving}
-                  className={cn(
-                    "w-full py-2.5 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
-                    isApproving
-                      ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                      : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
-                  )}
-                >
-                  {isApproving
-                    ? <>Approving<LoadingDots /></>
-                    : `Approve${approvalProgress ? ` (${approvalProgress.step}/${approvalProgress.total})` : ""}`}
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+      <ApprovalCard
+        show={showApprovalCard}
+        pendingApproval={lastApprovalRef.current}
+        approvalProgress={approvalProgress}
+        decimals={vault.decimals}
+        isApproving={isApproving}
+        onApprove={(exact) => approve(exact)}
+      />
 
       {/* Simulation Modal */}
       {showSimulationModal && simulationResult && (

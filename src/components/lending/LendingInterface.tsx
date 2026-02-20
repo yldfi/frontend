@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useLayoutEffect, useCallback, useRef } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
 import { formatUnits } from "viem";
@@ -527,35 +527,6 @@ export function LendingInterface({
     setChildSettling(false);
   }, [activeTab]);
 
-  // Smooth height transition for tab content
-  const tabContentRef = useRef<HTMLDivElement>(null);
-  const [tabContentHeight, setTabContentHeight] = useState<number | undefined>(undefined);
-  const [tabOverflowHidden, setTabOverflowHidden] = useState(false);
-
-  // Set initial pixel height synchronously before first paint (CSS can't transition from auto)
-  useLayoutEffect(() => {
-    if (tabContentRef.current && tabContentHeight === undefined) {
-      setTabContentHeight(tabContentRef.current.offsetHeight);
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Watch for content height changes; delay update to next frame so the browser
-  // paints the old height first, allowing the CSS transition to animate smoothly
-  useEffect(() => {
-    if (!tabContentRef.current) return;
-    const observer = new ResizeObserver(() => {
-      if (tabContentRef.current) {
-        const newHeight = tabContentRef.current.offsetHeight;
-        requestAnimationFrame(() => {
-          setTabOverflowHidden(true);
-          setTabContentHeight(newHeight);
-        });
-      }
-    });
-    observer.observe(tabContentRef.current);
-    return () => observer.disconnect();
-  }, []);
-
   const effectiveEstimatedHealth = childEstimatedHealth;
 
   // Position summary values
@@ -645,13 +616,15 @@ export function LendingInterface({
   }, [position, debugSoftLiq]);
 
   // Reset to "borrow" tab when a loan is first created
+  // Guard: skip when position is null (refetch flicker) to avoid false resets
   const prevHasLoan = useRef(hasLoan);
   useEffect(() => {
+    if (position === null) return;
     if (hasLoan && !prevHasLoan.current) {
       setActiveTab("borrow");
     }
     prevHasLoan.current = hasLoan;
-  }, [hasLoan]);
+  }, [hasLoan, position]);
 
   // New loan source choice (Curve vs yld)
   const [loanSource, setLoanSourceState] = useState<"choice" | "yldfi">(() => {
@@ -1216,7 +1189,7 @@ export function LendingInterface({
 
   // --- Has Loan View: Position summary + Health bar + Management tabs ---
   return (
-    <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl overflow-hidden">
+    <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl">
       {/* Title — hidden during tx states */}
       {!effectiveTxState && (
         <div className="px-4 pt-3 pb-1 flex items-center gap-2">
@@ -1432,12 +1405,7 @@ export function LendingInterface({
 
       {/* Form Content — hidden (not unmounted) during tx states so effects keep running */}
       <div className={effectiveTxState || debugApprovalData ? "hidden" : ""}>
-        <div
-          className={cn("transition-[height] duration-300 ease-in-out", tabOverflowHidden ? "overflow-hidden" : "")}
-          style={{ height: tabContentHeight !== undefined ? `${tabContentHeight}px` : "auto" }}
-          onTransitionEnd={(e) => { if (e.propertyName === "height") setTabOverflowHidden(false); }}
-        >
-          <div ref={tabContentRef} className="p-4 space-y-4">
+          <div className="p-4 space-y-4">
             {activeTab === "collateral" && (
               <CollateralTab
                 vault={vault}
@@ -1456,6 +1424,7 @@ export function LendingInterface({
                 vault={vault}
                 position={effectivePosition}
                 controllerAddress={controllerAddress}
+                userBalance={userBalance}
                 onTransactionSuccess={onTransactionSuccess}
                 onEstimatedHealthChange={handleEstimatedHealthChange}
                 onDebtDeltaChange={handleDebtDeltaChange}
@@ -1491,7 +1460,6 @@ export function LendingInterface({
               />
             )}
           </div>
-        </div>
       </div>
 
       {/* Debug Approval Preview */}
