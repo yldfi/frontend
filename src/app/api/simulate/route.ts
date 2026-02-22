@@ -31,12 +31,26 @@ const CVX_ALLOWANCE_SLOT = 1n;
 const MAX_UINT256 = (1n << 256n) - 1n;
 const MAX_REQUESTS_PER_MINUTE = 8;
 
-// ERC4626 ABI for convertToAssets
+// ERC4626 ABI for convertToAssets and asset discovery
 const ERC4626_ABI = [
   {
     inputs: [{ name: "shares", type: "uint256" }],
     name: "convertToAssets",
     outputs: [{ name: "assets", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "asset",
+    outputs: [{ name: "", type: "address" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "decimals",
+    outputs: [{ name: "", type: "uint8" }],
     stateMutability: "view",
     type: "function",
   },
@@ -274,26 +288,57 @@ function processAssetChanges(
 
 /**
  * Enriches vault token prices by calculating USD value using pricePerShare × underlying price.
- * Tenderly doesn't have prices for our vault tokens (yscvgCVX, yscvxCRV, yspxCVX), so we calculate them.
+ * Handles both yld vaults (known config) and unknown ERC4626 vaults (e.g. yvUSDC-1) via on-chain discovery.
  */
 async function enrichVaultTokenPrices(assetChanges: AssetChange[]): Promise<AssetChange[]> {
   try {
-    // Find vault tokens without prices
-    const vaultTokensToPrice = assetChanges.filter((change) => {
-      if (change.dollarValue && parseFloat(change.dollarValue) > 0) return false;
-      return getVaultByAddress(change.address) !== undefined;
+    // Find all unpriced tokens
+    const unpricedChanges = assetChanges.filter((change) => {
+      return !change.dollarValue || parseFloat(change.dollarValue) <= 0;
     });
 
-    if (vaultTokensToPrice.length === 0) return assetChanges;
+    if (unpricedChanges.length === 0) return assetChanges;
 
-    // Get unique underlying token addresses
+    // Collect underlying addresses — from yld vault config or ERC4626 asset() discovery
     const underlyingAddresses = new Set<string>();
-    for (const change of vaultTokensToPrice) {
+    // Map unknown vault address → { underlying, underlyingDecimals } discovered via RPC
+    const discoveredVaults = new Map<string, { underlying: string; underlyingDecimals: number }>();
+
+    for (const change of unpricedChanges) {
       const vault = getVaultByAddress(change.address);
       if (vault) {
         underlyingAddresses.add(vault.assetAddress.toLowerCase());
       }
     }
+
+    // For unpriced tokens not in yld vaults, try ERC4626 asset() discovery
+    const unknownUnpriced = unpricedChanges.filter(c => !getVaultByAddress(c.address));
+    await Promise.all(unknownUnpriced.map(async (change) => {
+      try {
+        const [underlying, underlyingDecimals] = await Promise.all([
+          publicClient.readContract({
+            address: change.address as `0x${string}`,
+            abi: ERC4626_ABI,
+            functionName: "asset",
+          }),
+          publicClient.readContract({
+            address: change.address as `0x${string}`,
+            abi: ERC4626_ABI,
+            functionName: "decimals",
+          }),
+        ]);
+        const underlyingAddr = (underlying as string).toLowerCase();
+        discoveredVaults.set(change.address.toLowerCase(), {
+          underlying: underlyingAddr,
+          underlyingDecimals: Number(underlyingDecimals),
+        });
+        underlyingAddresses.add(underlyingAddr);
+      } catch {
+        // Not an ERC4626 vault, skip
+      }
+    }));
+
+    if (underlyingAddresses.size === 0) return assetChanges;
 
     // Fetch underlying token prices from Enso
     const priceData = await fetchTokenPrices([...underlyingAddresses]);
@@ -302,14 +347,16 @@ async function enrichVaultTokenPrices(assetChanges: AssetChange[]): Promise<Asse
     // Calculate vault token values
     const enrichedChanges = await Promise.all(
       assetChanges.map(async (change): Promise<AssetChange> => {
-        // Skip if already has a price
         if (change.dollarValue && parseFloat(change.dollarValue) > 0) return change;
 
+        // Determine underlying info from yld vault config or discovered ERC4626
         const vault = getVaultByAddress(change.address);
-        if (!vault) return change;
+        const discovered = discoveredVaults.get(change.address.toLowerCase());
+        if (!vault && !discovered) return change;
+
+        const underlyingAddr = vault ? vault.assetAddress.toLowerCase() : discovered!.underlying;
 
         try {
-          // Get underlying amount via convertToAssets
           const underlyingAmount = await publicClient.readContract({
             address: change.address as `0x${string}`,
             abi: ERC4626_ABI,
@@ -317,17 +364,28 @@ async function enrichVaultTokenPrices(assetChanges: AssetChange[]): Promise<Asse
             args: [BigInt(change.rawAmount)],
           });
 
-          // Get underlying price from Enso
-          const underlyingPrice = priceMap.get(vault.assetAddress.toLowerCase());
+          const underlyingPrice = priceMap.get(underlyingAddr);
           if (underlyingPrice === undefined) return change;
 
-          // Calculate USD value: underlyingAmount / 10^decimals × price
-          const underlyingValue = Number(underlyingAmount) / 10 ** vault.assetDecimals;
+          // For discovered vaults, get underlying decimals from the underlying token
+          let decimals: number;
+          if (vault) {
+            decimals = vault.assetDecimals;
+          } else {
+            // ERC4626 decimals matches underlying for most vaults, but use underlying's actual decimals
+            const udec = await publicClient.readContract({
+              address: underlyingAddr as `0x${string}`,
+              abi: ERC4626_ABI,
+              functionName: "decimals",
+            });
+            decimals = Number(udec);
+          }
+
+          const underlyingValue = Number(underlyingAmount) / 10 ** decimals;
           const dollarValue = (underlyingValue * underlyingPrice).toString();
 
           return { ...change, dollarValue };
         } catch {
-          // If RPC call fails, return unchanged
           return change;
         }
       })
@@ -335,7 +393,6 @@ async function enrichVaultTokenPrices(assetChanges: AssetChange[]): Promise<Asse
 
     return enrichedChanges;
   } catch {
-    // If price enrichment fails entirely, return original asset changes
     return assetChanges;
   }
 }

@@ -675,9 +675,10 @@ export function VaultPageContent({ id }: { id: string }) {
   const { pricePerShare, pricePerShareFormatted, isLoading: ppsLoading } = usePricePerShare(vaultAddressTyped);
 
   // Fetch user balances
-  const { formatted: tokenBalanceFormatted, isLoading: tokenBalanceLoading, refetch: refetchTokenBalance } = useTokenBalance(TOKENS.CVXCRV);
+  const { balance: tokenBalanceRaw, decimals: tokenDecimals, formatted: tokenBalanceFormatted, isLoading: tokenBalanceLoading, refetch: refetchTokenBalance } = useTokenBalance(TOKENS.CVXCRV);
   const {
     balance: vaultBalanceRaw,
+    decimals: vaultDecimals,
     formatted: vaultBalanceFormatted,
     isLoading: vaultBalanceLoading,
     refetch: refetchVaultBalance,
@@ -813,8 +814,35 @@ export function VaultPageContent({ id }: { id: string }) {
   const outputAmount = activeTab === "deposit"
     ? inputAmount / exchangeRate
     : inputAmount * exchangeRate;
-  const maxAmount = activeTab === "deposit" ? tokenBalance : vaultBalance;
-  const hasInsufficientBalance = inputAmount > maxAmount;
+  // Compare with bigints to avoid float precision issues (e.g. 192.12403126 > 192.12403125836392)
+  const hasInsufficientBalance = (() => {
+    if (!amount || inputAmount === 0) return false;
+    try {
+      const decimals = activeTab === "deposit" ? tokenDecimals : vaultDecimals;
+      const rawBalance = activeTab === "deposit" ? tokenBalanceRaw : vaultBalanceRaw;
+      const inputBigInt = parseUnits(amount, decimals);
+      return inputBigInt > rawBalance;
+    } catch {
+      return inputAmount > (activeTab === "deposit" ? tokenBalance : vaultBalance);
+    }
+  })();
+
+  // Zap insufficient balance check (bigint precision)
+  const hasZapInsufficientBalance = (() => {
+    if (!zapAmount || Number(zapAmount) === 0) return false;
+    try {
+      if (zapDirection === "in") {
+        if (!zapInputBalance) return false;
+        const inputBigInt = parseUnits(zapAmount, zapInputBalance.decimals);
+        return inputBigInt > zapInputBalance.value;
+      } else {
+        const inputBigInt = parseUnits(zapAmount, vaultDecimals);
+        return inputBigInt > vaultBalanceRaw;
+      }
+    } catch {
+      return zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance;
+    }
+  })();
 
   // Run Tenderly simulation preview for vault deposit/withdraw
   const runVaultSimulationPreview = useCallback(async () => {
@@ -2339,10 +2367,10 @@ export function VaultPageContent({ id }: { id: string }) {
                               executeZap();
                             }
                           }}
-                          disabled={showZapApprovalCard || !zapQuote || zapIsLoading || zapQuoteLoading || isSimulatingPreview || showSimulationModal || (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance)}
+                          disabled={showZapApprovalCard || !zapQuote || zapIsLoading || zapQuoteLoading || isSimulatingPreview || showSimulationModal || hasZapInsufficientBalance}
                           className={cn(
                             "w-full py-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-base",
-                            showZapApprovalCard || !zapQuote || zapIsLoading || zapQuoteLoading || isSimulatingPreview || showSimulationModal || (zapAmount && (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance))
+                            showZapApprovalCard || !zapQuote || zapIsLoading || zapQuoteLoading || isSimulatingPreview || showSimulationModal || (zapAmount && hasZapInsufficientBalance)
                               ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
                               : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer"
                           )}
@@ -2355,7 +2383,7 @@ export function VaultPageContent({ id }: { id: string }) {
                             <>Getting quote<LoadingDots /></>
                           ) : !zapAmount || Number(zapAmount) === 0 ? (
                             "Enter amount"
-                          ) : (zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance) ? (
+                          ) : hasZapInsufficientBalance ? (
                             "Insufficient balance"
                           ) : !zapQuote ? (
                             "No route found"
