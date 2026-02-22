@@ -538,7 +538,7 @@ export async function POST(request: NextRequest) {
     input: body.data,
     value: body.value ?? "0",
     gas: body.gas,
-    save: isDev,           // Only save successful simulations in dev
+    save: true,            // Save simulations so users can view traces
     save_if_fails: true,   // Always save failures for debugging
     simulation_type: "full",
     overrides,
