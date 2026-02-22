@@ -56,7 +56,7 @@ function ConnectButtonContent({
             <button
               onClick={isWrongNetwork ? onSwitchNetwork : openAccountModal}
               type="button"
-              className={`mono text-sm px-4 py-2 border rounded-md transition-all cursor-pointer ${
+              className={`mono text-sm px-3 sm:px-4 py-2 border rounded-md transition-all cursor-pointer truncate max-w-[140px] sm:max-w-none ${
                 isWrongNetwork
                   ? "border-[var(--destructive)] text-[var(--destructive)] hover:bg-[var(--destructive)]/10"
                   : "border-[var(--border)] hover:border-[var(--border-hover)] hover:bg-[var(--muted)]"

@@ -235,6 +235,16 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
     logoURI: "/tokens/pxcvx.png",
     type: "defi",
   },
+  // Yearn V3 vault tokens
+  {
+    address: "0xBe53A109B494E5c9f97b9Cd39Fe969BE68BF6204",
+    chainId: 1,
+    name: "USDC-1 yVault",
+    symbol: "yvUSDC-1",
+    decimals: 6,
+    logoURI: "/tokens/yearn-v3.svg",
+    type: "defi",
+  },
   // yld vault tokens - from centralized config
   ...Object.values(VAULTS).map((vault) => ({
     address: vault.address,

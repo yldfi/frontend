@@ -50,31 +50,9 @@ async function rateLimitedFetch(url: string): Promise<Response> {
   return fetch(url);
 }
 
-// Per-IP rate limiting: 30 requests per minute
-const MAX_REQUESTS_PER_MINUTE = 30;
-const RATE_LIMIT_WINDOW_MS = 60_000;
-const requestLog = new Map<string, number[]>();
+import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
 
-function getClientIp(request: NextRequest): string {
-  return (
-    request.headers.get("cf-connecting-ip") ||
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    "unknown"
-  );
-}
-
-function isRateLimited(clientIp: string): boolean {
-  const now = Date.now();
-  const entries = requestLog.get(clientIp) ?? [];
-  const recent = entries.filter((timestamp) => now - timestamp < RATE_LIMIT_WINDOW_MS);
-  if (recent.length >= MAX_REQUESTS_PER_MINUTE) {
-    requestLog.set(clientIp, recent);
-    return true;
-  }
-  recent.push(now);
-  requestLog.set(clientIp, recent);
-  return false;
-}
+const isRateLimited = createRateLimiter(30);
 
 // Get KV namespace from Cloudflare context
 // Returns null in local dev if bindings aren't configured
@@ -177,7 +155,7 @@ export async function GET(request: NextRequest) {
 
         // If it's a proxy contract, try to get the implementation name
         if (name && isProxyContract(name)) {
-          const implAddress = await getImplementationAddress(address, chainId, apiKey);
+          const implAddress = await getImplementationAddress(address, chainId);
           if (implAddress) {
             const implName = await fetchContractName(implAddress, chainId, apiKey);
             if (implName && !isProxyContract(implName)) {
@@ -221,7 +199,7 @@ export async function GET(request: NextRequest) {
         // Check if this is a proxy contract - try to get implementation source
         const isLikelyProxy = !sourceResult.SourceCode || isProxyContract(sourceResult.ContractName);
         if (isLikelyProxy) {
-          const implAddress = await getImplementationAddress(address, chainId, apiKey);
+          const implAddress = await getImplementationAddress(address, chainId);
           if (implAddress) {
             // Fetch implementation source
             const implUrl = `${ETHERSCAN_API_BASE}?chainid=${chainId}&module=contract&action=getsourcecode&address=${implAddress}&apikey=${apiKey}`;
@@ -393,8 +371,7 @@ const IMPLEMENTATION_SLOTS = [
 
 async function getImplementationAddress(
   proxyAddress: string,
-  chainId: string,
-  apiKey: string
+  chainId: string
 ): Promise<string | null> {
   try {
     const rpcUrl = chainId === "1" ? "https://eth.llamarpc.com" : null;

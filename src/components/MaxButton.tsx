@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { cn } from "@/lib/utils";
 
 interface MaxButtonProps {
@@ -12,24 +12,39 @@ interface MaxButtonProps {
 
 export function MaxButton({ balance, onSelect, showClose, onClose }: MaxButtonProps) {
   const [isHovered, setIsHovered] = useState(false);
+  const [isTouchOpen, setIsTouchOpen] = useState(false);
   const hideTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const touchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const balanceNum = parseFloat(balance) || 0;
+
+  const isOpen = isHovered || isTouchOpen;
+
+  // Auto-collapse after 4 seconds of inactivity on touch
+  useEffect(() => {
+    if (isTouchOpen) {
+      touchTimeoutRef.current = setTimeout(() => {
+        setIsTouchOpen(false);
+      }, 4000);
+      return () => {
+        if (touchTimeoutRef.current) clearTimeout(touchTimeoutRef.current);
+      };
+    }
+  }, [isTouchOpen]);
 
   const handlePercentage = (percent: number) => {
     if (percent === 0) {
       onSelect("");
     } else {
       const amount = balanceNum * (percent / 100);
-      // Cap to 8 decimal places to avoid display overflow
       const dot = balance.indexOf(".");
       const maxDecimals = dot === -1 ? 0 : Math.min(balance.length - dot - 1, 8);
       onSelect(maxDecimals > 0 ? amount.toFixed(maxDecimals) : amount.toString());
     }
-    // Hide menu after selection
     setIsHovered(false);
+    setIsTouchOpen(false);
   };
 
-  // Show menu immediately on hover
+  // Show menu immediately on hover (desktop)
   const handleMouseEnter = useCallback(() => {
     if (hideTimeoutRef.current) {
       clearTimeout(hideTimeoutRef.current);
@@ -38,7 +53,7 @@ export function MaxButton({ balance, onSelect, showClose, onClose }: MaxButtonPr
     setIsHovered(true);
   }, []);
 
-  // Delay hiding to allow moving to other buttons
+  // Delay hiding to allow moving to other buttons (desktop)
   const handleMouseLeave = useCallback(() => {
     hideTimeoutRef.current = setTimeout(() => {
       setIsHovered(false);
@@ -52,7 +67,7 @@ export function MaxButton({ balance, onSelect, showClose, onClose }: MaxButtonPr
         className={cn(
           "absolute right-0 rounded-lg bg-[var(--background)]/40 transition-opacity duration-200 z-30 pointer-events-none",
           showClose ? "-top-[116px] -bottom-[28px] -left-1.5 -right-1.5" : "-top-[116px] -bottom-1.5 -left-1.5 -right-1.5",
-          isHovered ? "opacity-100" : "opacity-0"
+          isOpen ? "opacity-100" : "opacity-0"
         )}
       />
 
@@ -60,7 +75,7 @@ export function MaxButton({ balance, onSelect, showClose, onClose }: MaxButtonPr
       <div
         className={cn(
           "absolute bottom-full right-0 pb-1 flex flex-col gap-1 transition-[opacity,transform] duration-200 ease-out z-40",
-          isHovered ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1 pointer-events-none"
+          isOpen ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1 pointer-events-none"
         )}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
@@ -79,12 +94,23 @@ export function MaxButton({ balance, onSelect, showClose, onClose }: MaxButtonPr
         ))}
       </div>
 
-      {/* Main MAX button - hover trigger */}
+      {/* Main MAX button - hover on desktop, tap to expand on touch */}
       <button
         type="button"
         tabIndex={-1}
         onMouseDown={(e) => e.preventDefault()}
-        onClick={() => handlePercentage(100)}
+        onClick={() => {
+          if (isTouchOpen) {
+            // Already open from touch — treat as MAX selection
+            handlePercentage(100);
+          } else if (!isHovered) {
+            // Touch device — no hover state, so toggle open
+            setIsTouchOpen(true);
+          } else {
+            // Desktop with hover — direct MAX selection
+            handlePercentage(100);
+          }
+        }}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
         className="relative z-40 shrink-0 px-2 py-1 text-xs font-medium bg-[var(--background)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] rounded transition-colors cursor-pointer"
@@ -97,7 +123,7 @@ export function MaxButton({ balance, onSelect, showClose, onClose }: MaxButtonPr
         <div
           className={cn(
             "absolute top-full right-0 pt-1 transition-[opacity,transform] duration-200 ease-out z-40",
-            isHovered ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1 pointer-events-none"
+            isOpen ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1 pointer-events-none"
           )}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}

@@ -286,10 +286,10 @@ export function HomePageContent() {
   ];
 
   return (
-    <div className="min-h-screen bg-[var(--background)]">
+    <div className="min-h-screen bg-[var(--background)] overflow-x-hidden">
       {/* Header */}
       <header className="fixed left-0 right-0 z-50 border-b border-[var(--border)] backdrop-blur-lg bg-[var(--background)]/80" style={{ top: "var(--test-banner-height)" }}>
-        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <Logo size={28} />
             <span className="mono text-lg font-medium tracking-tight leading-none">
@@ -319,7 +319,7 @@ export function HomePageContent() {
                 </div>
                 <div
                   className={cn(
-                    "max-w-6xl mx-auto px-6 relative z-10 py-24 md:py-32 transition-opacity duration-500",
+                    "max-w-6xl mx-auto px-4 sm:px-6 relative z-10 py-24 md:py-32 transition-opacity duration-500",
                     heroCollapsed ? "opacity-0" : "opacity-100"
                   )}
                 >
@@ -409,7 +409,7 @@ export function HomePageContent() {
         {/* Vaults */}
         <section id="vaults" className="scroll-mt-16">
           <div className={cn(
-            "max-w-6xl mx-auto px-6 transition-all duration-500",
+            "max-w-6xl mx-auto px-4 sm:px-6 transition-all duration-500",
             heroCollapsed ? "py-6 md:py-8" : "py-16 md:py-24"
           )}>
             <div className="flex items-end justify-between mb-12">
@@ -480,7 +480,7 @@ export function HomePageContent() {
                         {vault.name}
                       </h3>
                     </div>
-                    <p className="text-sm text-[var(--muted-foreground)] mb-3 leading-relaxed">
+                    <p className="text-sm text-[var(--muted-foreground)] mb-3 leading-relaxed line-clamp-2">
                       {vault.description}
                     </p>
                     <div className="flex items-center gap-2.5 mb-4">
@@ -489,19 +489,19 @@ export function HomePageContent() {
                           <button
                             key={badge}
                             onClick={(e) => { e.preventDefault(); e.stopPropagation(); router.push(`/vaults/${vault.id}/lending`); }}
-                            className="group/badge collateral-badge inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium bg-[var(--muted)] text-[var(--muted-foreground)] rounded whitespace-nowrap hover:text-[var(--foreground)] transition-colors"
+                            className="group/badge collateral-badge inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium bg-[var(--muted)] text-white rounded whitespace-nowrap hover:text-[var(--foreground)] transition-colors max-w-full"
                           >
                             <Image src="/curve-logo.png" alt="Curve" width={12} height={12} className="rounded-full" />
                             {vault.lendingPosition?.hasLoan ? (
                               <>
                                 <span>Loan</span>
                                 <span className="mx-0.5">·</span>
-                                <Image src="/tokens/crvusd.png" alt="crvUSD" width={12} height={12} className="rounded-full" />
-                                <span className="mono">{Number(formatUnits(vault.lendingPosition.debt, 18)).toFixed(0)} crvUSD</span>
-                                <span>/</span>
-                                <Image src={vault.logo} alt={vault.name} width={12} height={12} className="rounded-full" />
-                                <span className="mono">{Number(formatUnits(vault.lendingPosition.collateral, 18)).toFixed(0)} {vault.name}</span>
-                                {(() => { const h = formatHealth(vault.lendingPosition.health); const hoverColor = h.status === "healthy" ? "group-hover/badge:text-green-500" : h.status === "warning" ? "group-hover/badge:text-yellow-500" : "group-hover/badge:text-red-400"; return <span className={`inline-flex items-center gap-0.5 ${h.color} ${hoverColor} transition-colors`}><HeartPulse size={10} /><span className="mono">{h.value.toFixed(0)}%</span></span>; })()}
+                                <Image src="/tokens/crvusd.png" alt="crvUSD" width={12} height={12} className="rounded-full hidden lg:inline" />
+                                <span className="mono">{Number(formatUnits(vault.lendingPosition.debt, 18)).toFixed(0)}<span className="hidden lg:inline"> crvUSD</span></span>
+                                <span className="hidden lg:inline">/</span>
+                                <Image src={vault.logo} alt={vault.name} width={12} height={12} className="rounded-full hidden lg:inline" />
+                                <span className="mono hidden lg:inline">{Number(formatUnits(vault.lendingPosition.collateral, 18)).toFixed(0)} {vault.name}</span>
+                                {(() => { const h = formatHealth(vault.lendingPosition.health); const hoverColor = h.status === "healthy" ? "group-hover/badge:text-green-500" : h.status === "warning" ? "group-hover/badge:text-yellow-500" : "group-hover/badge:text-red-400"; return <span className={`hidden lg:inline-flex items-center gap-0.5 ${h.color} ${hoverColor} transition-colors`}><HeartPulse size={10} /><span className="mono">{h.value.toFixed(0)}%</span></span>; })()}
                               </>
                             ) : (
                               <span>Borrow against {vault.name}</span>
@@ -509,7 +509,7 @@ export function HomePageContent() {
                             <ArrowUpRight size={10} />
                           </button>
                         ) : (
-                          <span key={badge} className="inline-flex items-center px-2 py-1 text-[11px] font-medium bg-[var(--muted)] text-[var(--muted-foreground)] rounded border border-transparent whitespace-nowrap">
+                          <span key={badge} className="inline-flex items-center px-2 py-1 text-[11px] font-medium bg-[var(--muted)] text-white rounded border border-transparent whitespace-nowrap">
                             {badge}
                           </span>
                         )
@@ -554,25 +554,25 @@ export function HomePageContent() {
                         <h3 className="text-lg font-medium group-hover:text-[var(--accent)] transition-colors">
                           {vault.name}
                         </h3>
-                        <div className="flex items-center gap-2 mt-1">
+                        <div className="flex items-center gap-2.5 mt-1">
                           {vault.badges?.map((badge) => (
                             badge === "Collateral (LlamaLend)" ? (
                               <button
                                 key={badge}
                                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); router.push(`/vaults/${vault.id}/lending`); }}
-                                className="group/badge collateral-badge inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium bg-[var(--muted)] text-[var(--muted-foreground)] rounded whitespace-nowrap hover:text-[var(--foreground)] transition-colors"
+                                className="group/badge collateral-badge inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium bg-[var(--muted)] text-white rounded whitespace-nowrap hover:text-[var(--foreground)] transition-colors max-w-full"
                               >
                                 <Image src="/curve-logo.png" alt="Curve" width={10} height={10} className="rounded-full" />
                                 {vault.lendingPosition?.hasLoan ? (
                                   <>
                                     <span>Loan</span>
                                     <span>·</span>
-                                    <Image src="/tokens/crvusd.png" alt="crvUSD" width={10} height={10} className="rounded-full" />
-                                    <span className="mono">{Number(formatUnits(vault.lendingPosition.debt, 18)).toFixed(0)} crvUSD</span>
-                                    <span>/</span>
-                                    <Image src={vault.logo} alt={vault.name} width={10} height={10} className="rounded-full" />
-                                    <span className="mono">{Number(formatUnits(vault.lendingPosition.collateral, 18)).toFixed(0)} {vault.name}</span>
-                                    {(() => { const h = formatHealth(vault.lendingPosition.health); const hoverColor = h.status === "healthy" ? "group-hover/badge:text-green-500" : h.status === "warning" ? "group-hover/badge:text-yellow-500" : "group-hover/badge:text-red-400"; return <span className={`inline-flex items-center gap-0.5 ${h.color} ${hoverColor} transition-colors`}><HeartPulse size={10} /><span className="mono">{h.value.toFixed(0)}%</span></span>; })()}
+                                    <Image src="/tokens/crvusd.png" alt="crvUSD" width={10} height={10} className="rounded-full hidden lg:inline" />
+                                    <span className="mono">{Number(formatUnits(vault.lendingPosition.debt, 18)).toFixed(0)}<span className="hidden lg:inline"> crvUSD</span></span>
+                                    <span className="hidden lg:inline">/</span>
+                                    <Image src={vault.logo} alt={vault.name} width={10} height={10} className="rounded-full hidden lg:inline" />
+                                    <span className="mono hidden lg:inline">{Number(formatUnits(vault.lendingPosition.collateral, 18)).toFixed(0)} {vault.name}</span>
+                                    {(() => { const h = formatHealth(vault.lendingPosition.health); const hoverColor = h.status === "healthy" ? "group-hover/badge:text-green-500" : h.status === "warning" ? "group-hover/badge:text-yellow-500" : "group-hover/badge:text-red-400"; return <span className={`hidden lg:inline-flex items-center gap-0.5 ${h.color} ${hoverColor} transition-colors`}><HeartPulse size={10} /><span className="mono">{h.value.toFixed(0)}%</span></span>; })()}
                                   </>
                                 ) : (
                                   <span>Borrow against {vault.name}</span>
@@ -580,7 +580,7 @@ export function HomePageContent() {
                                 <ArrowUpRight size={10} />
                               </button>
                             ) : (
-                              <span key={badge} className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-[var(--muted)] text-[var(--muted-foreground)] rounded border border-transparent whitespace-nowrap">
+                              <span key={badge} className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-[var(--muted)] text-white rounded border border-transparent whitespace-nowrap">
                                 {badge}
                               </span>
                             )
@@ -630,7 +630,7 @@ export function HomePageContent() {
 
         {/* How it works */}
         <section className="border-t border-[var(--border)]">
-          <div className="max-w-6xl mx-auto px-6 py-16 md:py-24">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 py-16 md:py-24">
             <div className="mb-12">
               <p className="mono text-sm text-[var(--muted-foreground)] mb-2">
                 [003] Architecture
@@ -682,7 +682,7 @@ export function HomePageContent() {
 
       {/* Footer */}
       <footer className="border-t border-[var(--border)]">
-        <div className="max-w-6xl mx-auto px-6 py-12">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-12">
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
             <div className="flex items-center gap-3">
               <Logo size={32} />

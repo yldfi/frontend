@@ -8,7 +8,7 @@ import { parseUnits, formatUnits } from "viem";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
 import { MaxButton } from "@/components/MaxButton";
-import { ArrowUpRight, ExternalLink, Loader2, Search, Route, RouteOff, Copy, ChevronDown, ChevronRight, Check, X, Clock, ArrowRightLeft, HeartPulse } from "lucide-react";
+import { ArrowUpRight, ExternalLink, Loader2, Search, Route, RouteOff, Copy, ChevronDown, ChevronRight, Check, X, Clock, ArrowRightLeft, HeartPulse, Shield, Wallet, Banknote, Percent, TrendingUp, Info, Coins } from "lucide-react";
 import { RouteDisplay } from "@/components/RouteDisplay";
 import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
@@ -145,6 +145,17 @@ export function VaultPageContent({ id }: { id: string }) {
   const [debugPanelPos, setDebugPanelPos] = useState<{ x: number; y: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const dragOffset = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [debugMinimized, setDebugMinimized] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try { return localStorage.getItem("yldfi-vault-tx-preview-minimized") === "true"; } catch { return false; }
+  });
+  const toggleDebugMinimized = useCallback(() => {
+    setDebugMinimized(prev => {
+      const next = !prev;
+      try { localStorage.setItem("yldfi-vault-tx-preview-minimized", String(next)); } catch {}
+      return next;
+    });
+  }, []);
 
   // Load saved position on mount
   useEffect(() => {
@@ -291,8 +302,18 @@ export function VaultPageContent({ id }: { id: string }) {
 
   // Contract explorer state (localStorage persisted)
   const { isOpen: explorerOpen, address: explorerAddress, title: explorerTitle, lastUpdated: explorerLastUpdated, icon: explorerIcon, showFlowTab: explorerShowFlowTab, activeTab: explorerActiveTab, openExplorer, switchContract, closeExplorer, setActiveTab: setExplorerActiveTab } = useContractExplorer();
-  const [amount, setAmountState] = useState("");
-  const setAmount = useCallback((value: string) => setAmountState(sanitizeAmount(value)), []);
+  const [amount, setAmountState] = useState(() => {
+    if (typeof window === "undefined") return "";
+    try { return sanitizeAmount(localStorage.getItem(`yldfi-amount-${id}`) ?? ""); } catch { return ""; }
+  });
+  const setAmount = useCallback((value: string) => {
+    const sanitized = sanitizeAmount(value);
+    setAmountState(sanitized);
+    try {
+      if (sanitized) localStorage.setItem(`yldfi-amount-${id}`, sanitized);
+      else localStorage.removeItem(`yldfi-amount-${id}`);
+    } catch { /* */ }
+  }, [id]);
 
   // Reset amount when Tenderly network changes (mainnet <-> VNet)
   useEffect(() => {
@@ -422,6 +443,7 @@ export function VaultPageContent({ id }: { id: string }) {
 
   // Clear form state when navigating away (but preserve on refresh)
   useClearOnNavigation([
+    `yldfi-amount-${id}`,
     `yldfi-zap-amount-${id}`,
     `yldfi-zap-direction-${id}`,
     "yldfi-active-tab",
@@ -779,7 +801,7 @@ export function VaultPageContent({ id }: { id: string }) {
           }).then(resultData => {
             const answer = resultData[1] as bigint;
             setEthPrice(Number(answer) / 1e8);
-          }).catch(() => {});
+          }).catch(() => { });
         }
       }
     } finally {
@@ -826,7 +848,7 @@ export function VaultPageContent({ id }: { id: string }) {
           }).then(resultData => {
             const answer = resultData[1] as bigint;
             setEthPrice(Number(answer) / 1e8);
-          }).catch(() => {});
+          }).catch(() => { });
         }
       }
     } finally {
@@ -868,8 +890,8 @@ export function VaultPageContent({ id }: { id: string }) {
         const action = prevTxStatus.current === "waitingApproval" || prevTxStatus.current === "approving"
           ? "approval"
           : activeTab === "deposit"
-          ? "deposit"
-          : "withdraw";
+            ? "deposit"
+            : "withdraw";
 
         // Check if user cancelled (rejected in wallet)
         if (txError && isUserRejection(txError)) {
@@ -1160,10 +1182,10 @@ export function VaultPageContent({ id }: { id: string }) {
   }, [zapQuoteError]);
 
   return (
-    <div className="min-h-screen bg-[var(--background)]">
+    <div className="min-h-screen bg-[var(--background)] overflow-x-hidden">
       {/* Header */}
       <header className="fixed left-0 right-0 z-50 border-b border-[var(--border)] backdrop-blur-lg bg-[var(--background)]/80" style={{ top: "var(--test-banner-height)" }}>
-        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <Logo size={28} />
             <span className="mono text-lg font-medium tracking-tight leading-none">
@@ -1177,13 +1199,13 @@ export function VaultPageContent({ id }: { id: string }) {
       <main style={{ paddingTop: "calc(4rem + var(--test-banner-height))", overflowX: "clip" }}>
         {/* Breadcrumb navigation */}
         <div className="border-b border-[var(--border)]">
-          <div className="max-w-6xl mx-auto px-6 py-4">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4">
             <nav className="flex items-center gap-2 text-sm">
               <Link
                 href="/"
                 className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
               >
-                yld
+                yld Vaults
               </Link>
               <ChevronRight size={14} className="text-[var(--muted-foreground)]" />
               <span className="text-[var(--foreground)]">{vault.symbol}</span>
@@ -1191,12 +1213,15 @@ export function VaultPageContent({ id }: { id: string }) {
           </div>
         </div>
 
-        <div className="max-w-6xl mx-auto px-6 py-12">
-          <div className="grid lg:grid-cols-5 gap-12">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+          <div className="grid lg:grid-cols-5 gap-8 lg:gap-12">
             {/* Left column - Info */}
-            <div className="lg:col-span-3 space-y-12">
-              {/* Header */}
+            <div className="lg:col-span-3 space-y-8 min-w-0 overflow-hidden">
+              {/* Section Header */}
               <div>
+                <p className="mono text-sm text-[var(--muted-foreground)] mb-2">
+                  [003] Vault
+                </p>
                 <div className="flex items-center gap-3 mb-4">
                   {vault.logo && (
                     <Image
@@ -1210,7 +1235,7 @@ export function VaultPageContent({ id }: { id: string }) {
                   <div className="relative" ref={vaultSelectorRef}>
                     <button
                       onClick={() => setVaultSelectorOpen(!vaultSelectorOpen)}
-                      className="flex items-center gap-2 text-3xl md:text-4xl font-medium tracking-tight leading-none hover:text-[var(--accent)] transition-colors"
+                      className="flex items-center gap-2 text-2xl md:text-3xl font-medium tracking-tight leading-none hover:text-[var(--accent)] transition-colors"
                     >
                       {vault.name}
                       <ChevronDown
@@ -1269,40 +1294,11 @@ export function VaultPageContent({ id }: { id: string }) {
                 </p>
               </div>
 
-              {/* Stats */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                <div>
-                  <p className="text-sm text-[var(--muted-foreground)] mb-1">APY</p>
-                  <p className="mono text-2xl font-medium text-[var(--success)]">
-                    {yearnLoading || parentLoading ? "..." : displayApyFormatted}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-[var(--muted-foreground)] mb-1">TVL</p>
-                  <p className="mono text-2xl font-medium">
-                    {yearnLoading ? "..." : yearnVault?.tvlFormatted ?? "—"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-[var(--muted-foreground)] mb-1">Price/Share</p>
-                  <p className="mono text-2xl font-medium">
-                    {ppsLoading ? "..." : pricePerShareFormatted}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-[var(--muted-foreground)] mb-1">Token</p>
-                  <p className="mono text-2xl font-medium">
-                    {vault.assetSymbol}
-                  </p>
-                </div>
-              </div>
-
               {/* Lending Position / Borrow CTA */}
               {vault.type === "vault" && controllerAddress && (() => {
                 if (lendingPosition?.hasLoan && curveVault) {
-                  // Collateral APR = vault APY (what the collateral earns)
                   const collateralApr = yearnVault?.apy ?? 0;
-                  const borrowApr = curveVault.rates.borrowApr * 100; // decimal to percent
+                  const borrowApr = curveVault.rates.borrowApr * 100;
                   const display = buildLendingPositionDisplay(
                     lendingPosition.collateral,
                     lendingPosition.debt,
@@ -1347,21 +1343,22 @@ export function VaultPageContent({ id }: { id: string }) {
                             </p>
                           </div>
                           <div>
-                            {(() => { const h = formatHealth(lendingPosition.health); return (<>
-                              <p className="text-xs text-[var(--muted-foreground)] mb-0.5">Health</p>
-                              <p className={`mono text-sm font-medium ${h.color}`}>{h.value.toFixed(0)}%</p>
-                            </>); })()}
+                            {(() => {
+                              const h = formatHealth(lendingPosition.health); return (<>
+                                <p className="text-xs text-[var(--muted-foreground)] mb-0.5">Health</p>
+                                <p className={`mono text-sm font-medium ${h.color}`}>{h.value.toFixed(0)}%</p>
+                              </>);
+                            })()}
                           </div>
                         </div>
                       </div>
                     </Link>
                   );
                 }
-                // No position — show borrow CTA
                 return (
                   <Link
                     href={`/vaults/${vault.name}/lending`}
-                    className="collateral-link"
+                    className="collateral-link block"
                   >
                     <span>
                       <Image src="/curve-logo.png" alt="Curve" width={14} height={14} className="rounded-full inline-block" />
@@ -1372,95 +1369,131 @@ export function VaultPageContent({ id }: { id: string }) {
                 );
               })()}
 
-              {/* Details */}
-              <div className="space-y-6">
-                <h2 className="text-lg font-medium">{vault.type === "vault" ? "Vault" : "Strategy"} Details</h2>
+              {/* Stats */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="bg-[var(--background)]/80 backdrop-blur-sm border border-[var(--border)] rounded-xl p-4 flex flex-col justify-between group hover:border-[var(--muted-foreground)]/30 transition-colors">
+                  <div className="flex items-center gap-2 mb-3 text-[var(--muted-foreground)]">
+                    <TrendingUp size={16} />
+                    <span className="text-xs font-medium uppercase tracking-wider">APY</span>
+                  </div>
+                  <p className="mono xl:text-2xl text-xl font-medium text-[var(--success)]">
+                    {yearnLoading || parentLoading ? "..." : displayApyFormatted}
+                  </p>
+                </div>
 
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between py-3 border-b border-[var(--border)]">
-                    <span className="text-[var(--muted-foreground)]">Strategy</span>
-                    <span className="mono text-sm">{vault.strategy}</span>
+                <div className="bg-[var(--background)]/80 backdrop-blur-sm border border-[var(--border)] rounded-xl p-4 flex flex-col justify-between group hover:border-[var(--muted-foreground)]/30 transition-colors">
+                  <div className="flex items-center gap-2 mb-3 text-[var(--muted-foreground)]">
+                    <Wallet size={16} />
+                    <span className="text-xs font-medium uppercase tracking-wider">TVL</span>
                   </div>
-                  <div className="flex items-center justify-between py-3 border-b border-[var(--border)]">
-                    <span className="text-[var(--muted-foreground)]">Performance Fee</span>
-                    <span className="mono text-sm text-right">
-                      {vault.type === "vault" ? (
-                        <>15% Vault (to LlamaLend lenders) + 5% Strategy</>
-                      ) : (
-                        <>{vault.fees.performance}%</>
-                      )}
-                    </span>
+                  <p className="mono xl:text-2xl text-xl font-medium">
+                    {yearnLoading ? "..." : yearnVault?.tvlFormatted ?? "—"}
+                  </p>
+                </div>
+
+                <div className="bg-[var(--background)]/80 backdrop-blur-sm border border-[var(--border)] rounded-xl p-4 flex flex-col justify-between group hover:border-[var(--muted-foreground)]/30 transition-colors">
+                  <div className="flex items-center gap-2 mb-3 text-[var(--muted-foreground)]">
+                    <Banknote size={16} />
+                    <span className="text-xs font-medium uppercase tracking-wider">Price/Share</span>
                   </div>
-                  <div className="flex items-center justify-between py-3 border-b border-[var(--border)]">
-                    <span className="text-[var(--muted-foreground)]">
-                      {vault.type === "strategy" ? "Strategy" : "Vault"}
-                    </span>
+                  <p className="mono xl:text-2xl text-xl font-medium">
+                    {ppsLoading ? "..." : pricePerShareFormatted}
+                  </p>
+                </div>
+
+                <div className="bg-[var(--background)]/80 backdrop-blur-sm border border-[var(--border)] rounded-xl p-4 flex flex-col justify-between group hover:border-[var(--muted-foreground)]/30 transition-colors">
+                  <div className="flex items-center gap-2 mb-3 text-[var(--muted-foreground)]">
+                    <Coins size={16} />
+                    <span className="text-xs font-medium uppercase tracking-wider">Token</span>
+                  </div>
+                  <p className="mono xl:text-2xl text-xl font-medium">
+                    {vault.assetSymbol}
+                  </p>
+                </div>
+              </div>
+
+              {/* Details */}
+              <div className="p-5 rounded-xl border border-[var(--border)] space-y-4">
+                <div className="flex items-center gap-2">
+                  <Info size={14} className="text-[var(--muted-foreground)]" />
+                  <h3 className="text-sm font-medium text-[var(--foreground)]">{vault.type === "vault" ? "Vault" : "Strategy"} Details</h3>
+                </div>
+
+                <div className="space-y-2 text-sm">
+                  {/* Strategy & Fee row */}
+                  <div className="flex gap-2">
+                    <div className="flex-1 flex justify-between items-center px-3 py-2.5 rounded-lg bg-[var(--muted)]/30">
+                      <span className="text-[var(--muted-foreground)] text-xs">Strategy</span>
+                      <span className="mono text-xs font-medium">{vault.strategy}</span>
+                    </div>
+                    <div className="flex-1 flex justify-between items-center px-3 py-2.5 rounded-lg bg-[var(--muted)]/30">
+                      <span className="text-[var(--muted-foreground)] text-xs">Performance Fee</span>
+                      <span className="mono text-xs font-medium">
+                        {vault.type === "vault" ? "15% Vault + 5% Strat" : `${vault.fees.performance}%`}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Vault address */}
+                  <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-[var(--muted)]/30">
+                    <span className="text-[var(--muted-foreground)] text-xs">{vault.type === "strategy" ? "Strategy" : "Vault"}</span>
                     <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => openExplorer(vault.address, vault.name, vault.logo, vault.type === "strategy")}
-                        className="mono text-xs px-2 py-1 bg-[var(--muted)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] rounded flex items-center gap-1 transition-colors"
-                      >
-                        <Search size={10} />
-                        Explore
-                      </button>
                       <a
                         href={vault.links?.etherscan || `https://etherscan.io/address/${vault.address}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="mono text-sm flex items-center gap-1 hover:text-[var(--accent)] transition-colors"
+                        className="mono text-xs flex items-center gap-1 hover:text-[var(--accent)] transition-colors"
                       >
                         {vault.address.slice(0, 6)}...{vault.address.slice(-4)}
-                        <ExternalLink size={12} />
+                        <ExternalLink size={10} className="opacity-50" />
                       </a>
                       <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(vault.address);
-                          toast.success("Address copied to clipboard", { id: "copy-address" });
-                        }}
-                        className="hover:text-[var(--accent)] transition-colors"
+                        onClick={() => { navigator.clipboard.writeText(vault.address); toast.success("Address copied", { id: "copy-address" }); }}
+                        className="hover:text-[var(--accent)] text-[var(--muted-foreground)] transition-colors"
                         aria-label="Copy vault address"
                       >
-                        <Copy size={12} />
+                        <Copy size={11} />
+                      </button>
+                      <button
+                        onClick={() => openExplorer(vault.address, vault.name, vault.logo, vault.type === "strategy")}
+                        className="text-[10px] px-1.5 py-0.5 bg-[var(--muted)] hover:bg-[var(--accent)] hover:text-white rounded flex items-center gap-1 transition-colors"
+                      >
+                        <Search size={9} />
+                        Explore
                       </button>
                     </div>
                   </div>
+
+                  {/* Strategy contract address */}
                   {vault.underlyingStrategy && vault.type === "vault" && (
-                    <div className="flex items-center justify-between py-3 border-b border-[var(--border)]">
-                      <span className="text-[var(--muted-foreground)]">Strategy</span>
+                    <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-[var(--muted)]/30">
+                      <span className="text-[var(--muted-foreground)] text-xs">Strategy Contract</span>
                       <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => {
-                            const strategyConfig = getVaultByAddress(vault.underlyingStrategy!);
-                            openExplorer(
-                              vault.underlyingStrategy!,
-                              strategyConfig?.name || `${vault.name} Strategy`,
-                              strategyConfig?.logo,
-                              true // Show Strategy Flow tab for strategy contracts
-                            );
-                          }}
-                          className="mono text-xs px-2 py-1 bg-[var(--muted)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] rounded flex items-center gap-1 transition-colors"
-                        >
-                          <Search size={10} />
-                          Explore
-                        </button>
                         <a
                           href={`https://etherscan.io/address/${vault.underlyingStrategy}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="mono text-sm flex items-center gap-1 hover:text-[var(--accent)] transition-colors"
+                          className="mono text-xs flex items-center gap-1 hover:text-[var(--accent)] transition-colors"
                         >
                           {vault.underlyingStrategy.slice(0, 6)}...{vault.underlyingStrategy.slice(-4)}
-                          <ExternalLink size={12} />
+                          <ExternalLink size={10} className="opacity-50" />
                         </a>
                         <button
-                          onClick={() => {
-                            navigator.clipboard.writeText(vault.underlyingStrategy!);
-                            toast.success("Address copied to clipboard", { id: "copy-address" });
-                          }}
-                          className="hover:text-[var(--accent)] transition-colors"
+                          onClick={() => { navigator.clipboard.writeText(vault.underlyingStrategy!); toast.success("Address copied", { id: "copy-address" }); }}
+                          className="hover:text-[var(--accent)] text-[var(--muted-foreground)] transition-colors"
                           aria-label="Copy strategy address"
                         >
-                          <Copy size={12} />
+                          <Copy size={11} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            const strategyConfig = getVaultByAddress(vault.underlyingStrategy!);
+                            openExplorer(vault.underlyingStrategy!, strategyConfig?.name || `${vault.name} Strategy`, strategyConfig?.logo, true);
+                          }}
+                          className="text-[10px] px-1.5 py-0.5 bg-[var(--muted)] hover:bg-[var(--accent)] hover:text-white rounded flex items-center gap-1 transition-colors"
+                        >
+                          <Search size={9} />
+                          Explore
                         </button>
                       </div>
                     </div>
@@ -1470,38 +1503,42 @@ export function VaultPageContent({ id }: { id: string }) {
 
               {/* LlamaLend Market Stats */}
               {curveData && (
-                <div className="space-y-6">
-                  <a
-                    href={curveData.depositUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-lg font-medium flex items-center gap-2 hover:text-[var(--accent)] transition-colors"
-                  >
-                    ycvxCRV LlamaLend Market
-                    <ExternalLink size={16} />
-                  </a>
+                <div className="p-5 rounded-xl bg-gradient-to-br from-[#121212] to-transparent border border-[#222] shadow-sm relative overflow-hidden">
+                  <div className="relative z-10 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Image src="/curve-logo.png" alt="Curve" width={24} height={24} className="rounded-full" />
+                        <h3 className="text-base font-medium text-[var(--foreground)]">ycvxCRV LlamaLend Market</h3>
+                      </div>
+                      <a
+                        href={curveData.depositUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-medium flex items-center gap-1 text-[var(--foreground)] hover:text-[var(--accent)] transition-colors group"
+                      >
+                        <span>View Market</span>
+                        <ExternalLink size={12} className="opacity-50 group-hover:opacity-100" />
+                      </a>
+                    </div>
 
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between py-3 border-b border-[var(--border)]">
-                      <span className="text-[var(--muted-foreground)]">Borrow APY</span>
-                      <span className="mono text-sm">{curveData.borrowApyFormatted}</span>
-                    </div>
-                    <div className="flex items-center justify-between py-3 border-b border-[var(--border)]">
-                      <span className="text-[var(--muted-foreground)]">Total Borrowed</span>
-                      <span className="mono text-sm">{curveData.totalBorrowedFormatted}</span>
-                    </div>
-                    <div className="flex items-center justify-between py-3 border-b border-[var(--border)]">
-                      <span className="text-[var(--muted-foreground)]">Available to Borrow</span>
-                      <span className="mono text-sm">{curveData.availableToBorrowFormatted}</span>
-                    </div>
-                    <div className="flex items-center justify-between py-3 border-b border-[var(--border)]">
-                      <span className="text-[var(--muted-foreground)]">Total Collateral</span>
-                      <span className="mono text-sm">
-                        {curveData.collateralInAmm.toFixed(2)} ycvxCRV
-                        <span className="text-[var(--muted-foreground)]">
-                          {" "}(${(curveData.collateralInAmm * pricePerShare * underlyingPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })})
-                        </span>
-                      </span>
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
+                      <div className="bg-[var(--background)]/40 backdrop-blur-sm border border-[var(--border)]/50 rounded-lg p-3 group hover:border-[var(--muted-foreground)]/30 transition-colors">
+                        <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--muted-foreground)] mb-1">Borrow APY</p>
+                        <p className="mono font-medium text-lg text-[#F24E4E]">{curveData.borrowApyFormatted}</p>
+                      </div>
+                      <div className="bg-[var(--background)]/40 backdrop-blur-sm border border-[var(--border)]/50 rounded-lg p-3 group hover:border-[var(--muted-foreground)]/30 transition-colors">
+                        <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--muted-foreground)] mb-1">Total Borrowed</p>
+                        <p className="mono font-medium text-lg">{curveData.totalBorrowedFormatted}</p>
+                      </div>
+                      <div className="bg-[var(--background)]/40 backdrop-blur-sm border border-[var(--border)]/50 rounded-lg p-3 group hover:border-[var(--muted-foreground)]/30 transition-colors">
+                        <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--muted-foreground)] mb-1">Available to Borrow</p>
+                        <p className="mono font-medium text-lg text-[var(--success)]">{curveData.availableToBorrowFormatted}</p>
+                      </div>
+                      <div className="bg-[var(--background)]/40 backdrop-blur-sm border border-[var(--border)]/50 rounded-lg p-3 group hover:border-[var(--muted-foreground)]/30 transition-colors">
+                        <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--muted-foreground)] mb-1">Total Collateral</p>
+                        <p className="mono font-medium text-lg">{curveData.collateralInAmm.toFixed(2)} ycvxCRV</p>
+                        <p className="text-[10px] text-[var(--muted-foreground)] mt-0.5">${(curveData.collateralInAmm * pricePerShare * underlyingPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1552,44 +1589,44 @@ export function VaultPageContent({ id }: { id: string }) {
 
                 {/* Tabs - hidden during waitingTx (vault or zap)/pendingMultiStep/success/reverted states (visible during wallet signing & simulation) */}
                 {isVaultDeployed && debugTxState === "none" && !pendingMultiStep && txStatus !== "waitingTx" && zapStatus !== "waitingTx" && !showTxSuccess?.show && !showTxReverted?.show && (
-                <div className="p-5 pb-0">
-                  <div className="flex border-b border-[var(--border)]">
-                    {(["deposit", "withdraw", "zap"] as const).map((tab) => {
-                      const isDisabled = false;
-                      return (
-                        <button
-                          key={tab}
-                          disabled={isDisabled}
-                          onClick={() => {
-                            if (isDisabled) return;
-                            setActiveTab(tab);
-                            setAmount("");
-                            setZapAmount("");
-                            setLastTxResult(null);
-                            // Clear any pending error states when switching tabs
-                            resetVaultActions();
-                            resetZapActions();
-                          }}
-                          className={cn(
-                            "flex-1 pb-3 text-sm font-medium transition-all capitalize relative",
-                            isDisabled
-                              ? "text-[var(--muted-foreground)]/50 cursor-not-allowed"
-                              : "cursor-pointer",
-                            !isDisabled && activeTab === tab
-                              ? "text-[var(--foreground)]"
-                              : !isDisabled && "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                          )}
-                          title={isDisabled ? "Vault not yet deployed" : undefined}
-                        >
-                          {tab}
-                          {!isDisabled && activeTab === tab && (
-                            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--foreground)]" />
-                          )}
-                        </button>
-                      );
-                    })}
+                  <div className="p-5 pb-0">
+                    <div className="flex border-b border-[var(--border)]">
+                      {(["deposit", "withdraw", "zap"] as const).map((tab) => {
+                        const isDisabled = false;
+                        return (
+                          <button
+                            key={tab}
+                            disabled={isDisabled}
+                            onClick={() => {
+                              if (isDisabled) return;
+                              setActiveTab(tab);
+                              setAmount("");
+                              setZapAmount("");
+                              setLastTxResult(null);
+                              // Clear any pending error states when switching tabs
+                              resetVaultActions();
+                              resetZapActions();
+                            }}
+                            className={cn(
+                              "flex-1 pb-3 text-sm font-medium transition-all capitalize relative",
+                              isDisabled
+                                ? "text-[var(--muted-foreground)]/50 cursor-not-allowed"
+                                : "cursor-pointer",
+                              !isDisabled && activeTab === tab
+                                ? "text-[var(--foreground)]"
+                                : !isDisabled && "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                            )}
+                            title={isDisabled ? "Vault not yet deployed" : undefined}
+                          >
+                            {tab}
+                            {!isDisabled && activeTab === tab && (
+                              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--foreground)]" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
                 )}
 
                 {/* Form - min-height prevents layout shift when switching tabs */}
@@ -1713,7 +1750,7 @@ export function VaultPageContent({ id }: { id: string }) {
                             <img src={details.fromLogo} alt={details.fromSymbol} className="w-5 h-5 rounded-full" />
                             <span className="mono text-sm">{details.fromAmount} {details.fromSymbol}</span>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[var(--muted-foreground)]">
-                              <path d="M5 12h14M12 5l7 7-7 7"/>
+                              <path d="M5 12h14M12 5l7 7-7 7" />
                             </svg>
                             <img src={details.toLogo} alt={details.toSymbol} className="w-5 h-5 rounded-full" />
                             <span className="mono text-sm">{details.toAmount} {details.toSymbol}</span>
@@ -1820,7 +1857,7 @@ export function VaultPageContent({ id }: { id: string }) {
                       <div className="flex justify-center">
                         <div className="w-8 h-8 rounded-full bg-[var(--muted)] flex items-center justify-center">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--muted-foreground)]">
-                            <path d="M12 5v14M19 12l-7 7-7-7"/>
+                            <path d="M12 5v14M19 12l-7 7-7-7" />
                           </svg>
                         </div>
                       </div>
@@ -1924,39 +1961,39 @@ export function VaultPageContent({ id }: { id: string }) {
                             </div>
                           </div>
                         ) : (
-                        <button
-                          onClick={() => {
-                            if (showSimulationPreview && vaultSimulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
-                              // Re-open cached simulation modal if same block
-                              setShowSimulationModal(true);
-                            } else {
-                              handleSubmit();
-                            }
-                          }}
-                          disabled={!inputAmount || hasInsufficientBalance || isLoading || isSimulatingPreview || showSimulationModal}
-                          className={cn(
-                            "w-full py-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-base",
-                            !inputAmount || hasInsufficientBalance || isLoading || isSimulatingPreview || showSimulationModal
-                              ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                              : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer"
-                          )}
-                        >
-                          {isSimulatingPreview || showSimulationModal ? (
-                            <>Simulating<LoadingDots /></>
-                          ) : isLoading ? (
-                            <>
-                              {txStatus === "approving" || txStatus === "waitingApproval"
-                                ? <>Approving<LoadingDots /></>
-                                : <>Confirm in wallet<LoadingDots /></>}
-                            </>
-                          ) : !inputAmount ? (
-                            "Enter amount"
-                          ) : hasInsufficientBalance ? (
-                            "Insufficient balance"
-                          ) : (
-                            activeTab === "deposit" ? "Deposit" : "Withdraw"
-                          )}
-                        </button>
+                          <button
+                            onClick={() => {
+                              if (showSimulationPreview && vaultSimulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
+                                // Re-open cached simulation modal if same block
+                                setShowSimulationModal(true);
+                              } else {
+                                handleSubmit();
+                              }
+                            }}
+                            disabled={!inputAmount || hasInsufficientBalance || isLoading || isSimulatingPreview || showSimulationModal}
+                            className={cn(
+                              "w-full py-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-base",
+                              !inputAmount || hasInsufficientBalance || isLoading || isSimulatingPreview || showSimulationModal
+                                ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                                : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer"
+                            )}
+                          >
+                            {isSimulatingPreview || showSimulationModal ? (
+                              <>Simulating<LoadingDots /></>
+                            ) : isLoading ? (
+                              <>
+                                {txStatus === "approving" || txStatus === "waitingApproval"
+                                  ? <>Approving<LoadingDots /></>
+                                  : <>Confirm in wallet<LoadingDots /></>}
+                              </>
+                            ) : !inputAmount ? (
+                              "Enter amount"
+                            ) : hasInsufficientBalance ? (
+                              "Insufficient balance"
+                            ) : (
+                              activeTab === "deposit" ? "Deposit" : "Withdraw"
+                            )}
+                          </button>
                         )
                       ) : (
                         <button
@@ -2009,7 +2046,7 @@ export function VaultPageContent({ id }: { id: string }) {
                             <img src={details.fromLogo} alt={details.fromSymbol} className="w-5 h-5 rounded-full" />
                             <span className="mono text-sm">{details.fromAmount} {details.fromSymbol}</span>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[var(--muted-foreground)]">
-                              <path d="M5 12h14M12 5l7 7-7 7"/>
+                              <path d="M5 12h14M12 5l7 7-7 7" />
                             </svg>
                             <img src={details.toLogo} alt={details.toSymbol} className="w-5 h-5 rounded-full" />
                             <span className="mono text-sm">{details.toAmount} {details.toSymbol}</span>
@@ -2144,7 +2181,7 @@ export function VaultPageContent({ id }: { id: string }) {
                           <div className="flex justify-center">
                             <div className="w-8 h-8 rounded-full bg-[var(--muted)] flex items-center justify-center">
                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--muted-foreground)]">
-                                <path d="M12 5v14M19 12l-7 7-7-7"/>
+                                <path d="M12 5v14M19 12l-7 7-7-7" />
                               </svg>
                             </div>
                           </div>
@@ -2194,7 +2231,7 @@ export function VaultPageContent({ id }: { id: string }) {
                           <div className="flex justify-center">
                             <div className="w-8 h-8 rounded-full bg-[var(--muted)] flex items-center justify-center">
                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--muted-foreground)]">
-                                <path d="M12 5v14M19 12l-7 7-7-7"/>
+                                <path d="M12 5v14M19 12l-7 7-7-7" />
                               </svg>
                             </div>
                           </div>
@@ -2364,10 +2401,10 @@ export function VaultPageContent({ id }: { id: string }) {
                             title="Zap settings"
                           >
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <line x1="4" y1="6" x2="20" y2="6"/>
-                              <circle cx="8" cy="6" r="2"/>
-                              <line x1="4" y1="18" x2="20" y2="18"/>
-                              <circle cx="16" cy="18" r="2"/>
+                              <line x1="4" y1="6" x2="20" y2="6" />
+                              <circle cx="8" cy="6" r="2" />
+                              <line x1="4" y1="18" x2="20" y2="18" />
+                              <circle cx="16" cy="18" r="2" />
                             </svg>
                           </button>
                         </div>
@@ -2537,352 +2574,360 @@ export function VaultPageContent({ id }: { id: string }) {
 
       {/* DEBUG: Transaction State Preview Panel - Only shows in development */}
       {process.env.NODE_ENV === "development" && (
-      <div
-        data-debug-panel
-        className={cn(
-          "fixed z-50 bg-[var(--card)] border border-[var(--border)] rounded-lg p-3 shadow-lg max-w-xs",
-          isDragging && "cursor-grabbing"
-        )}
-        style={debugPanelPos ? {
-          left: debugPanelPos.x,
-          top: debugPanelPos.y,
-          bottom: "auto",
-          right: "auto",
-        } : {
-          bottom: 16,
-          right: 16,
-        }}
-      >
         <div
-          className="text-xs text-[var(--muted-foreground)] mb-2 font-medium cursor-grab select-none"
-          onMouseDown={handleDragStart}
+          data-debug-panel
+          className={cn(
+            "fixed z-50 bg-[var(--card)] border border-[var(--border)] rounded-lg p-3 shadow-lg max-w-xs",
+            isDragging && "cursor-grabbing"
+          )}
+          style={debugPanelPos ? {
+            left: debugPanelPos.x,
+            top: debugPanelPos.y,
+            bottom: "auto",
+            right: "auto",
+          } : {
+            bottom: 16,
+            right: 16,
+          }}
         >
-          ⋮⋮ TX State Preview
-        </div>
-        <div className="space-y-2">
-          {/* Reset */}
-          <button
-            onClick={() => {
-              setDebugTxState("none");
-              setPendingMultiStep(null);
-              setPendingTxDetails(null);
-              setDebugSimulationResult(null);
-              setShowSimulationModal(false);
-              setShowSlippageModal(false);
-              setShowPriceImpactModal(false);
-              setPriceImpactConfirmText("");
-            }}
-            className={cn(
-              "w-full px-2 py-1 text-xs rounded transition-colors",
-              debugTxState === "none" && !pendingMultiStep && !showSimulationModal && !showSlippageModal && !showPriceImpactModal
-                ? "bg-[var(--foreground)] text-[var(--background)]"
-                : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-            )}
+          <div
+            className="text-xs text-[var(--muted-foreground)] mb-2 font-medium cursor-grab select-none flex items-center justify-between"
+            onMouseDown={handleDragStart}
           >
-            Reset All
-          </button>
-          {/* Deposit */}
-          <div className="flex gap-1">
-            <span className="text-[10px] text-[var(--muted-foreground)] w-14 flex items-center">Deposit</span>
+            <span>⋮⋮ TX State Preview</span>
             <button
-              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("deposit-pending"); }}
-              className={cn(
-                "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                debugTxState === "deposit-pending"
-                  ? "bg-[var(--accent)] text-[var(--background)]"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              )}
+              type="button"
+              onClick={(e) => { e.stopPropagation(); toggleDebugMinimized(); }}
+              onMouseDown={(e) => e.stopPropagation()}
+              className="ml-2 px-1.5 py-0.5 rounded hover:bg-[var(--muted)] transition-colors text-[10px]"
             >
-              Pending
-            </button>
-            <button
-              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("deposit-success"); }}
-              className={cn(
-                "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                debugTxState === "deposit-success"
-                  ? "bg-green-500 text-white"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              )}
-            >
-              Success
-            </button>
-            <button
-              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("deposit-reverted"); }}
-              className={cn(
-                "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                debugTxState === "deposit-reverted"
-                  ? "bg-red-500 text-white"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              )}
-            >
-              Reverted
+              {debugMinimized ? "+" : "−"}
             </button>
           </div>
-          {/* Withdraw */}
-          <div className="flex gap-1">
-            <span className="text-[10px] text-[var(--muted-foreground)] w-14 flex items-center">Withdraw</span>
-            <button
-              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("withdraw-pending"); }}
-              className={cn(
-                "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                debugTxState === "withdraw-pending"
-                  ? "bg-[var(--accent)] text-[var(--background)]"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              )}
-            >
-              Pending
-            </button>
-            <button
-              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("withdraw-success"); }}
-              className={cn(
-                "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                debugTxState === "withdraw-success"
-                  ? "bg-green-500 text-white"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              )}
-            >
-              Success
-            </button>
-            <button
-              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("withdraw-reverted"); }}
-              className={cn(
-                "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                debugTxState === "withdraw-reverted"
-                  ? "bg-red-500 text-white"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              )}
-            >
-              Reverted
-            </button>
-          </div>
-          {/* Zap Approve (multi-step) */}
-          <div className="flex gap-1">
-            <span className="text-[10px] text-[var(--muted-foreground)] w-14 flex items-center">Approve</span>
-            <button
-              onClick={() => {
-                setDebugTxState("none");
-                setPendingMultiStep({
-                  type: "zap",
-                  step: 1,
-                  approvalToken: "USDC",
-                  spenderName: "Enso",
-                });
-                setPendingTxDetails({
-                  fromAmount: "123.31",
-                  fromSymbol: "USDC",
-                  fromLogo: "/tokens/usdc.png",
-                  toAmount: "144.55",
-                  toSymbol: vault?.symbol || "yspxCVX",
-                  toLogo: vault?.logo || "/tokens/unknown.png",
-                });
-              }}
-              className={cn(
-                "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                pendingMultiStep?.step === 1
-                  ? "bg-[var(--accent)] text-[var(--background)]"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              )}
-            >
-              Step 1
-            </button>
-            <button
-              onClick={() => {
-                setPendingMultiStep({
-                  type: "zap",
-                  step: 2,
-                  approvalToken: "USDC",
-                  spenderName: "Enso",
-                });
-                setPendingTxDetails({
-                  fromAmount: "123.31",
-                  fromSymbol: "USDC",
-                  fromLogo: "/tokens/usdc.png",
-                  toAmount: "144.55",
-                  toSymbol: vault?.symbol || "yspxCVX",
-                  toLogo: vault?.logo || "/tokens/unknown.png",
-                });
-                setDebugTxState("zap-in-pending");
-              }}
-              className={cn(
-                "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                pendingMultiStep?.step === 2
-                  ? "bg-[var(--accent)] text-[var(--background)]"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              )}
-            >
-              Step 2
-            </button>
+          {!debugMinimized && <div className="space-y-2">
+            {/* Reset */}
             <button
               onClick={() => {
                 setDebugTxState("none");
                 setPendingMultiStep(null);
                 setPendingTxDetails(null);
+                setDebugSimulationResult(null);
+                setShowSimulationModal(false);
+                setShowSlippageModal(false);
+                setShowPriceImpactModal(false);
+                setPriceImpactConfirmText("");
               }}
-              className="flex-1 px-2 py-1 text-xs rounded transition-colors bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-            >
-              Clear
-            </button>
-          </div>
-          {/* Zap In */}
-          <div className="flex gap-1">
-            <span className="text-[10px] text-[var(--muted-foreground)] w-14 flex items-center">Zap In</span>
-            <button
-              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("zap-in-pending"); }}
-              className={cn(
-                "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                debugTxState === "zap-in-pending"
-                  ? "bg-[var(--accent)] text-[var(--background)]"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              )}
-            >
-              Pending
-            </button>
-            <button
-              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("zap-in-success"); }}
-              className={cn(
-                "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                debugTxState === "zap-in-success"
-                  ? "bg-green-500 text-white"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              )}
-            >
-              Success
-            </button>
-            <button
-              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("zap-in-reverted"); }}
-              className={cn(
-                "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                debugTxState === "zap-in-reverted"
-                  ? "bg-red-500 text-white"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              )}
-            >
-              Reverted
-            </button>
-          </div>
-          {/* Zap Out */}
-          <div className="flex gap-1">
-            <span className="text-[10px] text-[var(--muted-foreground)] w-14 flex items-center">Zap Out</span>
-            <button
-              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("zap-out-pending"); }}
-              className={cn(
-                "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                debugTxState === "zap-out-pending"
-                  ? "bg-[var(--accent)] text-[var(--background)]"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              )}
-            >
-              Pending
-            </button>
-            <button
-              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("zap-out-success"); }}
-              className={cn(
-                "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                debugTxState === "zap-out-success"
-                  ? "bg-green-500 text-white"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              )}
-            >
-              Success
-            </button>
-            <button
-              onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("zap-out-reverted"); }}
-              className={cn(
-                "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                debugTxState === "zap-out-reverted"
-                  ? "bg-red-500 text-white"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              )}
-            >
-              Reverted
-            </button>
-          </div>
-          {/* Separator */}
-          <div className="border-t border-[var(--border)] my-2" />
-          {/* Modals */}
-          <div className="flex gap-1">
-            <span className="text-[10px] text-[var(--muted-foreground)] w-14 flex items-center">Modals</span>
-            <button
-              onClick={() => setShowSlippageModal(!showSlippageModal)}
-              className={cn(
-                "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                showSlippageModal
-                  ? "bg-[var(--accent)] text-[var(--background)]"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              )}
-            >
-              Slippage
-            </button>
-            <button
-              onClick={() => {
-                if (showSimulationModal) {
-                  setShowSimulationModal(false);
-                  setDebugSimulationResult(null);
-                } else {
-                  setDebugSimulationResult({
-                    success: true,
-                    gasUsed: 285000,
-                    tenderlyUrl: "https://dashboard.tenderly.co/shared/simulation/example",
-                    assetChanges: [
-                      { type: "send", symbol: "USDC", amount: "100.00", logo: "/tokens/usdc.png" },
-                      { type: "receive", symbol: vault?.symbol || "ycvxCRV", amount: "95.50", logo: vault?.logo },
-                    ],
-                  });
-                  setShowSimulationModal(true);
-                }
-              }}
-              className={cn(
-                "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                showSimulationModal
-                  ? "bg-[var(--accent)] text-[var(--background)]"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              )}
-            >
-              Simulate
-            </button>
-            <button
-              onClick={() => setShowPriceImpactModal(!showPriceImpactModal)}
-              className={cn(
-                "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                showPriceImpactModal
-                  ? "bg-red-500 text-white"
-                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              )}
-            >
-              Impact
-            </button>
-          </div>
-          {/* Separator */}
-          <div className="border-t border-[var(--border)] my-2" />
-          {/* Auto Cycle Controls */}
-          <div className="space-y-2">
-            <button
-              onClick={() => setDebugAutoCycle(!debugAutoCycle)}
               className={cn(
                 "w-full px-2 py-1 text-xs rounded transition-colors",
-                debugAutoCycle
-                  ? "bg-blue-500 text-white"
+                debugTxState === "none" && !pendingMultiStep && !showSimulationModal && !showSlippageModal && !showPriceImpactModal
+                  ? "bg-[var(--foreground)] text-[var(--background)]"
                   : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
               )}
             >
-              {debugAutoCycle ? "⏸ Stop Auto-Cycle" : "▶ Auto-Cycle All"}
+              Reset All
             </button>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-[var(--muted-foreground)]">Speed</span>
-              <input
-                type="range"
-                min="500"
-                max="3000"
-                step="250"
-                value={debugCycleSpeed}
-                onChange={(e) => setDebugCycleSpeed(Number(e.target.value))}
-                className="flex-1 h-1 accent-[var(--accent)]"
-              />
-              <span className="text-[10px] text-[var(--muted-foreground)] w-10">{(debugCycleSpeed / 1000).toFixed(1)}s</span>
+            {/* Deposit */}
+            <div className="flex gap-1">
+              <span className="text-[10px] text-[var(--muted-foreground)] w-14 flex items-center">Deposit</span>
+              <button
+                onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("deposit-pending"); }}
+                className={cn(
+                  "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                  debugTxState === "deposit-pending"
+                    ? "bg-[var(--accent)] text-[var(--background)]"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Pending
+              </button>
+              <button
+                onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("deposit-success"); }}
+                className={cn(
+                  "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                  debugTxState === "deposit-success"
+                    ? "bg-green-500 text-white"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Success
+              </button>
+              <button
+                onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("deposit-reverted"); }}
+                className={cn(
+                  "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                  debugTxState === "deposit-reverted"
+                    ? "bg-red-500 text-white"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Reverted
+              </button>
             </div>
-          </div>
+            {/* Withdraw */}
+            <div className="flex gap-1">
+              <span className="text-[10px] text-[var(--muted-foreground)] w-14 flex items-center">Withdraw</span>
+              <button
+                onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("withdraw-pending"); }}
+                className={cn(
+                  "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                  debugTxState === "withdraw-pending"
+                    ? "bg-[var(--accent)] text-[var(--background)]"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Pending
+              </button>
+              <button
+                onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("withdraw-success"); }}
+                className={cn(
+                  "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                  debugTxState === "withdraw-success"
+                    ? "bg-green-500 text-white"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Success
+              </button>
+              <button
+                onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("withdraw-reverted"); }}
+                className={cn(
+                  "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                  debugTxState === "withdraw-reverted"
+                    ? "bg-red-500 text-white"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Reverted
+              </button>
+            </div>
+            {/* Zap Approve (multi-step) */}
+            <div className="flex gap-1">
+              <span className="text-[10px] text-[var(--muted-foreground)] w-14 flex items-center">Approve</span>
+              <button
+                onClick={() => {
+                  setDebugTxState("none");
+                  setPendingMultiStep({
+                    type: "zap",
+                    step: 1,
+                    approvalToken: "USDC",
+                    spenderName: "Enso",
+                  });
+                  setPendingTxDetails({
+                    fromAmount: "123.31",
+                    fromSymbol: "USDC",
+                    fromLogo: "/tokens/usdc.png",
+                    toAmount: "144.55",
+                    toSymbol: vault?.symbol || "yspxCVX",
+                    toLogo: vault?.logo || "/tokens/unknown.png",
+                  });
+                }}
+                className={cn(
+                  "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                  pendingMultiStep?.step === 1
+                    ? "bg-[var(--accent)] text-[var(--background)]"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Step 1
+              </button>
+              <button
+                onClick={() => {
+                  setPendingMultiStep({
+                    type: "zap",
+                    step: 2,
+                    approvalToken: "USDC",
+                    spenderName: "Enso",
+                  });
+                  setPendingTxDetails({
+                    fromAmount: "123.31",
+                    fromSymbol: "USDC",
+                    fromLogo: "/tokens/usdc.png",
+                    toAmount: "144.55",
+                    toSymbol: vault?.symbol || "yspxCVX",
+                    toLogo: vault?.logo || "/tokens/unknown.png",
+                  });
+                  setDebugTxState("zap-in-pending");
+                }}
+                className={cn(
+                  "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                  pendingMultiStep?.step === 2
+                    ? "bg-[var(--accent)] text-[var(--background)]"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Step 2
+              </button>
+              <button
+                onClick={() => {
+                  setDebugTxState("none");
+                  setPendingMultiStep(null);
+                  setPendingTxDetails(null);
+                }}
+                className="flex-1 px-2 py-1 text-xs rounded transition-colors bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              >
+                Clear
+              </button>
+            </div>
+            {/* Zap In */}
+            <div className="flex gap-1">
+              <span className="text-[10px] text-[var(--muted-foreground)] w-14 flex items-center">Zap In</span>
+              <button
+                onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("zap-in-pending"); }}
+                className={cn(
+                  "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                  debugTxState === "zap-in-pending"
+                    ? "bg-[var(--accent)] text-[var(--background)]"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Pending
+              </button>
+              <button
+                onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("zap-in-success"); }}
+                className={cn(
+                  "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                  debugTxState === "zap-in-success"
+                    ? "bg-green-500 text-white"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Success
+              </button>
+              <button
+                onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("zap-in-reverted"); }}
+                className={cn(
+                  "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                  debugTxState === "zap-in-reverted"
+                    ? "bg-red-500 text-white"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Reverted
+              </button>
+            </div>
+            {/* Zap Out */}
+            <div className="flex gap-1">
+              <span className="text-[10px] text-[var(--muted-foreground)] w-14 flex items-center">Zap Out</span>
+              <button
+                onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("zap-out-pending"); }}
+                className={cn(
+                  "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                  debugTxState === "zap-out-pending"
+                    ? "bg-[var(--accent)] text-[var(--background)]"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Pending
+              </button>
+              <button
+                onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("zap-out-success"); }}
+                className={cn(
+                  "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                  debugTxState === "zap-out-success"
+                    ? "bg-green-500 text-white"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Success
+              </button>
+              <button
+                onClick={() => { setPendingMultiStep(null); setPendingTxDetails(null); setDebugTxState("zap-out-reverted"); }}
+                className={cn(
+                  "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                  debugTxState === "zap-out-reverted"
+                    ? "bg-red-500 text-white"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Reverted
+              </button>
+            </div>
+            {/* Separator */}
+            <div className="border-t border-[var(--border)] my-2" />
+            {/* Modals */}
+            <div className="flex gap-1">
+              <span className="text-[10px] text-[var(--muted-foreground)] w-14 flex items-center">Modals</span>
+              <button
+                onClick={() => setShowSlippageModal(!showSlippageModal)}
+                className={cn(
+                  "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                  showSlippageModal
+                    ? "bg-[var(--accent)] text-[var(--background)]"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Slippage
+              </button>
+              <button
+                onClick={() => {
+                  if (showSimulationModal) {
+                    setShowSimulationModal(false);
+                    setDebugSimulationResult(null);
+                  } else {
+                    setDebugSimulationResult({
+                      success: true,
+                      gasUsed: 285000,
+                      tenderlyUrl: "https://dashboard.tenderly.co/shared/simulation/example",
+                      assetChanges: [
+                        { type: "send", symbol: "USDC", amount: "100.00", logo: "/tokens/usdc.png" },
+                        { type: "receive", symbol: vault?.symbol || "ycvxCRV", amount: "95.50", logo: vault?.logo },
+                      ],
+                    });
+                    setShowSimulationModal(true);
+                  }
+                }}
+                className={cn(
+                  "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                  showSimulationModal
+                    ? "bg-[var(--accent)] text-[var(--background)]"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Simulate
+              </button>
+              <button
+                onClick={() => setShowPriceImpactModal(!showPriceImpactModal)}
+                className={cn(
+                  "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                  showPriceImpactModal
+                    ? "bg-red-500 text-white"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Impact
+              </button>
+            </div>
+            {/* Separator */}
+            <div className="border-t border-[var(--border)] my-2" />
+            {/* Auto Cycle Controls */}
+            <div className="space-y-2">
+              <button
+                onClick={() => setDebugAutoCycle(!debugAutoCycle)}
+                className={cn(
+                  "w-full px-2 py-1 text-xs rounded transition-colors",
+                  debugAutoCycle
+                    ? "bg-blue-500 text-white"
+                    : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                {debugAutoCycle ? "⏸ Stop Auto-Cycle" : "▶ Auto-Cycle All"}
+              </button>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-[var(--muted-foreground)]">Speed</span>
+                <input
+                  type="range"
+                  min="500"
+                  max="3000"
+                  step="250"
+                  value={debugCycleSpeed}
+                  onChange={(e) => setDebugCycleSpeed(Number(e.target.value))}
+                  className="flex-1 h-1 accent-[var(--accent)]"
+                />
+                <span className="text-[10px] text-[var(--muted-foreground)] w-10">{(debugCycleSpeed / 1000).toFixed(1)}s</span>
+              </div>
+            </div>
+          </div>}
         </div>
-      </div>
       )}
 
     </div>

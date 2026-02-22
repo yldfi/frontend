@@ -67,6 +67,7 @@ html {
   scroll-behavior: smooth;
   scroll-padding-top: 7rem;
   overscroll-behavior: none;
+  overflow-x: hidden;
   overflow-y: scroll;
 }
 
@@ -78,6 +79,8 @@ body {
   -moz-osx-font-smoothing: grayscale;
   line-height: 1.6;
   overscroll-behavior: none;
+  overflow-x: hidden;
+  max-width: 100vw;
 }
 
 /* Selection */
@@ -262,8 +265,13 @@ input[type="range"]::-moz-range-track {
   font-size: 13px;
   font-weight: 500;
   border-radius: 6px;
-  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6);
+  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6, #ef4444);
+  background-size: 200% 100%;
   transition: all 0.2s ease;
+}
+
+.collateral-link:hover {
+  animation: rainbowSlide 4s linear infinite;
 }
 
 .collateral-link span {
@@ -291,16 +299,31 @@ input[type="range"]::-moz-range-track {
   position: absolute;
   inset: -1px;
   border-radius: 5px;
-  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6);
+  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6, #ef4444);
+  background-size: 200% 100%;
   z-index: -1;
+}
+
+.collateral-badge:hover::before {
+  animation: rainbowSlide 4s linear infinite;
+}
+
+@keyframes rainbowSlide {
+  0% { background-position: 0% 0%; }
+  100% { background-position: -200% 0%; }
 }
 
 /* Lending card - block with rainbow gradient border */
 .lending-card {
   padding: 1px;
   border-radius: 10px;
-  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6);
+  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6, #ef4444);
+  background-size: 200% 100%;
   transition: opacity 0.2s ease;
+}
+
+.lending-card:hover {
+  animation: rainbowSlide 4s linear infinite;
 }
 
 .lending-card > * {

@@ -258,15 +258,35 @@ export function NewLoanForm({
   const isVaultToken =
     selectedToken.address.toLowerCase() === vault.address.toLowerCase();
 
-  // Form state
-  const [amount, setAmountState] = useState("");
-  const setAmount = useCallback((v: string) => setAmountState(sanitizeAmount(v)), []);
-  const [debtInput, setDebtInputState] = useState("");
+  // Form state — persisted across refresh
+  const amountStorageKey = `yldfi-lending-newloan-amount-${vault.address}`;
+  const debtStorageKey = `yldfi-lending-newloan-debt-${vault.address}`;
+  const [amount, setAmountState] = useState(() => {
+    if (typeof window === "undefined") return "";
+    try { return sanitizeAmount(localStorage.getItem(amountStorageKey) ?? ""); } catch { return ""; }
+  });
+  const setAmount = useCallback((v: string) => {
+    const sanitized = sanitizeAmount(v);
+    setAmountState(sanitized);
+    try {
+      if (sanitized) localStorage.setItem(amountStorageKey, sanitized);
+      else localStorage.removeItem(amountStorageKey);
+    } catch { /* */ }
+  }, [amountStorageKey]);
+  const [debtInput, setDebtInputState] = useState(() => {
+    if (typeof window === "undefined") return "";
+    try { return sanitizeAmount(localStorage.getItem(debtStorageKey) ?? ""); } catch { return ""; }
+  });
   const debtRatio = useRef<number | null>(null); // ratio of debt to maxBorrowable (0-1)
   const setDebtInput = useCallback((v: string) => {
-    setDebtInputState(sanitizeAmount(v));
+    const sanitized = sanitizeAmount(v);
+    setDebtInputState(sanitized);
     debtRatio.current = null; // will be recalculated in effect
-  }, []);
+    try {
+      if (sanitized) localStorage.setItem(debtStorageKey, sanitized);
+      else localStorage.removeItem(debtStorageKey);
+    } catch { /* */ }
+  }, [debtStorageKey]);
   const [bands, setBands] = useState(10);
   const debouncedBands = useDebouncedValue(bands, 400);
   useEffect(() => { onBandsChange?.(bands); }, [bands, onBandsChange]);
