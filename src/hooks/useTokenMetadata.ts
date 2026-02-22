@@ -10,7 +10,10 @@ import type { EnsoToken } from "@/types/enso";
  * Try to fetch a token logo from known sources.
  * Returns the first URL that resolves, or undefined.
  */
-async function fetchTokenLogo(address: string): Promise<string | undefined> {
+async function fetchTokenLogo(
+  address: string,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
   const checksummed = getAddress(address);
 
   const candidates = [
@@ -22,17 +25,18 @@ async function fetchTokenLogo(address: string): Promise<string | undefined> {
 
   for (const url of candidates) {
     try {
-      const res = await fetch(url, { method: "HEAD" });
+      const res = await fetch(url, { method: "HEAD", signal });
       if (res.ok) return url;
     } catch {
-      // try next
+      if (signal?.aborted) return undefined;
     }
   }
 
   // CoinGecko API fallback (rate-limited, try last)
   try {
     const res = await fetch(
-      `https://api.coingecko.com/api/v3/coins/ethereum/contract/${address.toLowerCase()}`
+      `https://api.coingecko.com/api/v3/coins/ethereum/contract/${address.toLowerCase()}`,
+      { signal },
     );
     if (res.ok) {
       const data = await res.json() as { image?: { small?: string; thumb?: string } };
@@ -84,14 +88,14 @@ export function useTokenMetadata(address: string | undefined) {
     },
   });
 
-  // Fetch logo in parallel — keyed by address so stale logos don't linger
+  // Fetch logo in parallel — abort on unmount or address change
   useEffect(() => {
     if (!tokenAddress) return;
-    let cancelled = false;
-    fetchTokenLogo(tokenAddress).then((uri) => {
-      if (!cancelled) setLogoState({ address: tokenAddress, uri });
+    const ac = new AbortController();
+    fetchTokenLogo(tokenAddress, ac.signal).then((uri) => {
+      if (!ac.signal.aborted) setLogoState({ address: tokenAddress, uri });
     });
-    return () => { cancelled = true; };
+    return () => ac.abort();
   }, [tokenAddress]);
 
   // Only use logo if it matches the current address

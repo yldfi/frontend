@@ -214,19 +214,23 @@ export function TokenSelector({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isOpen]);
 
-  // Close on escape key
+  // Close on escape key — import dialog takes priority over main modal
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setIsOpen(false);
+        if (confirmImportToken) {
+          setConfirmImportToken(null);
+        } else {
+          setIsOpen(false);
+        }
       }
     };
 
-    if (isOpen) {
+    if (isOpen || confirmImportToken) {
       document.addEventListener("keydown", handleEscape);
     }
     return () => document.removeEventListener("keydown", handleEscape);
-  }, [isOpen]);
+  }, [isOpen, confirmImportToken]);
 
   const handleSelect = (token: EnsoToken, shouldImport = false) => {
     if (shouldImport) {

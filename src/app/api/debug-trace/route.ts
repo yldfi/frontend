@@ -218,9 +218,15 @@ export async function POST(request: NextRequest) {
 }
 
 // GET for checking if debug trace is available (no config details exposed)
-export async function GET() {
+export async function GET(request: NextRequest) {
   if (!IS_DEV) {
     return NextResponse.json({ available: false });
+  }
+  if (DEBUG_API_KEY) {
+    const authHeader = request.headers.get("x-debug-key") || "";
+    if (authHeader !== DEBUG_API_KEY) {
+      return NextResponse.json({ available: false });
+    }
   }
   return NextResponse.json({
     available: Boolean(DEBUG_RPC_URL),
