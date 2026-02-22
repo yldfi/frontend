@@ -1,14 +1,14 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   useAccount,
-  useWriteContract,
   useWaitForTransactionReceipt,
   useReadContract,
-  useSendTransaction,
   usePublicClient,
 } from "wagmi";
+import { useVNetSendTransaction as useSendTransaction } from "@/hooks/useVNetSendTransaction";
+import { useVNetWriteContract as useWriteContract } from "@/hooks/useVNetWriteContract";
 import { parseUnits, maxUint256 } from "viem";
 import type { Hash } from "viem";
 import { ETH_ADDRESS } from "@/lib/enso";
@@ -16,9 +16,12 @@ import { ERC20_APPROVAL_ABI } from "@/lib/abis";
 import { useTenderly } from "@/contexts/TenderlyContext";
 import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
 import type { ZapQuote, SimulationResult } from "@/types/enso";
+import type { PendingApproval, ApprovalProgress } from "@/types/approval";
+import { runVNetSimulation } from "@/lib/vnet-simulation";
 
 export type ZapStatus =
   | "idle"
+  | "needsApproval"
   | "approving"
   | "waitingApproval"
   | "zapping"
@@ -120,13 +123,15 @@ function parseErrorMessage(error: Error | null, defaultMsg: string): string | nu
 export function useZapActions(quote: ZapQuote | null | undefined) {
   const { address: userAddress, chainId } = useAccount();
   const publicClient = usePublicClient();
-  const { isTenderlyVNet } = useTenderly();
+  const { isTenderlyVNet, testNetworkType } = useTenderly();
   const { isFlashbotsEnabled, isFlashbotsSupported, toggleFlashbots, sendViaFlashbots } = useFlashbotsProtect();
-  const [actionState, setActionState] = useState<"idle" | "approving" | "simulating" | "zapping">("idle");
+  const [actionState, setActionState] = useState<"idle" | "needsApproval" | "approving" | "simulating" | "zapping">("idle");
   const [simulationError, setSimulationError] = useState<string | null>(null);
   const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
   const [flashbotsHash, setFlashbotsHash] = useState<Hash | undefined>(undefined);
   const [flashbotsError, setFlashbotsError] = useState<Error | null>(null);
+  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+  const autoExecuteRef = useRef(false);
 
   const isEth =
     quote?.inputToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
@@ -186,7 +191,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   // Log transaction receipts to browser console in dev
   useEffect(() => {
     if (approvalReceipt && process.env.NODE_ENV === "development") {
-      console.log("[Approval Transaction]", {
+      console.log("[Approve Receipt]", {
         hash: approvalReceipt.transactionHash,
         status: approvalReceipt.status,
         blockNumber: Number(approvalReceipt.blockNumber),
@@ -197,7 +202,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
   useEffect(() => {
     if (zapReceipt && process.env.NODE_ENV === "development") {
-      console.log("[Zap Transaction]", {
+      console.log("[TX Receipt]", {
         hash: zapReceipt.transactionHash,
         status: zapReceipt.status,
         blockNumber: Number(zapReceipt.blockNumber),
@@ -210,19 +215,20 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
   // Derive status from state (avoids setState in effects)
   const status: ZapStatus = useMemo(() => {
-    // On-chain state takes priority - if we have a receipt, respect its status
-    // This handles the case where a tx is mined but reverts on-chain
+    // Terminal on-chain states (receipt exists and shows final result)
     if (isZapReverted || isApprovalReverted) return "reverted";
     if (isZapSuccess) return "success";
-    if (isApprovalSuccess) return "idle";
     // Error states for pre-send failures (wallet rejection, simulation failure, RPC errors)
     if (approveError || zapError || flashbotsError || simulationError) return "error";
-    // Pending transaction states
-    if (isApprovalPending) return "waitingApproval";
+    // Active on-chain pending states
     if (isZapPending) return "waitingTx";
-    // User-initiated action states
+    if (isApprovalPending) return "waitingApproval";
+    // Active action states (pre-send) — must be checked AFTER on-chain states
+    // but BEFORE isApprovalSuccess, which stays true after approval and would
+    // mask the simulating/zapping states during the approve→zap transition
     if (actionState === "approving") return "approving";
-    if (actionState === "simulating") return "zapping"; // Show as "zapping" to user (simulating is quick)
+    if (actionState === "needsApproval") return "needsApproval";
+    if (actionState === "simulating") return "zapping";
     if (actionState === "zapping") return "zapping";
     return "idle";
   }, [approveError, zapError, flashbotsError, simulationError, isZapReverted, isApprovalReverted, isZapSuccess, isApprovalSuccess, isApprovalPending, isZapPending, actionState]);
@@ -258,6 +264,23 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     }
   }, [isEth, quote, allowance]);
 
+  // Derive approvalProgress and isApproving for ApprovalCard
+  const approvalProgress: ApprovalProgress | null = useMemo(() => {
+    if (!pendingApproval) return null;
+    return {
+      step: 1,
+      total: 1,
+      steps: [{
+        label: pendingApproval.tokenSymbol,
+        description: "Approve for swap routing",
+        done: false,
+        spender: routerAddress,
+      }],
+    };
+  }, [pendingApproval, routerAddress]);
+
+  const isApproving = status === "approving" || status === "waitingApproval";
+
   // Refetch allowance after approval success (external side effect only)
   useEffect(() => {
     if (isApprovalSuccess) {
@@ -265,25 +288,66 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     }
   }, [isApprovalSuccess, refetchAllowance]);
 
-  // Approve max tokens
-  const approve = useCallback(() => {
-    if (!userAddress || isEth || !tokenAddress || !routerAddress) return;
-    setActionState("approving");
+  // Ref to hold latest executeZapInternal for use in auto-execute effect
+  const executeZapInternalRef = useRef<() => Promise<SimulationResult | null>>(async () => null);
 
+  // Clear pendingApproval on error
+  useEffect(() => {
+    if (status === "error" || approveError) {
+      setPendingApproval(null);
+      autoExecuteRef.current = false;
+      if (actionState === "needsApproval") setActionState("idle");
+    }
+  }, [status, approveError, actionState, resetApprove]);
+
+  // Clear pendingApproval when quote changes (user changed amount/token/direction)
+  useEffect(() => {
+    if (actionState === "needsApproval") {
+      setPendingApproval(null);
+      setActionState("idle");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quote]);
+
+  // Approve tokens — exact=true uses the quote amount, exact=false uses unlimited
+  const approve = useCallback((exact: boolean) => {
+    if (!userAddress || isEth || !tokenAddress || !routerAddress || !quote) return;
+    setActionState("approving");
+    autoExecuteRef.current = true;
+
+    let amount: bigint;
+    if (exact) {
+      try {
+        amount = parseUnits(quote.inputAmount, quote.inputToken.decimals);
+      } catch {
+        amount = maxUint256;
+      }
+    } else {
+      amount = maxUint256;
+    }
+    if (process.env.NODE_ENV === "development") {
+      console.log("[Approve TX]", {
+        type: "erc20",
+        token: tokenAddress,
+        spender: routerAddress,
+        amount: amount.toString(),
+        exact,
+      });
+    }
     writeApprove({
       address: tokenAddress,
       abi: ERC20_APPROVAL_ABI,
       functionName: "approve",
-      args: [routerAddress, maxUint256],
+      args: [routerAddress, amount],
     });
-  }, [userAddress, isEth, tokenAddress, routerAddress, writeApprove]);
+  }, [userAddress, isEth, tokenAddress, routerAddress, quote, writeApprove]);
 
-  // Execute zap transaction with pre-flight simulation
+  // Internal execute — skips approval check, used directly and after auto-approval
   // Options:
   //   - skipSimulation: skip simulation and send tx directly (used after preview confirmation)
   //   - previewOnly: run simulation but don't send tx (for preview mode)
   // Returns the simulation result when previewOnly is true, otherwise returns null
-  const executeZap = useCallback(async (options?: { skipSimulation?: boolean; previewOnly?: boolean }): Promise<SimulationResult | null> => {
+  const executeZapInternal = useCallback(async (options?: { skipSimulation?: boolean; previewOnly?: boolean }): Promise<SimulationResult | null> => {
     if (!quote || !userAddress || !publicClient) return null;
 
     // Clear any previous simulation error
@@ -296,6 +360,19 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       data: quote.tx.data as `0x${string}`,
       value: BigInt(quote.tx.value || "0"),
     };
+
+    if (process.env.NODE_ENV === "development") {
+      console.log("[TX]", {
+        fn: "zap",
+        to: txParams.to,
+        selector: txParams.data.slice(0, 10),
+        value: txParams.value.toString(),
+        dataLength: txParams.data.length,
+        data: txParams.data,
+        previewOnly: !!options?.previewOnly,
+        skipSimulation: !!options?.skipSimulation,
+      });
+    }
 
     // If skipSimulation is true, go straight to sending (used after preview mode confirmation)
     if (options?.skipSimulation && simulationResult?.success) {
@@ -321,10 +398,12 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       return null;
     }
 
-    // Skip Tenderly simulation on VNet - it simulates against mainnet, not VNet state
-    const tenderlyPromise = (isTenderlyVNet || chainId === 1337)
-      ? Promise.resolve({ ok: true as const, result: null })
-      : (async () => {
+    // Three-way simulation:
+    // 1. Mainnet → Tenderly REST API
+    // 2. Tenderly VNet → VNet RPC simulation
+    // 3. Anvil / chainId 1337 → skip (eth_call only below)
+    const simPromise = (testNetworkType === null && chainId !== 1337)
+      ? (async () => {
           try {
             const nonceResponse = await fetch("/api/simulate/nonce", {
               method: "GET",
@@ -362,7 +441,6 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
             const result = (await response.json()) as SimulationResult & { retryable?: boolean };
 
-            // Log simulation result to browser console in dev
             if (process.env.NODE_ENV === "development") {
               console.log("[Tenderly Simulation]", {
                 success: result.success,
@@ -389,7 +467,14 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
               retryable: true,
             };
           }
-        })();
+        })()
+      : (testNetworkType === "tenderly" && publicClient)
+        ? runVNetSimulation(
+            publicClient.transport,
+            { from: userAddress, to: quote.tx.to, data: quote.tx.data, value: quote.tx.value ?? "0x0" },
+            userAddress,
+          )
+        : Promise.resolve({ ok: true as const, result: null });
 
     const ethCallPromise = (async () => {
       try {
@@ -397,40 +482,44 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
           account: userAddress,
           ...txParams,
         });
+        if (process.env.NODE_ENV === "development") console.log("[eth_call]", { ok: true, to: txParams.to });
         return { ok: true as const };
       } catch (error) {
+        const msg = error instanceof Error ? error.message : "Unknown error";
+        if (process.env.NODE_ENV === "development") console.log("[eth_call]", { ok: false, to: txParams.to, error: msg });
         return {
           ok: false as const,
-          errorMessage: error instanceof Error ? error.message : "Unknown error",
+          errorMessage: msg,
         };
       }
     })();
 
-    const [tenderlyResult, ethCallResult] = await Promise.all([
-      tenderlyPromise,
+    const [simResult, ethCallResult] = await Promise.all([
+      simPromise,
       ethCallPromise,
     ]);
 
     // Store the simulation result for preview mode
-    if (tenderlyResult.result) {
-      setSimulationResult(tenderlyResult.result);
+    if (simResult.result) {
+      setSimulationResult(simResult.result);
     }
 
-    if (!tenderlyResult.ok && !ethCallResult.ok) {
-      const errorMsg = tenderlyResult.retryable
-        ? ethCallResult.errorMessage ?? tenderlyResult.errorMessage
-        : tenderlyResult.errorMessage;
+    if (!simResult.ok && !ethCallResult.ok) {
+      const rawMsg = (simResult as { retryable?: boolean }).retryable
+        ? ethCallResult.errorMessage ?? simResult.errorMessage
+        : simResult.errorMessage;
+      const errorMsg = typeof rawMsg === "string" ? rawMsg : (rawMsg as { message?: string })?.message ?? "Simulation failed";
       setSimulationError(
         parseErrorMessage(new Error(errorMsg), "Transaction would fail")
       );
       setActionState("idle");
-      return tenderlyResult.result ?? null;
+      return simResult.result ?? null;
     }
 
     // If previewOnly mode, stop here without sending tx and return simulation result
     if (options?.previewOnly) {
       setActionState("idle");
-      return tenderlyResult.result ?? null;
+      return simResult.result ?? null;
     }
 
     // Simulation passed - send the actual transaction
@@ -467,7 +556,66 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       sendTransaction(txParams);
     }
     return null;
-  }, [quote, userAddress, publicClient, sendTransaction, sendViaFlashbots, isFlashbotsEnabled, chainId, isTenderlyVNet, simulationResult]);
+  }, [quote, userAddress, publicClient, sendTransaction, sendViaFlashbots, isFlashbotsEnabled, chainId, isTenderlyVNet, testNetworkType, simulationResult]);
+
+  // Keep ref in sync with latest executeZapInternal
+  executeZapInternalRef.current = executeZapInternal;
+
+  // Auto-execute zap after approval succeeds
+  const prevStatus = useRef<ZapStatus>("idle");
+  useEffect(() => {
+    if (
+      autoExecuteRef.current &&
+      prevStatus.current === "waitingApproval" &&
+      (status === "idle" || status === "needsApproval")
+    ) {
+      // Approval completed — clear approval state and execute zap
+      autoExecuteRef.current = false;
+      setPendingApproval(null);
+      setActionState("idle");
+      // Small delay to ensure allowance is refetched
+      setTimeout(() => {
+        executeZapInternalRef.current();
+      }, 100);
+    }
+    prevStatus.current = status;
+  }, [status]);
+
+  // Public executeZap — checks approval before executing.
+  // If approval is needed, sets pendingApproval and shows the approval card.
+  // The zap auto-executes after approval via the effect above.
+  const executeZap = useCallback(async (options?: { skipSimulation?: boolean; previewOnly?: boolean }): Promise<SimulationResult | null> => {
+    if (!quote || !userAddress) return null;
+
+    // Clear stale wagmi error state from previous attempts (e.g., wallet rejection)
+    resetApprove();
+    resetZap();
+
+    // Check if approval is needed
+    if (needsApproval()) {
+      // Set pending approval state to show the approval card
+      const tokenSymbol = quote.inputToken.symbol;
+      let amountWei: bigint | undefined;
+      try {
+        amountWei = parseUnits(quote.inputAmount, quote.inputToken.decimals);
+      } catch {
+        // fallback: don't show exact amount
+      }
+      setPendingApproval({
+        type: "erc20",
+        token: tokenAddress!,
+        tokenSymbol,
+        spender: routerAddress!,
+        spenderName: "Enso Router",
+        amount: amountWei,
+      });
+      setActionState("needsApproval");
+      return null;
+    }
+
+    // No approval needed — execute directly
+    return executeZapInternal(options);
+  }, [quote, userAddress, needsApproval, tokenAddress, routerAddress, executeZapInternal, resetApprove, resetZap]);
 
   // Reset state
   const reset = useCallback(() => {
@@ -476,6 +624,8 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     setSimulationResult(null);
     setFlashbotsHash(undefined);
     setFlashbotsError(null);
+    setPendingApproval(null);
+    autoExecuteRef.current = false;
     resetApprove();
     resetZap();
   }, [resetApprove, resetZap]);
@@ -487,11 +637,15 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     reset,
     status,
     error,
-    isLoading: status !== "idle" && status !== "success" && status !== "error" && status !== "reverted",
+    isLoading: status !== "idle" && status !== "needsApproval" && status !== "success" && status !== "error" && status !== "reverted",
     isSuccess: status === "success",
     isReverted: status === "reverted",
     zapHash: activeZapHash,
     refetchAllowance,
+    // Approval state for ApprovalCard
+    pendingApproval,
+    approvalProgress,
+    isApproving,
     // Flashbots Protect settings
     isFlashbotsEnabled,
     isFlashbotsSupported,

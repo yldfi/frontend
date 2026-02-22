@@ -1,22 +1,25 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useAccount, useChainId } from "wagmi";
+import { useAccount, useChainId, usePublicClient } from "wagmi";
 import { useTenderly } from "@/contexts/TenderlyContext";
 import { useConnect, useDisconnect } from "wagmi";
 
 export default function DebugPage() {
   const { address, connector, isConnected, chain } = useAccount();
   const chainId = useChainId();
-  const { isTenderlyVNet, isDetecting } = useTenderly();
+  const publicClient = usePublicClient();
+  const { isTestNetwork, testNetworkType, isDetecting } = useTenderly();
   const { connectors, connect } = useConnect();
   const { disconnect } = useDisconnect();
   const [rpcProbeResult, setRpcProbeResult] = useState<string>("");
   const [rpcError, setRpcError] = useState<string | null>(null);
+  const [transportProbeResult, setTransportProbeResult] = useState<string>("");
+  const [transportError, setTransportError] = useState<string | null>(null);
   const [providerInfo, setProviderInfo] = useState<string>("Loading...");
   const [copied, setCopied] = useState(false);
 
-  // Probe evm_snapshot manually
+  // Probe evm_snapshot via wallet provider
   useEffect(() => {
     if (!isConnected || !connector) {
       return;
@@ -66,6 +69,32 @@ export default function DebugPage() {
     probeRpc();
   }, [isConnected, connector]);
 
+  // Probe evm_snapshot via wagmi transport (direct HTTP to configured RPC)
+  useEffect(() => {
+    if (!publicClient) return;
+
+    async function probeTransport() {
+      try {
+        const result = await publicClient!.transport.request({ method: "evm_snapshot", params: [] });
+        try {
+          await publicClient!.transport.request({ method: "anvil_nodeInfo", params: [] });
+          setTransportProbeResult(`SUCCESS (Anvil): ${JSON.stringify(result)}`);
+        } catch {
+          setTransportProbeResult(`SUCCESS (Tenderly): ${JSON.stringify(result)}`);
+        }
+        setTransportError(null);
+      } catch (err: unknown) {
+        const error = err as { code?: number; message?: string; error?: { code?: number; message?: string } };
+        const errorCode = error?.code || error?.error?.code;
+        const errorMsg = error?.message || error?.error?.message || String(err);
+        setTransportProbeResult(`ERROR code: ${errorCode}`);
+        setTransportError(errorMsg);
+      }
+    }
+
+    probeTransport();
+  }, [publicClient]);
+
   const copyAll = useCallback(() => {
     const debugData = {
       timestamp: new Date().toISOString(),
@@ -81,9 +110,10 @@ export default function DebugPage() {
         chainName: chain?.name,
         isMainnet: chainId === 1,
       },
-      tenderly: {
+      testNetwork: {
         isDetecting,
-        isTenderlyVNet,
+        isTestNetwork,
+        testNetworkType,
       },
       rpcProbe: {
         result: rpcProbeResult || (isConnected ? "Testing..." : "Not connected"),
@@ -96,7 +126,7 @@ export default function DebugPage() {
     navigator.clipboard.writeText(JSON.stringify(debugData, null, 2));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }, [isConnected, address, connector, chainId, chain, isDetecting, isTenderlyVNet, rpcProbeResult, rpcError, providerInfo]);
+  }, [isConnected, address, connector, chainId, chain, isDetecting, isTestNetwork, testNetworkType, rpcProbeResult, rpcError, providerInfo]);
 
   return (
     <div className="min-h-screen bg-black text-white p-8">
@@ -160,23 +190,28 @@ export default function DebugPage() {
           <Row label="Is Mainnet" value={chainId === 1 ? "Yes" : "No"} />
         </Section>
 
-        <Section title="Tenderly Detection">
+        <Section title="Test Network Detection">
           <Row label="Is Detecting" value={isDetecting ? "Yes..." : "No"} />
           <Row
-            label="Is Tenderly VNet"
-            value={isTenderlyVNet ? "YES (Test Mode)" : "No (Mainnet)"}
-            highlight={isTenderlyVNet}
+            label="Is Test Network"
+            value={isTestNetwork ? `YES (${testNetworkType})` : "No (Mainnet)"}
+            highlight={isTestNetwork}
           />
         </Section>
 
-        <Section title="RPC Probe (evm_snapshot)">
+        <Section title="RPC Probe — Wallet Provider">
           <Row label="Result" value={rpcProbeResult || (isConnected ? "Testing..." : "Not connected")} highlight={rpcProbeResult.startsWith("SUCCESS")} />
-          {rpcError && <Row label="Error Message" value={rpcError} />}
+          {rpcError && <Row label="Error" value={rpcError} />}
           <div className="mt-2 text-xs text-zinc-500">
-            <p>Expected results:</p>
-            <p>• Mainnet: ERROR code -32601 (Method not found)</p>
-            <p>• Tenderly Public RPC: ERROR code -32004 (Access forbidden)</p>
-            <p>• Tenderly Admin RPC: SUCCESS (snapshot ID)</p>
+            Tests evm_snapshot via the wallet extension. Some wallets (e.g. Rabby) filter non-standard methods and return -32601 even on Anvil.
+          </div>
+        </Section>
+
+        <Section title="RPC Probe — Wagmi Transport">
+          <Row label="Result" value={transportProbeResult || "Testing..."} highlight={transportProbeResult.startsWith("SUCCESS")} />
+          {transportError && <Row label="Error" value={transportError} />}
+          <div className="mt-2 text-xs text-zinc-500">
+            Tests evm_snapshot via wagmi&apos;s HTTP transport (bypasses wallet). Uses NEXT_PUBLIC_ANVIL_RPC when set. This is the fallback used for detection when the wallet blocks the probe.
           </div>
         </Section>
 

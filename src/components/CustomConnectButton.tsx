@@ -4,6 +4,7 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useSwitchChain } from "wagmi";
 import { mainnet } from "wagmi/chains";
 import { createPortal } from "react-dom";
+import { useTenderly } from "@/contexts/TenderlyContext";
 
 // Inner component to properly use hooks
 function ConnectButtonContent({
@@ -74,7 +75,7 @@ function ConnectButtonContent({
           <div className="relative bg-[var(--background)] border border-[var(--border)] rounded-lg p-6 max-w-sm w-full shadow-xl">
             <h3 className="text-lg font-medium mb-2">Wrong Network</h3>
             <p className="text-sm text-[var(--muted-foreground)] mb-6">
-              yld_fi is only available on Ethereum mainnet. Please switch your network to continue.
+              yld is only available on Ethereum mainnet. Please switch your network to continue.
             </p>
             <button
               onClick={onSwitchNetwork}
@@ -92,29 +93,45 @@ function ConnectButtonContent({
 
 export function CustomConnectButton() {
   const { switchChain } = useSwitchChain();
+  const { vnetAvailable, vnetEnabled, toggleVNet } = useTenderly();
 
   const handleSwitchToEthereum = () => {
     switchChain({ chainId: mainnet.id });
   };
 
   return (
-    <ConnectButton.Custom>
-      {({
-        account,
-        chain,
-        openAccountModal,
-        openConnectModal,
-        mounted,
-      }) => (
-        <ConnectButtonContent
-          account={account}
-          chain={chain}
-          openAccountModal={openAccountModal}
-          openConnectModal={openConnectModal}
-          mounted={mounted}
-          onSwitchNetwork={handleSwitchToEthereum}
-        />
+    <div className="flex items-center gap-2">
+      {vnetAvailable && (
+        <button
+          onClick={toggleVNet}
+          type="button"
+          className={`mono text-xs px-2.5 py-1.5 border rounded-md transition-all cursor-pointer ${
+            vnetEnabled
+              ? "border-cyan-500 text-cyan-400 bg-cyan-500/10"
+              : "border-[var(--border)] text-[var(--muted-foreground)] hover:border-[var(--border-hover)]"
+          }`}
+        >
+          VNet
+        </button>
       )}
-    </ConnectButton.Custom>
+      <ConnectButton.Custom>
+        {({
+          account,
+          chain,
+          openAccountModal,
+          openConnectModal,
+          mounted,
+        }) => (
+          <ConnectButtonContent
+            account={account}
+            chain={chain}
+            openAccountModal={openAccountModal}
+            openConnectModal={openConnectModal}
+            mounted={mounted}
+            onSwitchNetwork={handleSwitchToEthereum}
+          />
+        )}
+      </ConnectButton.Custom>
+    </div>
   );
 }

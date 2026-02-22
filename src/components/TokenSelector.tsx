@@ -1,16 +1,16 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useEnsoTokens } from "@/hooks/useEnsoTokens";
 import { useTokenMetadata } from "@/hooks/useTokenMetadata";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
 import { formatUnits, isAddress } from "viem";
 import { cn } from "@/lib/utils";
-import { VAULTS } from "@/config/vaults";
+import { VAULTS, CURVE_SAVINGS } from "@/config/vaults";
 import type { EnsoToken } from "@/types/enso";
 
-// Our vault tokens to show at top of list
+// Our vault tokens to show in yld Vaults tab
 const FEATURED_VAULT_TOKENS: EnsoToken[] = Object.values(VAULTS)
   .filter((v) => v.address !== "0x0000000000000000000000000000000000000000" && !v.hidden)
   .map((v) => ({
@@ -23,12 +23,20 @@ const FEATURED_VAULT_TOKENS: EnsoToken[] = Object.values(VAULTS)
     type: "defi" as const,
   }));
 
+// Tokens that should always be selectable regardless of excludeDefiTokens
+// (our vaults + partner vaults we deeply integrate with)
+const ALWAYS_AVAILABLE_ADDRESSES = new Set([
+  ...FEATURED_VAULT_TOKENS.map((t) => t.address.toLowerCase()),
+  CURVE_SAVINGS.SCRVUSD.toLowerCase(),
+]);
+
 interface TokenSelectorProps {
   selectedToken: EnsoToken | null;
   onSelect: (token: EnsoToken) => void;
   disabled?: boolean;
   excludeTokens?: string[]; // Addresses to exclude from list
   excludeDefiTokens?: boolean; // Exclude vault/strategy tokens (can't be swapped to)
+  priorityTokens?: EnsoToken[]; // Tokens to show at top of list regardless of balance
 }
 
 // Token logo with fallback
@@ -131,6 +139,7 @@ export function TokenSelector({
   disabled,
   excludeTokens,
   excludeDefiTokens,
+  priorityTokens,
 }: TokenSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"tokens" | "vaults">("tokens");
@@ -151,21 +160,40 @@ export function TokenSelector({
   );
 
   // Filter out excluded tokens and optionally DeFi tokens
-  const excludeSet = new Set((excludeTokens || []).map(addr => addr.toLowerCase()));
+  const excludeSet = useMemo(() => new Set((excludeTokens || []).map(addr => addr.toLowerCase())), [excludeTokens]);
   const filteredTokens = tokens.filter((t) => {
     // Exclude specific token addresses
     if (excludeSet.has(t.address.toLowerCase())) {
       return false;
     }
     // Exclude DeFi tokens (vault/strategy tokens can't be swapped to)
-    if (excludeDefiTokens && t.type === "defi") {
+    // But always keep our vaults and partner tokens (scrvUSD etc.)
+    if (excludeDefiTokens && t.type === "defi" && !ALWAYS_AVAILABLE_ADDRESSES.has(t.address.toLowerCase())) {
       return false;
     }
     return true;
   });
 
+  // Merge priority tokens + vault tokens into the list for balance fetching (they may not be in filteredTokens)
+  const tokensForBalances = useMemo(() => {
+    const seen = new Set(filteredTokens.map(t => t.address.toLowerCase()));
+    const extra = [
+      ...(priorityTokens || []),
+      ...FEATURED_VAULT_TOKENS,
+    ].filter(t => !seen.has(t.address.toLowerCase()) && !excludeSet.has(t.address.toLowerCase()));
+    // Deduplicate extras
+    const extraSeen = new Set<string>();
+    const uniqueExtra = extra.filter(t => {
+      const key = t.address.toLowerCase();
+      if (extraSeen.has(key)) return false;
+      extraSeen.add(key);
+      return true;
+    });
+    return uniqueExtra.length > 0 ? [...filteredTokens, ...uniqueExtra] : filteredTokens;
+  }, [filteredTokens, priorityTokens, excludeSet]);
+
   // Sort tokens by balance (tokens with balance first), get prices
-  const { sortedTokens, balanceMap, priceMap } = useTokenBalances(filteredTokens);
+  const { sortedTokens, balanceMap, priceMap } = useTokenBalances(tokensForBalances);
 
   // Close on click outside
   useEffect(() => {
@@ -303,7 +331,7 @@ export function TokenSelector({
                       : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                   )}
                 >
-                  yld_fi Vaults
+                  yld Vaults
                 </button>
               </div>
 
@@ -436,6 +464,40 @@ export function TokenSelector({
                       </div>
                     )}
 
+                    {/* Priority tokens (shown first, regardless of balance; filtered by search when searching) */}
+                    {priorityTokens && priorityTokens.length > 0 && (() => {
+                      const query = searchQuery.toLowerCase();
+                      const visible = priorityTokens.filter((t) => {
+                        if (excludeSet.has(t.address.toLowerCase())) return false;
+                        if (!query) return true;
+                        return (
+                          t.symbol.toLowerCase().includes(query) ||
+                          t.name.toLowerCase().includes(query) ||
+                          t.address.toLowerCase() === query
+                        );
+                      });
+                      if (visible.length === 0) return null;
+                      return (
+                        <>
+                          {visible.map((token) => (
+                            <TokenRow
+                              key={`priority-${token.address}`}
+                              token={token}
+                              onSelect={() => handleSelect(token)}
+                              isSelected={
+                                selectedToken?.address?.toLowerCase() ===
+                                token.address?.toLowerCase()
+                              }
+                              balance={balanceMap.get(token.address.toLowerCase())}
+                              price={priceMap.get(token.address.toLowerCase())}
+                            />
+                          ))}
+                          {/* Divider after priority tokens */}
+                          <div className="border-b border-[var(--border)] mx-3" />
+                        </>
+                      );
+                    })()}
+
                     {/* Regular token list */}
                     {sortedTokens.length === 0 && !isSearchAddress ? (
                       <div className="text-center py-8 text-[var(--muted-foreground)]">
@@ -443,7 +505,14 @@ export function TokenSelector({
                       </div>
                     ) : (
                       sortedTokens
-                        .filter((token) => token && token.address && token.symbol)
+                        .filter((token) => {
+                          if (!token || !token.address || !token.symbol) return false;
+                          // Exclude priority tokens from regular list to avoid duplicates
+                          if (priorityTokens?.some(p => p.address.toLowerCase() === token.address.toLowerCase())) {
+                            return false;
+                          }
+                          return true;
+                        })
                         .map((token) => (
                           <TokenRow
                             key={token.address}

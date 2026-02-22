@@ -1,4 +1,4 @@
-import { createConfig, http, fallback, unstable_connector } from "wagmi";
+import { createConfig, http, fallback, unstable_connector, custom } from "wagmi";
 import { mainnet } from "wagmi/chains";
 import { injected } from "wagmi/connectors";
 import {
@@ -7,25 +7,48 @@ import {
 } from "@rainbow-me/rainbowkit";
 import { PUBLIC_RPC_URLS } from "./rpc";
 
-// RPC endpoints with fallbacks for reliability
-// First try the user's wallet RPC (MetaMask/Frame uses their configured RPC)
-// Then fall back to public RPCs if needed
-const mainnetTransport = fallback([
-  unstable_connector(injected),
-  http(PUBLIC_RPC_URLS.llamarpc),
-  http(PUBLIC_RPC_URLS.drpc),
-  http(PUBLIC_RPC_URLS.cloudflare),
-  http(), // Default RPC as last fallback
-]);
+// Anvil fork RPC for local testing (set NEXT_PUBLIC_ANVIL_RPC=http://127.0.0.1:8545)
+// NOTE: use process.env.X (not process.env?.X) so Next.js DefinePlugin inlines it in the browser bundle
+const anvilRpc: string | undefined = process.env.NEXT_PUBLIC_ANVIL_RPC || undefined;
 
-const projectId = (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID) || "demo";
+// Tenderly VNet RPC for dev-mode toggle (set NEXT_PUBLIC_TENDERLY_VNET_RPC in .env.local)
+const vnetRpc: string | undefined = process.env.NEXT_PUBLIC_TENDERLY_VNET_RPC || undefined;
+
+// Normal transport chain (used as fallback or when VNet is off)
+const normalTransport = anvilRpc
+  ? fallback([http(anvilRpc), http(PUBLIC_RPC_URLS.drpc)])
+  : fallback([
+      http(PUBLIC_RPC_URLS.drpc),
+      http(PUBLIC_RPC_URLS.cloudflare),
+      unstable_connector(injected),
+    ]);
+
+// Switchable transport: checks localStorage on every request to route to VNet or normal RPC.
+// Only created when VNet RPC is configured AND Anvil is not (Anvil takes priority).
+const mainnetTransport = (vnetRpc && !anvilRpc)
+  ? (() => {
+      const vnetTransport = http(vnetRpc);
+      return custom({
+        async request({ method, params }) {
+          const useVNet = typeof window !== "undefined"
+            && localStorage.getItem("yldfi-vnet-enabled") === "true";
+          const transport = useVNet
+            ? vnetTransport({ chain: mainnet })
+            : normalTransport({ chain: mainnet });
+          return transport.request({ method, params });
+        },
+      });
+    })()
+  : normalTransport;
+
+const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "demo";
 
 // Get default wallets from RainbowKit
 const { wallets: defaultWallets } = getDefaultWallets();
 
 // Build connectors with wallets
 const connectors = connectorsForWallets(defaultWallets, {
-  appName: "yld_fi",
+  appName: "yld",
   projectId,
 });
 
@@ -35,6 +58,8 @@ export const config = createConfig({
   transports: {
     [mainnet.id]: mainnetTransport,
   },
+  // Faster polling on Anvil fork (default 4000ms is too slow for auto-mine)
+  ...(anvilRpc ? { pollingInterval: 1_000 } : {}),
   ssr: true,
 });
 

@@ -187,13 +187,13 @@ describe("ENS Avatar API Route Logic", () => {
       global.fetch = mockFetch;
 
       await global.fetch("https://euc.li/test.eth", {
-        headers: { "User-Agent": "yld_fi ENS Avatar Proxy" },
+        headers: { "User-Agent": "yld ENS Avatar Proxy" },
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
         "https://euc.li/test.eth",
         expect.objectContaining({
-          headers: { "User-Agent": "yld_fi ENS Avatar Proxy" },
+          headers: { "User-Agent": "yld ENS Avatar Proxy" },
         })
       );
     });

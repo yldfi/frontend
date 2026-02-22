@@ -55,7 +55,7 @@ export async function GET(
     const avatarUrl = `https://euc.li/${name}`;
     const response = await fetch(avatarUrl, {
       headers: {
-        "User-Agent": "yld_fi ENS Avatar Proxy",
+        "User-Agent": "yld ENS Avatar Proxy",
       },
     });
 

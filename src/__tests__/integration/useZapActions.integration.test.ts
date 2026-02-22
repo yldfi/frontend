@@ -226,7 +226,7 @@ describe("useZapActions integration", () => {
       const { result } = renderHook(() => useZapActions(mockUsdcQuote));
 
       act(() => {
-        result.current.approve();
+        result.current.approve(false);
       });
 
       expect(mockWriteContract).toHaveBeenCalledWith(
@@ -246,7 +246,7 @@ describe("useZapActions integration", () => {
       const { result } = renderHook(() => useZapActions(mockUsdcQuote));
 
       act(() => {
-        result.current.approve();
+        result.current.approve(false);
       });
 
       expect(result.current.status).toBe("approving");
@@ -432,7 +432,7 @@ describe("useZapActions integration", () => {
       const { result } = renderHook(() => useZapActions(mockEthQuote));
 
       act(() => {
-        result.current.approve();
+        result.current.approve(false);
       });
 
       expect(mockWriteContract).not.toHaveBeenCalled();

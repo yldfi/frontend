@@ -65,6 +65,7 @@ button:disabled {
 
 html {
   scroll-behavior: smooth;
+  scroll-padding-top: 7rem;
   overscroll-behavior: none;
   overflow-y: scroll;
 }
@@ -110,9 +111,11 @@ body {
   outline-offset: 2px;
 }
 
-/* Number inputs handle focus via parent container - remove their own outline */
+/* Inputs handle focus via parent container - remove their own outline */
 input[type="number"]:focus-visible,
-input[type="number"]:focus {
+input[type="number"]:focus,
+input[type="text"]:focus-visible,
+input[type="text"]:focus {
   outline: none !important;
 }
 
@@ -181,10 +184,73 @@ input[type="number"] {
   -moz-appearance: textfield;
 }
 
-/* Animated rainbow gradient */
-@keyframes rainbowSlide {
-  0% { background-position: 0% 50%; }
-  100% { background-position: 200% 50%; }
+/* Range slider — white thumb, subtle track */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  outline: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--foreground);
+  border: none;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(0.95);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--foreground);
+  border: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+}
+
+
+
+/* Health bar pulse animation */
+@keyframes health-pulse {
+  0%, 100% { opacity: 1; filter: brightness(1); }
+  50% { opacity: 0.4; filter: brightness(1.6); }
+}
+
+/* Synced estimate pulse — animated CSS variable on parent, children inherit */
+@property --estimate-pulse {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+
+@keyframes estimate-pulse {
+  0%, 100% { --estimate-pulse: 1; }
+  50% { --estimate-pulse: 0.4; }
+}
+
+.estimating {
+  animation: estimate-pulse 1.2s ease-in-out infinite;
 }
 
 /* Collateral link - compact with logo rainbow gradient border */
@@ -196,9 +262,7 @@ input[type="number"] {
   font-size: 13px;
   font-weight: 500;
   border-radius: 6px;
-  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6, #ef4444);
-  background-size: 200% 100%;
-  animation: rainbowSlide 3s linear infinite;
+  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6);
   transition: all 0.2s ease;
 }
 
@@ -227,10 +291,26 @@ input[type="number"] {
   position: absolute;
   inset: -1px;
   border-radius: 5px;
-  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6, #ef4444);
-  background-size: 200% 100%;
-  animation: rainbowSlide 3s linear infinite;
+  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6);
   z-index: -1;
+}
+
+/* Lending card - block with rainbow gradient border */
+.lending-card {
+  padding: 1px;
+  border-radius: 10px;
+  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6);
+  transition: opacity 0.2s ease;
+}
+
+.lending-card > * {
+  background: var(--background);
+  border-radius: 9px;
+  transition: background 0.2s ease;
+}
+
+.lending-card:hover > * {
+  background: var(--muted);
 }
 
 /* Sonner Toast Customization */

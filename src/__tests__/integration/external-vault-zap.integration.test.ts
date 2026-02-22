@@ -2,7 +2,7 @@
  * External Vault Zap Integration Tests
  *
  * Tests cover zapping FROM external vaults (Llama Airforce, Concentrator, Beefy)
- * INTO yld_fi vaults, as well as pxCVX/lpxCVX token inputs.
+ * INTO yld vaults, as well as pxCVX/lpxCVX token inputs.
  *
  * Run with: pnpm vitest run src/__tests__/integration/external-vault-zap.integration.test.ts
  *

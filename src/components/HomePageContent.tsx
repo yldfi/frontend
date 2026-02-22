@@ -2,8 +2,10 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useAccount } from "wagmi";
+import { formatUnits } from "viem";
+import { useRouter } from "next/navigation";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
-import { ArrowUpRight, Github, BookOpen, Send, ChevronDown, ChevronUp } from "lucide-react";
+import { ArrowUpRight, Github, BookOpen, Send, ChevronDown, ChevronUp, HeartPulse } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import { cn, formatUsd } from "@/lib/utils";
@@ -14,7 +16,8 @@ import { useMultipleVaultBalances } from "@/hooks/useVaultBalance";
 import { useMultiplePricePerShare } from "@/hooks/usePricePerShare";
 import { useVaultCache } from "@/hooks/useVaultCache";
 import { useCvxCrvPrice } from "@/hooks/useCvxCrvPrice";
-import { VAULTS, VAULT_ADDRESSES } from "@/config/vaults";
+import { useCurveLendingPosition, formatHealth } from "@/hooks/useCurveLendingPosition";
+import { VAULTS, VAULT_ADDRESSES, CURVE_CONTROLLERS } from "@/config/vaults";
 
 // Build vault configs from centralized config
 // In development, show all vaults including hidden ones
@@ -33,6 +36,7 @@ const vaultConfigs = Object.values(VAULTS)
     fee: vault.fees.performance,
     feeBreakdown: vault.feeBreakdown,
     logo: vault.logoSmall,
+    hasLending: vault.type === "vault" && vault.address in CURVE_CONTROLLERS,
   }));
 
 type SortOption = "holdings" | "apy" | "tvl";
@@ -67,7 +71,8 @@ function getInitialHeroCollapsed(): boolean {
 }
 
 export function HomePageContent() {
-  const { isConnected } = useAccount();
+  const { isConnected, address } = useAccount();
+  const router = useRouter();
   const [sortBy, setSortBy] = useState<SortOption>(getInitialSortValue);
   const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
   const sortDropdownRef = useRef<HTMLDivElement>(null);
@@ -127,6 +132,12 @@ export function HomePageContent() {
   // cvgCVX and pxCVX still use cache (no on-chain oracle hooks yet)
   const cvgCvxPrice = cacheData?.cvgCvxPrice ?? 0;
   const pxCvxPrice = cacheData?.pxCvxPrice ?? 0;
+
+  // Fetch lending position for vaults with LlamaLend markets
+  const { position: ycvxcrvLendingPosition } = useCurveLendingPosition(
+    VAULT_ADDRESSES.YCVXCRV as `0x${string}`,
+    address
+  );
 
   // Fetch price per share from on-chain
   const { prices: pricePerShareData } = useMultiplePricePerShare([
@@ -222,6 +233,11 @@ export function HomePageContent() {
     [VAULT_ADDRESSES.YSPXCVX.toLowerCase()]: balances[3],
   };
 
+  // Lending position lookup by vault ID
+  const lendingPositionByVaultId: Record<string, typeof ycvxcrvLendingPosition> = {
+    ycvxcrv: ycvxcrvLendingPosition,
+  };
+
   const vaultsUnsorted = vaultConfigs.map((config) => {
     const balance = balanceByAddress[config.contractAddress.toLowerCase()];
     return {
@@ -231,6 +247,7 @@ export function HomePageContent() {
       holdings: balance?.formattedUsd ?? "$0",
       holdingsUsd: balance?.usdValue ?? 0,
       hasHoldings: (balance?.usdValue ?? 0) > 0,
+      lendingPosition: lendingPositionByVaultId[config.id] ?? null,
     };
   });
 
@@ -276,7 +293,7 @@ export function HomePageContent() {
           <Link href="/" className="flex items-center gap-2">
             <Logo size={28} />
             <span className="mono text-lg font-medium tracking-tight leading-none">
-              yld<span className="text-[var(--muted-foreground)]">_</span>fi
+              yld
             </span>
           </Link>
 
@@ -308,7 +325,7 @@ export function HomePageContent() {
                 >
               <div className="max-w-3xl">
                 <p className="mono text-sm text-[var(--muted-foreground)] mb-4 animate-fade-in">
-                  [001] yld_fi
+                  [001] yld
                 </p>
                 <h1 className="text-4xl md:text-5xl lg:text-6xl font-medium tracking-tight leading-[1.1] mb-6 animate-fade-in-up opacity-0 delay-100">
                   Deposit
@@ -469,10 +486,28 @@ export function HomePageContent() {
                     <div className="flex items-center gap-2.5 mb-4">
                       {vault.badges?.map((badge) => (
                         badge === "Collateral (LlamaLend)" ? (
-                          <span key={badge} className="collateral-badge inline-flex items-center px-2 py-1 text-[11px] font-medium bg-[var(--muted)] text-[var(--muted-foreground)] rounded whitespace-nowrap">
-                            <Image src="/curve-logo.png" alt="Curve" width={12} height={12} className="mr-1" />
-                            Collateral
-                          </span>
+                          <button
+                            key={badge}
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); router.push(`/vaults/${vault.id}/lending`); }}
+                            className="group/badge collateral-badge inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium bg-[var(--muted)] text-[var(--muted-foreground)] rounded whitespace-nowrap hover:text-[var(--foreground)] transition-colors"
+                          >
+                            <Image src="/curve-logo.png" alt="Curve" width={12} height={12} className="rounded-full" />
+                            {vault.lendingPosition?.hasLoan ? (
+                              <>
+                                <span>Loan</span>
+                                <span className="mx-0.5">·</span>
+                                <Image src="/tokens/crvusd.png" alt="crvUSD" width={12} height={12} className="rounded-full" />
+                                <span className="mono">{Number(formatUnits(vault.lendingPosition.debt, 18)).toFixed(0)} crvUSD</span>
+                                <span>/</span>
+                                <Image src={vault.logo} alt={vault.name} width={12} height={12} className="rounded-full" />
+                                <span className="mono">{Number(formatUnits(vault.lendingPosition.collateral, 18)).toFixed(0)} {vault.name}</span>
+                                {(() => { const h = formatHealth(vault.lendingPosition.health); const hoverColor = h.status === "healthy" ? "group-hover/badge:text-green-500" : h.status === "warning" ? "group-hover/badge:text-yellow-500" : "group-hover/badge:text-red-400"; return <span className={`inline-flex items-center gap-0.5 ${h.color} ${hoverColor} transition-colors`}><HeartPulse size={10} /><span className="mono">{h.value.toFixed(0)}%</span></span>; })()}
+                              </>
+                            ) : (
+                              <span>Borrow against {vault.name}</span>
+                            )}
+                            <ArrowUpRight size={10} />
+                          </button>
                         ) : (
                           <span key={badge} className="inline-flex items-center px-2 py-1 text-[11px] font-medium bg-[var(--muted)] text-[var(--muted-foreground)] rounded border border-transparent whitespace-nowrap">
                             {badge}
@@ -522,10 +557,28 @@ export function HomePageContent() {
                         <div className="flex items-center gap-2 mt-1">
                           {vault.badges?.map((badge) => (
                             badge === "Collateral (LlamaLend)" ? (
-                              <span key={badge} className="collateral-badge inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-[var(--muted)] text-[var(--muted-foreground)] rounded whitespace-nowrap">
-                                <Image src="/curve-logo.png" alt="Curve" width={10} height={10} className="mr-1" />
-                                Collateral
-                              </span>
+                              <button
+                                key={badge}
+                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); router.push(`/vaults/${vault.id}/lending`); }}
+                                className="group/badge collateral-badge inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium bg-[var(--muted)] text-[var(--muted-foreground)] rounded whitespace-nowrap hover:text-[var(--foreground)] transition-colors"
+                              >
+                                <Image src="/curve-logo.png" alt="Curve" width={10} height={10} className="rounded-full" />
+                                {vault.lendingPosition?.hasLoan ? (
+                                  <>
+                                    <span>Loan</span>
+                                    <span>·</span>
+                                    <Image src="/tokens/crvusd.png" alt="crvUSD" width={10} height={10} className="rounded-full" />
+                                    <span className="mono">{Number(formatUnits(vault.lendingPosition.debt, 18)).toFixed(0)} crvUSD</span>
+                                    <span>/</span>
+                                    <Image src={vault.logo} alt={vault.name} width={10} height={10} className="rounded-full" />
+                                    <span className="mono">{Number(formatUnits(vault.lendingPosition.collateral, 18)).toFixed(0)} {vault.name}</span>
+                                    {(() => { const h = formatHealth(vault.lendingPosition.health); const hoverColor = h.status === "healthy" ? "group-hover/badge:text-green-500" : h.status === "warning" ? "group-hover/badge:text-yellow-500" : "group-hover/badge:text-red-400"; return <span className={`inline-flex items-center gap-0.5 ${h.color} ${hoverColor} transition-colors`}><HeartPulse size={10} /><span className="mono">{h.value.toFixed(0)}%</span></span>; })()}
+                                  </>
+                                ) : (
+                                  <span>Borrow against {vault.name}</span>
+                                )}
+                                <ArrowUpRight size={10} />
+                              </button>
                             ) : (
                               <span key={badge} className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-[var(--muted)] text-[var(--muted-foreground)] rounded border border-transparent whitespace-nowrap">
                                 {badge}
@@ -635,7 +688,7 @@ export function HomePageContent() {
               <Logo size={32} />
               <div>
                 <p className="mono text-lg font-medium mb-1">
-                  yld<span className="text-[var(--muted-foreground)]">_</span>fi
+                  yld
                 </p>
                 <p className="text-sm text-[var(--muted-foreground)]">
                   Automated yield optimization
@@ -676,7 +729,7 @@ export function HomePageContent() {
 
           <div className="mt-12 pt-6 border-t border-[var(--border)] flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <p className="text-xs text-[var(--muted-foreground)]">
-              &copy; {new Date().getFullYear()} yld_fi. All rights reserved.
+              &copy; {new Date().getFullYear()} yld. All rights reserved.
             </p>
             <div className="flex items-center gap-4">
               <a
