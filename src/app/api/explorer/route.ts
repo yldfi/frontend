@@ -155,7 +155,7 @@ export async function GET(request: NextRequest) {
 
         // If it's a proxy contract, try to get the implementation name
         if (name && isProxyContract(name)) {
-          const implAddress = await getImplementationAddress(address, chainId, apiKey);
+          const implAddress = await getImplementationAddress(address, chainId);
           if (implAddress) {
             const implName = await fetchContractName(implAddress, chainId, apiKey);
             if (implName && !isProxyContract(implName)) {
@@ -199,7 +199,7 @@ export async function GET(request: NextRequest) {
         // Check if this is a proxy contract - try to get implementation source
         const isLikelyProxy = !sourceResult.SourceCode || isProxyContract(sourceResult.ContractName);
         if (isLikelyProxy) {
-          const implAddress = await getImplementationAddress(address, chainId, apiKey);
+          const implAddress = await getImplementationAddress(address, chainId);
           if (implAddress) {
             // Fetch implementation source
             const implUrl = `${ETHERSCAN_API_BASE}?chainid=${chainId}&module=contract&action=getsourcecode&address=${implAddress}&apikey=${apiKey}`;
@@ -371,8 +371,7 @@ const IMPLEMENTATION_SLOTS = [
 
 async function getImplementationAddress(
   proxyAddress: string,
-  chainId: string,
-  _apiKey: string
+  chainId: string
 ): Promise<string | null> {
   try {
     const rpcUrl = chainId === "1" ? "https://eth.llamarpc.com" : null;
