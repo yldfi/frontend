@@ -20,6 +20,14 @@ interface RouteDisplayProps {
   inputAmount?: string;
   outputAmount?: string;
   isLoading?: boolean;
+  // Closing loan details - when provided, adds extra steps at the end
+  closingLoan?: {
+    collateralReturned?: string;
+    collateralSymbol?: string;
+    crvUsdReturned?: string;
+  };
+  // Optional completion message shown at the bottom of the route in accent color
+  completionMessage?: string;
 }
 
 // Token logo paths (local files in /public/tokens/)
@@ -35,7 +43,12 @@ const TOKEN_LOGOS: Record<string, string> = {
   usdc: "/tokens/usdc.png",
   usdt: "/tokens/usdt.png",
   dai: "/tokens/dai.png",
+  wbtc: "/tokens/wbtc.png",
   crvusd: "/tokens/crvusd.png",
+  scrvusd: "/tokens/scrvusd.png",
+  // Union (Llama Airforce) vaults
+  ucvx: "/tokens/llama-airforce.png",
+  ucrv: "/tokens/llama-airforce.png",
 };
 
 // Get logo URL for a token symbol - checks TOKEN_LOGOS first, then VAULTS config
@@ -57,7 +70,7 @@ const PROTOCOL_STYLES: Record<string, string> = {
   Enso: "text-[var(--foreground)]",
   Curve: "text-[var(--foreground)]",
   Convex: "text-[var(--foreground)]",
-  "yld_fi": "text-[var(--foreground)]",
+  "yld": "text-[var(--foreground)]",
   Pirex: "text-[var(--foreground)]",
 };
 
@@ -85,6 +98,8 @@ const PROTOCOL_LINKS: Record<string, string> = {
   "sushi": "https://sushi.com",
   "balancer": "https://balancer.fi",
   "curve": "https://curve.fi",
+  "curve llamalend": "https://lend.curve.fi",
+  "curve savings": "https://crvusd.curve.fi",
   "velodrome": "https://velodrome.finance",
   "aerodrome": "https://aerodrome.finance",
   "camelot": "https://camelot.exchange",
@@ -174,6 +189,7 @@ const PROTOCOL_LINKS: Record<string, string> = {
   "hop": "https://hop.exchange",
   // Other
   "pirex": "https://pirex.io",
+  "liquidboost": "https://app.tangent.finance/liquid-boost/cvx",
   "weth": "https://weth.io",
 };
 
@@ -203,6 +219,8 @@ const PROTOCOL_DISPLAY_NAMES: Record<string, string> = {
   "sushi": "Sushi",
   "balancer": "Balancer",
   "curve": "Curve",
+  "curve llamalend": "Curve LlamaLend",
+  "curve savings": "Curve Savings",
   "velodrome": "Velodrome",
   "aerodrome": "Aerodrome",
   "camelot": "Camelot",
@@ -292,8 +310,9 @@ const PROTOCOL_DISPLAY_NAMES: Record<string, string> = {
   "hop": "Hop",
   // Other
   "pirex": "Pirex",
+  "liquidboost": "LiquidBoost",
   "weth": "WETH",
-  "yld_fi": "yld_fi",
+  "yld": "yld",
 };
 
 // Get display name for a protocol (proper casing)
@@ -399,16 +418,19 @@ function RouteStepRow({ step, isLast }: { step: RouteStep; isLast: boolean }) {
             )}
             {step.protocol && (
               <>
-                {/* For yld_fi deposits with description, just add "vault" - description already has target */}
-                {step.action?.toLowerCase() === "deposit" && step.protocol?.toLowerCase() === "yld_fi" && step.description ? (
-                  <span className="opacity-70"> vault</span>
+                {/* For yld deposits with description, use "via" to avoid double "into" */}
+                {step.action?.toLowerCase() === "deposit" && step.protocol?.toLowerCase() === "yld" && step.description ? (
+                  <>
+                    <span className="opacity-70"> via </span>
+                    <span className="font-medium text-[var(--foreground)]">yld</span>
+                  </>
                 ) : (
                   <>
                     <span className="opacity-70">
                       {" "}{step.action?.toLowerCase() === "deposit" ? "into" : "via"}{" "}
                     </span>
-                    {step.action?.toLowerCase() === "deposit" && step.protocol?.toLowerCase() === "yld_fi" ? (
-                      <><span className="font-medium">yld_fi</span> vault</>
+                    {step.action?.toLowerCase() === "deposit" && step.protocol?.toLowerCase() === "yld" ? (
+                      <><span className="font-medium text-[var(--foreground)]">yld</span> vault</>
                     ) : protocolLink ? (
                       <a
                         href={protocolLink}
@@ -554,7 +576,7 @@ function LegacyRouteDisplay({ routeInfo }: { routeInfo: RouteInfo }) {
   );
 }
 
-export function RouteDisplay({ routeInfo, inputSymbol, outputSymbol, inputAmount, outputAmount, isLoading }: RouteDisplayProps) {
+export function RouteDisplay({ routeInfo, inputSymbol, outputSymbol, inputAmount, outputAmount, isLoading, closingLoan, completionMessage }: RouteDisplayProps) {
   // Only show skeleton if loading AND no existing data to display
   if (isLoading && !routeInfo) {
     return <LoadingSkeleton />;
@@ -577,15 +599,81 @@ export function RouteDisplay({ routeInfo, inputSymbol, outputSymbol, inputAmount
       return step;
     });
 
+    // Build closing loan steps if provided
+    const closingLoanSteps: RouteStep[] = [];
+    if (closingLoan) {
+      if (closingLoan.collateralReturned && closingLoan.collateralSymbol) {
+        closingLoanSteps.push({
+          tokenSymbol: closingLoan.collateralSymbol,
+          amount: closingLoan.collateralReturned,
+          action: "Collateral returned",
+          description: "to wallet",
+          protocol: "Curve",
+        });
+      }
+      if (closingLoan.crvUsdReturned && Number(closingLoan.crvUsdReturned) > 0) {
+        closingLoanSteps.push({
+          tokenSymbol: "crvUSD",
+          amount: `~${Number(closingLoan.crvUsdReturned).toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+          action: "Excess returned",
+          description: "to wallet",
+          protocol: "Curve",
+        });
+      }
+    }
+
+    const hasClosingLoan = closingLoanSteps.length > 0;
+
     return (
       <div className={`space-y-0 transition-opacity ${isLoading ? "opacity-50" : ""}`}>
         {stepsWithAmounts.map((step, index) => (
           <RouteStepRow
             key={index}
             step={step}
-            isLast={index === stepsWithAmounts.length - 1}
+            isLast={!hasClosingLoan && !completionMessage && index === stepsWithAmounts.length - 1}
           />
         ))}
+        {closingLoanSteps.map((step, index) => (
+          <RouteStepRow
+            key={`closing-${index}`}
+            step={step}
+            isLast={index === closingLoanSteps.length - 1}
+          />
+        ))}
+        {hasClosingLoan && (
+          <div className="flex gap-2.5 pt-2">
+            <div className="w-2 flex-shrink-0" />
+            <div className="text-xs font-medium text-[var(--accent)]">
+              ✓ Loan closed
+            </div>
+          </div>
+        )}
+        {completionMessage && !hasClosingLoan && (
+          <div className="flex gap-2.5">
+            <div className="relative w-2 flex-shrink-0">
+              <div className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] mt-[7px]" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/curve-logo.png" alt="Curve" width={18} height={18} className="rounded-full" />
+                <span className="text-sm font-medium text-[var(--accent)]">New Loan</span>
+              </div>
+              <div className="text-xs text-[var(--accent)] mt-0.5">
+                <span className="opacity-70">Loan created on </span>
+                <a
+                  href="https://lend.curve.fi"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium hover:brightness-125 transition-all inline-flex items-center gap-0.5"
+                >
+                  Curve LlamaLend
+                  <ExternalLink size={10} className="opacity-50" />
+                </a>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

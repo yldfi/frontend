@@ -113,7 +113,7 @@ export interface RouteStep {
   tokenSymbol: string;      // Token symbol shown in the pill (output of this step)
   tokenAddress?: string;    // Address for icon lookup
   action: string;           // "Swap", "Mint", "Lock", "Stake", "Deposit", "Redeem", "Withdraw"
-  description: string;      // Full description like "ETH for CVX" or "cvgCVX with CVX"
+  description?: string;     // Optional: "for CVX", "from crvUSD", etc. (action is primary label)
   protocol: string;         // Protocol name (e.g., "Enso", "Curve", "Convex", "Yearn")
   amount?: string;          // Optional: formatted amount for this step
   bonus?: number;           // Optional: bonus % for this step (e.g., +2.5% from Curve swap)
@@ -144,7 +144,7 @@ export interface CustomBundleResponse extends EnsoBundleResponse {
 
 // Simulation result types
 export interface SimulationAssetChange {
-  type: "send" | "receive";
+  type: "send" | "receive" | "repay" | "borrow" | "deposit";
   symbol: string;
   amount: string;       // Human readable
   rawAmount: string;    // Wei/raw units
@@ -157,8 +157,11 @@ export interface SimulationAssetChange {
 export interface SimulationResult {
   success: boolean;
   gasUsed: number | null;
-  errorMessage: string | null;
+  errorMessage: string | { id?: string; slug?: string; message?: string } | null;
   simulationId: string | null;
   tenderlyUrl: string | null;
   assetChanges: SimulationAssetChange[];
+  // When Tenderly is unavailable but eth_call passed
+  simulationUnavailable?: boolean;
+  simulationUnavailableReason?: string;
 }

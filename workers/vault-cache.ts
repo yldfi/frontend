@@ -1,21 +1,24 @@
 // Cloudflare Worker for caching vault data
-// Runs on a cron schedule to fetch and cache vault data from Ethereum
+// Runs on a cron schedule to fetch vault data from Kong/Yearn API
 
-const RPC_URL = "https://eth.llamarpc.com";
+const KONG_API_URL = "https://kong.yearn.farm/api/gql";
+
+// RPC URLs for fallback (yspxcvx not tracked by Kong)
+const RPC_URLS = [
+  "https://eth.llamarpc.com",
+  "https://eth.drpc.org",
+  "https://cloudflare-eth.com",
+];
 
 // Contract addresses
 const YCVXCRV_VAULT = "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86";
 const YSCVXCRV_VAULT = "0xCa960E6DF1150100586c51382f619efCCcF72706";
 const YSCVGCVX_VAULT = "0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359";
 const YSPXCVX_VAULT = "0xB246DB2A73EEE3ee026153660c74657C123f8E42";
-const CVXCRV_TOKEN = "0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7";
-const CVGCVX_TOKEN = "0x2191DF768ad71140F9F3E96c1e4407A4aA31d082";
-const PXCVX_TOKEN = "0xBCe0Cf87F513102F22232436CCa2ca49e815C3aC";
 
-// Function selectors
+// Function selectors (only needed for yspxcvx fallback)
 const TOTAL_ASSETS = "0x01e1d114"; // totalAssets()
 const PRICE_PER_SHARE = "0x99530b06"; // pricePerShare()
-const DECIMALS = "0x313ce567"; // decimals()
 
 /**
  * Convert BigInt with 18 decimals to Number
@@ -70,18 +73,37 @@ async function fetchWithRetry(
 }
 
 async function ethCall(to: string, data: string): Promise<string> {
-  const response = await fetchWithRetry(RPC_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "eth_call",
-      params: [{ to, data }, "latest"],
-    }),
-  });
-  const json = (await response.json()) as { result: string };
-  return json.result;
+  let lastError: Error | null = null;
+
+  for (const rpcUrl of RPC_URLS) {
+    try {
+      const response = await fetchWithRetry(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_call",
+          params: [{ to, data }, "latest"],
+        }),
+      }, 1); // Only 1 retry per RPC, then try next
+
+      if (response.ok) {
+        const json = (await response.json()) as { result?: string; error?: { message: string } };
+        if (json.result) {
+          return json.result;
+        }
+        // RPC returned error response, try next
+        lastError = new Error(json.error?.message ?? "RPC returned no result");
+        continue;
+      }
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
+      continue;
+    }
+  }
+
+  throw lastError ?? new Error("All RPCs failed");
 }
 
 async function getVaultData(vaultAddress: string) {
@@ -102,11 +124,31 @@ async function getVaultData(vaultAddress: string) {
   };
 }
 
+// pxCVX token for fallback price lookup (yspxcvx not tracked by Kong)
+const PXCVX_TOKEN = "0xBCe0Cf87F513102F22232436CCa2ca49e815C3aC";
+
+interface KongVaultData {
+  tvl: { close: number } | null;
+  totalAssets: string | null;
+  pricePerShare: string | null;
+  decimals: string | null;
+}
+
+interface KongResponse {
+  data: {
+    ycvxcrv: KongVaultData | null;
+    yscvxcrv: KongVaultData | null;
+    yscvgcvx: KongVaultData | null;
+  };
+}
+
+/**
+ * Fetch token price from Enso API (corrected URL format)
+ */
 async function getTokenPrice(tokenAddress: string): Promise<number> {
-  // Fetch from Enso API (more reliable than Curve for these tokens)
   try {
     const response = await fetchWithRetry(
-      `https://api.enso.finance/api/v1/prices/${tokenAddress}?chainId=1`,
+      `https://api.enso.finance/api/v1/prices/1/${tokenAddress}`,
       undefined,
       2
     );
@@ -120,41 +162,64 @@ async function getTokenPrice(tokenAddress: string): Promise<number> {
   return 0;
 }
 
+/**
+ * Fetch all vault data from Kong/Yearn API
+ * Kong provides totalAssets, pricePerShare, and TVL (with proper redemption values)
+ */
+async function fetchKongVaults(): Promise<KongResponse> {
+  const query = `{
+    ycvxcrv: vault(chainId: 1, address: "${YCVXCRV_VAULT}") { tvl { close } totalAssets pricePerShare decimals }
+    yscvxcrv: vault(chainId: 1, address: "${YSCVXCRV_VAULT}") { tvl { close } totalAssets pricePerShare decimals }
+    yscvgcvx: vault(chainId: 1, address: "${YSCVGCVX_VAULT}") { tvl { close } totalAssets pricePerShare decimals }
+  }`;
+
+  const response = await fetchWithRetry(KONG_API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Kong API error: ${response.status}`);
+  }
+
+  return (await response.json()) as KongResponse;
+}
+
+/**
+ * Convert Kong vault data to our response format
+ */
+function formatKongVault(address: string, data: KongVaultData | null) {
+  const totalAssets = data?.totalAssets ? BigInt(data.totalAssets) : 0n;
+  const pricePerShare = data?.pricePerShare ? BigInt(data.pricePerShare) : 0n;
+
+  return {
+    address,
+    totalAssets: totalAssets.toString(),
+    pricePerShare: pricePerShare.toString(),
+    tvl: bigIntToNumber18(totalAssets),
+    pps: bigIntToNumber18(pricePerShare),
+    tvlUsd: data?.tvl?.close ?? 0,
+  };
+}
+
 async function fetchVaultData() {
-  const [ycvxcrvData, yscvxcrvData, yscvgcvxData, yspxcvxData, cvxCrvPrice, cvgCvxPrice, pxCvxPrice] = await Promise.all([
-    getVaultData(YCVXCRV_VAULT),
-    getVaultData(YSCVXCRV_VAULT),
-    getVaultData(YSCVGCVX_VAULT),
-    getVaultData(YSPXCVX_VAULT),
-    getTokenPrice(CVXCRV_TOKEN),
-    getTokenPrice(CVGCVX_TOKEN),
+  // Fetch Kong data for 3 vaults + RPC for yspxcvx + Enso price for pxCVX
+  const [kongData, yspxcvxData, pxCvxPrice] = await Promise.all([
+    fetchKongVaults(),
+    getVaultData(YSPXCVX_VAULT), // Only vault not in Kong
     getTokenPrice(PXCVX_TOKEN),
   ]);
 
   return {
-    ycvxcrv: {
-      address: YCVXCRV_VAULT,
-      ...ycvxcrvData,
-      tvlUsd: ycvxcrvData.tvl * cvxCrvPrice,
-    },
-    yscvxcrv: {
-      address: YSCVXCRV_VAULT,
-      ...yscvxcrvData,
-      tvlUsd: yscvxcrvData.tvl * cvxCrvPrice,
-    },
-    yscvgcvx: {
-      address: YSCVGCVX_VAULT,
-      ...yscvgcvxData,
-      tvlUsd: yscvgcvxData.tvl * cvgCvxPrice,
-    },
+    ycvxcrv: formatKongVault(YCVXCRV_VAULT, kongData.data.ycvxcrv),
+    yscvxcrv: formatKongVault(YSCVXCRV_VAULT, kongData.data.yscvxcrv),
+    yscvgcvx: formatKongVault(YSCVGCVX_VAULT, kongData.data.yscvgcvx),
     yspxcvx: {
       address: YSPXCVX_VAULT,
       ...yspxcvxData,
       tvlUsd: yspxcvxData.tvl * pxCvxPrice,
     },
-    cvxCrvPrice,
-    cvgCvxPrice,
-    pxCvxPrice,
     lastUpdated: new Date().toISOString(),
   };
 }

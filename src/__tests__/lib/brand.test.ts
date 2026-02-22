@@ -4,7 +4,7 @@ import { BRAND, URLS, CONTRACTS } from "@/lib/brand";
 describe("brand", () => {
   describe("BRAND constants", () => {
     it("has correct brand name", () => {
-      expect(BRAND.name).toBe("yld_fi");
+      expect(BRAND.name).toBe("yld");
     });
 
     it("has correct tagline", () => {
@@ -14,20 +14,20 @@ describe("brand", () => {
     it("generates copyright with current year by default", () => {
       const currentYear = new Date().getFullYear();
       expect(BRAND.copyright()).toContain(String(currentYear));
-      expect(BRAND.copyright()).toContain("yld_fi");
+      expect(BRAND.copyright()).toContain("yld");
       expect(BRAND.copyright()).toContain("All rights reserved");
     });
 
     it("generates copyright with custom year", () => {
-      expect(BRAND.copyright(2023)).toBe("© 2023 yld_fi. All rights reserved.");
+      expect(BRAND.copyright(2023)).toBe("© 2023 yld. All rights reserved.");
     });
 
     it("has user agent string", () => {
-      expect(BRAND.userAgent).toBe("yld_fi ENS Avatar Proxy");
+      expect(BRAND.userAgent).toBe("yld ENS Avatar Proxy");
     });
 
     it("has wallet app name", () => {
-      expect(BRAND.walletAppName).toBe("yld_fi");
+      expect(BRAND.walletAppName).toBe("yld");
     });
   });
 

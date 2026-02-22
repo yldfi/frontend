@@ -1,10 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPublicClient, encodeAbiParameters, http, keccak256, pad, parseAbiParameters, toHex } from "viem";
 import { mainnet } from "viem/chains";
-import { TOKENS, getVaultByAddress } from "@/config/vaults";
+import { TOKENS, VAULT_ADDRESSES, CURVE_CONTROLLERS, getVaultByAddress } from "@/config/vaults";
 import { fetchTokenPrices } from "@/lib/enso";
 
 export const dynamic = "force-dynamic";
+
+// Allowed origins for CORS
+const ALLOWED_ORIGINS = [
+  "https://yldfi.co",
+  "https://www.yldfi.co",
+  "http://localhost:3000",
+];
+
+function getCorsHeaders(request: NextRequest): Record<string, string> {
+  const origin = request.headers.get("origin") ?? "";
+  const isAllowed = ALLOWED_ORIGINS.includes(origin);
+  return {
+    "Access-Control-Allow-Origin": isAllowed ? origin : ALLOWED_ORIGINS[0],
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Max-Age": "86400",
+  };
+}
 
 const ENSO_ROUTER = "0x80EbA3855878739F4710233A8a19d89Bdd2ffB8E";
 const ENSO_ROUTER_EXECUTOR = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf";
@@ -129,7 +147,7 @@ interface TenderlyAssetChange {
 
 // Processed asset change for our response
 interface AssetChange {
-  type: "send" | "receive";
+  type: "send" | "receive" | "repay" | "borrow" | "deposit";
   symbol: string;
   amount: string;
   rawAmount: string;
@@ -138,6 +156,24 @@ interface AssetChange {
   logo?: string;
   dollarValue?: string;
 }
+
+// Known Curve controller addresses for lending operations
+const CURVE_CONTROLLER_ADDRESSES = new Set([
+  "0x24174143ccf438f0a1f6dcf93b468c127123a96e", // ycvxCRV controller
+]);
+
+// Known Curve AMM addresses (controller.amm()) — collateral is deposited/withdrawn here
+const CURVE_AMM_ADDRESSES = new Set([
+  "0xf1b03586c03ebfec014238d105148a15102a282f", // ycvxCRV controller AMM
+]);
+
+// Known vault token addresses (collateral tokens for lending)
+const VAULT_COLLATERAL_TOKENS = new Set([
+  "0x95f19b19aff698169a1a0bbc28a2e47b14cb9a86", // ycvxCRV
+]);
+
+// crvUSD address
+const CRVUSD_ADDRESS = "0xf939e0a03fb07f59a73314e73794be0e57ac1b4e";
 
 function processAssetChanges(
   assetChanges: TenderlyAssetChange[] | undefined,
@@ -149,10 +185,82 @@ function processAssetChanges(
   const result: AssetChange[] = [];
 
   for (const change of assetChanges) {
-    const isUserSending = change.from?.toLowerCase() === normalizedUser;
-    const isUserReceiving = change.to?.toLowerCase() === normalizedUser;
+    const from = change.from?.toLowerCase() ?? "";
+    const to = change.to?.toLowerCase() ?? "";
+    const tokenAddress = change.token_info?.contract_address?.toLowerCase() ?? "";
+    const isCrvUsd = tokenAddress === CRVUSD_ADDRESS;
 
-    // Only include changes where user is sender or receiver
+    const isUserSending = from === normalizedUser;
+    const isUserReceiving = to === normalizedUser;
+    const isToController = CURVE_CONTROLLER_ADDRESSES.has(to);
+    const isFromController = CURVE_CONTROLLER_ADDRESSES.has(from);
+
+    // Detect lending operations
+    // crvUSD to controller = repay
+    if (isCrvUsd && isToController && !isFromController) {
+      result.push({
+        type: "repay",
+        symbol: change.token_info?.symbol ?? "crvUSD",
+        amount: change.amount ?? "0",
+        rawAmount: change.raw_amount ?? "0",
+        address: change.token_info?.contract_address ?? "",
+        decimals: change.token_info?.decimals ?? 18,
+        logo: change.token_info?.logo,
+        dollarValue: change.dollar_value,
+      });
+      continue;
+    }
+
+    // crvUSD from controller = borrow
+    if (isCrvUsd && isFromController && isUserReceiving) {
+      result.push({
+        type: "borrow",
+        symbol: change.token_info?.symbol ?? "crvUSD",
+        amount: change.amount ?? "0",
+        rawAmount: change.raw_amount ?? "0",
+        address: change.token_info?.contract_address ?? "",
+        decimals: change.token_info?.decimals ?? 18,
+        logo: change.token_info?.logo,
+        dollarValue: change.dollar_value,
+      });
+      continue;
+    }
+
+    // Collateral token → AMM = deposit (add_collateral)
+    const isVaultCollateral = VAULT_COLLATERAL_TOKENS.has(tokenAddress);
+    const isToAmm = CURVE_AMM_ADDRESSES.has(to);
+    const isFromAmm = CURVE_AMM_ADDRESSES.has(from);
+
+    if (isVaultCollateral && isToAmm) {
+      result.push({
+        type: "deposit",
+        symbol: change.token_info?.symbol ?? "???",
+        amount: change.amount ?? "0",
+        rawAmount: change.raw_amount ?? "0",
+        address: change.token_info?.contract_address ?? "",
+        decimals: change.token_info?.decimals ?? 18,
+        logo: change.token_info?.logo,
+        dollarValue: change.dollar_value,
+      });
+      continue;
+    }
+
+    // Collateral token ← AMM = withdraw (remove_collateral)
+    if (isVaultCollateral && isFromAmm) {
+      result.push({
+        type: "receive",
+        symbol: change.token_info?.symbol ?? "???",
+        amount: change.amount ?? "0",
+        rawAmount: change.raw_amount ?? "0",
+        address: change.token_info?.contract_address ?? "",
+        decimals: change.token_info?.decimals ?? 18,
+        logo: change.token_info?.logo,
+        dollarValue: change.dollar_value,
+      });
+      continue;
+    }
+
+    // Regular user send/receive
     if (!isUserSending && !isUserReceiving) continue;
 
     result.push({
@@ -238,12 +346,18 @@ async function enrichVaultTokenPrices(assetChanges: AssetChange[]): Promise<Asse
   }
 }
 
+export async function OPTIONS(request: NextRequest) {
+  return new NextResponse(null, { headers: getCorsHeaders(request) });
+}
+
 export async function POST(request: NextRequest) {
+  const corsHeaders = getCorsHeaders(request);
+
   const clientIp = getClientIp(request);
   if (isRateLimited(clientIp)) {
     return NextResponse.json(
       { success: false, errorMessage: "Rate limit exceeded", retryable: true },
-      { status: 429 }
+      { status: 429, headers: corsHeaders }
     );
   }
 
@@ -258,7 +372,7 @@ export async function POST(request: NextRequest) {
         errorMessage: "Tenderly not configured",
         retryable: true,
       },
-      { status: 500 }
+      { status: 500, headers: corsHeaders }
     );
   }
 
@@ -280,14 +394,14 @@ export async function POST(request: NextRequest) {
   } catch {
     return NextResponse.json(
       { success: false, errorMessage: "Invalid JSON body", retryable: false },
-      { status: 400 }
+      { status: 400, headers: corsHeaders }
     );
   }
 
   if (!body?.from || !body?.to || !body?.data) {
     return NextResponse.json(
       { success: false, errorMessage: "Missing from/to/data", retryable: false },
-      { status: 400 }
+      { status: 400, headers: corsHeaders }
     );
   }
 
@@ -295,21 +409,21 @@ export async function POST(request: NextRequest) {
   if (!nonceSecret) {
     return NextResponse.json(
       { success: false, errorMessage: "Nonce secret not configured", retryable: true },
-      { status: 500 }
+      { status: 500, headers: corsHeaders }
     );
   }
 
   if (!body.nonce || !body.expires || !body.sig) {
     return NextResponse.json(
       { success: false, errorMessage: "Missing nonce", retryable: false },
-      { status: 400 }
+      { status: 400, headers: corsHeaders }
     );
   }
 
   if (Date.now() > body.expires) {
     return NextResponse.json(
       { success: false, errorMessage: "Nonce expired", retryable: false },
-      { status: 400 }
+      { status: 400, headers: corsHeaders }
     );
   }
 
@@ -318,21 +432,28 @@ export async function POST(request: NextRequest) {
   if (!nonceOk) {
     return NextResponse.json(
       { success: false, errorMessage: "Invalid nonce", retryable: false },
-      { status: 400 }
+      { status: 400, headers: corsHeaders }
     );
   }
 
-  if (body.to.toLowerCase() !== ENSO_ROUTER_EXECUTOR.toLowerCase()) {
+  // Build allowlist of simulation targets: Enso router + all vault + controller addresses
+  const allowedTargets = new Set<string>([
+    ENSO_ROUTER_EXECUTOR.toLowerCase(),
+    ...Object.values(VAULT_ADDRESSES).map((a) => a.toLowerCase()),
+    ...Object.values(CURVE_CONTROLLERS).map((a) => a.toLowerCase()),
+  ]);
+
+  if (!allowedTargets.has(body.to.toLowerCase())) {
     return NextResponse.json(
       { success: false, errorMessage: "Unsupported simulation target", retryable: false },
-      { status: 400 }
+      { status: 400, headers: corsHeaders }
     );
   }
 
   if (!body.data.startsWith("0x") || body.data.length < 10) {
     return NextResponse.json(
       { success: false, errorMessage: "Invalid calldata", retryable: false },
-      { status: 400 }
+      { status: 400, headers: corsHeaders }
     );
   }
 
@@ -350,6 +471,7 @@ export async function POST(request: NextRequest) {
     : undefined;
 
   const isDev = process.env.NODE_ENV === "development";
+  console.log("[Tenderly] NODE_ENV:", process.env.NODE_ENV, "isDev:", isDev, "save:", isDev);
   const tenderlyRequest = {
     network_id: body.networkId?.toString() ?? "1",
     from: body.from,
@@ -362,6 +484,24 @@ export async function POST(request: NextRequest) {
     simulation_type: "full",
     overrides,
   };
+
+  // Helper to try eth_call as fallback
+  async function tryEthCall(): Promise<{ success: boolean; error?: string }> {
+    try {
+      await publicClient.call({
+        account: body.from as `0x${string}`,
+        to: body.to as `0x${string}`,
+        data: body.data as `0x${string}`,
+        value: body.value ? BigInt(body.value) : 0n,
+      });
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "eth_call failed";
+      // Extract revert reason if present
+      const revertMatch = message.match(/reverted with reason string '([^']+)'/);
+      return { success: false, error: revertMatch?.[1] ?? message };
+    }
+  }
 
   let response: Response;
   try {
@@ -378,18 +518,75 @@ export async function POST(request: NextRequest) {
       }
     );
   } catch (error) {
+    // Tenderly request failed (network error) - try eth_call fallback
+    const ethCallResult = await tryEthCall();
+    if (ethCallResult.success) {
+      return NextResponse.json(
+        {
+          success: true,
+          simulationUnavailable: true,
+          simulationUnavailableReason: error instanceof Error ? error.message : "Tenderly request failed",
+          gasUsed: null,
+          errorMessage: null,
+          retryable: false,
+          simulationId: null,
+          tenderlyUrl: null,
+          assetChanges: [],
+        },
+        { status: 200, headers: corsHeaders }
+      );
+    }
     return NextResponse.json(
       {
         success: false,
-        errorMessage:
-          error instanceof Error ? error.message : "Tenderly request failed",
-        retryable: true,
+        errorMessage: ethCallResult.error ?? "Transaction would fail",
+        retryable: false,
       },
-      { status: 502 }
+      { status: 400, headers: corsHeaders }
     );
   }
 
   const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+
+  // Check for Tenderly API-level errors (quota, auth, etc.) vs transaction failures
+  const payloadError = payload?.error as Record<string, unknown> | undefined;
+  const errorSlug = payloadError?.slug as string | undefined;
+  const isApiError = !response.ok || errorSlug === "quota_limit_reached" || errorSlug === "unauthorized";
+
+  if (isApiError) {
+    // Tenderly API error - try eth_call fallback
+    console.log("[Tenderly] API error detected, slug:", errorSlug, "response.ok:", response.ok);
+    const ethCallResult = await tryEthCall();
+    console.log("[Tenderly] eth_call fallback result:", ethCallResult);
+    if (ethCallResult.success) {
+      const apiErrorMessage = payloadError?.message ?? "Tenderly simulation unavailable";
+      console.log("[Tenderly] Falling back to eth_call success, reason:", apiErrorMessage);
+      return NextResponse.json(
+        {
+          success: true,
+          simulationUnavailable: true,
+          simulationUnavailableReason: apiErrorMessage,
+          gasUsed: null,
+          errorMessage: null,
+          retryable: false,
+          simulationId: null,
+          tenderlyUrl: null,
+          assetChanges: [],
+        },
+        { status: 200, headers: corsHeaders }
+      );
+    }
+    // eth_call also failed - return the actual error
+    return NextResponse.json(
+      {
+        success: false,
+        errorMessage: ethCallResult.error ?? "Transaction would fail",
+        retryable: false,
+      },
+      { status: 400, headers: corsHeaders }
+    );
+  }
+
   const simulation = (payload?.simulation ?? payload?.transaction ?? payload ?? {}) as Record<string, unknown>;
   const status = simulation?.status !== false;
   const transaction = payload?.transaction as Record<string, unknown> | undefined;
@@ -401,7 +598,6 @@ export async function POST(request: NextRequest) {
   const tenderlyUrl = simulationId
     ? `/api/simulate/share/${simulationId}`
     : null;
-  const payloadError = payload?.error as Record<string, unknown> | undefined;
   const errorMessage =
     simulation?.error_message ??
     simulation?.error ??
@@ -442,6 +638,6 @@ export async function POST(request: NextRequest) {
       tenderlyUrl,
       assetChanges,
     },
-    { status: response.ok ? 200 : 502 }
+    { status: response.ok ? 200 : 502, headers: corsHeaders }
   );
 }

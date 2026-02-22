@@ -334,8 +334,8 @@ describe("useVaultData logic", () => {
       expect(performanceFee / 100).toBe(10);
     });
 
-    it("yld_fi vault: 0% management, 10% performance", () => {
-      // Typical yld_fi configuration
+    it("yld vault: 0% management, 10% performance", () => {
+      // Typical yld configuration
       const managementFee = 0;
       const performanceFee = 1000;
 

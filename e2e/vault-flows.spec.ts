@@ -296,7 +296,7 @@ test.describe("Vault-to-Vault Flow", () => {
     await page.goto("/vaults/yscvgcvx");
   });
 
-  test("should show yld_fi vaults in token selector", async ({ page }) => {
+  test("should show yld vaults in token selector", async ({ page }) => {
     await page.getByRole("button", { name: "Zap" }).click();
 
     // Wait for Zap content to load
@@ -316,8 +316,8 @@ test.describe("Vault-to-Vault Flow", () => {
     // Wait for modal
     await expect(page.getByRole("heading", { name: "Select a token" })).toBeVisible();
 
-    // Look for yld_fi Vaults tab
-    const vaultsTab = page.locator('button:has-text("yld_fi Vaults")');
+    // Look for yld Vaults tab
+    const vaultsTab = page.locator('button:has-text("yld Vaults")');
     if (await vaultsTab.isVisible({ timeout: 2000 }).catch(() => false)) {
       await vaultsTab.click();
 
@@ -351,7 +351,7 @@ test.describe("Vault-to-Vault Flow", () => {
     await expect(page.getByRole("heading", { name: "Select a token" })).toBeVisible();
 
     // Look for vaults tab
-    const vaultsTab = page.locator('button:has-text("yld_fi Vaults")');
+    const vaultsTab = page.locator('button:has-text("yld Vaults")');
     if (await vaultsTab.isVisible({ timeout: 2000 }).catch(() => false)) {
       await vaultsTab.click();
 

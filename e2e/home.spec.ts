@@ -6,8 +6,8 @@ test.describe("Homepage", () => {
   });
 
   test("displays the homepage", async ({ page }) => {
-    // Check page title contains yld_fi
-    await expect(page).toHaveTitle(/yld_fi/i);
+    // Check page title contains yld
+    await expect(page).toHaveTitle(/yld/i);
   });
 
   test("displays vault cards", async ({ page }) => {

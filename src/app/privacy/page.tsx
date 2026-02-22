@@ -3,8 +3,8 @@ import Link from "next/link";
 import Image from "next/image";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy | yld_fi",
-  description: "Privacy Policy for yld_fi",
+  title: "Privacy Policy | yld",
+  description: "Privacy Policy for yld",
 };
 
 export default function PrivacyPage() {
@@ -16,13 +16,13 @@ export default function PrivacyPage() {
           <Link href="/" className="flex items-center gap-3">
             <Image
               src="/logo-128.png"
-              alt="yld_fi"
+              alt="yld"
               width={32}
               height={32}
               className="rounded-full"
             />
             <span className="mono text-lg font-medium">
-              yld<span className="text-[var(--muted-foreground)]">_</span>fi
+              yld
             </span>
           </Link>
         </div>
@@ -40,7 +40,7 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-xl font-medium mb-4">1. Introduction</h2>
             <p className="text-[var(--muted-foreground)] leading-relaxed">
-              yld_fi (&quot;we&quot;, &quot;us&quot;, or &quot;our&quot;) is committed to protecting your privacy.
+              yld (&quot;we&quot;, &quot;us&quot;, or &quot;our&quot;) is committed to protecting your privacy.
               This Privacy Policy explains how we collect, use, and safeguard information when you use our web interface.
             </p>
           </section>
@@ -53,7 +53,7 @@ export default function PrivacyPage() {
             <p className="text-[var(--muted-foreground)] leading-relaxed mb-4">
               When you connect your wallet and interact with smart contracts through our interface, your wallet address
               and transaction data are recorded on the public Ethereum blockchain. This data is publicly accessible
-              and not controlled by yld_fi.
+              and not controlled by yld.
             </p>
 
             <h3 className="text-lg font-medium mb-3 mt-6">Analytics Data</h3>
@@ -99,7 +99,7 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-xl font-medium mb-4">3. Information We Do Not Collect</h2>
             <p className="text-[var(--muted-foreground)] leading-relaxed mb-4">
-              yld_fi does not collect, store, or have access to:
+              yld does not collect, store, or have access to:
             </p>
             <ul className="list-disc list-inside text-[var(--muted-foreground)] space-y-1 ml-4">
               <li>Your private keys or seed phrases</li>
@@ -222,7 +222,7 @@ export default function PrivacyPage() {
             href="/"
             className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
           >
-            &larr; Back to yld_fi
+            &larr; Back to yld
           </Link>
         </div>
       </main>
@@ -231,7 +231,7 @@ export default function PrivacyPage() {
       <footer className="border-t border-[var(--border)] mt-12">
         <div className="max-w-4xl mx-auto px-6 py-6">
           <p className="text-xs text-[var(--muted-foreground)]">
-            &copy; {new Date().getFullYear()} yld_fi. All rights reserved.
+            &copy; {new Date().getFullYear()} yld. All rights reserved.
           </p>
         </div>
       </footer>
