@@ -496,12 +496,12 @@ export function HomePageContent() {
                               <>
                                 <span>Loan</span>
                                 <span className="mx-0.5">·</span>
-                                <Image src="/tokens/crvusd.png" alt="crvUSD" width={12} height={12} className="rounded-full" />
-                                <span className="mono">{Number(formatUnits(vault.lendingPosition.debt, 18)).toFixed(0)} crvUSD</span>
-                                <span>/</span>
-                                <Image src={vault.logo} alt={vault.name} width={12} height={12} className="rounded-full" />
-                                <span className="mono">{Number(formatUnits(vault.lendingPosition.collateral, 18)).toFixed(0)} {vault.name}</span>
-                                {(() => { const h = formatHealth(vault.lendingPosition.health); const hoverColor = h.status === "healthy" ? "group-hover/badge:text-green-500" : h.status === "warning" ? "group-hover/badge:text-yellow-500" : "group-hover/badge:text-red-400"; return <span className={`inline-flex items-center gap-0.5 ${h.color} ${hoverColor} transition-colors`}><HeartPulse size={10} /><span className="mono">{h.value.toFixed(0)}%</span></span>; })()}
+                                <Image src="/tokens/crvusd.png" alt="crvUSD" width={12} height={12} className="rounded-full hidden lg:inline" />
+                                <span className="mono">{Number(formatUnits(vault.lendingPosition.debt, 18)).toFixed(0)}<span className="hidden lg:inline"> crvUSD</span></span>
+                                <span className="hidden lg:inline">/</span>
+                                <Image src={vault.logo} alt={vault.name} width={12} height={12} className="rounded-full hidden lg:inline" />
+                                <span className="mono hidden lg:inline">{Number(formatUnits(vault.lendingPosition.collateral, 18)).toFixed(0)} {vault.name}</span>
+                                {(() => { const h = formatHealth(vault.lendingPosition.health); const hoverColor = h.status === "healthy" ? "group-hover/badge:text-green-500" : h.status === "warning" ? "group-hover/badge:text-yellow-500" : "group-hover/badge:text-red-400"; return <span className={`hidden lg:inline-flex items-center gap-0.5 ${h.color} ${hoverColor} transition-colors`}><HeartPulse size={10} /><span className="mono">{h.value.toFixed(0)}%</span></span>; })()}
                               </>
                             ) : (
                               <span>Borrow against {vault.name}</span>
@@ -567,12 +567,12 @@ export function HomePageContent() {
                                   <>
                                     <span>Loan</span>
                                     <span>·</span>
-                                    <Image src="/tokens/crvusd.png" alt="crvUSD" width={10} height={10} className="rounded-full" />
-                                    <span className="mono">{Number(formatUnits(vault.lendingPosition.debt, 18)).toFixed(0)} crvUSD</span>
-                                    <span>/</span>
-                                    <Image src={vault.logo} alt={vault.name} width={10} height={10} className="rounded-full" />
-                                    <span className="mono">{Number(formatUnits(vault.lendingPosition.collateral, 18)).toFixed(0)} {vault.name}</span>
-                                    {(() => { const h = formatHealth(vault.lendingPosition.health); const hoverColor = h.status === "healthy" ? "group-hover/badge:text-green-500" : h.status === "warning" ? "group-hover/badge:text-yellow-500" : "group-hover/badge:text-red-400"; return <span className={`inline-flex items-center gap-0.5 ${h.color} ${hoverColor} transition-colors`}><HeartPulse size={10} /><span className="mono">{h.value.toFixed(0)}%</span></span>; })()}
+                                    <Image src="/tokens/crvusd.png" alt="crvUSD" width={10} height={10} className="rounded-full hidden lg:inline" />
+                                    <span className="mono">{Number(formatUnits(vault.lendingPosition.debt, 18)).toFixed(0)}<span className="hidden lg:inline"> crvUSD</span></span>
+                                    <span className="hidden lg:inline">/</span>
+                                    <Image src={vault.logo} alt={vault.name} width={10} height={10} className="rounded-full hidden lg:inline" />
+                                    <span className="mono hidden lg:inline">{Number(formatUnits(vault.lendingPosition.collateral, 18)).toFixed(0)} {vault.name}</span>
+                                    {(() => { const h = formatHealth(vault.lendingPosition.health); const hoverColor = h.status === "healthy" ? "group-hover/badge:text-green-500" : h.status === "warning" ? "group-hover/badge:text-yellow-500" : "group-hover/badge:text-red-400"; return <span className={`hidden lg:inline-flex items-center gap-0.5 ${h.color} ${hoverColor} transition-colors`}><HeartPulse size={10} /><span className="mono">{h.value.toFixed(0)}%</span></span>; })()}
                                   </>
                                 ) : (
                                   <span>Borrow against {vault.name}</span>
