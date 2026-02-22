@@ -132,6 +132,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   const [flashbotsError, setFlashbotsError] = useState<Error | null>(null);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const autoExecuteRef = useRef(false);
+  const pendingOptionsRef = useRef<{ skipSimulation?: boolean; previewOnly?: boolean } | undefined>(undefined);
 
   const isEth =
     quote?.inputToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
@@ -289,7 +290,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   }, [isApprovalSuccess, refetchAllowance]);
 
   // Ref to hold latest executeZapInternal for use in auto-execute effect
-  const executeZapInternalRef = useRef<() => Promise<SimulationResult | null>>(async () => null);
+  const executeZapInternalRef = useRef<(options?: { skipSimulation?: boolean; previewOnly?: boolean }) => Promise<SimulationResult | null>>(async () => null);
 
   // Clear pendingApproval on error
   useEffect(() => {
@@ -575,9 +576,12 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       autoExecuteRef.current = false;
       setPendingApproval(null);
       setActionState("idle");
+      // Preserve original options (e.g. previewOnly) from before approval
+      const options = pendingOptionsRef.current;
+      pendingOptionsRef.current = undefined;
       // Small delay to ensure allowance is refetched
       setTimeout(() => {
-        executeZapInternalRef.current();
+        executeZapInternalRef.current(options);
       }, 100);
     }
     prevStatus.current = status;
@@ -595,6 +599,8 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
     // Check if approval is needed
     if (needsApproval()) {
+      // Store options so auto-execute after approval preserves intent (e.g. previewOnly)
+      pendingOptionsRef.current = options;
       // Set pending approval state to show the approval card
       const tokenSymbol = quote.inputToken.symbol;
       let amountWei: bigint | undefined;
@@ -628,6 +634,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     setFlashbotsError(null);
     setPendingApproval(null);
     autoExecuteRef.current = false;
+    pendingOptionsRef.current = undefined;
     resetApprove();
     resetZap();
   }, [resetApprove, resetZap]);
