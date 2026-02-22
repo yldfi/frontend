@@ -1192,34 +1192,37 @@ export function VaultPageContent({ id }: { id: string }) {
         </div>
 
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
-          {/* Section Header — full width, nothing beside it */}
-          <div className="mb-6">
-            <p className="mono text-sm text-[var(--muted-foreground)] mb-2">
-              [003] Vault
-            </p>
-            <div className="flex items-center gap-3 mb-4">
-              {vault.logo && (
-                <Image
-                  src={vault.logo}
-                  alt={vault.name}
-                  width={40}
-                  height={40}
-                  className="rounded-full translate-y-[1px]"
-                />
-              )}
-              <div className="relative" ref={vaultSelectorRef}>
-                <button
-                  onClick={() => setVaultSelectorOpen(!vaultSelectorOpen)}
-                  className="flex items-center gap-2 text-2xl md:text-3xl font-medium tracking-tight leading-none hover:text-[var(--accent)] transition-colors"
-                >
-                  {vault.name}
-                  <ChevronDown
-                    size={24}
-                    className={cn(
-                      "transition-transform text-[var(--muted-foreground)]",
-                      vaultSelectorOpen && "rotate-180"
-                    )}
-                  />
+          <div className="grid lg:grid-cols-5 gap-8 lg:gap-12">
+            {/* Left column - Info */}
+            <div className="lg:col-span-3 space-y-8">
+              {/* Section Header */}
+              <div>
+                <p className="mono text-sm text-[var(--muted-foreground)] mb-2">
+                  [003] Vault
+                </p>
+                <div className="flex items-center gap-3 mb-4">
+                  {vault.logo && (
+                    <Image
+                      src={vault.logo}
+                      alt={vault.name}
+                      width={40}
+                      height={40}
+                      className="rounded-full translate-y-[1px]"
+                    />
+                  )}
+                  <div className="relative" ref={vaultSelectorRef}>
+                    <button
+                      onClick={() => setVaultSelectorOpen(!vaultSelectorOpen)}
+                      className="flex items-center gap-2 text-2xl md:text-3xl font-medium tracking-tight leading-none hover:text-[var(--accent)] transition-colors"
+                    >
+                      {vault.name}
+                      <ChevronDown
+                        size={24}
+                        className={cn(
+                          "transition-transform text-[var(--muted-foreground)]",
+                          vaultSelectorOpen && "rotate-180"
+                        )}
+                      />
                 </button>
                 {vaultSelectorOpen && (
                   <div className="absolute top-full left-0 mt-2 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-lg z-50 min-w-[200px] py-1 max-h-[300px] overflow-y-auto">
@@ -1264,48 +1267,16 @@ export function VaultPageContent({ id }: { id: string }) {
                 )}
               </div>
             </div>
-            <p className="text-[var(--muted-foreground)] max-w-xl leading-relaxed">
-              {vault.longDescription}
-            </p>
-          </div>
-
-          <div className="grid lg:grid-cols-5 gap-8 lg:gap-12">
-            {/* Left column - Info */}
-            <div className="lg:col-span-3 space-y-12">
-              {/* Stats */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                <div>
-                  <p className="text-sm text-[var(--muted-foreground)] mb-1">APY</p>
-                  <p className="mono text-2xl font-medium text-[var(--success)]">
-                    {yearnLoading || parentLoading ? "..." : displayApyFormatted}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-[var(--muted-foreground)] mb-1">TVL</p>
-                  <p className="mono text-2xl font-medium">
-                    {yearnLoading ? "..." : yearnVault?.tvlFormatted ?? "—"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-[var(--muted-foreground)] mb-1">Price/Share</p>
-                  <p className="mono text-2xl font-medium">
-                    {ppsLoading ? "..." : pricePerShareFormatted}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-[var(--muted-foreground)] mb-1">Token</p>
-                  <p className="mono text-2xl font-medium">
-                    {vault.assetSymbol}
-                  </p>
-                </div>
+                <p className="text-[var(--muted-foreground)] max-w-xl leading-relaxed">
+                  {vault.longDescription}
+                </p>
               </div>
 
               {/* Lending Position / Borrow CTA */}
               {vault.type === "vault" && controllerAddress && (() => {
                 if (lendingPosition?.hasLoan && curveVault) {
-                  // Collateral APR = vault APY (what the collateral earns)
                   const collateralApr = yearnVault?.apy ?? 0;
-                  const borrowApr = curveVault.rates.borrowApr * 100; // decimal to percent
+                  const borrowApr = curveVault.rates.borrowApr * 100;
                   const display = buildLendingPositionDisplay(
                     lendingPosition.collateral,
                     lendingPosition.debt,
@@ -1360,11 +1331,10 @@ export function VaultPageContent({ id }: { id: string }) {
                     </Link>
                   );
                 }
-                // No position — show borrow CTA
                 return (
                   <Link
                     href={`/vaults/${vault.name}/lending`}
-                    className="collateral-link"
+                    className="collateral-link block"
                   >
                     <span>
                       <Image src="/curve-logo.png" alt="Curve" width={14} height={14} className="rounded-full inline-block" />
@@ -1374,6 +1344,34 @@ export function VaultPageContent({ id }: { id: string }) {
                   </Link>
                 );
               })()}
+
+              {/* Stats */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                <div>
+                  <p className="text-sm text-[var(--muted-foreground)] mb-1">APY</p>
+                  <p className="mono text-2xl font-medium text-[var(--success)]">
+                    {yearnLoading || parentLoading ? "..." : displayApyFormatted}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-[var(--muted-foreground)] mb-1">TVL</p>
+                  <p className="mono text-2xl font-medium">
+                    {yearnLoading ? "..." : yearnVault?.tvlFormatted ?? "—"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-[var(--muted-foreground)] mb-1">Price/Share</p>
+                  <p className="mono text-2xl font-medium">
+                    {ppsLoading ? "..." : pricePerShareFormatted}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-[var(--muted-foreground)] mb-1">Token</p>
+                  <p className="mono text-2xl font-medium">
+                    {vault.assetSymbol}
+                  </p>
+                </div>
+              </div>
 
               {/* Details */}
               <div className="space-y-6">
