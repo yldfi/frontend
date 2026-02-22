@@ -18,7 +18,7 @@ import {
   getVaultInfo,
   CURVE_CONTROLLERS,
 } from "@/lib/curve-lending";
-import { TOKENS } from "@/config/vaults";
+import { TOKENS, getVaultByAddress } from "@/config/vaults";
 import { ERC20_APPROVAL_ABI, CONTROLLER_APPROVE_ABI } from "@/lib/abis";
 import { ETH_ADDRESS, ENSO_SHORTCUTS } from "@/lib/enso";
 import { CRVUSD_ADDRESS } from "@/lib/zapper";
@@ -1537,11 +1537,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           token: vaultAddress,
           tokenSymbol: tokenSymbol,
           spender: ENSO_SHORTCUTS as `0x${string}`,
+          spenderName: "Enso",
           amount: amountWei,
         },
         needed: vaultTokenAllowance < amountWei,
         label: tokenSymbol,
-        description: `Approve ${tokenSymbol} for swap routing`,
+        description: `Approve ${tokenSymbol} spending for Enso`,
         spender: ENSO_SHORTCUTS,
       },
     ];
@@ -2064,13 +2065,14 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       ...(isWithdrawSwap ? [{
         approval: {
           token: vaultAddress,
-          tokenSymbol: options?.withdrawTokenSymbol ?? "Collateral",
+          tokenSymbol: options?.withdrawTokenSymbol ?? (getVaultByAddress(vaultAddress)?.symbol ?? "Collateral"),
           spender: ENSO_SHORTCUTS as `0x${string}`,
+          spenderName: "Enso",
           amount: withdrawAmount,
         },
         needed: collateralAllowance < withdrawAmount,
-        label: options?.withdrawTokenSymbol ?? "Collateral",
-        description: "Approve collateral for swap routing",
+        label: options?.withdrawTokenSymbol ?? (getVaultByAddress(vaultAddress)?.symbol ?? "Collateral"),
+        description: `Approve ${options?.withdrawTokenSymbol ?? (getVaultByAddress(vaultAddress)?.symbol ?? "collateral")} for swap routing via Enso`,
         spender: ENSO_SHORTCUTS,
       }] : []),
     ];
@@ -2172,13 +2174,14 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         ...(isWithdrawSwap ? [{
           approval: {
             token: vaultAddress as `0x${string}`,
-            tokenSymbol: options?.withdrawTokenSymbol ?? "Collateral",
+            tokenSymbol: options?.withdrawTokenSymbol ?? (getVaultByAddress(vaultAddress)?.symbol ?? "Collateral"),
             spender: ENSO_SHORTCUTS as `0x${string}`,
+            spenderName: "Enso",
             amount: withdrawAmountWei,
           },
           needed: collateralAllowance < withdrawAmountWei,
-          label: options?.withdrawTokenSymbol ?? "Collateral",
-          description: "Approve collateral for swap routing",
+          label: options?.withdrawTokenSymbol ?? (getVaultByAddress(vaultAddress)?.symbol ?? "Collateral"),
+          description: `Approve ${options?.withdrawTokenSymbol ?? (getVaultByAddress(vaultAddress)?.symbol ?? "collateral")} for swap routing via Enso`,
           spender: ENSO_SHORTCUTS,
         }] : []),
       ];
@@ -2324,20 +2327,19 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     ];
     if (collateralWei > 0n) {
       // Vault token needs approval for ENSO_SHORTCUTS to pull collateral
-      const vault = Object.values(TOKENS).find(
-        (t) => typeof t === "string" && t.toLowerCase() === vaultAddress.toLowerCase()
-      );
-      const vaultSymbol = vault ? "vault token" : "collateral";
+      const vaultConfig = getVaultByAddress(vaultAddress);
+      const vaultSymbol = vaultConfig?.symbol ?? "Collateral";
       allApprovals.push({
         approval: {
           token: vaultAddress,
           tokenSymbol: vaultSymbol,
           spender: ENSO_SHORTCUTS as `0x${string}`,
+          spenderName: "Enso",
           amount: collateralWei,
         },
         needed: vaultTokenAllowance < collateralWei,
-        label: "Collateral",
-        description: "Approve collateral transfer for lending",
+        label: vaultSymbol,
+        description: `Approve ${vaultSymbol} spending for Enso`,
         spender: ENSO_SHORTCUTS,
       });
     }
