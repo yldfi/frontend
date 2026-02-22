@@ -540,8 +540,6 @@ export function PriceChart({
   const [showBands, setShowBands] = useState(false);
   const [showVP, setShowVP] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [resizeHeight, setResizeHeight] = useState<number | null>(null);
-  const windowHeight = isFullscreen ? (resizeHeight ?? (typeof window !== "undefined" ? window.innerHeight - 150 : height)) : height;
   const [tooltip, setTooltip] = useState<{
     x: number;
     y: number;
@@ -556,14 +554,6 @@ export function PriceChart({
     time: "",
     visible: false,
   });
-
-  // Track window resize for fullscreen mode
-  useEffect(() => {
-    if (!isFullscreen) return;
-    const handleResize = () => setResizeHeight(window.innerHeight - 150);
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [isFullscreen]);
 
   const activePriceData = showAlt && altPriceData ? altPriceData : priceData;
 
@@ -1006,7 +996,6 @@ export function PriceChart({
     showLiquidationZone,
     previewLiqUpper,
     previewLiqLower,
-    windowHeight,
     showBands,
     bands,
     activeBand,
@@ -1019,15 +1008,14 @@ export function PriceChart({
     <div
       className={cn(
         "relative w-full",
-        isFullscreen && "fixed inset-0 z-50 bg-[var(--background)]/95 backdrop-blur-md p-6 sm:p-12 flex flex-col animate-in fade-in duration-200"
+        isFullscreen && "fixed inset-0 z-50 bg-[var(--background)] p-4 flex flex-col animate-in fade-in duration-200"
       )}
     >
       {/* Chart container */}
-      <div className={cn("relative w-full flex justify-center mx-auto min-w-0 flex-1", !isFullscreen && "max-w-[1400px]")}>
+      <div className={cn("relative w-full mx-auto min-w-0", isFullscreen ? "flex-1 flex flex-col" : "max-w-[1400px]")}>
         <div
           ref={containerRef}
-          className="border border-[var(--border)] rounded-lg w-full relative h-[400px] sm:h-[450px]"
-          style={isFullscreen ? { height: windowHeight } : undefined}
+          className={cn("border border-[var(--border)] rounded-lg w-full relative", isFullscreen ? "flex-1" : "h-[400px] sm:h-[450px]")}
         >
           {/* Overlay Header + Actions (single row to prevent overlap) */}
           <div className="absolute top-3 left-4 right-20 z-20 flex items-center gap-2 pointer-events-none">
