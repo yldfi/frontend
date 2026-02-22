@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -11,6 +11,10 @@ import { getVault } from "@/config/vaults";
 import { CURVE_CONTROLLERS } from "@/config/vaults";
 import { useVaultBalance } from "@/hooks/useVaultBalance";
 import { useCurveLendingPosition } from "@/hooks/useCurveLendingPosition";
+import { useOraclePriceHistory, useMarketBands } from "@/hooks/useOraclePriceHistory";
+import { useR2PriceHistory } from "@/hooks/useR2PriceHistory";
+import { useVolumeProfile, type VolumeProfilePeriod } from "@/hooks/useVolumeProfile";
+import { useCurveMarketRates } from "@/hooks/useCurveMarketRates";
 import { LendingInterface } from "./LendingInterface";
 import { PriceChart } from "./PriceChart";
 import { Logo } from "@/components/Logo";
@@ -30,6 +34,26 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
     vault?.address as `0x${string}`,
     address
   );
+
+  // Oracle price history + band data for the chart
+  const { data: oracleHistory } = useOraclePriceHistory(controllerAddress);
+  const { data: bandsData } = useMarketBands(controllerAddress);
+
+  // R2 price history (full historical data) — falls back to oracleHistory
+  const { data: r2History } = useR2PriceHistory();
+  const { data: volumeProfile } = useVolumeProfile();
+  const marketStats = useCurveMarketRates(controllerAddress);
+  const [vpPeriod, setVpPeriod] = useState<VolumeProfilePeriod>("all");
+
+  // Preview liquidation prices from LendingInterface child tab inputs
+  const [previewLiqPrices, setPreviewLiqPrices] = useState<{ upper: number; lower: number } | null>(null);
+  const handlePreviewLiqPrices = useCallback((upper: number | null, lower: number | null) => {
+    if (upper !== null && lower !== null) {
+      setPreviewLiqPrices({ upper, lower });
+    } else {
+      setPreviewLiqPrices(null);
+    }
+  }, []);
 
   const shouldRedirect = !vault || !controllerAddress;
 
@@ -86,30 +110,41 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
           <div className="grid lg:grid-cols-5 gap-12">
             {/* Left column - Chart + Position + Info */}
             <div className="lg:col-span-3 space-y-8">
-              {/* Header */}
+              {/* Price Chart */}
               <div>
-                <div className="flex items-center gap-3 mb-4">
-                  {vault.logo && (
-                    <Image
-                      src={vault.logo}
-                      alt={vault.name}
-                      width={40}
-                      height={40}
-                      className="rounded-full translate-y-[1px]"
-                    />
-                  )}
-                  <div>
-                    <h1 className="text-3xl md:text-4xl font-medium tracking-tight leading-none">
-                      {vault.name}
-                    </h1>
-                    <span className="text-sm text-[var(--muted-foreground)]">
-                      Curve LlamaLend
-                    </span>
-                  </div>
-                </div>
-                <p className="text-[var(--muted-foreground)] max-w-xl leading-relaxed text-sm">
-                  Borrow crvUSD against {vault.symbol} collateral. Use leverage to amplify your position.
-                </p>
+                <PriceChart
+                  vaultName={vault.name}
+                  vaultLogo={vault.logo}
+                  symbol={vault.assetSymbol}
+                  priceData={r2History?.ycvxcrvData ?? oracleHistory?.data}
+                  priceSymbol={vault.symbol}
+                  altPriceData={r2History?.cvxcrvData}
+                  altSymbol={vault.assetSymbol}
+                  currentOraclePrice={oracleHistory?.currentOraclePrice}
+                  liquidationPriceUpper={
+                    position?.hasLoan
+                      ? Number(formatUnits(position.liquidationPriceUpper, 18))
+                      : undefined
+                  }
+                  liquidationPriceLower={
+                    position?.hasLoan
+                      ? Number(formatUnits(position.liquidationPriceLower, 18))
+                      : undefined
+                  }
+                  bands={bandsData?.bands}
+                  activeBand={bandsData?.activeBand}
+                  showLiquidationZone={!!position?.hasLoan}
+                  previewLiqUpper={previewLiqPrices?.upper}
+                  previewLiqLower={previewLiqPrices?.lower}
+                  height={320}
+                  pricePerShareData={r2History?.pricePerShareData}
+                  volumeProfileBins={volumeProfile?.timeframes?.[vpPeriod]?.bins}
+                  volumeProfilePoc={volumeProfile?.timeframes?.[vpPeriod]?.poc}
+                  volumeProfileVah={volumeProfile?.timeframes?.[vpPeriod]?.vah}
+                  volumeProfileVal={volumeProfile?.timeframes?.[vpPeriod]?.val}
+                  volumeProfilePeriod={vpPeriod}
+                  onVolumeProfilePeriodChange={setVpPeriod}
+                />
               </div>
 
               {/* Soft-liquidation warning */}
@@ -125,34 +160,28 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                 </div>
               )}
 
-              {/* Price Chart */}
-              <div>
-                <PriceChart
-                  symbol={vault.assetSymbol}
-                  currentPrice={
-                    position?.liquidationPriceUpper
-                      ? Number(formatUnits(position.liquidationPriceUpper, 18)) * 1.2
-                      : undefined
-                  }
-                  liquidationPriceUpper={
-                    position?.hasLoan
-                      ? Number(formatUnits(position.liquidationPriceUpper, 18))
-                      : undefined
-                  }
-                  liquidationPriceLower={
-                    position?.hasLoan
-                      ? Number(formatUnits(position.liquidationPriceLower, 18))
-                      : undefined
-                  }
-                  showLiquidationBands={!!position?.hasLoan}
-                  height={280}
-                />
-              </div>
-
               {/* Market Info */}
-              <div>
-                <h3 className="text-sm font-medium text-[var(--muted-foreground)] mb-3">Market Info</h3>
-                <div className="p-4 rounded-lg bg-[var(--muted)]/30 border border-[var(--border)] space-y-3 text-sm">
+              <div className="p-4 rounded-lg bg-[var(--muted)]/30 border border-[var(--border)] space-y-3 text-sm">
+                <p className="text-[var(--muted-foreground)] leading-relaxed">
+                  Borrow crvUSD against {vault.symbol} collateral. Use leverage to amplify your position.
+                </p>
+                <div className="pt-1 border-t border-[var(--border)] space-y-3">
+                  {marketStats && (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-[var(--muted-foreground)]">Total Supplied</span>
+                        <span className="mono">{marketStats.totalSupplied} crvUSD</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-[var(--muted-foreground)]">Total Borrowed</span>
+                        <span className="mono">{marketStats.totalBorrowed} crvUSD</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-[var(--muted-foreground)]">Available Liquidity</span>
+                        <span className="mono">{marketStats.availableLiquidity} crvUSD</span>
+                      </div>
+                    </>
+                  )}
                   <div className="flex justify-between">
                     <span className="text-[var(--muted-foreground)]">Collateral Token</span>
                     <span className="mono">{vault.symbol}</span>
@@ -167,7 +196,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                       href={`https://etherscan.io/address/${controllerAddress}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="mono text-[var(--accent)] hover:underline inline-flex items-center gap-1"
+                      className="mono text-[var(--foreground)] hover:text-[var(--accent)] transition-colors inline-flex items-center gap-1"
                     >
                       {controllerAddress.slice(0, 6)}...{controllerAddress.slice(-4)}
                       <ExternalLink size={10} />
@@ -179,7 +208,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                         href={vault.links.curve}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-[var(--accent)] hover:underline inline-flex items-center gap-1"
+                        className="text-[var(--foreground)] hover:text-[var(--accent)] transition-colors inline-flex items-center gap-1"
                       >
                         View on Curve.finance
                         <ExternalLink size={12} />
@@ -200,13 +229,14 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                   positionLoading={positionLoading && !position}
                   controllerAddress={controllerAddress}
                   onTransactionSuccess={() => refetchPosition()}
+                  onPreviewLiqPrices={handlePreviewLiqPrices}
                 />
               </div>
             </div>
           </div>
-        </div>
-      </main>
-    </div>
+        </div >
+      </main >
+    </div >
   );
 }
 
