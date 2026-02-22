@@ -24,6 +24,7 @@ import { ETH_ADDRESS, ENSO_SHORTCUTS } from "@/lib/enso";
 import { CRVUSD_ADDRESS } from "@/lib/zapper";
 import type { EnsoBundleResponse, SimulationResult } from "@/types/enso";
 import { useTenderly } from "@/contexts/TenderlyContext";
+import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
 import { runVNetSimulation } from "@/lib/vnet-simulation";
 import { snapshotTx, logTxDiff } from "@/lib/dev-logging";
 
@@ -416,6 +417,28 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
   const { sendTransactionAsync } = useSendTransaction();
   const { writeContractAsync } = useWriteContract();
   const { testNetworkType } = useTenderly();
+  const { isFlashbotsEnabled, sendViaFlashbots } = useFlashbotsProtect();
+
+  // Flashbots-aware transaction sender: routes through private mempool on mainnet
+  const sendTx = useCallback(async (
+    txParams: { to: `0x${string}`; data: `0x${string}`; value?: bigint }
+  ): Promise<`0x${string}`> => {
+    if (isFlashbotsEnabled && testNetworkType === null && chainId === 1) {
+      try {
+        return await sendViaFlashbots(txParams);
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        // Wallet doesn't support eth_signTransaction — fall back to regular send
+        const isUnsupportedMethod = errorMsg.includes("eth_signTransaction") &&
+          (errorMsg.includes("not supported") || errorMsg.includes("does not exist"));
+        if (isUnsupportedMethod) {
+          return sendTransactionAsync(txParams);
+        }
+        throw err;
+      }
+    }
+    return sendTransactionAsync(txParams);
+  }, [isFlashbotsEnabled, sendViaFlashbots, sendTransactionAsync, testNetworkType, chainId]);
 
   const [status, setStatus] = useState<LendingStatus>("idle");
   const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
@@ -604,7 +627,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("executing");
 
       if (process.env.NODE_ENV === "development") console.log("[TX]", { to: pendingBundle.tx.to, selector: (pendingBundle.tx.data as string).slice(0, 10), data: pendingBundle.tx.data });
-      const hash = await sendTransactionAsync({
+      const hash = await sendTx({
         to: pendingBundle.tx.to as `0x${string}`,
         data: pendingBundle.tx.data as `0x${string}`,
         value: pendingBundle.tx.value ? BigInt(pendingBundle.tx.value) : 0n,
@@ -636,7 +659,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setError(parseErrorMessage(err));
       setStatus("error");
     }
-  }, [pendingBundle, publicClient, address, pendingInputToken, sendTransactionAsync, testNetworkType, chainId, pendingController]);
+  }, [pendingBundle, publicClient, address, pendingInputToken, sendTx, testNetworkType, chainId, pendingController]);
 
   // Execute a pending bundle after preview confirmation
   const executeAfterPreview = useCallback(async () => {
@@ -656,7 +679,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("executing");
 
       if (process.env.NODE_ENV === "development") console.log("[TX]", { to: pendingBundle.tx.to, selector: (pendingBundle.tx.data as string).slice(0, 10), data: pendingBundle.tx.data });
-      const hash = await sendTransactionAsync({
+      const hash = await sendTx({
         to: pendingBundle.tx.to as `0x${string}`,
         data: pendingBundle.tx.data as `0x${string}`,
         value: pendingBundle.tx.value ? BigInt(pendingBundle.tx.value) : 0n,
@@ -688,7 +711,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setError(parseErrorMessage(err));
       setStatus("error");
     }
-  }, [pendingBundle, publicClient, sendTransactionAsync, address, pendingController, pendingInputToken]);
+  }, [pendingBundle, publicClient, sendTx, address, pendingController, pendingInputToken]);
 
   const executeBundle = useCallback(async (
     bundleFn: () => Promise<EnsoBundleResponse>,
@@ -828,7 +851,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("executing");
 
       if (process.env.NODE_ENV === "development") console.log("[TX]", { to: bundle.tx.to, selector: (bundle.tx.data as string).slice(0, 10), data: bundle.tx.data });
-      const hash = await sendTransactionAsync({
+      const hash = await sendTx({
         to: bundle.tx.to as `0x${string}`,
         data: bundle.tx.data as `0x${string}`,
         value: bundle.tx.value ? BigInt(bundle.tx.value) : 0n,
@@ -864,7 +887,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, sendTransactionAsync, testNetworkType, chainId, simulationResult, pendingController]);
+  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult, pendingController]);
 
   // Direct controller call for create_loan (no Enso bundle needed)
   const createLoan = useCallback(async (
@@ -1015,7 +1038,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       // Execute
       setStatus("executing");
       if (process.env.NODE_ENV === "development") console.log("[TX]", { to: controllerAddress, selector: (callData as string).slice(0, 10), data: callData });
-      const hash = await sendTransactionAsync({
+      const hash = await sendTx({
         to: controllerAddress as `0x${string}`,
         data: callData as `0x${string}`,
       });
@@ -1044,7 +1067,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, sendTransactionAsync, testNetworkType, chainId, simulationResult]);
+  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult]);
 
   // Create loan with swap: tokenIn → vaultToken → create_loan (Enso bundle)
   const createLoanWithSwap = useCallback(async (
@@ -1258,7 +1281,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
       setStatus("executing");
       if (process.env.NODE_ENV === "development") console.log("[TX]", { to: controllerAddress, selector: (callData as string).slice(0, 10), data: callData });
-      const hash = await sendTransactionAsync({
+      const hash = await sendTx({
         to: controllerAddress as `0x${string}`,
         data: callData as `0x${string}`,
       });
@@ -1287,7 +1310,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, sendTransactionAsync, testNetworkType, chainId, simulationResult]);
+  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult]);
 
   // Direct controller call for remove_collateral (no Enso bundle needed)
   const removeCollateral = useCallback(async (
@@ -1420,7 +1443,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       // Execute
       setStatus("executing");
       if (process.env.NODE_ENV === "development") console.log("[TX]", { to: controllerAddress, selector: (callData as string).slice(0, 10), data: callData });
-      const hash = await sendTransactionAsync({
+      const hash = await sendTx({
         to: controllerAddress as `0x${string}`,
         data: callData as `0x${string}`,
       });
@@ -1449,7 +1472,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, sendTransactionAsync, testNetworkType, chainId, simulationResult]);
+  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult]);
 
   const addCollateralWithSwap = useCallback(async (
     vaultAddress: `0x${string}`,
@@ -1728,7 +1751,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       // Execute
       setStatus("executing");
       if (process.env.NODE_ENV === "development") console.log("[TX]", { to: controllerAddress, selector: (callData as string).slice(0, 10), data: callData });
-      const hash = await sendTransactionAsync({
+      const hash = await sendTx({
         to: controllerAddress as `0x${string}`,
         data: callData as `0x${string}`,
       });
@@ -1757,7 +1780,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, sendTransactionAsync, testNetworkType, chainId, simulationResult]);
+  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult]);
 
   // Swap any token to vault collateral + borrow_more in a single Enso bundle (delegate mode).
   // User provides tokenIn (e.g., ETH, USDC) which gets swapped to vault token, then
@@ -1964,7 +1987,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("executing");
       if (process.env.NODE_ENV === "development") console.log("[TX]", { to: controllerAddress, selector: (callData as string).slice(0, 10), data: callData });
 
-      const hash = await sendTransactionAsync({
+      const hash = await sendTx({
         to: controllerAddress,
         data: callData as `0x${string}`,
       });
@@ -1998,7 +2021,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, sendTransactionAsync, testNetworkType, chainId, simulationResult]);
+  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult]);
 
   // Repay crvUSD debt + withdraw collateral in a single Enso bundle.
   // Requires controller approval + crvUSD approval for ENSO_SHORTCUTS.
