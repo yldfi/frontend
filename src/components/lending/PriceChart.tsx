@@ -532,6 +532,7 @@ export function PriceChart({
   const bandsPrimitiveRef = useRef<CollateralBandsPrimitive | null>(null);
   const vpPrimitiveRef = useRef<VolumeProfilePrimitive | null>(null);
   const priceLinesRef = useRef<ReturnType<ISeriesApi<"Area">["createPriceLine"]>[]>([]);
+  const hasInitialFitRef = useRef(false);
   const accentColorRef = useRef("#f59e0b");
   const focusPricesRef = useRef<number[]>([]);
   const showBandsRef = useRef(false);
@@ -986,7 +987,10 @@ export function PriceChart({
     if (effectiveLower !== undefined) focus.push(effectiveLower);
     focusPricesRef.current = focus;
 
-    chart.timeScale().fitContent();
+    if (!hasInitialFitRef.current) {
+      chart.timeScale().fitContent();
+      hasInitialFitRef.current = true;
+    }
   }, [
     activePriceData,
     priceScale,
