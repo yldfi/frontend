@@ -741,8 +741,8 @@ export function LendingInterface({
   // --- Loading: show skeleton while position data loads ---
   if (positionLoading) {
     return (
-      <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl overflow-hidden p-4">
-        <div className="flex items-center justify-center py-40 text-sm text-[var(--muted-foreground)]">
+      <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl overflow-hidden p-4 flex-1 flex flex-col">
+        <div className="flex items-center justify-center py-40 flex-1 text-sm text-[var(--muted-foreground)]">
           <LoadingDots />
         </div>
       </div>
@@ -1000,7 +1000,7 @@ export function LendingInterface({
     // Choice screen: Curve Finance vs yld
     if (loanSource === "choice") {
       return (
-        <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl p-6 space-y-4">
+        <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl p-6 space-y-4 flex-1 flex flex-col">
           <h3 className="text-lg font-medium text-center">Create New Loan</h3>
           <p className="text-sm text-[var(--muted-foreground)] text-center">
             Choose where to open your position
@@ -1046,7 +1046,7 @@ export function LendingInterface({
 
     // yld NewLoanForm view with back button
     return (
-      <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl">
+      <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl flex-1 flex flex-col">
         {/* Title + Back button — hidden during tx states */}
         {!effectiveTxState && (
           <div className="px-4 pt-3 pb-1 flex items-center gap-2">
@@ -1287,7 +1287,7 @@ export function LendingInterface({
 
   // --- Has Loan View: Position summary + Health bar + Management tabs ---
   return (
-    <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl">
+    <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl flex-1 flex flex-col">
       {/* Title — hidden during tx states */}
       {!effectiveTxState && (
         <div className="px-4 pt-3 pb-1 flex items-center gap-2">

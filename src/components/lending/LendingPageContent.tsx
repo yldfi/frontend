@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -44,6 +44,24 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
   const { data: volumeProfile } = useVolumeProfile();
   const marketStats = useCurveMarketRates(controllerAddress);
   const [vpPeriod, setVpPeriod] = useState<VolumeProfilePeriod>("all");
+
+  // Measure chart bottom relative to grid so right panel aligns
+  const gridRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<HTMLDivElement>(null);
+  const [panelMinH, setPanelMinH] = useState(0);
+  useEffect(() => {
+    if (!chartRef.current || !gridRef.current) return;
+    const measure = () => {
+      if (!chartRef.current || !gridRef.current) return;
+      const gridTop = gridRef.current.getBoundingClientRect().top;
+      const chartBottom = chartRef.current.getBoundingClientRect().bottom;
+      setPanelMinH(Math.round(chartBottom - gridTop));
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(chartRef.current);
+    measure();
+    return () => ro.disconnect();
+  }, []);
 
   // Preview liquidation prices from LendingInterface child tab inputs
   const [previewLiqPrices, setPreviewLiqPrices] = useState<{ upper: number; lower: number } | null>(null);
@@ -107,7 +125,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
         </div>
 
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
-          <div className="grid lg:grid-cols-5 gap-8 lg:gap-12">
+          <div ref={gridRef} className="grid lg:grid-cols-5 gap-8 lg:gap-12">
             {/* Left column - Chart + Position + Info */}
             <div className="lg:col-span-3 space-y-8 min-w-0">
               {/* Section Header */}
@@ -132,7 +150,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
               </div>
 
               {/* Price Chart */}
-              <div>
+              <div ref={chartRef}>
                 <PriceChart
                   vaultName={vault.name}
                   vaultLogo={vault.logo}
@@ -241,8 +259,8 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
             </div>
 
             {/* Right column - Lending Panel */}
-            <div className="lg:col-span-2 lg:self-start lg:min-h-[520px]">
-              <div>
+            <div className="lg:col-span-2 lg:self-start flex flex-col" style={panelMinH ? { minHeight: panelMinH } : undefined}>
+              <div className="flex-1 flex flex-col">
                 <LendingInterface
                   vault={vault}
                   userBalance={String(balance ?? 0n)}
