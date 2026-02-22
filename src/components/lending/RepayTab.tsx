@@ -111,6 +111,7 @@ interface RepayTabProps {
   onTransactionSuccess: () => void;
   onEstimatedHealthChange?: (health: number | null) => void;
   onDebtDeltaChange?: (delta: bigint | null) => void;
+  onCollateralDeltaChange?: (delta: bigint | null) => void;
   onTxStateChange?: (state: { status: "pending" | "success" | "reverted"; action: string; hash: string; details?: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string } } | null) => void;
   onSwitchTab?: (tab: string) => void;
 }
@@ -122,6 +123,7 @@ export function RepayTab({
   onTransactionSuccess,
   onEstimatedHealthChange,
   onDebtDeltaChange,
+  onCollateralDeltaChange,
   onTxStateChange,
   onSwitchTab,
 }: RepayTabProps) {
@@ -873,6 +875,11 @@ export function RepayTab({
       onDebtDeltaChange?.(null);
     }
   }, [isCrvUsd, repayAmount, estimatedCrvUsdOut, onDebtDeltaChange]);
+
+  // Report collateral delta to parent (negative = withdrawing collateral)
+  useEffect(() => {
+    onCollateralDeltaChange?.(withdrawAmountWei > 0n ? -withdrawAmountWei : null);
+  }, [withdrawAmountWei, onCollateralDeltaChange]);
 
   // Report tx state to parent for full-screen overlay
   useEffect(() => {
