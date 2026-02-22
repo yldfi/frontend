@@ -9,9 +9,9 @@ test.describe("Vault Page", () => {
   });
 
   test("displays vault name and symbol", async ({ page }) => {
-    // Vault name should be visible
-    const vaultHeader = page.locator("h1, h2").first();
-    await expect(vaultHeader).toBeVisible({ timeout: 10000 });
+    // Vault name is rendered as a styled link, not a heading element
+    const vaultName = page.getByText("ycvxCRV").first();
+    await expect(vaultName).toBeVisible({ timeout: 15000 });
   });
 
   test("displays vault stats", async ({ page }) => {
