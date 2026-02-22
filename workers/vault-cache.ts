@@ -3,8 +3,8 @@
 
 const KONG_API_URL = "https://kong.yearn.farm/api/gql";
 
-// RPC URLs for fallback (yspxcvx not tracked by Kong)
-const RPC_URLS = [
+// Public RPC fallbacks (yspxcvx not tracked by Kong)
+const PUBLIC_RPC_URLS = [
   "https://eth.llamarpc.com",
   "https://eth.drpc.org",
   "https://cloudflare-eth.com",
@@ -37,6 +37,7 @@ function bigIntToNumber18(value: bigint): number {
 interface Env {
   VAULT_CACHE: KVNamespace;
   REFRESH_SECRET?: string;
+  RPC_URL?: string;
 }
 
 /**
@@ -73,10 +74,10 @@ async function fetchWithRetry(
   throw lastError || new Error("Failed after retries");
 }
 
-async function ethCall(to: string, data: string): Promise<string> {
+async function ethCall(to: string, data: string, rpcUrls: string[]): Promise<string> {
   let lastError: Error | null = null;
 
-  for (const rpcUrl of RPC_URLS) {
+  for (const rpcUrl of rpcUrls) {
     try {
       const response = await fetchWithRetry(rpcUrl, {
         method: "POST",
@@ -107,10 +108,10 @@ async function ethCall(to: string, data: string): Promise<string> {
   throw lastError ?? new Error("All RPCs failed");
 }
 
-async function getVaultData(vaultAddress: string) {
+async function getVaultData(vaultAddress: string, rpcUrls: string[]) {
   const [totalAssetsHex, pricePerShareHex] = await Promise.all([
-    ethCall(vaultAddress, TOTAL_ASSETS),
-    ethCall(vaultAddress, PRICE_PER_SHARE),
+    ethCall(vaultAddress, TOTAL_ASSETS, rpcUrls),
+    ethCall(vaultAddress, PRICE_PER_SHARE, rpcUrls),
   ]);
 
   const totalAssets = BigInt(totalAssetsHex);
@@ -204,13 +205,37 @@ function formatKongVault(address: string, data: KongVaultData | null) {
   };
 }
 
-async function fetchVaultData() {
-  // Fetch Kong data for 3 vaults + RPC for yspxcvx + Enso price for pxCVX
-  const [kongData, yspxcvxData, pxCvxPrice] = await Promise.all([
+async function fetchVaultData(env: Env) {
+  // Build RPC list: private endpoint first, public fallbacks after
+  const rpcUrls = [...(env.RPC_URL ? [env.RPC_URL] : []), ...PUBLIC_RPC_URLS];
+
+  // Use allSettled so one failure doesn't kill the entire update
+  const [kongResult, yspxcvxResult, pxCvxPriceResult] = await Promise.allSettled([
     fetchKongVaults(),
-    getVaultData(YSPXCVX_VAULT), // Only vault not in Kong
+    getVaultData(YSPXCVX_VAULT, rpcUrls),
     getTokenPrice(PXCVX_TOKEN),
   ]);
+
+  // Kong is critical — if it fails, throw so we don't overwrite cache with empty data
+  if (kongResult.status === "rejected") {
+    throw new Error(`Kong API failed: ${kongResult.reason}`);
+  }
+  const kongData = kongResult.value;
+
+  // yspxcvx and price are non-critical — use fallback values
+  const yspxcvxData = yspxcvxResult.status === "fulfilled"
+    ? yspxcvxResult.value
+    : { totalAssets: "0", pricePerShare: "0", tvl: 0, pps: 0 };
+  const pxCvxPrice = pxCvxPriceResult.status === "fulfilled"
+    ? pxCvxPriceResult.value
+    : 0;
+
+  if (yspxcvxResult.status === "rejected") {
+    console.error("yspxcvx RPC failed (using zeros):", yspxcvxResult.reason);
+  }
+  if (pxCvxPriceResult.status === "rejected") {
+    console.error("pxCVX price failed (using 0):", pxCvxPriceResult.reason);
+  }
 
   return {
     ycvxcrv: formatKongVault(YCVXCRV_VAULT, kongData.data.ycvxcrv),
@@ -233,9 +258,9 @@ export default {
     _ctx: ExecutionContext
   ): Promise<void> {
     try {
-      const data = await fetchVaultData();
+      const data = await fetchVaultData(env);
       await env.VAULT_CACHE.put("vault-data", JSON.stringify(data), {
-        expirationTtl: 600, // 10 minutes TTL as backup
+        expirationTtl: 86400, // 24h TTL — stale data beats 503
       });
       console.log("Vault data cached successfully:", data.lastUpdated);
     } catch (error) {
@@ -262,10 +287,10 @@ export default {
 
       // Fallback: fetch fresh data if cache is empty
       try {
-        const data = await fetchVaultData();
+        const data = await fetchVaultData(env);
         // Cache for next request
         await env.VAULT_CACHE.put("vault-data", JSON.stringify(data), {
-          expirationTtl: 600,
+          expirationTtl: 86400,
         });
         return new Response(JSON.stringify(data), {
           headers: {
@@ -294,7 +319,7 @@ export default {
         });
       }
 
-      const data = await fetchVaultData();
+      const data = await fetchVaultData(env);
       await env.VAULT_CACHE.put("vault-data", JSON.stringify(data), {
         expirationTtl: 600,
       });

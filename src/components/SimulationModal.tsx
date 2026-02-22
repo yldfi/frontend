@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { VAULTS } from "@/config/vaults";
+import { CUSTOM_TOKENS } from "@/lib/enso";
 import type { SimulationAssetChange } from "@/types/enso";
 
 interface SimulationModalProps {
@@ -28,9 +29,11 @@ interface SimulationModalProps {
 
 // Asset change row component
 function AssetChangeRow({ change }: { change: SimulationAssetChange }) {
-  // Get token logo from Tenderly, vault config, or fallback
+  // Get token logo from Tenderly, vault config, custom tokens, or fallback
+  const customToken = CUSTOM_TOKENS.find(t => t.address.toLowerCase() === change.address.toLowerCase());
   const tokenLogo = change.logo
     || VAULTS[change.symbol.toLowerCase() as keyof typeof VAULTS]?.logo
+    || customToken?.logoURI
     || (change.symbol === "ETH" ? "https://assets.coingecko.com/coins/images/279/thumb/ethereum.png" : undefined)
     || (change.symbol.toLowerCase() === "crvusd" ? "/tokens/crvusd.png" : undefined);
 

@@ -562,12 +562,14 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   executeZapInternalRef.current = executeZapInternal;
 
   // Auto-execute zap after approval succeeds
+  // After approval confirms, isApprovalPending goes false but actionState stays "approving",
+  // so status transitions from "waitingApproval" → "approving" (not "idle").
   const prevStatus = useRef<ZapStatus>("idle");
   useEffect(() => {
     if (
       autoExecuteRef.current &&
       prevStatus.current === "waitingApproval" &&
-      (status === "idle" || status === "needsApproval")
+      (status === "idle" || status === "needsApproval" || status === "approving")
     ) {
       // Approval completed — clear approval state and execute zap
       autoExecuteRef.current = false;

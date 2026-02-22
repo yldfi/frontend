@@ -49,6 +49,8 @@ const TOKEN_LOGOS: Record<string, string> = {
   // Union (Llama Airforce) vaults
   ucvx: "/tokens/llama-airforce.png",
   ucrv: "/tokens/llama-airforce.png",
+  // Yearn vaults
+  "yvusdc-1": "/tokens/yearn-v3.svg",
 };
 
 // Get logo URL for a token symbol - checks TOKEN_LOGOS first, then VAULTS config
