@@ -305,6 +305,9 @@ export function useZapQuote({
   // Check if vault uses cvgCVX or pxCVX as underlying (requires custom routing)
   const isCvgCvxVault = underlyingToken?.toLowerCase() === TOKENS.CVGCVX.toLowerCase();
   const isPxCvxVault = underlyingToken?.toLowerCase() === TOKENS.PXCVX.toLowerCase();
+  const vaultConfig = getVaultByAddress(vaultAddress);
+  const vaultSymbol = vaultConfig?.symbol || "Vault Shares";
+  const vaultName = vaultConfig?.name || "Vault Shares";
 
   // Determine token addresses based on direction
   // Zap In: inputToken → underlying (then vault deposits)
@@ -394,8 +397,8 @@ export function useZapQuote({
         return {
           inputToken: {
             address: vaultAddress,
-            symbol: "Vault Shares",
-            name: "Vault Shares",
+            symbol: vaultSymbol,
+            name: vaultName,
             decimals: 18,
             chainId: 1,
             type: "defi",
@@ -786,13 +789,11 @@ export function useZapQuote({
           const outputUsdValue = outputTokenPrice !== null ? outputNum * outputTokenPrice : null;
           const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
 
-          const vault = getVaultByAddress(vaultAddress);
-          const vaultSymbol = vault?.symbol || "Vault";
           return {
             inputToken: {
               address: vaultAddress,
-              symbol: "Vault Shares",
-              name: "Vault Shares",
+              symbol: vaultSymbol,
+              name: vaultName,
               decimals: 18,
               chainId: 1,
               type: "defi",
@@ -909,13 +910,11 @@ export function useZapQuote({
           const outputUsdValue = outputTokenPrice !== null ? outputNum * outputTokenPrice : null;
           const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
 
-          const vault = getVaultByAddress(vaultAddress);
-          const vaultSymbol = vault?.symbol || "Vault";
           return {
             inputToken: {
               address: vaultAddress,
-              symbol: "Vault Shares",
-              name: "Vault Shares",
+              symbol: vaultSymbol,
+              name: vaultName,
               decimals: 18,
               chainId: 1,
               type: "defi",
@@ -988,8 +987,8 @@ export function useZapQuote({
         const quote: ZapQuote = {
           inputToken: {
             address: vaultAddress,
-            symbol: "Vault Shares",
-            name: "Vault Shares",
+            symbol: vaultSymbol,
+            name: vaultName,
             decimals: 18,
             chainId: 1,
             type: "defi",
