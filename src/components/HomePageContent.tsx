@@ -483,7 +483,7 @@ export function HomePageContent() {
                     <p className="text-sm text-[var(--muted-foreground)] mb-3 leading-relaxed">
                       {vault.description}
                     </p>
-                    <div className="flex flex-wrap items-center gap-2 mb-4">
+                    <div className="flex items-center gap-2.5 mb-4">
                       {vault.badges?.map((badge) => (
                         badge === "Collateral (LlamaLend)" ? (
                           <button
@@ -554,7 +554,7 @@ export function HomePageContent() {
                         <h3 className="text-lg font-medium group-hover:text-[var(--accent)] transition-colors">
                           {vault.name}
                         </h3>
-                        <div className="flex flex-wrap items-center gap-2 mt-1">
+                        <div className="flex items-center gap-2.5 mt-1">
                           {vault.badges?.map((badge) => (
                             badge === "Collateral (LlamaLend)" ? (
                               <button
