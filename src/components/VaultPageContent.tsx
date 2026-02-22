@@ -1510,7 +1510,7 @@ export function VaultPageContent({ id }: { id: string }) {
 
             {/* Right column - Action Card */}
             <div className="lg:col-span-2 min-w-0">
-              <div className="sticky border border-[var(--border)] rounded-xl overflow-x-hidden overflow-y-auto w-full" style={{ top: "calc(6rem + var(--test-banner-height))", maxHeight: "calc(100vh - 7rem - var(--test-banner-height))" }}>
+              <div className="sticky border border-[var(--border)] rounded-xl overflow-x-hidden w-full" style={{ top: "calc(6rem + var(--test-banner-height))" }}>
                 {/* Your Wallet - Always visible when connected with balance */}
                 {isConnected && vaultBalance > 0 && (
                   <div className="bg-[var(--muted)]/30 p-5 border-b border-[var(--border)]">
