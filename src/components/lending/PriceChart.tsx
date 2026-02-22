@@ -43,6 +43,7 @@ class LiquidationZonePrimitive implements ISeriesPrimitive<Time> {
   private _lower = 0;
   private _fillColor: string;
   private _series: ISeriesApi<SeriesType, Time> | null = null;
+  private _requestUpdate?: () => void;
   private _paneViews: IPrimitivePaneView[];
 
   constructor(fillColor = "rgba(239, 68, 68, 0.08)") {
@@ -54,10 +55,12 @@ class LiquidationZonePrimitive implements ISeriesPrimitive<Time> {
 
   attached(param: SeriesAttachedParameter<Time, SeriesType>) {
     this._series = param.series;
+    this._requestUpdate = param.requestUpdate;
   }
 
   detached() {
     this._series = null;
+    this._requestUpdate = undefined;
   }
 
   paneViews() {
@@ -67,6 +70,9 @@ class LiquidationZonePrimitive implements ISeriesPrimitive<Time> {
   update(upper: number, lower: number) {
     this._upper = upper;
     this._lower = lower;
+    if (this._requestUpdate) {
+      this._requestUpdate();
+    }
   }
 
   private _renderer(): IPrimitivePaneRenderer | null {
