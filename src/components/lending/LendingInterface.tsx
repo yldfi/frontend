@@ -176,23 +176,26 @@ export function LendingInterface({
   positionLoading,
   controllerAddress,
   onTransactionSuccess,
+  onPreviewLiqPrices,
 }: LendingPanelProps) {
   const { address } = useAccount();
   const publicClient = usePublicClient();
 
   // Oracle price for accurate leverage display
   const [oraclePrice, setOraclePrice] = useState<bigint>(0n);
+  const [ammAddress, setAmmAddress] = useState<`0x${string}` | null>(null);
   useEffect(() => {
     async function readOraclePrice() {
       if (!publicClient) return;
       try {
-        const ammAddress = await publicClient.readContract({
+        const amm = await publicClient.readContract({
           address: controllerAddress,
           abi: [{ name: "amm", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] }] as const,
           functionName: "amm",
         });
+        setAmmAddress(amm as `0x${string}`);
         const price = await publicClient.readContract({
-          address: ammAddress as `0x${string}`,
+          address: amm as `0x${string}`,
           abi: [{ name: "price_oracle", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] }] as const,
           functionName: "price_oracle",
         });
@@ -518,6 +521,100 @@ export function LendingInterface({
     const newUtil = marketRates.totalAssets > 0n ? Number(newDebt) / Number(marketRates.totalAssets) : 0;
     return semilogBorrowAPR(newUtil, marketRates.minRate, marketRates.maxRate);
   }, [marketRates, childDebtDelta]);
+
+  // Compute preview liquidation prices from child tab deltas
+  // Uses controller.calculate_debt_n1 to get band index, then AMM.p_oracle_up/down for price levels
+  useEffect(() => {
+    if (!onPreviewLiqPrices || !publicClient || !ammAddress) return;
+    const notify = onPreviewLiqPrices;
+
+    const CALC_ABI = [
+      { name: "calculate_debt_n1", type: "function", stateMutability: "view",
+        inputs: [{ name: "collateral", type: "uint256" }, { name: "debt", type: "uint256" }, { name: "N", type: "uint256" }],
+        outputs: [{ name: "", type: "int256" }] },
+    ] as const;
+    const P_ABI = [
+      { name: "p_oracle_up", type: "function", stateMutability: "view",
+        inputs: [{ name: "n", type: "int256" }], outputs: [{ name: "", type: "uint256" }] },
+      { name: "p_oracle_down", type: "function", stateMutability: "view",
+        inputs: [{ name: "n", type: "int256" }], outputs: [{ name: "", type: "uint256" }] },
+    ] as const;
+
+    let cancelled = false;
+
+    async function compute() {
+      let totalCollateral: bigint;
+      let totalDebt: bigint;
+      let N: number;
+
+      if (position?.hasLoan) {
+        // Existing loan: apply deltas
+        totalCollateral = position.collateral + (childCollateralDelta ?? 0n);
+        totalDebt = position.debt + (childDebtDelta ?? 0n);
+        N = position.N;
+
+        // Only compute if there's an actual change
+        if ((childDebtDelta === null || childDebtDelta === 0n) &&
+            (childCollateralDelta === null || childCollateralDelta === 0n)) {
+          if (!cancelled) notify(null, null);
+          return;
+        }
+      } else {
+        // New loan: use child amounts directly
+        totalCollateral = childCollateralAmount ?? 0n;
+        totalDebt = childDebtDelta ?? 0n;
+        N = childBands;
+
+        if (totalCollateral <= 0n || totalDebt <= 0n) {
+          if (!cancelled) notify(null, null);
+          return;
+        }
+      }
+
+      if (totalCollateral <= 0n || totalDebt <= 0n) {
+        if (!cancelled) notify(null, null);
+        return;
+      }
+
+      try {
+        const n1 = await publicClient!.readContract({
+          address: controllerAddress,
+          abi: CALC_ABI,
+          functionName: "calculate_debt_n1",
+          args: [totalCollateral, totalDebt, BigInt(N)],
+        });
+
+        const n2 = n1 + BigInt(N - 1);
+
+        const [pUp, pDown] = await Promise.all([
+          publicClient!.readContract({
+            address: ammAddress!,
+            abi: P_ABI,
+            functionName: "p_oracle_up",
+            args: [n1],
+          }),
+          publicClient!.readContract({
+            address: ammAddress!,
+            abi: P_ABI,
+            functionName: "p_oracle_down",
+            args: [n2],
+          }),
+        ]);
+
+        if (!cancelled) {
+          notify(
+            Number(formatUnits(pUp, 18)),
+            Number(formatUnits(pDown, 18)),
+          );
+        }
+      } catch {
+        if (!cancelled) notify(null, null);
+      }
+    }
+
+    compute();
+    return () => { cancelled = true; };
+  }, [publicClient, controllerAddress, ammAddress, position, childDebtDelta, childCollateralDelta, childCollateralAmount, childBands, onPreviewLiqPrices]);
 
   // Clear child estimates when switching tabs
   useEffect(() => {
@@ -1429,6 +1526,7 @@ export function LendingInterface({
                 onTransactionSuccess={onTransactionSuccess}
                 onEstimatedHealthChange={handleEstimatedHealthChange}
                 onDebtDeltaChange={handleDebtDeltaChange}
+                onCollateralDeltaChange={handleCollateralDeltaChange}
                 onTxStateChange={handleTxStateChange}
                 onSwitchTab={(t) => setActiveTab(t as Tab)}
               />
@@ -1441,6 +1539,7 @@ export function LendingInterface({
                 onTransactionSuccess={onTransactionSuccess}
                 onEstimatedHealthChange={handleEstimatedHealthChange}
                 onDebtDeltaChange={handleDebtDeltaChange}
+                onCollateralDeltaChange={handleCollateralDeltaChange}
                 onTxStateChange={handleTxStateChange}
                 onSwitchTab={(t) => setActiveTab(t as Tab)}
               />
