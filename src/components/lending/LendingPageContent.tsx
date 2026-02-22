@@ -115,9 +115,20 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                 <p className="mono text-sm text-[var(--muted-foreground)] mb-2">
                   [004] Lending
                 </p>
-                <h2 className="text-2xl md:text-3xl font-medium tracking-tight">
-                  {vault.name} <span className="text-[var(--muted-foreground)]">LlamaLend</span>
-                </h2>
+                <div className="flex items-center gap-3">
+                  {vault.logo && (
+                    <Image
+                      src={vault.logo}
+                      alt={vault.name}
+                      width={36}
+                      height={36}
+                      className="rounded-full"
+                    />
+                  )}
+                  <h2 className="text-2xl md:text-3xl font-medium tracking-tight">
+                    {vault.name} <span className="text-[var(--muted-foreground)]">LlamaLend</span>
+                  </h2>
+                </div>
               </div>
 
               {/* Price Chart */}

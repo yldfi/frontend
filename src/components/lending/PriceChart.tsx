@@ -1030,54 +1030,35 @@ export function PriceChart({
         >
           {/* Overlay Header + Actions (single row to prevent overlap) */}
           <div className="absolute top-2 sm:top-3 left-2 sm:left-4 right-[76px] sm:right-20 z-20 flex items-center gap-1 sm:gap-2 pointer-events-none overflow-hidden">
-            {/* Vault Header — left side */}
-            <div className="flex items-center gap-1.5 sm:gap-2 bg-[var(--background)]/40 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg backdrop-blur-sm border border-[var(--border)]/50 shadow-sm mr-auto min-w-0">
-              {vaultLogo && (
-                <Image
-                  src={vaultLogo}
-                  alt={vaultName}
-                  width={18}
-                  height={18}
-                  className="rounded-full bg-black/20 shrink-0"
-                />
-              )}
-              <div className="hidden sm:flex items-baseline gap-1.5 min-w-0">
-                <h1 className="text-sm font-semibold tracking-tight text-[var(--foreground)] drop-shadow-md truncate">
-                  {vaultName}
-                </h1>
-                <span className="text-[10px] font-medium text-[var(--accent)] drop-shadow-sm uppercase shrink-0">
-                  LlamaLend
-                </span>
+            {/* Token toggle — left side */}
+            {altPriceData && altSymbol && (
+              <div className="flex items-center rounded overflow-hidden border border-[var(--border)]/50 shadow-sm pointer-events-auto bg-[var(--background)]/40 backdrop-blur-sm mr-auto shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowAlt(false)}
+                  className={cn(
+                    "text-[10px] px-1.5 py-0.5 transition-all",
+                    !showAlt
+                      ? "bg-[var(--foreground)] text-[var(--background)] font-medium"
+                      : "bg-[var(--background)]/60 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                  )}
+                >
+                  {priceSymbol ?? symbol}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAlt(true)}
+                  className={cn(
+                    "text-[10px] px-1.5 py-0.5 transition-all",
+                    showAlt
+                      ? "bg-[var(--foreground)] text-[var(--background)] font-medium"
+                      : "bg-[var(--background)]/60 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                  )}
+                >
+                  {altSymbol}
+                </button>
               </div>
-              {altPriceData && altSymbol && (
-                <div className="flex items-center rounded overflow-hidden border border-[var(--border)]/50 shadow-sm pointer-events-auto">
-                  <button
-                    type="button"
-                    onClick={() => setShowAlt(false)}
-                    className={cn(
-                      "text-[10px] px-1.5 py-0.5 transition-all",
-                      !showAlt
-                        ? "bg-[var(--foreground)] text-[var(--background)] font-medium"
-                        : "bg-[var(--background)]/60 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                    )}
-                  >
-                    {priceSymbol ?? symbol}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowAlt(true)}
-                    className={cn(
-                      "text-[10px] px-1.5 py-0.5 transition-all",
-                      showAlt
-                        ? "bg-[var(--foreground)] text-[var(--background)] font-medium"
-                        : "bg-[var(--background)]/60 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                    )}
-                  >
-                    {altSymbol}
-                  </button>
-                </div>
-              )}
-            </div>
+            )}
 
             {/* Action buttons — right side */}
             <div className="flex items-center gap-0.5 sm:gap-1 pointer-events-auto shrink-0">
