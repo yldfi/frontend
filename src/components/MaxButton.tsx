@@ -34,6 +34,9 @@ export function MaxButton({ balance, onSelect, showClose, onClose }: MaxButtonPr
   const handlePercentage = (percent: number) => {
     if (percent === 0) {
       onSelect("");
+    } else if (percent === 100) {
+      // Pass full-precision balance string directly — no float math
+      onSelect(balance);
     } else {
       const amount = balanceNum * (percent / 100);
       const dot = balance.indexOf(".");
