@@ -22,31 +22,9 @@ function getCorsHeaders(request: NextRequest): Record<string, string> {
   };
 }
 
-// Rate limiting: 20 requests per minute per IP
-const MAX_REQUESTS_PER_MINUTE = 20;
-const RATE_LIMIT_WINDOW_MS = 60_000;
-const requestLog = new Map<string, number[]>();
+import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
 
-function getClientIp(request: NextRequest): string {
-  return (
-    request.headers.get("cf-connecting-ip") ||
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    "unknown"
-  );
-}
-
-function isRateLimited(clientIp: string): boolean {
-  const now = Date.now();
-  const entries = requestLog.get(clientIp) ?? [];
-  const recent = entries.filter((timestamp) => now - timestamp < RATE_LIMIT_WINDOW_MS);
-  if (recent.length >= MAX_REQUESTS_PER_MINUTE) {
-    requestLog.set(clientIp, recent);
-    return true;
-  }
-  recent.push(now);
-  requestLog.set(clientIp, recent);
-  return false;
-}
+const isRateLimited = createRateLimiter(20);
 
 function base64UrlEncode(bytes: Uint8Array): string {
   return Buffer.from(bytes)

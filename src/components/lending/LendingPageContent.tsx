@@ -4,11 +4,10 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { ChevronRight, AlertTriangle, ExternalLink } from "lucide-react";
+import { ChevronRight, AlertTriangle, ExternalLink, Info, Activity, Coins, TrendingUp } from "lucide-react";
 import { useAccount } from "wagmi";
 import { formatUnits } from "viem";
-import { getVault } from "@/config/vaults";
-import { CURVE_CONTROLLERS } from "@/config/vaults";
+import { getVault, CURVE_CONTROLLERS, CURVE_SAVINGS } from "@/config/vaults";
 import { useVaultBalance } from "@/hooks/useVaultBalance";
 import { useCurveLendingPosition } from "@/hooks/useCurveLendingPosition";
 import { useOraclePriceHistory, useMarketBands } from "@/hooks/useOraclePriceHistory";
@@ -19,6 +18,7 @@ import { LendingInterface } from "./LendingInterface";
 import { PriceChart } from "./PriceChart";
 import { Logo } from "@/components/Logo";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
+import { useClearOnNavigation } from "@/hooks/useClearOnNavigation";
 
 export function LendingPageContent({ vaultId }: { vaultId: string }) {
   const router = useRouter();
@@ -73,6 +73,19 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
     }
   }, []);
 
+  // Clear lending form amounts on navigation (preserve on refresh)
+  const vaultAddr = vault?.address ?? "";
+  useClearOnNavigation([
+    `yldfi-lending-collateral-${vaultAddr}`,
+    `yldfi-lending-borrow-collateral-${vaultAddr}`,
+    `yldfi-lending-borrow-amount-${vaultAddr}`,
+    `yldfi-lending-repay-${vaultAddr}`,
+    `yldfi-lending-leverage-${vaultAddr}`,
+    `yldfi-lending-newloan-amount-${vaultAddr}`,
+    `yldfi-lending-newloan-debt-${vaultAddr}`,
+    "yldfi-lending-tab",
+  ], "yldfi-lending-is-refresh");
+
   const shouldRedirect = !vault || !controllerAddress;
 
   useEffect(() => {
@@ -109,7 +122,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                 href="/"
                 className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
               >
-                yld
+                yld Vaults
               </Link>
               <ChevronRight size={14} className="text-[var(--muted-foreground)]" />
               <Link
@@ -127,7 +140,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
           <div ref={gridRef} className="grid lg:grid-cols-5 gap-8 lg:gap-12">
             {/* Left column - Chart + Position + Info */}
-            <div className="lg:col-span-3 space-y-8 min-w-0">
+            <div className="lg:col-span-3 space-y-8 min-w-0 overflow-hidden">
               {/* Section Header */}
               <div>
                 <p className="mono text-sm text-[var(--muted-foreground)] mb-2">
@@ -138,12 +151,12 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                     <Image
                       src={vault.logo}
                       alt={vault.name}
-                      width={36}
-                      height={36}
-                      className="rounded-full"
+                      width={40}
+                      height={40}
+                      className="rounded-full translate-y-[1px]"
                     />
                   )}
-                  <h2 className="text-2xl md:text-3xl font-medium tracking-tight">
+                  <h2 className="text-3xl md:text-4xl font-medium tracking-tight">
                     {vault.name} <span className="text-[var(--muted-foreground)]">LlamaLend</span>
                   </h2>
                 </div>
@@ -200,60 +213,114 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
               )}
 
               {/* Market Info */}
-              <div className="p-4 rounded-lg bg-[var(--muted)]/30 border border-[var(--border)] space-y-3 text-sm">
-                <p className="text-[var(--muted-foreground)] leading-relaxed">
-                  Borrow crvUSD against {vault.symbol} collateral. Use leverage to amplify your position.
-                </p>
-                <div className="pt-1 border-t border-[var(--border)] space-y-3">
+              <div className="p-5 rounded-xl bg-gradient-to-br from-[var(--muted)]/50 to-transparent border border-[var(--border)] shadow-sm relative overflow-hidden">
+                {/* Decorative background element */}
+                <div className="absolute top-0 right-0 w-32 h-32 bg-[var(--accent)]/5 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none"></div>
+
+                <div className="relative z-10 space-y-5">
+                  <div className="flex items-start gap-3">
+                    <div className="mt-1 bg-[var(--background)] p-1.5 rounded-md border border-[var(--border)] text-[var(--muted-foreground)]">
+                      <Info size={16} />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-medium text-[var(--foreground)]">Market Overview</h3>
+                      <p className="text-sm text-[var(--muted-foreground)] leading-relaxed mt-1">
+                        Borrow crvUSD against {vault.symbol} collateral. Use leverage to amplify your position.
+                      </p>
+                    </div>
+                  </div>
+
                   {marketStats && (
-                    <>
-                      <div className="flex justify-between">
-                        <span className="text-[var(--muted-foreground)]">Total Supplied</span>
-                        <span className="mono">{marketStats.totalSupplied} crvUSD</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                      <div className="bg-[var(--background)]/80 backdrop-blur-sm border border-[var(--border)] rounded-lg p-3 flex flex-col justify-between group hover:border-[var(--muted-foreground)]/30 transition-colors">
+                        <div className="flex items-center gap-2 mb-2 text-[var(--muted-foreground)]">
+                          <Coins size={14} />
+                          <span className="text-xs font-medium uppercase tracking-wider">Total Supplied</span>
+                        </div>
+                        <div className="mono text-[var(--foreground)] text-lg font-medium">{marketStats.totalSupplied}</div>
+                        <div className="text-[10px] text-[var(--muted-foreground)] mt-1">crvUSD</div>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-[var(--muted-foreground)]">Total Borrowed</span>
-                        <span className="mono">{marketStats.totalBorrowed} crvUSD</span>
+
+                      <div className="bg-[var(--background)]/80 backdrop-blur-sm border border-[var(--border)] rounded-lg p-3 flex flex-col justify-between group hover:border-[var(--muted-foreground)]/30 transition-colors">
+                        <div className="flex items-center gap-2 mb-2 text-[var(--muted-foreground)]">
+                          <TrendingUp size={14} />
+                          <span className="text-xs font-medium uppercase tracking-wider">Total Borrowed</span>
+                        </div>
+                        <div className="mono text-[var(--foreground)] text-lg font-medium">{marketStats.totalBorrowed}</div>
+                        <div className="text-[10px] text-[var(--muted-foreground)] mt-1">crvUSD</div>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-[var(--muted-foreground)]">Available Liquidity</span>
-                        <span className="mono">{marketStats.availableLiquidity} crvUSD</span>
+
+                      <div className="bg-[var(--background)]/80 backdrop-blur-sm border border-[var(--border)] rounded-lg p-3 flex flex-col justify-between group hover:border-[var(--muted-foreground)]/30 transition-colors">
+                        <div className="flex items-center gap-2 mb-2 text-[var(--muted-foreground)]">
+                          <Activity size={14} />
+                          <span className="text-xs font-medium uppercase tracking-wider">Available Liquidity</span>
+                        </div>
+                        <div className="mono text-[var(--success)] text-lg font-medium">{marketStats.availableLiquidity}</div>
+                        <div className="text-[10px] text-[var(--muted-foreground)] mt-1">crvUSD</div>
                       </div>
-                    </>
-                  )}
-                  <div className="flex justify-between">
-                    <span className="text-[var(--muted-foreground)]">Collateral Token</span>
-                    <span className="mono">{vault.symbol}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-[var(--muted-foreground)]">Borrow Token</span>
-                    <span className="mono">crvUSD</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-[var(--muted-foreground)]">Controller</span>
-                    <a
-                      href={`https://etherscan.io/address/${controllerAddress}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mono text-[var(--foreground)] hover:text-[var(--accent)] transition-colors inline-flex items-center gap-1"
-                    >
-                      {controllerAddress.slice(0, 6)}...{controllerAddress.slice(-4)}
-                      <ExternalLink size={10} />
-                    </a>
-                  </div>
-                  {vault.links?.curve && (
-                    <div className="pt-2 border-t border-[var(--border)]">
-                      <a
-                        href={vault.links.curve}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[var(--foreground)] hover:text-[var(--accent)] transition-colors inline-flex items-center gap-1"
-                      >
-                        View on Curve.finance
-                        <ExternalLink size={12} />
-                      </a>
                     </div>
                   )}
+
+                  <div className="pt-4 border-t border-[var(--border)] grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center bg-[var(--background)]/50 px-3 py-2 rounded-md border border-[var(--border)]/50">
+                        <span className="text-[var(--muted-foreground)] text-xs font-medium uppercase tracking-wider">Collateral</span>
+                        <a
+                          href={`https://etherscan.io/address/${vault.assetAddress}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 hover:text-[var(--accent)] transition-colors group"
+                        >
+                          {vault.logo && <Image src={vault.logo} alt={vault.symbol} width={16} height={16} className="rounded-full" />}
+                          <span className="mono font-medium">{vault.symbol}</span>
+                          <ExternalLink size={10} className="opacity-50 group-hover:opacity-100 transition-opacity" />
+                        </a>
+                      </div>
+                      <div className="flex justify-between items-center bg-[var(--background)]/50 px-3 py-2 rounded-md border border-[var(--border)]/50">
+                        <span className="text-[var(--muted-foreground)] text-xs font-medium uppercase tracking-wider">Borrow</span>
+                        <a
+                          href={`https://etherscan.io/address/${CURVE_SAVINGS.SCRVUSD_UNDERLYING}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 hover:text-[var(--accent)] transition-colors group"
+                        >
+                          <Image src="/tokens/crvusd.png" alt="crvUSD" width={16} height={16} className="rounded-full" />
+                          <span className="mono font-medium">crvUSD</span>
+                          <ExternalLink size={10} className="opacity-50 group-hover:opacity-100 transition-opacity" />
+                        </a>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center bg-[var(--background)]/50 px-3 py-2 rounded-md border border-[var(--border)]/50">
+                        <span className="text-[var(--muted-foreground)] text-xs font-medium uppercase tracking-wider">Controller</span>
+                        <a
+                          href={`https://etherscan.io/address/${controllerAddress}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mono text-[var(--foreground)] hover:text-[var(--accent)] transition-colors inline-flex items-center gap-1 group"
+                        >
+                          <span>{controllerAddress.slice(0, 6)}...{controllerAddress.slice(-4)}</span>
+                          <ExternalLink size={10} className="opacity-50 group-hover:opacity-100 transition-opacity" />
+                        </a>
+                      </div>
+                      {vault.links?.curve && (
+                        <div className="flex justify-between items-center bg-[var(--background)]/50 px-3 py-2 rounded-md border border-[var(--border)]/50">
+                          <span className="text-[var(--muted-foreground)] text-xs font-medium uppercase tracking-wider">Platform</span>
+                          <a
+                            href={vault.links.curve}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 hover:text-[var(--accent)] transition-colors group"
+                          >
+                            <Image src="/curve-logo.png" alt="Curve" width={16} height={16} className="rounded-full" />
+                            <span className="font-medium">Curve.finance</span>
+                            <ExternalLink size={10} className="opacity-50 group-hover:opacity-100 transition-opacity" />
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

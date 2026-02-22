@@ -223,8 +223,14 @@ export function middleware(request: NextRequest) {
     });
   }
 
-  // Set EEA cookie for consent management
+  // Security headers
   const response = NextResponse.next();
+  response.headers.set("X-Frame-Options", "DENY");
+  response.headers.set("Content-Security-Policy", "frame-ancestors 'none'");
+  response.headers.set("X-Content-Type-Options", "nosniff");
+  response.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
+  response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   const isEEA = EEA_COUNTRIES.has(country);
 
   // In development, don't overwrite manually set geo_region cookie (for testing)

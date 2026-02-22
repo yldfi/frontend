@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 // Only enabled in development with DEBUG_RPC_URL configured
 const DEBUG_RPC_URL = process.env.DEBUG_RPC_URL || "";
 const DEBUG_RPC_AUTH = process.env.DEBUG_RPC_AUTH || "";
+const DEBUG_API_KEY = process.env.DEBUG_TRACE_API_KEY || "";
 const IS_DEV = process.env.NODE_ENV !== "production";
 
 interface TraceCall {
@@ -43,6 +44,17 @@ export async function POST(request: NextRequest) {
       { success: false, error: "Debug trace only available in development" },
       { status: 403 }
     );
+  }
+
+  // Security: Require API key if configured (defense-in-depth beyond NODE_ENV)
+  if (DEBUG_API_KEY) {
+    const authHeader = request.headers.get("x-debug-key") || "";
+    if (authHeader !== DEBUG_API_KEY) {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
   }
 
   // Security: Require DEBUG_RPC_URL to be configured
@@ -205,11 +217,12 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// GET for checking if debug trace is available
+// GET for checking if debug trace is available (no config details exposed)
 export async function GET() {
+  if (!IS_DEV) {
+    return NextResponse.json({ available: false });
+  }
   return NextResponse.json({
-    available: IS_DEV && Boolean(DEBUG_RPC_URL),
-    isDev: IS_DEV,
-    hasDebugRpc: Boolean(DEBUG_RPC_URL),
+    available: Boolean(DEBUG_RPC_URL),
   });
 }

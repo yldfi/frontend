@@ -390,7 +390,17 @@ export function LendingInterface({
   // Debug tx state (dev only)
   type DebugLendingTxState = "none" | "borrow-pending" | "borrow-success" | "borrow-reverted" | "repay-pending" | "repay-success" | "repay-reverted" | "collateral-pending" | "collateral-success" | "collateral-reverted" | "leverage-pending" | "leverage-success" | "leverage-reverted" | "newloan-pending" | "newloan-success" | "newloan-reverted";
   const [debugTxState, setDebugTxState] = useState<DebugLendingTxState>("none");
-  const [debugMinimized, setDebugMinimized] = useState(false);
+  const [debugMinimized, setDebugMinimized] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try { return localStorage.getItem("yldfi-tx-preview-minimized") === "true"; } catch { return false; }
+  });
+  const toggleDebugMinimized = useCallback(() => {
+    setDebugMinimized(prev => {
+      const next = !prev;
+      try { localStorage.setItem("yldfi-tx-preview-minimized", String(next)); } catch {}
+      return next;
+    });
+  }, []);
   const [debugSoftLiq, setDebugSoftLiq] = useState(false);
   type DebugApprovalScenario = "none" | "ctrl-1of1" | "erc20-1of2" | "ctrl-2of2" | "approving";
   const [debugApproval, setDebugApproval] = useState<DebugApprovalScenario>("none");
@@ -895,7 +905,7 @@ export function LendingInterface({
         <span>⋮⋮ Lending TX Preview</span>
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); setDebugMinimized(!debugMinimized); }}
+          onClick={(e) => { e.stopPropagation(); toggleDebugMinimized(); }}
           onMouseDown={(e) => e.stopPropagation()}
           className="ml-2 px-1.5 py-0.5 rounded hover:bg-[var(--muted)] transition-colors text-[10px]"
         >

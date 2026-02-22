@@ -6,9 +6,13 @@ import { useQueryClient } from "@tanstack/react-query";
 
 type TestNetworkType = "anvil" | "tenderly" | null;
 
-// VNet dev-mode toggle env vars
-const VNET_RPC_URL = process.env.NEXT_PUBLIC_TENDERLY_VNET_RPC || "";
-const VNET_ADDRESS = process.env.NEXT_PUBLIC_TENDERLY_VNET_ADDRESS || "";
+// VNet dev-mode toggle env vars (only active in development)
+const VNET_RPC_URL = process.env.NODE_ENV === "development"
+  ? (process.env.NEXT_PUBLIC_TENDERLY_VNET_RPC || "")
+  : "";
+const VNET_ADDRESS = process.env.NODE_ENV === "development"
+  ? (process.env.NEXT_PUBLIC_TENDERLY_VNET_ADDRESS || "")
+  : "";
 
 interface TenderlyContextValue {
   /** True when connected to any test network (Anvil fork, Tenderly VNet, chain 1337) */
