@@ -489,7 +489,7 @@ export function HomePageContent() {
                           <button
                             key={badge}
                             onClick={(e) => { e.preventDefault(); e.stopPropagation(); router.push(`/vaults/${vault.id}/lending`); }}
-                            className="group/badge collateral-badge inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium bg-[var(--muted)] text-[var(--muted-foreground)] rounded whitespace-nowrap hover:text-[var(--foreground)] transition-colors max-w-full"
+                            className="group/badge collateral-badge inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium bg-[var(--muted)] text-white rounded whitespace-nowrap hover:text-[var(--foreground)] transition-colors max-w-full"
                           >
                             <Image src="/curve-logo.png" alt="Curve" width={12} height={12} className="rounded-full" />
                             {vault.lendingPosition?.hasLoan ? (
@@ -509,7 +509,7 @@ export function HomePageContent() {
                             <ArrowUpRight size={10} />
                           </button>
                         ) : (
-                          <span key={badge} className="inline-flex items-center px-2 py-1 text-[11px] font-medium bg-[var(--muted)] text-[var(--muted-foreground)] rounded border border-transparent whitespace-nowrap">
+                          <span key={badge} className="inline-flex items-center px-2 py-1 text-[11px] font-medium bg-[var(--muted)] text-white rounded border border-transparent whitespace-nowrap">
                             {badge}
                           </span>
                         )
@@ -560,7 +560,7 @@ export function HomePageContent() {
                               <button
                                 key={badge}
                                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); router.push(`/vaults/${vault.id}/lending`); }}
-                                className="group/badge collateral-badge inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium bg-[var(--muted)] text-[var(--muted-foreground)] rounded whitespace-nowrap hover:text-[var(--foreground)] transition-colors max-w-full"
+                                className="group/badge collateral-badge inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium bg-[var(--muted)] text-white rounded whitespace-nowrap hover:text-[var(--foreground)] transition-colors max-w-full"
                               >
                                 <Image src="/curve-logo.png" alt="Curve" width={10} height={10} className="rounded-full" />
                                 {vault.lendingPosition?.hasLoan ? (
@@ -580,7 +580,7 @@ export function HomePageContent() {
                                 <ArrowUpRight size={10} />
                               </button>
                             ) : (
-                              <span key={badge} className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-[var(--muted)] text-[var(--muted-foreground)] rounded border border-transparent whitespace-nowrap">
+                              <span key={badge} className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-[var(--muted)] text-white rounded border border-transparent whitespace-nowrap">
                                 {badge}
                               </span>
                             )
