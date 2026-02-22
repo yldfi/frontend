@@ -1008,18 +1008,29 @@ export function PriceChart({
     convertedVP,
   ]);
 
+  // Refit chart when fullscreen toggles (container size changes dramatically)
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    // Small delay to let the container resize via CSS before fitting
+    const timer = setTimeout(() => {
+      chart.timeScale().fitContent();
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [isFullscreen]);
+
   return (
     <div
       className={cn(
         "relative w-full",
-        isFullscreen && "fixed inset-0 z-50 bg-[var(--background)] p-4 flex flex-col animate-in fade-in duration-200"
+        isFullscreen && "fixed inset-0 z-50 bg-[var(--background)] flex flex-col animate-in fade-in duration-200"
       )}
     >
       {/* Chart container */}
-      <div className={cn("relative w-full mx-auto min-w-0", isFullscreen ? "flex-1 flex flex-col" : "max-w-[1400px]")}>
+      <div className={cn("relative w-full min-w-0", isFullscreen ? "flex-1 flex flex-col" : "max-w-[1400px] mx-auto")}>
         <div
           ref={containerRef}
-          className={cn("border border-[var(--border)] rounded-lg w-full relative", isFullscreen ? "flex-1" : "h-[400px] sm:h-[450px]")}
+          className={cn("w-full relative", isFullscreen ? "flex-1" : "h-[400px] sm:h-[450px] border border-[var(--border)] rounded-lg")}
         >
           {/* Overlay Header + Actions (single row to prevent overlap) */}
           <div className="absolute top-3 left-4 right-20 z-20 flex items-center gap-2 pointer-events-none">
@@ -1190,7 +1201,7 @@ export function PriceChart({
       </div>
 
       {/* Legend */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 w-full max-w-[1400px] mx-auto text-xs text-[var(--muted-foreground)]">
+      <div className={cn("flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 w-full max-w-[1400px] mx-auto text-xs text-[var(--muted-foreground)]", isFullscreen && "hidden")}>
         <div className="flex items-center gap-1.5">
           <div className="w-4 h-0.5 bg-[var(--accent)] rounded-full" />
           <span>Oracle Price</span>
