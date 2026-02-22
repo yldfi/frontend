@@ -241,7 +241,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
             </div>
 
             {/* Right column - Lending Panel */}
-            <div className="lg:col-span-2 lg:self-start">
+            <div className="lg:col-span-2 lg:self-start lg:min-h-[520px]">
               <div>
                 <LendingInterface
                   vault={vault}
