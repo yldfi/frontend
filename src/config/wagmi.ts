@@ -11,8 +11,10 @@ import { PUBLIC_RPC_URLS } from "./rpc";
 // NOTE: use process.env.X (not process.env?.X) so Next.js DefinePlugin inlines it in the browser bundle
 const anvilRpc: string | undefined = process.env.NEXT_PUBLIC_ANVIL_RPC || undefined;
 
-// Tenderly VNet RPC for dev-mode toggle (set NEXT_PUBLIC_TENDERLY_VNET_RPC in .env.local)
-const vnetRpc: string | undefined = process.env.NEXT_PUBLIC_TENDERLY_VNET_RPC || undefined;
+// Tenderly VNet RPC for dev-mode toggle (only in development)
+const vnetRpc: string | undefined = process.env.NODE_ENV === "development"
+  ? (process.env.NEXT_PUBLIC_TENDERLY_VNET_RPC || undefined)
+  : undefined;
 
 // Normal transport chain (used as fallback or when VNet is off)
 const normalTransport = anvilRpc

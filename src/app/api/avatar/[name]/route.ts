@@ -1,29 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
 
-// Rate limiting: 60 requests per minute per IP
-const MAX_REQUESTS_PER_MINUTE = 60;
-const RATE_LIMIT_WINDOW_MS = 60_000;
-const requestLog = new Map<string, number[]>();
+const isRateLimited = createRateLimiter(60);
 
-function getClientIp(request: NextRequest): string {
-  return (
-    request.headers.get("cf-connecting-ip") ||
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    "unknown"
-  );
-}
+// Allowed origins for CORS (same as simulate endpoint)
+const ALLOWED_ORIGINS = [
+  "https://yldfi.co",
+  "https://www.yldfi.co",
+  "http://localhost:3000",
+];
 
-function isRateLimited(clientIp: string): boolean {
-  const now = Date.now();
-  const entries = requestLog.get(clientIp) ?? [];
-  const recent = entries.filter((timestamp) => now - timestamp < RATE_LIMIT_WINDOW_MS);
-  if (recent.length >= MAX_REQUESTS_PER_MINUTE) {
-    requestLog.set(clientIp, recent);
-    return true;
-  }
-  recent.push(now);
-  requestLog.set(clientIp, recent);
-  return false;
+function getCorsHeaders(request: NextRequest): Record<string, string> {
+  const origin = request.headers.get("origin") ?? "";
+  const isAllowed = ALLOWED_ORIGINS.includes(origin);
+  return {
+    "Access-Control-Allow-Origin": isAllowed ? origin : ALLOWED_ORIGINS[0],
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Max-Age": "86400",
+  };
 }
 
 /**
@@ -36,19 +31,22 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ name: string }> }
 ) {
+  const corsHeaders = getCorsHeaders(request);
+
   // Rate limiting
   const clientIp = getClientIp(request);
   if (isRateLimited(clientIp)) {
     return new NextResponse("Rate limit exceeded", {
       status: 429,
-      headers: { "Access-Control-Allow-Origin": "*" },
+      headers: corsHeaders,
     });
   }
 
   const { name } = await params;
 
-  if (!name || !name.includes(".")) {
-    return NextResponse.json({ error: "Invalid ENS name" }, { status: 400 });
+  // Validate ENS name format
+  if (!name || !/^[a-z0-9._-]+\.eth$/i.test(name)) {
+    return NextResponse.json({ error: "Invalid ENS name" }, { status: 400, headers: corsHeaders });
   }
 
   try {
@@ -62,9 +60,7 @@ export async function GET(
     if (!response.ok) {
       return new NextResponse("Avatar not found", {
         status: response.status,
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-        },
+        headers: corsHeaders,
       });
     }
 
@@ -74,28 +70,19 @@ export async function GET(
     return new NextResponse(body, {
       status: 200,
       headers: {
+        ...corsHeaders,
         "Content-Type": contentType,
-        "Access-Control-Allow-Origin": "*",
-        "Cache-Control": "public, max-age=3600", // 1 hour cache
+        "Cache-Control": "public, max-age=3600",
       },
     });
   } catch {
     return new NextResponse("Failed to fetch avatar", {
       status: 500,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-      },
+      headers: corsHeaders,
     });
   }
 }
 
-export async function OPTIONS() {
-  return new NextResponse(null, {
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-      "Access-Control-Max-Age": "86400",
-    },
-  });
+export async function OPTIONS(request: NextRequest) {
+  return new NextResponse(null, { headers: getCorsHeaders(request) });
 }

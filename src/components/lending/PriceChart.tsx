@@ -7,10 +7,12 @@ import {
   LineStyle,
   CrosshairMode,
   AreaSeries,
+  LineSeries,
   type IChartApi,
   type ISeriesApi,
   type Time,
   type AreaData,
+  type LineData,
   type WhitespaceData,
   type ISeriesPrimitive,
   type SeriesAttachedParameter,
@@ -19,7 +21,7 @@ import {
   type IPrimitivePaneRenderer,
 } from "lightweight-charts";
 import { cn } from "@/lib/utils";
-import { Maximize2, Minimize2, RefreshCcw } from "lucide-react";
+import { Maximize2, Minimize2, RefreshCcw, AlignJustify, TrendingUp } from "lucide-react";
 import Image from "next/image";
 import { formatUnits } from "viem";
 import type { BandData } from "@/hooks/useOraclePriceHistory";
@@ -400,11 +402,7 @@ class VolumeProfilePrimitive implements ISeriesPrimitive<Time> {
               const barX = chartRight - w;
               context.lineWidth = 1;
               context.beginPath();
-              if (typeof context.roundRect === "function") {
-                context.roundRect(barX, top, w, h, [4, 0, 0, 4]);
-              } else {
-                context.rect(barX, top, w, h);
-              }
+              context.rect(barX, top, w, h);
               context.fill();
               context.stroke();
             });
@@ -537,9 +535,13 @@ export function PriceChart({
   const focusPricesRef = useRef<number[]>([]);
   const showBandsRef = useRef(false);
   const bandsDataRef = useRef<BandData[] | undefined>(undefined);
+  const ma20Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const ma50Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const ma200Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const [showAlt, setShowAlt] = useState(false);
   const [showBands, setShowBands] = useState(false);
   const [showVP, setShowVP] = useState(false);
+  const [showMA, setShowMA] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [tooltip, setTooltip] = useState<{
     x: number;
@@ -711,6 +713,12 @@ export function PriceChart({
     oracleSeries.attachPrimitive(vpPrimitive);
     vpPrimitiveRef.current = vpPrimitive;
 
+    // Moving average line series (hidden by default)
+    const maOpts = { lineWidth: 1 as const, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: false, title: "" };
+    ma20Ref.current = chart.addSeries(LineSeries, { ...maOpts, color: "#3b82f6" });
+    ma50Ref.current = chart.addSeries(LineSeries, { ...maOpts, color: "#f97316" });
+    ma200Ref.current = chart.addSeries(LineSeries, { ...maOpts, color: "#a855f7" });
+
     // Tooltip Sync
     chart.subscribeCrosshairMove((param) => {
       const container = containerRef.current;
@@ -816,6 +824,9 @@ export function PriceChart({
       zonePrimitiveRef.current = null;
       bandsPrimitiveRef.current = null;
       vpPrimitiveRef.current = null;
+      ma20Ref.current = null;
+      ma50Ref.current = null;
+      ma200Ref.current = null;
     };
   }, []); // Run once on mount
 
@@ -851,6 +862,33 @@ export function PriceChart({
     }
 
     oracleSeries.setData(paddedData);
+
+    // Compute and set moving averages
+    const computeMA = (data: AreaData[], period: number): LineData[] => {
+      const result: LineData[] = [];
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) {
+        sum += data[i].value;
+        if (i >= period) sum -= data[i - period].value;
+        if (i >= period - 1) {
+          result.push({ time: data[i].time, value: sum / period });
+        }
+      }
+      return result;
+    };
+
+    if (ma20Ref.current) {
+      ma20Ref.current.setData(computeMA(oracleData, 20));
+      ma20Ref.current.applyOptions({ visible: showMA });
+    }
+    if (ma50Ref.current) {
+      ma50Ref.current.setData(computeMA(oracleData, 50));
+      ma50Ref.current.applyOptions({ visible: showMA });
+    }
+    if (ma200Ref.current) {
+      ma200Ref.current.setData(computeMA(oracleData, 200));
+      ma200Ref.current.applyOptions({ visible: showMA });
+    }
 
     // Effective liquidation prices — preview overrides current when available
     // Apply priceScale to convert from yCVXCRV to cvxCRV terms when alt view is active
@@ -1006,6 +1044,7 @@ export function PriceChart({
     maxBandUsd,
     showVP,
     convertedVP,
+    showMA,
   ]);
 
   // Refit chart when fullscreen toggles (container size changes dramatically)
@@ -1033,58 +1072,39 @@ export function PriceChart({
           className={cn("w-full relative", isFullscreen ? "flex-1" : "h-[400px] sm:h-[450px] border border-[var(--border)] rounded-lg")}
         >
           {/* Overlay Header + Actions (single row to prevent overlap) */}
-          <div className="absolute top-3 left-4 right-20 z-20 flex items-center gap-2 pointer-events-none">
-            {/* Vault Header — left side */}
-            <div className="flex items-center gap-2 bg-[var(--background)]/40 px-3 py-1.5 rounded-lg backdrop-blur-sm border border-[var(--border)]/50 shadow-sm mr-auto shrink-0">
-              {vaultLogo && (
-                <Image
-                  src={vaultLogo}
-                  alt={vaultName}
-                  width={18}
-                  height={18}
-                  className="rounded-full bg-black/20"
-                />
-              )}
-              <div className="flex items-baseline gap-1.5">
-                <h1 className="text-sm font-semibold tracking-tight text-[var(--foreground)] drop-shadow-md">
-                  {vaultName}
-                </h1>
-                <span className="text-[10px] font-medium text-[var(--accent)] drop-shadow-sm uppercase">
-                  LlamaLend
-                </span>
+          <div className="absolute top-2 sm:top-3 left-2 sm:left-4 right-[76px] sm:right-20 z-20 flex items-center gap-1 sm:gap-2 pointer-events-none overflow-hidden">
+            {/* Token toggle — left side */}
+            {altPriceData && altSymbol && (
+              <div className="flex items-center rounded overflow-hidden border border-[var(--border)]/50 shadow-sm pointer-events-auto bg-[var(--background)]/40 backdrop-blur-sm mr-auto shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowAlt(false)}
+                  className={cn(
+                    "text-[10px] px-1.5 py-0.5 transition-all",
+                    !showAlt
+                      ? "bg-[var(--foreground)] text-[var(--background)] font-medium"
+                      : "bg-[var(--background)]/60 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                  )}
+                >
+                  {priceSymbol ?? symbol}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAlt(true)}
+                  className={cn(
+                    "text-[10px] px-1.5 py-0.5 transition-all",
+                    showAlt
+                      ? "bg-[var(--foreground)] text-[var(--background)] font-medium"
+                      : "bg-[var(--background)]/60 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                  )}
+                >
+                  {altSymbol}
+                </button>
               </div>
-              {altPriceData && altSymbol && (
-                <div className="flex items-center rounded overflow-hidden border border-[var(--border)]/50 shadow-sm pointer-events-auto">
-                  <button
-                    type="button"
-                    onClick={() => setShowAlt(false)}
-                    className={cn(
-                      "text-[10px] px-1.5 py-0.5 transition-all",
-                      !showAlt
-                        ? "bg-[var(--foreground)] text-[var(--background)] font-medium"
-                        : "bg-[var(--background)]/60 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                    )}
-                  >
-                    {priceSymbol ?? symbol}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowAlt(true)}
-                    className={cn(
-                      "text-[10px] px-1.5 py-0.5 transition-all",
-                      showAlt
-                        ? "bg-[var(--foreground)] text-[var(--background)] font-medium"
-                        : "bg-[var(--background)]/60 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                    )}
-                  >
-                    {altSymbol}
-                  </button>
-                </div>
-              )}
-            </div>
+            )}
 
             {/* Action buttons — right side */}
-            <div className="flex items-center gap-1 pointer-events-auto">
+            <div className="flex items-center gap-0.5 sm:gap-1 pointer-events-auto shrink-0">
               {volumeProfileBins && volumeProfileBins.length > 0 && (
                 <>
                   <button
@@ -1100,7 +1120,7 @@ export function PriceChart({
                     VP
                   </button>
                   {showVP && onVolumeProfilePeriodChange && (
-                    <div className="flex items-center rounded overflow-hidden border border-[var(--border)] shadow-sm backdrop-blur-md">
+                    <div className="hidden sm:flex items-center rounded overflow-hidden border border-[var(--border)] shadow-sm backdrop-blur-md">
                       {(["30d", "90d", "all"] as const).map((p) => (
                         <button
                           key={p}
@@ -1121,6 +1141,22 @@ export function PriceChart({
                 </>
               )}
 
+              {activePriceData && activePriceData.length >= 20 && (
+                <button
+                  type="button"
+                  onClick={() => setShowMA(!showMA)}
+                  className={cn(
+                    "text-[10px] font-medium px-1.5 py-1 rounded flex items-center justify-center transition-all shadow-sm backdrop-blur-md border",
+                    showMA
+                      ? "bg-[var(--foreground)] text-[var(--background)] border-[var(--foreground)] hover:bg-[var(--foreground)]/90"
+                      : "bg-[var(--background)]/80 text-[var(--foreground)] border-[var(--border)] hover:bg-[var(--accent)] hover:text-white"
+                  )}
+                  title="Moving Averages (20/50/200)"
+                >
+                  <TrendingUp size={12} />
+                </button>
+              )}
+
               {hasBands && (
                 <button
                   type="button"
@@ -1131,8 +1167,9 @@ export function PriceChart({
                       ? "bg-[var(--foreground)] text-[var(--background)] border-[var(--foreground)] hover:bg-[var(--foreground)]/90"
                       : "bg-[var(--background)]/80 text-[var(--foreground)] border-[var(--border)] hover:bg-[var(--accent)] hover:text-white"
                   )}
+                  title="Bands"
                 >
-                  Bands
+                  <AlignJustify size={12} />
                 </button>
               )}
 
@@ -1197,34 +1234,8 @@ export function PriceChart({
               </div>
             </div>
           )}
-        </div>
-      </div>
 
-      {/* Legend */}
-      <div className={cn("flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 w-full max-w-[1400px] mx-auto text-xs text-[var(--muted-foreground)]", isFullscreen && "hidden")}>
-        <div className="flex items-center gap-1.5">
-          <div className="w-4 h-0.5 bg-[var(--accent)] rounded-full" />
-          <span>Oracle Price</span>
         </div>
-        {showVP && convertedVP.poc != null && (
-          <div className="flex items-center gap-1.5">
-            <div className="w-3 h-2.5 bg-purple-400/30 rounded-sm border border-purple-400/50" />
-            <span>Vol Profile</span>
-            <span className="text-[var(--foreground)] tabular-nums ml-0.5">POC {formatPrice(convertedVP.poc)}</span>
-          </div>
-        )}
-        {showLiquidationZone && (liquidationPriceUpper !== undefined || previewLiqUpper !== undefined) && (
-          <>
-            <div className="flex items-center gap-1.5">
-              <div className="w-4 h-px border-t border-dashed border-red-500" />
-              <span>Liq. range</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-2.5 bg-red-500/10 rounded-sm border border-red-500/30" />
-              <span>Liq. zone</span>
-            </div>
-          </>
-        )}
       </div>
     </div>
   );

@@ -390,7 +390,17 @@ export function LendingInterface({
   // Debug tx state (dev only)
   type DebugLendingTxState = "none" | "borrow-pending" | "borrow-success" | "borrow-reverted" | "repay-pending" | "repay-success" | "repay-reverted" | "collateral-pending" | "collateral-success" | "collateral-reverted" | "leverage-pending" | "leverage-success" | "leverage-reverted" | "newloan-pending" | "newloan-success" | "newloan-reverted";
   const [debugTxState, setDebugTxState] = useState<DebugLendingTxState>("none");
-  const [debugMinimized, setDebugMinimized] = useState(false);
+  const [debugMinimized, setDebugMinimized] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try { return localStorage.getItem("yldfi-tx-preview-minimized") === "true"; } catch { return false; }
+  });
+  const toggleDebugMinimized = useCallback(() => {
+    setDebugMinimized(prev => {
+      const next = !prev;
+      try { localStorage.setItem("yldfi-tx-preview-minimized", String(next)); } catch {}
+      return next;
+    });
+  }, []);
   const [debugSoftLiq, setDebugSoftLiq] = useState(false);
   type DebugApprovalScenario = "none" | "ctrl-1of1" | "erc20-1of2" | "ctrl-2of2" | "approving";
   const [debugApproval, setDebugApproval] = useState<DebugApprovalScenario>("none");
@@ -741,8 +751,8 @@ export function LendingInterface({
   // --- Loading: show skeleton while position data loads ---
   if (positionLoading) {
     return (
-      <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl overflow-hidden p-4">
-        <div className="flex items-center justify-center py-40 text-sm text-[var(--muted-foreground)]">
+      <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl overflow-hidden p-4 flex-1 flex flex-col">
+        <div className="flex items-center justify-center py-40 flex-1 text-sm text-[var(--muted-foreground)]">
           <LoadingDots />
         </div>
       </div>
@@ -895,7 +905,7 @@ export function LendingInterface({
         <span>⋮⋮ Lending TX Preview</span>
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); setDebugMinimized(!debugMinimized); }}
+          onClick={(e) => { e.stopPropagation(); toggleDebugMinimized(); }}
           onMouseDown={(e) => e.stopPropagation()}
           className="ml-2 px-1.5 py-0.5 rounded hover:bg-[var(--muted)] transition-colors text-[10px]"
         >
@@ -1000,7 +1010,7 @@ export function LendingInterface({
     // Choice screen: Curve Finance vs yld
     if (loanSource === "choice") {
       return (
-        <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl p-6 space-y-4">
+        <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl p-6 space-y-4 flex-1 flex flex-col">
           <h3 className="text-lg font-medium text-center">Create New Loan</h3>
           <p className="text-sm text-[var(--muted-foreground)] text-center">
             Choose where to open your position
@@ -1046,7 +1056,7 @@ export function LendingInterface({
 
     // yld NewLoanForm view with back button
     return (
-      <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl">
+      <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl flex-1 flex flex-col">
         {/* Title + Back button — hidden during tx states */}
         {!effectiveTxState && (
           <div className="px-4 pt-3 pb-1 flex items-center gap-2">
@@ -1287,7 +1297,7 @@ export function LendingInterface({
 
   // --- Has Loan View: Position summary + Health bar + Management tabs ---
   return (
-    <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl">
+    <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl flex-1 flex flex-col">
       {/* Title — hidden during tx states */}
       {!effectiveTxState && (
         <div className="px-4 pt-3 pb-1 flex items-center gap-2">

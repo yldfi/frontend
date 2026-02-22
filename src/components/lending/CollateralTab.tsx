@@ -118,9 +118,20 @@ export function CollateralTab({
   const isVaultToken =
     selectedToken.address.toLowerCase() === vault.address.toLowerCase();
 
-  // Form state
-  const [amount, setAmountState] = useState("");
-  const setAmount = useCallback((v: string) => setAmountState(sanitizeAmount(v)), []);
+  // Form state — persisted across refresh
+  const storageKey = `yldfi-lending-collateral-${vault.address}`;
+  const [amount, setAmountState] = useState(() => {
+    if (typeof window === "undefined") return "";
+    try { return sanitizeAmount(localStorage.getItem(storageKey) ?? ""); } catch { return ""; }
+  });
+  const setAmount = useCallback((v: string) => {
+    const sanitized = sanitizeAmount(v);
+    setAmountState(sanitized);
+    try {
+      if (sanitized) localStorage.setItem(storageKey, sanitized);
+      else localStorage.removeItem(storageKey);
+    } catch { /* */ }
+  }, [storageKey]);
 
   // Slippage (basis points) — persisted
   const [rateInverted, setRateInverted] = useState(false);

@@ -170,10 +170,21 @@ export function BorrowTab({
   const [collateralToken, setCollateralToken] = useState<EnsoToken>(vaultToken);
   const isCollateralToken = collateralToken.address.toLowerCase() === vault.address.toLowerCase();
   const [showCollateralInput, setShowCollateralInput] = useState(false);
-  const [collateralAmount, setCollateralAmountState] = useState("");
+  const collateralStorageKey = `yldfi-lending-borrow-collateral-${vault.address}`;
+  const [collateralAmount, setCollateralAmountState] = useState(() => {
+    if (typeof window === "undefined") return "";
+    try { return sanitizeAmount(localStorage.getItem(collateralStorageKey) ?? ""); } catch { return ""; }
+  });
   const setCollateralAmount = useCallback(
-    (v: string) => setCollateralAmountState(sanitizeAmount(v)),
-    []
+    (v: string) => {
+      const sanitized = sanitizeAmount(v);
+      setCollateralAmountState(sanitized);
+      try {
+        if (sanitized) localStorage.setItem(collateralStorageKey, sanitized);
+        else localStorage.removeItem(collateralStorageKey);
+      } catch { /* */ }
+    },
+    [collateralStorageKey]
   );
 
   // Balance for non-vault collateral tokens
@@ -315,10 +326,21 @@ export function BorrowTab({
   // Form state — amount is in the selected token's denomination
   // crvUSD: amount of crvUSD debt to create
   // Other tokens: desired amount of token to receive (reverse quote calculates crvUSD debt)
-  const [borrowAmount, setBorrowAmountState] = useState("");
+  const borrowStorageKey = `yldfi-lending-borrow-amount-${vault.address}`;
+  const [borrowAmount, setBorrowAmountState] = useState(() => {
+    if (typeof window === "undefined") return "";
+    try { return sanitizeAmount(localStorage.getItem(borrowStorageKey) ?? ""); } catch { return ""; }
+  });
   const setBorrowAmount = useCallback(
-    (v: string) => setBorrowAmountState(sanitizeAmount(v)),
-    []
+    (v: string) => {
+      const sanitized = sanitizeAmount(v);
+      setBorrowAmountState(sanitized);
+      try {
+        if (sanitized) localStorage.setItem(borrowStorageKey, sanitized);
+        else localStorage.removeItem(borrowStorageKey);
+      } catch { /* */ }
+    },
+    [borrowStorageKey]
   );
 
   // Slippage (basis points) - persisted to localStorage

@@ -138,15 +138,24 @@ export function RepayTab({
   // Close loan is an explicit user action (CLOSE button only) — never auto-derived from amounts
   const [isClosingLoan, setIsClosingLoan] = useState(false);
 
-  // Form state
-  const [repayAmount, setRepayAmountState] = useState("");
+  // Form state — persisted across refresh
+  const repayStorageKey = `yldfi-lending-repay-${vault.address}`;
+  const [repayAmount, setRepayAmountState] = useState(() => {
+    if (typeof window === "undefined") return "";
+    try { return sanitizeAmount(localStorage.getItem(repayStorageKey) ?? ""); } catch { return ""; }
+  });
   const setRepayAmount = useCallback(
     (v: string) => {
-      setRepayAmountState(sanitizeAmount(v));
+      const sanitized = sanitizeAmount(v);
+      setRepayAmountState(sanitized);
       setIsClosingLoan(false);
       hasAutoCapped.current = false;
+      try {
+        if (sanitized) localStorage.setItem(repayStorageKey, sanitized);
+        else localStorage.removeItem(repayStorageKey);
+      } catch { /* */ }
     },
-    []
+    [repayStorageKey]
   );
 
   // Withdraw collateral (optional)

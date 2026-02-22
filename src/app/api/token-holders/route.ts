@@ -10,31 +10,9 @@ const TOKEN_HOLDER_API_KEY = process.env.TOKEN_HOLDER_API_KEY || "";
 const holdersCache = new Map<string, { holders: string[]; timestamp: number }>();
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
-// Rate limiting
-const MAX_REQUESTS_PER_MINUTE = 30;
-const RATE_LIMIT_WINDOW_MS = 60_000;
-const requestLog = new Map<string, number[]>();
+import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
 
-function getClientIp(request: NextRequest): string {
-  return (
-    request.headers.get("cf-connecting-ip") ||
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    "unknown"
-  );
-}
-
-function isRateLimited(clientIp: string): boolean {
-  const now = Date.now();
-  const entries = requestLog.get(clientIp) ?? [];
-  const recent = entries.filter((timestamp) => now - timestamp < RATE_LIMIT_WINDOW_MS);
-  if (recent.length >= MAX_REQUESTS_PER_MINUTE) {
-    requestLog.set(clientIp, recent);
-    return true;
-  }
-  recent.push(now);
-  requestLog.set(clientIp, recent);
-  return false;
-}
+const isRateLimited = createRateLimiter(30);
 
 function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;

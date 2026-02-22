@@ -30,7 +30,6 @@ const CVX_BALANCE_SLOT = 0n;
 const CVX_ALLOWANCE_SLOT = 1n;
 const MAX_UINT256 = (1n << 256n) - 1n;
 const MAX_REQUESTS_PER_MINUTE = 8;
-const RATE_LIMIT_WINDOW_MS = 60_000;
 
 // ERC4626 ABI for convertToAssets
 const ERC4626_ABI = [
@@ -49,27 +48,22 @@ const publicClient = createPublicClient({
   transport: http(),
 });
 
-const requestLog = new Map<string, number[]>();
+import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
 
-function getClientIp(request: NextRequest): string {
-  return (
-    request.headers.get("cf-connecting-ip") ||
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    "unknown"
-  );
-}
+const isRateLimited = createRateLimiter(MAX_REQUESTS_PER_MINUTE);
 
-function isRateLimited(clientIp: string): boolean {
+// Track consumed nonces to prevent replay within TTL window
+// Map<nonce, expiresAt> — entries self-clean on each check
+const consumedNonces = new Map<string, number>();
+function consumeNonce(nonce: string, expires: number): boolean {
   const now = Date.now();
-  const entries = requestLog.get(clientIp) ?? [];
-  const recent = entries.filter((timestamp) => now - timestamp < RATE_LIMIT_WINDOW_MS);
-  if (recent.length >= MAX_REQUESTS_PER_MINUTE) {
-    requestLog.set(clientIp, recent);
-    return true;
+  // Evict expired nonces
+  for (const [key, exp] of consumedNonces) {
+    if (now > exp) consumedNonces.delete(key);
   }
-  recent.push(now);
-  requestLog.set(clientIp, recent);
-  return false;
+  if (consumedNonces.has(nonce)) return false; // already used
+  consumedNonces.set(nonce, expires);
+  return true;
 }
 
 function base64UrlDecode(value: string): Uint8Array {
@@ -432,6 +426,14 @@ export async function POST(request: NextRequest) {
   if (!nonceOk) {
     return NextResponse.json(
       { success: false, errorMessage: "Invalid nonce", retryable: false },
+      { status: 400, headers: corsHeaders }
+    );
+  }
+
+  // Reject replayed nonces (each nonce can only be used once)
+  if (!consumeNonce(body.nonce, body.expires)) {
+    return NextResponse.json(
+      { success: false, errorMessage: "Nonce already used", retryable: false },
       { status: 400, headers: corsHeaders }
     );
   }

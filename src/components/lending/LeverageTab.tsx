@@ -334,8 +334,12 @@ export function LeverageTab({
   const [subTab, setSubTab] = useState<"leverageUp" | "deleverage">("leverageUp");
   const activeMode = mode === "selfLiquidate" ? mode : subTab;
 
-  // Form state
-  const [collateralAmount, setCollateralAmountRaw] = useState("");
+  // Form state — persisted across refresh
+  const leverageStorageKey = `yldfi-lending-leverage-${vault.address}`;
+  const [collateralAmount, setCollateralAmountRaw] = useState(() => {
+    if (typeof window === "undefined") return "";
+    try { return sanitizeAmount(localStorage.getItem(leverageStorageKey) ?? ""); } catch { return ""; }
+  });
   const setCollateralAmount = useCallback((v: string) => {
     const sanitized = sanitizeAmount(v);
     setCollateralAmountRaw(sanitized);
@@ -344,7 +348,11 @@ export function LeverageTab({
     if (sanitized && Number(sanitized) > 0) {
       setMaxBorrowableLoaded(false); // force clamp to wait for fresh calcMax
     }
-  }, []);
+    try {
+      if (sanitized) localStorage.setItem(leverageStorageKey, sanitized);
+      else localStorage.removeItem(leverageStorageKey);
+    } catch { /* */ }
+  }, [leverageStorageKey]);
   const [leverage, setLeverage] = useState(2.0);
   const [leverageInput, setLeverageInput] = useState(leverage.toFixed(2));
   const leverageInputFocused = useRef(false);

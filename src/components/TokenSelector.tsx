@@ -143,6 +143,7 @@ export function TokenSelector({
 }: TokenSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"tokens" | "vaults">("tokens");
+  const [confirmImportToken, setConfirmImportToken] = useState<EnsoToken | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -213,19 +214,23 @@ export function TokenSelector({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isOpen]);
 
-  // Close on escape key
+  // Close on escape key — import dialog takes priority over main modal
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setIsOpen(false);
+        if (confirmImportToken) {
+          setConfirmImportToken(null);
+        } else {
+          setIsOpen(false);
+        }
       }
     };
 
-    if (isOpen) {
+    if (isOpen || confirmImportToken) {
       document.addEventListener("keydown", handleEscape);
     }
     return () => document.removeEventListener("keydown", handleEscape);
-  }, [isOpen]);
+  }, [isOpen, confirmImportToken]);
 
   const handleSelect = (token: EnsoToken, shouldImport = false) => {
     if (shouldImport) {
@@ -271,6 +276,59 @@ export function TokenSelector({
           />
         </svg>
       </button>
+
+      {/* Import confirmation dialog */}
+      {confirmImportToken &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <div
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              onClick={() => setConfirmImportToken(null)}
+            />
+            <div className="relative bg-[var(--background)] border border-[var(--border)] rounded-xl w-full max-w-sm p-5 shadow-xl">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-yellow-500/10 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-5 h-5 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                </div>
+                <h3 className="font-medium text-base">Import token?</h3>
+              </div>
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-[var(--muted)] mb-3">
+                <TokenLogo token={confirmImportToken} size={32} />
+                <div className="min-w-0">
+                  <div className="font-medium">{confirmImportToken.symbol}</div>
+                  <div className="text-xs text-[var(--muted-foreground)] truncate">{confirmImportToken.name}</div>
+                </div>
+              </div>
+              <p className="text-sm text-[var(--muted-foreground)] mb-1">
+                <span className="mono text-xs break-all">{confirmImportToken.address}</span>
+              </p>
+              <p className="text-sm text-[var(--muted-foreground)] mb-4">
+                This token isn&apos;t on the default token list. Make sure you&apos;ve verified the contract address before importing.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setConfirmImportToken(null)}
+                  className="flex-1 py-2.5 rounded-lg border border-[var(--border)] text-sm font-medium hover:bg-[var(--muted)] transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    handleSelect(confirmImportToken, true);
+                    setConfirmImportToken(null);
+                  }}
+                  className="flex-1 py-2.5 rounded-lg bg-[var(--foreground)] text-[var(--background)] text-sm font-medium hover:opacity-90 transition-opacity"
+                >
+                  Import
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
 
       {isOpen &&
         typeof document !== "undefined" &&
@@ -452,7 +510,7 @@ export function TokenSelector({
                             </div>
                             <TokenRow
                               token={importedToken}
-                              onSelect={() => handleSelect(importedToken)}
+                              onSelect={() => setConfirmImportToken(importedToken)}
                               isSelected={false}
                             />
                           </div>
