@@ -136,6 +136,7 @@ interface BorrowTabProps {
   onTransactionSuccess: () => void;
   onEstimatedHealthChange?: (health: number | null) => void;
   onDebtDeltaChange?: (delta: bigint | null) => void;
+  onCollateralDeltaChange?: (delta: bigint | null) => void;
   onTxStateChange?: (state: { status: "pending" | "success" | "reverted"; action: string; hash: string; details?: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string } } | null) => void;
   onSwitchTab?: (tab: string) => void;
 }
@@ -148,6 +149,7 @@ export function BorrowTab({
   onTransactionSuccess,
   onEstimatedHealthChange,
   onDebtDeltaChange,
+  onCollateralDeltaChange,
   onTxStateChange,
   onSwitchTab,
 }: BorrowTabProps) {
@@ -802,6 +804,11 @@ export function BorrowTab({
     onDebtDeltaChange?.(estimatedCrvUsdBorrow ?? null);
   }, [estimatedCrvUsdBorrow, onDebtDeltaChange]);
 
+  // Report collateral delta to parent (positive = adding collateral)
+  useEffect(() => {
+    onCollateralDeltaChange?.(collateralWei > 0n ? collateralWei : null);
+  }, [collateralWei, onCollateralDeltaChange]);
+
   // Report tx state to parent for full-screen overlay
   useEffect(() => {
     if ((status === "waitingTx" || status === "success" || status === "reverted") && txHash) {
@@ -987,9 +994,12 @@ export function BorrowTab({
   };
 
   // Validation: amount exceeds max borrowable
+  // Use 0.01% tolerance to handle max_borrowable shifting by a few wei between
+  // RPC calls (interest accrual, different blocks) after clicking MAX then adding collateral
   const exceedsMax = useMemo(() => {
     if (!estimatedCrvUsdBorrow || maxBorrowable === null) return false;
-    return estimatedCrvUsdBorrow > maxBorrowable;
+    const tolerance = maxBorrowable / 10000n; // 0.01%
+    return estimatedCrvUsdBorrow > maxBorrowable + tolerance;
   }, [estimatedCrvUsdBorrow, maxBorrowable]);
 
   const isProcessing =
@@ -1198,7 +1208,7 @@ export function BorrowTab({
           className="grid transition-[grid-template-rows] duration-300 ease-in-out"
           style={{ gridTemplateRows: showCollateralInput ? "1fr" : "0fr" }}
         >
-          <div className="overflow-hidden">
+          <div className={showCollateralInput ? "overflow-visible" : "overflow-hidden"}>
             <div className="pt-3 space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-sm text-[var(--muted-foreground)]">
