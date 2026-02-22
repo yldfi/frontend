@@ -107,19 +107,19 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
         </div>
 
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
-          {/* Section Header — full width, nothing beside it */}
-          <div className="mb-6">
-            <p className="mono text-sm text-[var(--muted-foreground)] mb-2">
-              [004] Lending
-            </p>
-            <h2 className="text-2xl md:text-3xl font-medium tracking-tight">
-              {vault.name} <span className="text-[var(--muted-foreground)]">LlamaLend</span>
-            </h2>
-          </div>
-
           <div className="grid lg:grid-cols-5 gap-8 lg:gap-12">
             {/* Left column - Chart + Position + Info */}
             <div className="lg:col-span-3 space-y-8 min-w-0">
+              {/* Section Header */}
+              <div>
+                <p className="mono text-sm text-[var(--muted-foreground)] mb-2">
+                  [004] Lending
+                </p>
+                <h2 className="text-2xl md:text-3xl font-medium tracking-tight">
+                  {vault.name} <span className="text-[var(--muted-foreground)]">LlamaLend</span>
+                </h2>
+              </div>
+
               {/* Price Chart */}
               <div>
                 <PriceChart
