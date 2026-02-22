@@ -262,8 +262,13 @@ input[type="range"]::-moz-range-track {
   font-size: 13px;
   font-weight: 500;
   border-radius: 6px;
-  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6);
+  background: linear-gradient(135deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6);
+  background-size: 200% 200%;
   transition: all 0.2s ease;
+}
+
+.collateral-link:hover {
+  animation: rainbowSlide 4s linear infinite;
 }
 
 .collateral-link span {
@@ -309,8 +314,13 @@ input[type="range"]::-moz-range-track {
 .lending-card {
   padding: 1px;
   border-radius: 10px;
-  background: linear-gradient(90deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6);
+  background: linear-gradient(135deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #3b82f6);
+  background-size: 200% 200%;
   transition: opacity 0.2s ease;
+}
+
+.lending-card:hover {
+  animation: rainbowSlide 4s linear infinite;
 }
 
 .lending-card > * {
