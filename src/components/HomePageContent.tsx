@@ -480,7 +480,7 @@ export function HomePageContent() {
                         {vault.name}
                       </h3>
                     </div>
-                    <p className="text-sm text-[var(--muted-foreground)] mb-3 leading-relaxed">
+                    <p className="text-sm text-[var(--muted-foreground)] mb-3 leading-relaxed line-clamp-2">
                       {vault.description}
                     </p>
                     <div className="flex items-center gap-2.5 mb-4">
