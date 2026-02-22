@@ -1306,7 +1306,7 @@ export function VaultPageContent({ id }: { id: string }) {
                   const display = buildLendingPositionDisplay(
                     lendingPosition.collateral,
                     lendingPosition.debt,
-                    underlyingPrice,
+                    underlyingPrice * pricePerShare,
                     collateralApr,
                     borrowApr,
                   );
@@ -1329,7 +1329,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               {vault.logo && <Image src={vault.logo} alt={vault.symbol} width={12} height={12} className="rounded-full" />}
                               <span className="mono text-sm font-medium">{display.collateralFormatted}</span>
                             </div>
-                            <p className="text-xs text-green-500 mono">{display.collateralAprFormatted}</p>
+                            <p className="text-xs text-green-500 mono">{display.collateralAprFormatted} APR</p>
                           </div>
                           <div>
                             <p className="text-xs text-[var(--muted-foreground)] mb-0.5">Debt</p>
@@ -1337,7 +1337,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               <Image src="/tokens/crvusd.png" alt="crvUSD" width={12} height={12} className="rounded-full" />
                               <span className="mono text-sm font-medium">{display.debtFormatted}</span>
                             </div>
-                            <p className="text-xs text-red-500 mono">{display.borrowAprFormatted}</p>
+                            <p className="text-xs text-red-500 mono">{display.borrowAprFormatted} APR</p>
                           </div>
                           <div>
                             <p className="text-xs text-[var(--muted-foreground)] mb-0.5">Leverage</p>
