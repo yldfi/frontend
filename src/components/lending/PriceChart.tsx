@@ -19,7 +19,7 @@ import {
   type IPrimitivePaneRenderer,
 } from "lightweight-charts";
 import { cn } from "@/lib/utils";
-import { Maximize2, Minimize2, RefreshCcw } from "lucide-react";
+import { Maximize2, Minimize2, RefreshCcw, AlignJustify } from "lucide-react";
 import Image from "next/image";
 import { formatUnits } from "viem";
 import type { BandData } from "@/hooks/useOraclePriceHistory";
@@ -400,11 +400,7 @@ class VolumeProfilePrimitive implements ISeriesPrimitive<Time> {
               const barX = chartRight - w;
               context.lineWidth = 1;
               context.beginPath();
-              if (typeof context.roundRect === "function") {
-                context.roundRect(barX, top, w, h, [4, 0, 0, 4]);
-              } else {
-                context.rect(barX, top, w, h);
-              }
+              context.rect(barX, top, w, h);
               context.fill();
               context.stroke();
             });
@@ -1033,23 +1029,23 @@ export function PriceChart({
           className={cn("w-full relative", isFullscreen ? "flex-1" : "h-[400px] sm:h-[450px] border border-[var(--border)] rounded-lg")}
         >
           {/* Overlay Header + Actions (single row to prevent overlap) */}
-          <div className="absolute top-3 left-4 right-20 z-20 flex items-center gap-2 pointer-events-none">
+          <div className="absolute top-2 sm:top-3 left-2 sm:left-4 right-[76px] sm:right-20 z-20 flex items-center gap-1 sm:gap-2 pointer-events-none overflow-hidden">
             {/* Vault Header — left side */}
-            <div className="flex items-center gap-2 bg-[var(--background)]/40 px-3 py-1.5 rounded-lg backdrop-blur-sm border border-[var(--border)]/50 shadow-sm mr-auto shrink-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 bg-[var(--background)]/40 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg backdrop-blur-sm border border-[var(--border)]/50 shadow-sm mr-auto min-w-0">
               {vaultLogo && (
                 <Image
                   src={vaultLogo}
                   alt={vaultName}
                   width={18}
                   height={18}
-                  className="rounded-full bg-black/20"
+                  className="rounded-full bg-black/20 shrink-0"
                 />
               )}
-              <div className="flex items-baseline gap-1.5">
-                <h1 className="text-sm font-semibold tracking-tight text-[var(--foreground)] drop-shadow-md">
+              <div className="hidden sm:flex items-baseline gap-1.5 min-w-0">
+                <h1 className="text-sm font-semibold tracking-tight text-[var(--foreground)] drop-shadow-md truncate">
                   {vaultName}
                 </h1>
-                <span className="text-[10px] font-medium text-[var(--accent)] drop-shadow-sm uppercase">
+                <span className="text-[10px] font-medium text-[var(--accent)] drop-shadow-sm uppercase shrink-0">
                   LlamaLend
                 </span>
               </div>
@@ -1084,7 +1080,7 @@ export function PriceChart({
             </div>
 
             {/* Action buttons — right side */}
-            <div className="flex items-center gap-1 pointer-events-auto">
+            <div className="flex items-center gap-0.5 sm:gap-1 pointer-events-auto shrink-0">
               {volumeProfileBins && volumeProfileBins.length > 0 && (
                 <>
                   <button
@@ -1100,7 +1096,7 @@ export function PriceChart({
                     VP
                   </button>
                   {showVP && onVolumeProfilePeriodChange && (
-                    <div className="flex items-center rounded overflow-hidden border border-[var(--border)] shadow-sm backdrop-blur-md">
+                    <div className="hidden sm:flex items-center rounded overflow-hidden border border-[var(--border)] shadow-sm backdrop-blur-md">
                       {(["30d", "90d", "all"] as const).map((p) => (
                         <button
                           key={p}
@@ -1131,8 +1127,9 @@ export function PriceChart({
                       ? "bg-[var(--foreground)] text-[var(--background)] border-[var(--foreground)] hover:bg-[var(--foreground)]/90"
                       : "bg-[var(--background)]/80 text-[var(--foreground)] border-[var(--border)] hover:bg-[var(--accent)] hover:text-white"
                   )}
+                  title="Bands"
                 >
-                  Bands
+                  <AlignJustify size={12} />
                 </button>
               )}
 

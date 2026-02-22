@@ -1160,10 +1160,10 @@ export function VaultPageContent({ id }: { id: string }) {
   }, [zapQuoteError]);
 
   return (
-    <div className="min-h-screen bg-[var(--background)]">
+    <div className="min-h-screen bg-[var(--background)] overflow-x-hidden">
       {/* Header */}
       <header className="fixed left-0 right-0 z-50 border-b border-[var(--border)] backdrop-blur-lg bg-[var(--background)]/80" style={{ top: "var(--test-banner-height)" }}>
-        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <Logo size={28} />
             <span className="mono text-lg font-medium tracking-tight leading-none">
@@ -1177,7 +1177,7 @@ export function VaultPageContent({ id }: { id: string }) {
       <main style={{ paddingTop: "calc(4rem + var(--test-banner-height))", overflowX: "clip" }}>
         {/* Breadcrumb navigation */}
         <div className="border-b border-[var(--border)]">
-          <div className="max-w-6xl mx-auto px-6 py-4">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4">
             <nav className="flex items-center gap-2 text-sm">
               <Link
                 href="/"
@@ -1191,8 +1191,8 @@ export function VaultPageContent({ id }: { id: string }) {
           </div>
         </div>
 
-        <div className="max-w-6xl mx-auto px-6 py-12">
-          <div className="grid lg:grid-cols-5 gap-12">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-12">
+          <div className="grid lg:grid-cols-5 gap-8 lg:gap-12">
             {/* Left column - Info */}
             <div className="lg:col-span-3 space-y-12">
               {/* Header */}
