@@ -1464,7 +1464,7 @@ export function VaultPageContent({ id }: { id: string }) {
 
                   {/* Vault address */}
                   <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-[var(--muted)]/30">
-                    <span className="text-[var(--muted-foreground)] text-xs">{vault.type === "strategy" ? "Strategy" : "Vault"}</span>
+                    <span className="text-[var(--muted-foreground)] text-xs">{vault.type === "strategy" ? "Strategy Contract" : "Vault Contract"}</span>
                     <div className="flex items-center gap-2">
                       <a
                         href={vault.links?.etherscan || `https://etherscan.io/address/${vault.address}`}
