@@ -531,9 +531,11 @@ export function CollateralTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [amount, selectedToken.address, mode]);
 
-  // Toast notifications
+  // Handle transaction success — clear inputs and reset to idle
   useEffect(() => {
     if (status === "success" && txHash) {
+      setAmountState("");
+      try { localStorage.removeItem(storageKey); } catch { /* */ }
       toast.success(mode === "add" ? "Collateral added!" : "Collateral removed!", {
         action: {
           label: "View Tx",
@@ -544,7 +546,7 @@ export function CollateralTab({
       refetchBalance();
       reset();
     }
-  }, [status, txHash, mode, onTransactionSuccess, reset, refetchBalance]);
+  }, [status, txHash, mode, onTransactionSuccess, reset, refetchBalance, storageKey]);
 
   useEffect(() => {
     if ((status === "error" || status === "reverted") && error) {

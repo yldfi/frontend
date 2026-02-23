@@ -1258,9 +1258,14 @@ export function NewLoanForm({
     }
   }, [status, txHash, onTxStateChange, amount, selectedToken, debtAmount, hasOutputSwap, outputToken, outputSwapQuote]);
 
-  // Handle transaction success
+  // Handle transaction success — clear inputs and reset to idle
   useEffect(() => {
     if (status === "success" && txHash) {
+      setAmountState("");
+      setDebtInputState("");
+      debtRatio.current = null;
+      try { localStorage.removeItem(amountStorageKey); } catch { /* */ }
+      try { localStorage.removeItem(debtStorageKey); } catch { /* */ }
       toast.success("Loan created!", {
         action: {
           label: "View Tx",
@@ -1271,7 +1276,7 @@ export function NewLoanForm({
       refetchBalance();
       reset();
     }
-  }, [status, txHash, onTransactionSuccess, reset, refetchBalance]);
+  }, [status, txHash, onTransactionSuccess, reset, refetchBalance, amountStorageKey, debtStorageKey]);
 
   useEffect(() => {
     if ((status === "error" || status === "reverted") && error) {
