@@ -1441,92 +1441,66 @@ export function VaultPageContent({ id }: { id: string }) {
               </div>
 
               {/* Details */}
-              <div className="p-5 rounded-xl border border-[var(--border)] space-y-4">
-                <div className="flex items-center gap-2">
+              <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--border)] bg-[var(--muted)]/20">
                   <Info size={14} className="text-[var(--muted-foreground)]" />
                   <h3 className="text-sm font-medium text-[var(--foreground)]">{vault.type === "vault" ? "Vault" : "Strategy"} Details</h3>
                 </div>
-
-                <div className="space-y-2 text-sm">
-                  {/* Strategy & Fee row */}
-                  <div className="flex gap-2">
-                    <div className="flex-1 flex justify-between items-center px-3 py-2.5 rounded-lg bg-[var(--muted)]/30">
-                      <span className="text-[var(--muted-foreground)] text-xs">Strategy</span>
-                      <span className="mono text-xs font-medium">{vault.strategy}</span>
-                    </div>
-                    <div className="flex-1 flex justify-between items-center px-3 py-2.5 rounded-lg bg-[var(--muted)]/30">
-                      <span className="text-[var(--muted-foreground)] text-xs">Performance Fee</span>
-                      <span className="mono text-xs font-medium">
-                        {vault.type === "vault" ? "15% Vault + 5% Strat" : `${vault.fees.performance}%`}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Vault address */}
-                  <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-[var(--muted)]/30">
-                    <span className="text-[var(--muted-foreground)] text-xs">{vault.type === "strategy" ? "Strategy Contract" : "Vault Contract"}</span>
-                    <div className="flex items-center gap-2">
-                      <a
-                        href={vault.links?.etherscan || `https://etherscan.io/address/${vault.address}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="mono text-xs flex items-center gap-1 hover:text-[var(--accent)] transition-colors"
-                      >
-                        {vault.address.slice(0, 6)}...{vault.address.slice(-4)}
-                        <ExternalLink size={10} className="opacity-50" />
-                      </a>
-                      <button
-                        onClick={() => { navigator.clipboard.writeText(vault.address); toast.success("Address copied", { id: "copy-address" }); }}
-                        className="hover:text-[var(--accent)] text-[var(--muted-foreground)] transition-colors"
-                        aria-label="Copy vault address"
-                      >
-                        <Copy size={11} />
-                      </button>
-                      <button
-                        onClick={() => openExplorer(vault.address, vault.name, vault.logo, vault.type === "strategy")}
-                        className="text-[10px] px-1.5 py-0.5 bg-[var(--muted)] hover:bg-[var(--accent)] hover:text-white rounded flex items-center gap-1 transition-colors"
-                      >
-                        <Search size={9} />
-                        Explore
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Strategy contract address */}
-                  {vault.underlyingStrategy && vault.type === "vault" && (
-                    <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-[var(--muted)]/30">
-                      <span className="text-[var(--muted-foreground)] text-xs">Strategy Contract</span>
-                      <div className="flex items-center gap-2">
-                        <a
-                          href={`https://etherscan.io/address/${vault.underlyingStrategy}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="mono text-xs flex items-center gap-1 hover:text-[var(--accent)] transition-colors"
-                        >
-                          {vault.underlyingStrategy.slice(0, 6)}...{vault.underlyingStrategy.slice(-4)}
-                          <ExternalLink size={10} className="opacity-50" />
-                        </a>
-                        <button
-                          onClick={() => { navigator.clipboard.writeText(vault.underlyingStrategy!); toast.success("Address copied", { id: "copy-address" }); }}
-                          className="hover:text-[var(--accent)] text-[var(--muted-foreground)] transition-colors"
-                          aria-label="Copy strategy address"
-                        >
-                          <Copy size={11} />
-                        </button>
-                        <button
-                          onClick={() => {
-                            const strategyConfig = getVaultByAddress(vault.underlyingStrategy!);
-                            openExplorer(vault.underlyingStrategy!, strategyConfig?.name || `${vault.name} Strategy`, strategyConfig?.logo, true);
-                          }}
-                          className="text-[10px] px-1.5 py-0.5 bg-[var(--muted)] hover:bg-[var(--accent)] hover:text-white rounded flex items-center gap-1 transition-colors"
-                        >
-                          <Search size={9} />
-                          Explore
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <table className="w-full text-xs">
+                  <tbody>
+                    {vault.type === "vault" && (
+                      <tr className="border-b border-[var(--border)]/50">
+                        <td className="px-3 sm:px-4 py-2.5 text-[var(--muted-foreground)] font-medium whitespace-nowrap">Vault</td>
+                        <td className="px-3 sm:px-4 py-2.5 text-right mono font-medium">{vault.name}</td>
+                      </tr>
+                    )}
+                    <tr className="border-b border-[var(--border)]/50">
+                      <td className="px-3 sm:px-4 py-2.5 text-[var(--muted-foreground)] font-medium whitespace-nowrap">
+                        {vault.type === "vault" ? (<><span className="hidden sm:inline">Underlying Strategy</span><span className="sm:hidden">Strategy</span></>) : "Strategy"}
+                      </td>
+                      <td className="px-3 sm:px-4 py-2.5 text-right mono font-medium">{vault.strategy}</td>
+                    </tr>
+                    <tr className="border-b border-[var(--border)]/50">
+                      <td className="px-3 sm:px-4 py-2.5 text-[var(--muted-foreground)] font-medium whitespace-nowrap">
+                        <span className="hidden sm:inline">Performance Fee</span><span className="sm:hidden">Fee</span>
+                      </td>
+                      <td className="px-3 sm:px-4 py-2.5 text-right mono font-medium">
+                        {vault.type === "vault" ? (<><span className="hidden sm:inline">15% Vault + 5% Strategy</span><span className="sm:hidden">15% + 5%</span></>) : `${vault.fees.performance}%`}
+                      </td>
+                    </tr>
+                    <tr className={vault.underlyingStrategy && vault.type === "vault" ? "border-b border-[var(--border)]/50" : ""}>
+                      <td className="px-3 sm:px-4 py-2.5 text-[var(--muted-foreground)] font-medium whitespace-nowrap">
+                        <span className="hidden sm:inline">{vault.type === "strategy" ? "Strategy Contract" : "Vault Contract"}</span>
+                        <span className="sm:hidden">{vault.type === "strategy" ? "Contract" : "Vault"}</span>
+                      </td>
+                      <td className="px-3 sm:px-4 py-2.5 text-right">
+                        <div className="flex items-center justify-end gap-1.5 sm:gap-2 flex-wrap">
+                          <a href={vault.links?.etherscan || `https://etherscan.io/address/${vault.address}`} target="_blank" rel="noopener noreferrer" className="mono text-xs flex items-center gap-1 hover:text-[var(--accent)] transition-colors">
+                            {vault.address.slice(0, 6)}...{vault.address.slice(-4)}<ExternalLink size={10} className="opacity-50" />
+                          </a>
+                          <button onClick={() => { navigator.clipboard.writeText(vault.address); toast.success("Address copied", { id: "copy-address" }); }} className="hover:text-[var(--accent)] text-[var(--muted-foreground)] transition-colors" aria-label="Copy vault address"><Copy size={11} /></button>
+                          <button onClick={() => openExplorer(vault.address, vault.name, vault.logo, vault.type === "strategy")} className="text-[10px] px-1.5 py-0.5 bg-[var(--muted)] hover:bg-[var(--accent)] hover:text-white rounded flex items-center gap-1 transition-colors"><Search size={9} /><span className="hidden sm:inline">Explore</span></button>
+                        </div>
+                      </td>
+                    </tr>
+                    {vault.underlyingStrategy && vault.type === "vault" && (
+                      <tr>
+                        <td className="px-3 sm:px-4 py-2.5 text-[var(--muted-foreground)] font-medium whitespace-nowrap">
+                          <span className="hidden sm:inline">Strategy Contract</span><span className="sm:hidden">Strategy</span>
+                        </td>
+                        <td className="px-3 sm:px-4 py-2.5 text-right">
+                          <div className="flex items-center justify-end gap-1.5 sm:gap-2 flex-wrap">
+                            <a href={`https://etherscan.io/address/${vault.underlyingStrategy}`} target="_blank" rel="noopener noreferrer" className="mono text-xs flex items-center gap-1 hover:text-[var(--accent)] transition-colors">
+                              {vault.underlyingStrategy.slice(0, 6)}...{vault.underlyingStrategy.slice(-4)}<ExternalLink size={10} className="opacity-50" />
+                            </a>
+                            <button onClick={() => { navigator.clipboard.writeText(vault.underlyingStrategy!); toast.success("Address copied", { id: "copy-address" }); }} className="hover:text-[var(--accent)] text-[var(--muted-foreground)] transition-colors" aria-label="Copy strategy address"><Copy size={11} /></button>
+                            <button onClick={() => { const sc = getVaultByAddress(vault.underlyingStrategy!); openExplorer(vault.underlyingStrategy!, sc?.name || `${vault.name} Strategy`, sc?.logo, true); }} className="text-[10px] px-1.5 py-0.5 bg-[var(--muted)] hover:bg-[var(--accent)] hover:text-white rounded flex items-center gap-1 transition-colors"><Search size={9} /><span className="hidden sm:inline">Explore</span></button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
 
               {/* LlamaLend Market Stats */}
