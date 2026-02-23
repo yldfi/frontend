@@ -928,14 +928,17 @@ export function RepayTab({
     }
   }, [status, txHash, isClosingLoan, onTxStateChange, repayAmount, repayToken, isCrvUsd, isVaultWithCrvUsdUnderlying, estimatedCrvUsdOut, withdrawAmountWei, debouncedWithdrawAmount, vault.symbol]);
 
-  // Handle transaction success — reset to idle so button returns to normal
+  // Handle transaction success — clear inputs and reset to idle
   useEffect(() => {
     if (status === "success") {
+      setRepayAmountState("");
+      setWithdrawAmountState("");
+      try { localStorage.removeItem(repayStorageKey); } catch { /* */ }
       onTransactionSuccess();
       refetchBalance();
       reset();
     }
-  }, [status, onTransactionSuccess, reset, refetchBalance]);
+  }, [status, onTransactionSuccess, reset, refetchBalance, repayStorageKey]);
 
   // Toast error messages to user
   useEffect(() => {

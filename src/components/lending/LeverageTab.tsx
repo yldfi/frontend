@@ -1224,14 +1224,16 @@ export function LeverageTab({
     return () => { stale = true; };
   }, [mode, publicClient, address, controllerAddress, effectiveSelfLiqPercent]);
 
-  // Handle transaction success — reset to idle so button returns to normal
+  // Handle transaction success — clear inputs and reset to idle
   useEffect(() => {
     if (status === "success") {
+      setCollateralAmountRaw("");
+      try { localStorage.removeItem(leverageStorageKey); } catch { /* */ }
       onTransactionSuccess();
       refetchBalance();
       reset();
     }
-  }, [status, onTransactionSuccess, reset, refetchBalance]);
+  }, [status, onTransactionSuccess, reset, refetchBalance, leverageStorageKey]);
 
   // Toast error messages to user
   useEffect(() => {

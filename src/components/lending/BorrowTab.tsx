@@ -858,13 +858,17 @@ export function BorrowTab({
     }
   }, [status, txHash, onTxStateChange, estimatedCrvUsdBorrow, borrowAmount, borrowToken]);
 
-  // Handle transaction success — reset to idle so button returns to normal
+  // Handle transaction success — clear inputs and reset to idle
   useEffect(() => {
     if (status === "success") {
+      setBorrowAmountState("");
+      setCollateralAmountState("");
+      try { localStorage.removeItem(borrowStorageKey); } catch { /* */ }
+      try { localStorage.removeItem(collateralStorageKey); } catch { /* */ }
       onTransactionSuccess();
       reset();
     }
-  }, [status, onTransactionSuccess, reset]);
+  }, [status, onTransactionSuccess, reset, borrowStorageKey, collateralStorageKey]);
 
   // Handle approval success -> continue execution
   // For swap path: re-run full flow to check next approval (controller → crvUSD → execute)
