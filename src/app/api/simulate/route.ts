@@ -4,6 +4,7 @@ import { mainnet } from "viem/chains";
 import { TOKENS, VAULT_ADDRESSES, CURVE_CONTROLLERS, getVaultByAddress } from "@/config/vaults";
 import { fetchTokenPrices, ENSO_ROUTER, ENSO_ROUTER_EXECUTOR } from "@/lib/enso";
 import { CRVUSD_ADDRESS } from "@/config/addresses";
+import { ZAPPER_ADDRESS, ZAPPER_V2_ADDRESS } from "@/lib/zapper";
 
 export const dynamic = "force-dynamic";
 
@@ -199,6 +200,8 @@ function processAssetChanges(
     const isUserReceiving = to === normalizedUser;
     const isToController = CURVE_CONTROLLER_ADDRESSES.has(to);
     const isFromController = CURVE_CONTROLLER_ADDRESSES.has(from);
+    // Curve controllers mint crvUSD (from=0x0) rather than transferring from their balance
+    const isMint = from === "0x0000000000000000000000000000000000000000";
 
     // Detect lending operations
     // crvUSD to controller = repay
@@ -216,8 +219,9 @@ function processAssetChanges(
       continue;
     }
 
-    // crvUSD from controller = borrow
-    if (isCrvUsd && isFromController && isUserReceiving) {
+    // crvUSD from controller or minted = borrow (create_loan/borrow_more mint crvUSD)
+    // May go to user directly or to ENSO_SHORTCUTS for output swap
+    if (isCrvUsd && (isFromController || isMint)) {
       result.push({
         type: "borrow",
         symbol: change.token_info?.symbol ?? "crvUSD",
@@ -289,28 +293,36 @@ function processAssetChanges(
  */
 async function enrichVaultTokenPrices(assetChanges: AssetChange[]): Promise<AssetChange[]> {
   try {
-    // Find all unpriced tokens
-    const unpricedChanges = assetChanges.filter((change) => {
-      return !change.dollarValue || parseFloat(change.dollarValue) <= 0;
-    });
-
-    if (unpricedChanges.length === 0) return assetChanges;
-
-    // Collect underlying addresses — from yld vault config or ERC4626 asset() discovery
+    // Collect underlying addresses for ALL vault tokens (not just unpriced ones),
+    // since Tenderly often returns stale/inaccurate prices for vault tokens.
+    // We always override with convertToAssets × underlyingPrice for accuracy.
     const underlyingAddresses = new Set<string>();
+    const knownVaultAddresses = new Set<string>();
     // Map unknown vault address → { underlying, underlyingDecimals } discovered via RPC
     const discoveredVaults = new Map<string, { underlying: string; underlyingDecimals: number }>();
 
-    for (const change of unpricedChanges) {
+    for (const change of assetChanges) {
       const vault = getVaultByAddress(change.address);
       if (vault) {
         underlyingAddresses.add(vault.assetAddress.toLowerCase());
+        knownVaultAddresses.add(change.address.toLowerCase());
       }
     }
 
-    // For unpriced tokens not in yld vaults, try ERC4626 asset() discovery
-    const unknownUnpriced = unpricedChanges.filter(c => !getVaultByAddress(c.address));
-    await Promise.all(unknownUnpriced.map(async (change) => {
+    // For tokens not in yld vaults, try ERC4626 asset() discovery on ALL tokens
+    // (not just unpriced — Tenderly often returns stale prices for vault tokens)
+    const unknownTokens = assetChanges.filter(c =>
+      !knownVaultAddresses.has(c.address.toLowerCase())
+    );
+    // Deduplicate by address to avoid redundant RPC calls
+    const seenAddresses = new Set<string>();
+    const uniqueUnknown = unknownTokens.filter(c => {
+      const addr = c.address.toLowerCase();
+      if (seenAddresses.has(addr)) return false;
+      seenAddresses.add(addr);
+      return true;
+    });
+    await Promise.all(uniqueUnknown.map(async (change) => {
       try {
         const [underlying, underlyingDecimals] = await Promise.all([
           publicClient.readContract({
@@ -341,16 +353,16 @@ async function enrichVaultTokenPrices(assetChanges: AssetChange[]): Promise<Asse
     const priceData = await fetchTokenPrices([...underlyingAddresses]);
     const priceMap = new Map(priceData.map((p) => [p.address.toLowerCase(), p.price]));
 
-    // Calculate vault token values
+    // Calculate vault token values — always override for known vaults, enrich for discovered
     const enrichedChanges = await Promise.all(
       assetChanges.map(async (change): Promise<AssetChange> => {
-        if (change.dollarValue && parseFloat(change.dollarValue) > 0) return change;
-
-        // Determine underlying info from yld vault config or discovered ERC4626
-        const vault = getVaultByAddress(change.address);
+        const isKnownVault = knownVaultAddresses.has(change.address.toLowerCase());
         const discovered = discoveredVaults.get(change.address.toLowerCase());
-        if (!vault && !discovered) return change;
 
+        // Skip non-vault tokens entirely
+        if (!isKnownVault && !discovered) return change;
+
+        const vault = isKnownVault ? getVaultByAddress(change.address) : null;
         const underlyingAddr = vault ? vault.assetAddress.toLowerCase() : discovered!.underlying;
 
         try {
@@ -364,19 +376,8 @@ async function enrichVaultTokenPrices(assetChanges: AssetChange[]): Promise<Asse
           const underlyingPrice = priceMap.get(underlyingAddr);
           if (underlyingPrice === undefined) return change;
 
-          // For discovered vaults, get underlying decimals from the underlying token
-          let decimals: number;
-          if (vault) {
-            decimals = vault.assetDecimals;
-          } else {
-            // ERC4626 decimals matches underlying for most vaults, but use underlying's actual decimals
-            const udec = await publicClient.readContract({
-              address: underlyingAddr as `0x${string}`,
-              abi: ERC4626_ABI,
-              functionName: "decimals",
-            });
-            decimals = Number(udec);
-          }
+          // Use known vault decimals or previously-discovered decimals (no extra RPC)
+          const decimals = vault ? vault.assetDecimals : discovered!.underlyingDecimals;
 
           const underlyingValue = Number(underlyingAmount) / 10 ** decimals;
           const dollarValue = (underlyingValue * underlyingPrice).toString();
@@ -492,16 +493,18 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Build allowlist of simulation targets: Enso router + all vault + controller addresses
+  // Build allowlist of simulation targets: Enso router + vaults + controllers + zappers
   const allowedTargets = new Set<string>([
     ENSO_ROUTER_EXECUTOR.toLowerCase(),
+    ZAPPER_ADDRESS.toLowerCase(),
+    ZAPPER_V2_ADDRESS.toLowerCase(),
     ...Object.values(VAULT_ADDRESSES).map((a) => a.toLowerCase()),
     ...Object.values(CURVE_CONTROLLERS).map((a) => a.toLowerCase()),
   ]);
 
   if (!allowedTargets.has(body.to.toLowerCase())) {
     return NextResponse.json(
-      { success: false, errorMessage: "Unsupported simulation target", retryable: false },
+      { success: false, errorMessage: `[yld→Tenderly] Simulation target not in allowlist: ${body.to}`, retryable: false },
       { status: 400, headers: corsHeaders }
     );
   }
@@ -571,6 +574,7 @@ export async function POST(request: NextRequest) {
           "X-Access-Key": accessKey,
         },
         body: JSON.stringify(tenderlyRequest),
+        signal: AbortSignal.timeout(15_000), // 15s timeout — prevent hanging forever
       }
     );
   } catch (error) {

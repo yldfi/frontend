@@ -12,8 +12,11 @@ import {
   CRVUSD_ADDRESS,
   fetchZapperSwapData,
   fetchFromTokenSwapData,
+  buildVaultInputSwapBundle,
   getDeadline,
 } from "@/lib/zapper";
+import { getVaultInfo } from "@/lib/curve-lending";
+import { TOKENS, TANGENT } from "@/config/vaults";
 
 // ABI for direct controller.liquidate (no Zapper needed)
 const CONTROLLER_LIQUIDATE_ABI = [
@@ -41,6 +44,19 @@ const CONTROLLER_LIQUIDATE_ABI = [
     outputs: [],
   },
 ] as const;
+
+const ERC4626_PREVIEW_ABI = [
+  { name: "previewRedeem", type: "function", stateMutability: "view",
+    inputs: [{ name: "shares", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }] },
+] as const;
+
+const CURVE_GET_DY_ABI = [
+  { name: "get_dy", type: "function", stateMutability: "view",
+    inputs: [{ name: "i", type: "int128" }, { name: "j", type: "int128" }, { name: "dx", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }] },
+] as const;
+
 import { ERC20_APPROVAL_ABI } from "@/lib/abis";
 import type { SimulationResult } from "@/types/enso";
 import { useTenderly } from "@/contexts/TenderlyContext";
@@ -176,6 +192,7 @@ async function runTenderlySimulation(
     const nonceResponse = await fetch("/api/simulate/nonce", {
       method: "GET",
       headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(5_000), // 5s timeout
     });
     const nonceResult = (await nonceResponse.json()) as {
       success: boolean;
@@ -201,6 +218,7 @@ async function runTenderlySimulation(
         expires: nonceResult.expires,
         sig: nonceResult.sig,
       }),
+      signal: AbortSignal.timeout(20_000), // 20s timeout
     });
 
     const result = (await response.json()) as SimulationResult & { retryable?: boolean };
@@ -540,13 +558,43 @@ export function useZapperActions(): UseZapperActionsResult {
         })(),
       ]);
 
-      if (tenderlyResult.result) {
-        setSimulationResult(tenderlyResult.result);
-      }
+      // When Tenderly fails (e.g. delegate mode "Unsupported simulation target")
+      // but eth_call passes, mark as simulation unavailable rather than failure
+      if (!tenderlyResult.ok && ethCallResult.ok && tenderlyResult.result) {
+        const unavailableResult: SimulationResult = {
+          ...tenderlyResult.result,
+          success: true,
+          simulationUnavailable: true,
+          simulationUnavailableReason: tenderlyResult.errorMessage ?? "Simulation unavailable for this transaction type",
+          errorMessage: null,
+        };
+        setSimulationResult(unavailableResult);
+        if (previewOnly) {
+          setStatus("idle");
+          return unavailableResult;
+        }
+      } else {
+        if (tenderlyResult.result) {
+          setSimulationResult(tenderlyResult.result);
+        }
 
-      if (previewOnly) {
-        setStatus("idle");
-        return tenderlyResult.result;
+        if (previewOnly) {
+          setStatus("idle");
+          // If eth_call failed, report it even for preview
+          if (!ethCallResult.ok) {
+            const errorResult: SimulationResult = {
+              success: false,
+              gasUsed: null,
+              simulationId: null,
+              tenderlyUrl: null,
+              assetChanges: [],
+              errorMessage: ethCallResult.errorMessage || "Transaction would revert",
+            };
+            setSimulationResult(errorResult);
+            return errorResult;
+          }
+          return tenderlyResult.result;
+        }
       }
 
       // eth_call is the ground truth for the chain we're submitting to
@@ -823,6 +871,7 @@ export function useZapperActions(): UseZapperActionsResult {
           token: collateralToken,
           tokenSymbol,
           spender: ZAPPER_V2_ADDRESS as `0x${string}`,
+          spenderName: "yld Zapper",
           amount: inputAmount,
         },
         needed: erc20Needed,
@@ -838,6 +887,7 @@ export function useZapperActions(): UseZapperActionsResult {
         token: controller,
         tokenSymbol: "Controller",
         spender: ZAPPER_V2_ADDRESS as `0x${string}`,
+        spenderName: "yld Zapper",
       },
       needed: controllerNeeded,
       label: "yld Zapper",
@@ -1201,6 +1251,7 @@ export function useZapperActions(): UseZapperActionsResult {
           token: inputToken,
           tokenSymbol,
           spender: ZAPPER_V2_ADDRESS,
+          spenderName: "yld Zapper",
           amount: inputAmount,
         },
         needed: erc20Needed,
@@ -1217,6 +1268,7 @@ export function useZapperActions(): UseZapperActionsResult {
           token: controller,
           tokenSymbol: "Controller",
           spender: ZAPPER_V2_ADDRESS,
+          spenderName: "yld Zapper",
         },
         needed: controllerNeeded,
         label: "yld Zapper",
@@ -1431,16 +1483,76 @@ export function useZapperActions(): UseZapperActionsResult {
       setPendingApproval(null);
       setPendingController(controller);
 
-      const routes = await fetchFromTokenSwapData({
-        inputToken,
-        collateralToken,
-        inputAmount: inputAmount.toString(),
-        debtAmount: debt.toString(),
-        slippage: String(slippage),
-      });
+      // Check if inputToken is a vault token (e.g. yscvgCVX) that needs unwrapping
+      const inputVaultInfo = getVaultInfo(inputToken);
+      const isCvgCvxVault = inputVaultInfo
+        ? inputVaultInfo.underlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase()
+        : false;
 
-      const minCollateralFromInput = BigInt(routes.inputExpectedOut) * BigInt(10000 - slippage) / 10000n;
-      const minCollateralFromDebt = BigInt(routes.leverageExpectedOut) * BigInt(10000 - slippage) / 10000n;
+      let inputSwapData: string;
+      let inputExpectedOut: string;
+      let leverageSwapData: string;
+      let leverageExpectedOut: string;
+
+      if (inputVaultInfo) {
+        // Vault token input: build bundle for vault → collateral conversion
+        const estimatedUnderlying = await publicClient.readContract({
+          address: inputVaultInfo.address as `0x${string}`,
+          abi: ERC4626_PREVIEW_ABI,
+          functionName: "previewRedeem",
+          args: [inputAmount],
+        });
+
+        let estimatedCvx1: string | undefined;
+        if (isCvgCvxVault) {
+          const cvx1Out = await publicClient.readContract({
+            address: TANGENT.CVX1_CVGCVX_POOL as `0x${string}`,
+            abi: CURVE_GET_DY_ABI,
+            functionName: "get_dy",
+            args: [1n, 0n, estimatedUnderlying as bigint],
+          });
+          estimatedCvx1 = (cvx1Out as bigint).toString();
+        }
+
+        const [vaultSwap, leverageSwap] = await Promise.all([
+          buildVaultInputSwapBundle({
+            vaultAddress: inputVaultInfo.address,
+            underlying: inputVaultInfo.underlying,
+            targetToken: collateralToken,
+            amountIn: inputAmount.toString(),
+            estimatedUnderlying: (estimatedUnderlying as bigint).toString(),
+            isCvgCvx: isCvgCvxVault,
+            estimatedCvx1,
+            slippage: String(slippage),
+          }),
+          fetchZapperSwapData({
+            tokenIn: CRVUSD_ADDRESS,
+            tokenOut: collateralToken,
+            amountIn: debt.toString(),
+            slippage: String(slippage),
+          }),
+        ]);
+        inputSwapData = vaultSwap.swapData;
+        inputExpectedOut = vaultSwap.expectedOut;
+        leverageSwapData = leverageSwap.swapData;
+        leverageExpectedOut = leverageSwap.expectedOut;
+      } else {
+        // Standard token: use existing fetchFromTokenSwapData
+        const routes = await fetchFromTokenSwapData({
+          inputToken,
+          collateralToken,
+          inputAmount: inputAmount.toString(),
+          debtAmount: debt.toString(),
+          slippage: String(slippage),
+        });
+        inputSwapData = routes.inputSwapData;
+        inputExpectedOut = routes.inputExpectedOut;
+        leverageSwapData = routes.leverageSwapData;
+        leverageExpectedOut = routes.leverageExpectedOut;
+      }
+
+      const minCollateralFromInput = BigInt(inputExpectedOut) * BigInt(10000 - slippage) / 10000n;
+      const minCollateralFromDebt = BigInt(leverageExpectedOut) * BigInt(10000 - slippage) / 10000n;
 
       const data = encodeFunctionData({
         abi: ZAPPER_ABI,
@@ -1453,8 +1565,8 @@ export function useZapperActions(): UseZapperActionsResult {
           BigInt(N),
           minCollateralFromInput,
           minCollateralFromDebt,
-          routes.inputSwapData as `0x${string}`,
-          routes.leverageSwapData as `0x${string}`,
+          inputSwapData as `0x${string}`,
+          leverageSwapData as `0x${string}`,
           getDeadline(),
         ],
       });
@@ -1510,16 +1622,76 @@ export function useZapperActions(): UseZapperActionsResult {
       setPendingApproval(null);
       setPendingController(controller);
 
-      const routes = await fetchFromTokenSwapData({
-        inputToken,
-        collateralToken,
-        inputAmount: inputAmount.toString(),
-        debtAmount: additionalDebt.toString(),
-        slippage: String(slippage),
-      });
+      // Check if inputToken is a vault token (e.g. yscvgCVX) that needs unwrapping
+      const inputVaultInfo = getVaultInfo(inputToken);
+      const isCvgCvxVault = inputVaultInfo
+        ? inputVaultInfo.underlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase()
+        : false;
 
-      const minCollateralFromInput = BigInt(routes.inputExpectedOut) * BigInt(10000 - slippage) / 10000n;
-      const minCollateralFromDebt = BigInt(routes.leverageExpectedOut) * BigInt(10000 - slippage) / 10000n;
+      let inputSwapData: string;
+      let inputExpectedOut: string;
+      let leverageSwapData: string;
+      let leverageExpectedOut: string;
+
+      if (inputVaultInfo) {
+        // Vault token input: build bundle for vault → collateral conversion
+        const estimatedUnderlying = await publicClient.readContract({
+          address: inputVaultInfo.address as `0x${string}`,
+          abi: ERC4626_PREVIEW_ABI,
+          functionName: "previewRedeem",
+          args: [inputAmount],
+        });
+
+        let estimatedCvx1: string | undefined;
+        if (isCvgCvxVault) {
+          const cvx1Out = await publicClient.readContract({
+            address: TANGENT.CVX1_CVGCVX_POOL as `0x${string}`,
+            abi: CURVE_GET_DY_ABI,
+            functionName: "get_dy",
+            args: [1n, 0n, estimatedUnderlying as bigint],
+          });
+          estimatedCvx1 = (cvx1Out as bigint).toString();
+        }
+
+        const [vaultSwap, leverageSwap] = await Promise.all([
+          buildVaultInputSwapBundle({
+            vaultAddress: inputVaultInfo.address,
+            underlying: inputVaultInfo.underlying,
+            targetToken: collateralToken,
+            amountIn: inputAmount.toString(),
+            estimatedUnderlying: (estimatedUnderlying as bigint).toString(),
+            isCvgCvx: isCvgCvxVault,
+            estimatedCvx1,
+            slippage: String(slippage),
+          }),
+          fetchZapperSwapData({
+            tokenIn: CRVUSD_ADDRESS,
+            tokenOut: collateralToken,
+            amountIn: additionalDebt.toString(),
+            slippage: String(slippage),
+          }),
+        ]);
+        inputSwapData = vaultSwap.swapData;
+        inputExpectedOut = vaultSwap.expectedOut;
+        leverageSwapData = leverageSwap.swapData;
+        leverageExpectedOut = leverageSwap.expectedOut;
+      } else {
+        // Standard token: use existing fetchFromTokenSwapData
+        const routes = await fetchFromTokenSwapData({
+          inputToken,
+          collateralToken,
+          inputAmount: inputAmount.toString(),
+          debtAmount: additionalDebt.toString(),
+          slippage: String(slippage),
+        });
+        inputSwapData = routes.inputSwapData;
+        inputExpectedOut = routes.inputExpectedOut;
+        leverageSwapData = routes.leverageSwapData;
+        leverageExpectedOut = routes.leverageExpectedOut;
+      }
+
+      const minCollateralFromInput = BigInt(inputExpectedOut) * BigInt(10000 - slippage) / 10000n;
+      const minCollateralFromDebt = BigInt(leverageExpectedOut) * BigInt(10000 - slippage) / 10000n;
 
       const data = encodeFunctionData({
         abi: ZAPPER_ABI,
@@ -1531,8 +1703,8 @@ export function useZapperActions(): UseZapperActionsResult {
           additionalDebt,
           minCollateralFromInput,
           minCollateralFromDebt,
-          routes.inputSwapData as `0x${string}`,
-          routes.leverageSwapData as `0x${string}`,
+          inputSwapData as `0x${string}`,
+          leverageSwapData as `0x${string}`,
           getDeadline(),
         ],
       });

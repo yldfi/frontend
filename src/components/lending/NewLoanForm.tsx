@@ -277,11 +277,52 @@ export function NewLoanForm({
     logoURI: "/tokens/crvusd.png",
     type: "base" as const,
   }), []);
-  const [outputToken, setOutputToken] = useState<EnsoToken>(crvUsdToken);
+  const scrvUsdToken: EnsoToken = useMemo(() => ({
+    address: CURVE_SAVINGS.SCRVUSD,
+    chainId: 1,
+    name: "Savings crvUSD",
+    symbol: "scrvUSD",
+    decimals: 18,
+    logoURI: "/tokens/scrvusd.png",
+    type: "defi" as const,
+  }), []);
+  const outputTokenStorageKey = `yldfi-lending-newloan-output-${vault.address}`;
+  const [outputToken, setOutputTokenState] = useState<EnsoToken>(() => {
+    if (typeof window === "undefined") return crvUsdToken;
+    try {
+      const stored = localStorage.getItem(outputTokenStorageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored) as EnsoToken;
+        if (parsed.address && parsed.symbol && parsed.decimals) return parsed;
+      }
+    } catch { /* */ }
+    return crvUsdToken;
+  });
+  const setOutputToken = useCallback((token: EnsoToken) => {
+    setOutputTokenState(token);
+    try {
+      if (token.address.toLowerCase() === CRVUSD_ADDRESS.toLowerCase()) {
+        localStorage.removeItem(outputTokenStorageKey);
+      } else {
+        localStorage.setItem(outputTokenStorageKey, JSON.stringify(token));
+      }
+    } catch { /* */ }
+  }, [outputTokenStorageKey]);
   const hasOutputSwap = outputToken.address.toLowerCase() !== CRVUSD_ADDRESS.toLowerCase();
 
-  // Token selection
-  const [selectedToken, setSelectedTokenState] = useState<EnsoToken>(defaultToken ?? vaultToken);
+  // Token selection — persisted across refresh
+  const tokenStorageKey = `yldfi-lending-newloan-token-${vault.address}`;
+  const [selectedToken, setSelectedTokenState] = useState<EnsoToken>(() => {
+    if (typeof window === "undefined") return defaultToken ?? vaultToken;
+    try {
+      const stored = localStorage.getItem(tokenStorageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored) as EnsoToken;
+        if (parsed.address && parsed.symbol && parsed.decimals) return parsed;
+      }
+    } catch { /* */ }
+    return defaultToken ?? vaultToken;
+  });
   const isVaultToken =
     selectedToken.address.toLowerCase() === vault.address.toLowerCase();
 
@@ -516,7 +557,7 @@ export function NewLoanForm({
 
   // Read selected token balance
   const isEth = selectedToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
-  const { data: tokenBalance, refetch: refetchBalance } = useBalance({
+  const { data: tokenBalance, refetch: refetchBalance, isLoading: tokenBalanceLoading } = useBalance({
     address,
     token: isEth ? undefined : (selectedToken.address as `0x${string}`),
     query: { enabled: !!address },
@@ -931,12 +972,17 @@ export function NewLoanForm({
   });
 
   // True when pool liquidity caps borrowing (maxBorrowable ≈ controller balance)
-  const isLiquidityConstrained = useMemo(() => {
-    if (!controllerCrvUsdBalance || maxBorrowable === 0n) return false;
-    // If max borrowable is within 5% of controller balance, liquidity is the bottleneck
+  // Keeps last known value during settling (maxBorrowable may temporarily be 0)
+  const isLiquidityConstrainedLive = useMemo(() => {
+    if (!controllerCrvUsdBalance || maxBorrowable === 0n) return null; // unknown
     const threshold = controllerCrvUsdBalance * 105n / 100n;
     return maxBorrowable <= threshold;
   }, [controllerCrvUsdBalance, maxBorrowable]);
+  const isLiquidityConstrainedRef = useRef(false);
+  if (isLiquidityConstrainedLive !== null) {
+    isLiquidityConstrainedRef.current = isLiquidityConstrainedLive;
+  }
+  const isLiquidityConstrained = isLiquidityConstrainedLive ?? isLiquidityConstrainedRef.current;
 
   // Max receivable in output token terms (forward quote: maxBorrowable crvUSD → outputToken)
   const maxBorrowableStr = useMemo(
@@ -1256,7 +1302,10 @@ export function NewLoanForm({
   const outputSwapIsSettling = hasOutputSwap && (
     bands !== debouncedBands || debouncedBands !== maxBorrowableBandsRef.current || maxOutputTokenFetching || debtInput !== debouncedDebtInput || outputSwapQuoteLoading
   );
-  const isQuoteSettling = outputSwapIsSettling || (!isVaultToken && quoteLoading);
+  // Don't include swapQuoteFetching — it fires during periodic 30s background refetches
+  // which shouldn't trigger "Getting quote". quoteLoading covers initial fetch,
+  // amount !== debouncedAmount covers user input changes.
+  const isQuoteSettling = outputSwapIsSettling || (!isVaultToken && (quoteLoading || amount !== debouncedAmount)) || maxBorrowableFetching;
 
   // Leverage route settling: true when any part of the leverage async chain is in flight
   // (YOLO pending → maxBorrowable calc → leverage animation → debt debounce → swap quote)
@@ -1335,7 +1384,9 @@ export function NewLoanForm({
   // Estimate health — skip during settling to avoid stale intermediate values
   useEffect(() => {
     if (isQuoteSettling || leverageIsSettling) {
-      setEstimatedHealth(null); // clear stale health so it doesn't flash old value when settling ends
+      // Don't clear estimatedHealth here — healthToReport returns undefined during settling
+      // so the parent keeps the old value. Clearing would cause a "—" flash when settling ends
+      // before the async health_calculator call completes.
       return;
     }
     let cancelled = false;
@@ -1358,6 +1409,13 @@ export function NewLoanForm({
           totalCollateral = estimatedVaultTokenAmount + BigInt(leverageSwapQuote.amountOut);
         }
 
+        // For output swaps, reverse quote AMM spread can push debtAmount slightly above
+        // maxBorrowable — health_calculator reverts for debt > max. Cap it to maxBorrowable
+        // so we still show approximate health at Max LTV.
+        const healthDebt = (hasOutputSwap && maxBorrowable > 0n && debtAmount > maxBorrowable)
+          ? maxBorrowable
+          : debtAmount;
+
         const health = await publicClient.readContract({
           address: controllerAddress,
           abi: CONTROLLER_ABI,
@@ -1365,7 +1423,7 @@ export function NewLoanForm({
           args: [
             address,
             totalCollateral,
-            debtAmount,
+            healthDebt,
             true,
             BigInt(debouncedBands),
           ],
@@ -1386,11 +1444,19 @@ export function NewLoanForm({
 
     calcHealth();
     return () => { cancelled = true; };
-  }, [publicClient, address, controllerAddress, estimatedVaultTokenAmount, debtAmount, debouncedBands, isQuoteSettling, leverageIsSettling, loanTab, leverageSwapQuote, leverageSwapIsPlaceholder, oraclePrice, vault.decimals]);
+  }, [publicClient, address, controllerAddress, estimatedVaultTokenAmount, debtAmount, debouncedBands, isQuoteSettling, leverageIsSettling, loanTab, leverageSwapQuote, leverageSwapIsPlaceholder, oraclePrice, vault.decimals, hasOutputSwap, maxBorrowable]);
 
   // Report estimated health to parent (null if exceeds max borrowable)
-  const exceedsBorrow = debtAmount > 0n && maxBorrowableLoaded && maxBorrowable > 0n && debtAmount > maxBorrowable;
-  const healthToReport = (isQuoteSettling || leverageIsSettling) ? undefined : (exceedsBorrow ? null : estimatedHealth);
+  // For output swaps, use the same tolerance as exceedsMaxBorrowable — reverse quote spread
+  // can make debtAmount slightly exceed maxBorrowable even when user clicked MAX
+  const exceedsBorrow = debtAmount > 0n && maxBorrowableLoaded && maxBorrowable > 0n && (
+    hasOutputSwap
+      ? (!maxOutputTokenEquivalent || !debtInput ? false : Number(debtInput) > Number(maxOutputTokenEquivalent) * 1.001)
+      : debtAmount > maxBorrowable
+  );
+  // When input is cleared, bypass settling guard so position preview fades out immediately
+  const inputCleared = !amount || Number(amount) <= 0;
+  const healthToReport = inputCleared ? null : (isQuoteSettling || leverageIsSettling) ? undefined : (exceedsBorrow ? null : estimatedHealth);
   const prevHealthReport = useRef<number | null | undefined>(undefined);
   useEffect(() => {
     if (healthToReport === undefined) return; // settling — keep parent's old value
@@ -1401,8 +1467,11 @@ export function NewLoanForm({
 
   // Report collateral amount to parent (for position summary display)
   // For leverage mode, include the leverage swap collateral (borrowed crvUSD → collateral)
-  const collateralToReport = useMemo(() => {
-    if (isQuoteSettling || !estimatedVaultTokenAmount) return null;
+  // undefined = settling (parent keeps old value), null = no collateral, bigint = value
+  const collateralToReport = useMemo((): bigint | null | undefined => {
+    if (inputCleared) return null; // input cleared — fade out position preview immediately
+    if (isQuoteSettling) return undefined; // settling — keep parent's old value
+    if (!estimatedVaultTokenAmount) return null;
     if (loanTab === "leverage" && debtAmount > 0n) {
       // During leverage settling, use oracle estimate for collateral to keep the panel visible
       // (the actual swap quote will update this when settling completes)
@@ -1414,10 +1483,11 @@ export function NewLoanForm({
       return estimatedVaultTokenAmount + swapCollateral;
     }
     return estimatedVaultTokenAmount;
-  }, [isQuoteSettling, estimatedVaultTokenAmount, loanTab, debtAmount, leverageSwapQuote, oraclePrice, vault.decimals]);
+  }, [inputCleared, isQuoteSettling, estimatedVaultTokenAmount, loanTab, debtAmount, leverageSwapQuote, oraclePrice, vault.decimals]);
 
   const prevCollateralReport = useRef<bigint | null>(null);
   useEffect(() => {
+    if (collateralToReport === undefined) return; // settling — keep parent's old value
     if (collateralToReport === prevCollateralReport.current) return;
     prevCollateralReport.current = collateralToReport;
     onCollateralAmountChange?.(collateralToReport);
@@ -1426,30 +1496,38 @@ export function NewLoanForm({
   // Report estimated leverage to parent
   // leverage = collateralValue / (collateralValue - debt)
   // Uses total collateral (deposit + leverage swap output), not just the deposit
-  const leverageToReport = useMemo(() => {
-    if (isQuoteSettling || leverageIsSettling || !collateralToReport || debtAmount === 0n || !oraclePrice || oraclePrice === 0n) return null;
+  // undefined = settling (parent keeps old value), null = no leverage, number = value
+  const leverageToReport = useMemo((): number | null | undefined => {
+    if (inputCleared) return null; // input cleared — fade out immediately
+    if (isQuoteSettling || leverageIsSettling) return undefined; // settling — keep parent's old value
+    if (!collateralToReport || collateralToReport === undefined || debtAmount === 0n || !oraclePrice || oraclePrice === 0n) return null;
     const collValue = Number(formatUnits(collateralToReport * oraclePrice / (10n ** BigInt(vault.decimals)), 18));
     const debt = Number(formatUnits(debtAmount, 18));
     if (collValue <= 0 || collValue <= debt) return null;
     const lev = collValue / (collValue - debt);
     return lev > 1.005 ? lev : null;
-  }, [isQuoteSettling, leverageIsSettling, collateralToReport, debtAmount, oraclePrice, vault.decimals]);
+  }, [inputCleared, isQuoteSettling, leverageIsSettling, collateralToReport, debtAmount, oraclePrice, vault.decimals]);
 
   const prevLeverageReport = useRef<number | null>(null);
   useEffect(() => {
+    if (leverageToReport === undefined) return; // settling — keep parent's old value
     if (leverageToReport === prevLeverageReport.current) return;
     prevLeverageReport.current = leverageToReport;
     onEstimatedLeverageChange?.(leverageToReport);
   }, [leverageToReport, onEstimatedLeverageChange]);
 
   // Report debt delta to parent (for projected borrow APR calculation)
-  const debtDeltaToReport = useMemo(() => {
-    if (isQuoteSettling || debtAmount === 0n) return null;
+  // undefined = settling (parent keeps old value), null = no debt, bigint = value
+  const debtDeltaToReport = useMemo((): bigint | null | undefined => {
+    if (inputCleared) return null; // input cleared — fade out immediately
+    if (isQuoteSettling) return undefined; // settling — keep parent's old value
+    if (debtAmount === 0n) return null;
     return debtAmount;
-  }, [isQuoteSettling, debtAmount]);
+  }, [inputCleared, isQuoteSettling, debtAmount]);
 
   const prevDebtDeltaReport = useRef<bigint | null>(null);
   useEffect(() => {
+    if (debtDeltaToReport === undefined) return; // settling — keep parent's old value
     if (debtDeltaToReport === prevDebtDeltaReport.current) return;
     prevDebtDeltaReport.current = debtDeltaToReport;
     onDebtDeltaChange?.(debtDeltaToReport);
@@ -1486,6 +1564,8 @@ export function NewLoanForm({
       debtRatio.current = null;
       try { localStorage.removeItem(amountStorageKey); } catch { /* */ }
       try { localStorage.removeItem(debtStorageKey); } catch { /* */ }
+      try { localStorage.removeItem(tokenStorageKey); } catch { /* */ }
+      try { localStorage.removeItem(outputTokenStorageKey); } catch { /* */ }
       toast.success("Loan created!", {
         action: {
           label: "View Tx",
@@ -1496,7 +1576,7 @@ export function NewLoanForm({
       refetchBalance();
       reset();
     }
-  }, [status, txHash, onTransactionSuccess, reset, refetchBalance, amountStorageKey, debtStorageKey]);
+  }, [status, txHash, onTransactionSuccess, reset, refetchBalance, amountStorageKey, debtStorageKey, tokenStorageKey, outputTokenStorageKey]);
 
   useEffect(() => {
     if ((status === "error" || status === "reverted") && error) {
@@ -1513,15 +1593,6 @@ export function NewLoanForm({
       }
     }
   }, [status, error, reset, isLeveraged, zapperReset, lendingClearError]);
-
-  // Clear simulation/approval state when inputs change
-  useEffect(() => {
-    if (simulationResult || status === "needsApproval") {
-      reset();
-      setShowSimulationModal(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [amount, debtInput, selectedToken.address, outputToken.address, effectiveLeverage, bands, loanTab]);
 
   // Handle approval success
   const handleSubmitRef = useRef<(() => Promise<void>) | undefined>(undefined);
@@ -1542,16 +1613,31 @@ export function NewLoanForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lendingIsApprovalSuccess, lendingStatus, zapperIsApprovalSuccess, zapperStatus]);
 
+  // Reset stale approval state when user changes inputs
+  useEffect(() => {
+    if (status === "needsApproval") {
+      reset();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [amount, debtInput, leverage, selectedToken.address, outputToken.address]);
+
   // Clear amounts synchronously when switching token (avoids stale-data flash in RouteDisplay)
   const setSelectedToken = useCallback((token: EnsoToken) => {
     setSelectedTokenState(token);
+    try {
+      if (token.address.toLowerCase() === vault.address.toLowerCase()) {
+        localStorage.removeItem(tokenStorageKey);
+      } else {
+        localStorage.setItem(tokenStorageKey, JSON.stringify(token));
+      }
+    } catch { /* */ }
     setAmountState("");
     setDebtInputState("");
     debtRatio.current = null;
     receiveRatio.current = null;
     lendingReset();
     zapperReset();
-  }, [lendingReset, zapperReset]);
+  }, [lendingReset, zapperReset, tokenStorageKey, vault.address]);
 
   // Reset leverage when collateral is cleared
   useEffect(() => {
@@ -1686,8 +1772,15 @@ export function NewLoanForm({
     // Leverage tab uses loop-adjusted cap (debtAmount already capped at loopMaxWei),
     // so single-step maxBorrowable is not the right limit
     if (loanTab === "leverage") return false;
+    // When output swap is active, debtAmount comes from the reverse quote (outputToken → crvUSD)
+    // which can differ from the forward quote due to AMM spread. Compare the user's input
+    // against maxOutputTokenEquivalent (which was derived from maxBorrowable) instead.
+    if (hasOutputSwap) {
+      if (!maxOutputTokenEquivalent || !debtInput) return false;
+      return Number(debtInput) > Number(maxOutputTokenEquivalent) * 1.001; // 0.1% tolerance
+    }
     return debtAmount > maxBorrowable;
-  }, [debtAmount, maxBorrowable, maxBorrowableLoaded, loanTab]);
+  }, [debtAmount, maxBorrowable, maxBorrowableLoaded, loanTab, hasOutputSwap, maxOutputTokenEquivalent, debtInput]);
 
   const isProcessing =
     status !== "idle" &&
@@ -1715,10 +1808,9 @@ export function NewLoanForm({
     if (hasInsufficientBalance) return "Insufficient balance";
     if (!amount || Number(amount) <= 0) return "Enter amount";
     if (needsSwap && (!estimatedVaultTokenAmount || amount !== debouncedAmount || swapQuoteIsPlaceholder)) return <><span>Getting quote</span><LoadingDots /></>;
-    if (maxBorrowableFetching) return <><span>Getting max borrowable</span><LoadingDots /></>;
     if (loanTab !== "leverage" && (!debtInput || Number(debtInput) <= 0)) return "Enter amount";
     if (loanTab === "leverage" && debtAmount <= 0n) return "Increase leverage";
-    if (isQuoteSettling || leverageIsSettling) return <><span>Getting quote</span><LoadingDots /></>;
+    if (maxBorrowableFetching || isQuoteSettling || leverageIsSettling) return <><span>Getting quote</span><LoadingDots /></>;
     if (exceedsMaxBorrowable) return "Exceeds max borrowable";
 
     if (loanTab === "leverage") {
@@ -1756,10 +1848,16 @@ export function NewLoanForm({
             priorityTokens={[vaultToken]}
             excludeDefiTokens
           />
-          <MaxButton
-            balance={maxBalance}
-            onSelect={setAmount}
-          />
+          {!isVaultToken && tokenBalanceLoading ? (
+            <div className="animate-pulse pointer-events-none">
+              <MaxButton balance="0" onSelect={() => {}} />
+            </div>
+          ) : (
+            <MaxButton
+              balance={maxBalance}
+              onSelect={setAmount}
+            />
+          )}
         </div>
 
         {/* Swap quote details — animated via grid row transition, spinner overlay during refetch */}
@@ -1969,19 +2067,33 @@ export function NewLoanForm({
                 setOutputToken(token);
                 setDebtInputState(""); // Clear input when switching tokens (different units)
               }}
-              priorityTokens={[crvUsdToken]}
+              priorityTokens={[crvUsdToken, scrvUsdToken]}
               excludeDefiTokens
             />
             {hasOutputSwap ? (
+              maxOutputTokenEquivalent ? (
+                <MaxButton
+                  balance={maxOutputTokenEquivalent}
+                  onSelect={setDebtInput}
+                />
+              ) : maxOutputTokenFetching || maxBorrowableFetching ? (
+                <div className="animate-pulse pointer-events-none">
+                  <MaxButton balance="0" onSelect={() => {}} />
+                </div>
+              ) : (
+                <MaxButton balance="0" onSelect={setDebtInput} />
+              )
+            ) : maxBorrowable > 0n ? (
               <MaxButton
-                balance={maxOutputTokenEquivalent ?? "0"}
+                balance={formatUnits(maxBorrowable, 18)}
                 onSelect={setDebtInput}
               />
+            ) : maxBorrowableFetching ? (
+              <div className="animate-pulse pointer-events-none">
+                <MaxButton balance="0" onSelect={() => {}} />
+              </div>
             ) : (
-              <MaxButton
-                balance={maxBorrowable > 0n ? formatUnits(maxBorrowable, 18) : "0"}
-                onSelect={setDebtInput}
-              />
+              <MaxButton balance="0" onSelect={setDebtInput} />
             )}
           </div>
         </div>
@@ -2023,12 +2135,12 @@ export function NewLoanForm({
         </div>
       </div>
 
-      {/* Low liquidity warning */}
-      {isLiquidityConstrained && maxBorrowable > 0n && debtAmount > 0n && debtAmount >= maxBorrowable * 90n / 100n && (
+      {/* Low liquidity warning — keep visible during settling to avoid flicker */}
+      {isLiquidityConstrained && controllerCrvUsdBalance && (maxBorrowable > 0n || isQuoteSettling) && (debtAmount > 0n || isQuoteSettling) && (
         <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-500 text-xs flex items-center gap-2">
           <AlertTriangle size={14} className="shrink-0" />
           <span>
-            Only {Number(formatUnits(controllerCrvUsdBalance!, 18)).toLocaleString(undefined, { maximumFractionDigits: 0 })} crvUSD available in lending market. Max borrow is limited by pool liquidity, not your collateral.
+            Only {Number(formatUnits(controllerCrvUsdBalance, 18)).toLocaleString(undefined, { maximumFractionDigits: 0 })} crvUSD available in lending market. Max borrow is limited by pool liquidity, not your collateral.
           </span>
         </div>
       )}
@@ -2043,23 +2155,55 @@ export function NewLoanForm({
       />
 
       {/* Simulation Modal */}
-      {showSimulationModal && simulationResult && (
-        <SimulationModal
-          isOpen={showSimulationModal}
-          onClose={() => {
-            setShowSimulationModal(false);
-            toast("Transaction cancelled", { id: "new-loan-cancelled", duration: 3000 });
-          }}
-          onConfirm={() => {
-            setShowSimulationModal(false);
-            handleExecute();
-          }}
-          simulationResult={simulationResult}
-          gasPrice={gasPrice}
-          ethPrice={ethPrice}
-          confirmText="Confirm & Execute"
-        />
-      )}
+      {showSimulationModal && simulationResult && (() => {
+        // Filter asset changes to show net result, hiding intermediates:
+        // - "borrow" → always (crvUSD debt created)
+        // - "deposit" → always (collateral added to loan / AMM)
+        // - "send" → only if symbol isn't in borrow/receive/deposit (net wallet outflow)
+        // - "receive" → only if symbol isn't in send/deposit/borrow (net wallet inflow)
+        const changes = simulationResult.assetChanges ?? [];
+        const symSet = (type: string) => new Set(
+          changes.filter((c) => c.type === type).map((c) => c.symbol.toLowerCase())
+        );
+        const borrowSyms = symSet("borrow");
+        const sendSyms = symSet("send");
+        const receiveSyms = symSet("receive");
+        const depositSyms = symSet("deposit");
+        const filteredChanges = changes.filter((c) => {
+          const s = c.symbol.toLowerCase();
+          if (c.type === "borrow" || c.type === "deposit") return true;
+          if (c.type === "send") return !borrowSyms.has(s) && !receiveSyms.has(s) && !depositSyms.has(s);
+          if (c.type === "receive") return !sendSyms.has(s) && !depositSyms.has(s) && !borrowSyms.has(s);
+          return true;
+        });
+
+        return (
+          <SimulationModal
+            isOpen={showSimulationModal}
+            onClose={() => {
+              setShowSimulationModal(false);
+              toast("Transaction cancelled", { id: "new-loan-cancelled", duration: 3000 });
+            }}
+            onConfirm={() => {
+              setShowSimulationModal(false);
+              handleExecute();
+            }}
+            simulationResult={{
+              ...simulationResult,
+              assetChanges: filteredChanges,
+            }}
+            gasPrice={gasPrice}
+            ethPrice={ethPrice}
+            confirmText="Confirm & Execute"
+            swapTitle="Swap & Deposit as Collateral"
+            borrowSwapTitle={hasOutputSwap ? "Borrow & Swap" : undefined}
+            perSwapPriceImpacts={needsSwap || hasOutputSwap ? {
+              input: needsSwap ? priceImpact ?? undefined : undefined,
+            } : undefined}
+            leverageMode={isLeveraged}
+          />
+        );
+      })()}
 
       {/* Action Button */}
       <div
@@ -2167,7 +2311,7 @@ export function NewLoanForm({
           className="grid transition-[grid-template-rows] duration-300 ease-in-out"
           style={{
             gridTemplateRows:
-              showRoute && amount && Number(amount) > 0 && (needsSwap ? (swapQuote || quoteLoading) : (hasOutputSwap || displayRouteSteps.length > 1)) ? "1fr" : "0fr",
+              showRoute && amount && Number(amount) > 0 && debtAmount > 0n && (needsSwap ? (swapQuote || quoteLoading) : (hasOutputSwap || displayRouteSteps.length > 1)) ? "1fr" : "0fr",
           }}
         >
           <div className="overflow-hidden">
@@ -2175,7 +2319,7 @@ export function NewLoanForm({
               <div className="text-xs text-[var(--muted-foreground)] mb-2">Route</div>
               <RouteDisplay
                 routeInfo={{ steps: displayRouteSteps }}
-                isLoading={quoteLoading || (hasOutputSwap && outputSwapQuoteLoading)}
+                isLoading={anySettling}
                 completionMessage="Loan created on Curve LlamaLend"
               />
             </div>
