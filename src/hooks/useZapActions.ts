@@ -409,6 +409,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
             const nonceResponse = await fetch("/api/simulate/nonce", {
               method: "GET",
               headers: { "Content-Type": "application/json" },
+              signal: AbortSignal.timeout(5_000), // 5s timeout
             });
             const nonceResult = (await nonceResponse.json()) as {
               success: boolean;
@@ -438,6 +439,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
                 expires: nonceResult.expires,
                 sig: nonceResult.sig,
               }),
+              signal: AbortSignal.timeout(20_000), // 20s timeout
             });
 
             const result = (await response.json()) as SimulationResult & { retryable?: boolean };

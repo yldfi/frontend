@@ -334,6 +334,7 @@ async function runTenderlySimulation(
     const nonceResponse = await fetch("/api/simulate/nonce", {
       method: "GET",
       headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(5_000), // 5s timeout
     });
     const nonceResult = (await nonceResponse.json()) as {
       success: boolean;
@@ -360,6 +361,7 @@ async function runTenderlySimulation(
         expires: nonceResult.expires,
         sig: nonceResult.sig,
       }),
+      signal: AbortSignal.timeout(20_000), // 20s timeout (> backend's 15s to prefer its error handling)
     });
 
     const result = (await response.json()) as SimulationResult & { retryable?: boolean };
@@ -1081,11 +1083,30 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     slippage: number = 100,
     options?: { previewOnly?: boolean; tokenSymbol?: string }
   ): Promise<SimulationResult | null> => {
-    if (!address) return null;
+    if (!address || !publicClient) return null;
     const { parseUnits } = await import("viem");
     const amountWei = parseUnits(amountIn, 18);
     const ctrl = CURVE_CONTROLLERS[vaultAddress as keyof typeof CURVE_CONTROLLERS];
     if (ctrl) setPendingController(ctrl as `0x${string}`);
+
+    // cvgCVX vault inputs route through user's wallet and need vault token approval
+    const inputVaultInfo = getVaultInfo(tokenIn);
+    if (inputVaultInfo?.underlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase()) {
+      const vaultAllowance = await checkAllowance(publicClient, address, vaultAddress, ENSO_SHORTCUTS as `0x${string}`);
+      if (vaultAllowance === 0n) {
+        // Need vault token approval first — prompt and return
+        setPendingApproval({
+          token: vaultAddress,
+          tokenSymbol: getVaultByAddress(vaultAddress)?.symbol ?? "Vault Token",
+          spender: ENSO_SHORTCUTS as `0x${string}`,
+          spenderName: "Enso Shortcuts",
+        });
+        setPendingBundle(null);
+        setStatus("needsApproval");
+        return null;
+      }
+    }
+
     return executeBundle(
       () => fetchCreateLoanWithSwapBundle({
         fromAddress: address,
@@ -1100,7 +1121,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       amountWei,
       options
     );
-  }, [address, executeBundle]);
+  }, [address, publicClient, executeBundle]);
 
   // Create loan with output swap: create_loan → crvUSD → swap to tokenOut
   // Optionally swaps input token to vault token first (double swap)
@@ -1114,12 +1135,32 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     slippage: number = 100,
     options?: { previewOnly?: boolean; tokenSymbol?: string }
   ): Promise<SimulationResult | null> => {
-    if (!address) return null;
+    if (!address || !publicClient) return null;
     const { parseUnits } = await import("viem");
     const decimals = tokenIn ? 18 : 18; // vault tokens are always 18 decimals
     const amountWei = parseUnits(amountIn, decimals);
     const ctrl = CURVE_CONTROLLERS[vaultAddress as keyof typeof CURVE_CONTROLLERS];
     if (ctrl) setPendingController(ctrl as `0x${string}`);
+
+    // cvgCVX vault inputs route through user's wallet and need vault token approval
+    if (tokenIn) {
+      const inputVaultInfo = getVaultInfo(tokenIn);
+      if (inputVaultInfo?.underlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase()) {
+        const vaultAllowance = await checkAllowance(publicClient, address, vaultAddress, ENSO_SHORTCUTS as `0x${string}`);
+        if (vaultAllowance === 0n) {
+          setPendingApproval({
+            token: vaultAddress,
+            tokenSymbol: getVaultByAddress(vaultAddress)?.symbol ?? "Vault Token",
+            spender: ENSO_SHORTCUTS as `0x${string}`,
+            spenderName: "Enso Shortcuts",
+          });
+          setPendingBundle(null);
+          setStatus("needsApproval");
+          return null;
+        }
+      }
+    }
+
     return executeBundle(
       () => fetchCreateLoanWithOutputSwapBundle({
         fromAddress: address,
@@ -1135,7 +1176,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       amountWei,
       options
     );
-  }, [address, executeBundle]);
+  }, [address, publicClient, executeBundle]);
 
   // Direct controller call for add_collateral (no Enso bundle needed)
   const addCollateral = useCallback(async (

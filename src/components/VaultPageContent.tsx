@@ -1178,6 +1178,14 @@ export function VaultPageContent({ id }: { id: string }) {
     }
   }, [zapIsSuccess, zapIsReverted, zapHash, refetchTokenBalance, refetchVaultBalance, refetchZapInputBalance, resetZapActions, setZapAmount]);
 
+  // Reset stale zap approval state when user changes inputs
+  useEffect(() => {
+    if (zapStatus === "needsApproval") {
+      resetZapActions();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zapAmount, zapDirection, zapInputToken?.address, zapOutputToken?.address]);
+
   // Show toast notifications for errors
   useEffect(() => {
     if (txError) {

@@ -8,10 +8,10 @@ import type { PendingApproval, ApprovalProgress } from "@/types/approval";
 
 function LoadingDots() {
   return (
-    <span className="inline-flex items-center">
-      <span className="animate-[pulse_1.4s_ease-in-out_infinite]">.</span>
-      <span className="animate-[pulse_1.4s_ease-in-out_0.2s_infinite]">.</span>
-      <span className="animate-[pulse_1.4s_ease-in-out_0.4s_infinite]">.</span>
+    <span className="inline-flex items-center gap-0.5">
+      <span className="animate-bounce" style={{ animationDelay: "0ms", animationDuration: "600ms" }}>.</span>
+      <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
+      <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
     </span>
   );
 }

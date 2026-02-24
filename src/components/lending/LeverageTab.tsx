@@ -9,7 +9,8 @@ import { toast } from "sonner";
 import { isUserRejection } from "@/lib/analytics";
 import { formatUnits, parseUnits } from "viem";
 import type { VaultConfig } from "@/config/vaults";
-import { CURVE_CONTROLLERS } from "@/config/vaults";
+import { CURVE_CONTROLLERS, TOKENS, TANGENT } from "@/config/vaults";
+import { getVaultInfo } from "@/lib/curve-lending";
 import type { LendingPosition } from "@/hooks/useCurveLendingPosition";
 import { useZapperActions } from "@/hooks/useZapperActions";
 import { CRVUSD_ADDRESS, CHAINLINK_ETH_USD } from "@/config/addresses";
@@ -87,6 +88,18 @@ const AMM_ABI = [
     inputs: [],
     outputs: [{ name: "", type: "uint256" }],
   },
+] as const;
+
+const ERC4626_PREVIEW_ABI = [
+  { name: "previewRedeem", type: "function", stateMutability: "view",
+    inputs: [{ name: "shares", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }] },
+] as const;
+
+const CURVE_GET_DY_ABI = [
+  { name: "get_dy", type: "function", stateMutability: "view",
+    inputs: [{ name: "i", type: "int128" }, { name: "j", type: "int128" }, { name: "dx", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }] },
 ] as const;
 
 // Combined MAX button with hover options: MAX ALL (above) + Reset (below)
@@ -535,6 +548,7 @@ export function LeverageTab({
   // Zapper actions
   const {
     createLeveragedLoan,
+    createLeveragedLoanFromToken: createLeveragedLoanFromTokenAction,
     leverageUp: leverageUpAction,
     leverageUpFromToken: leverageUpFromTokenAction,
     deleverage: deleverageAction,
@@ -582,6 +596,12 @@ export function LeverageTab({
   const [selectedToken, setSelectedToken] = useState<EnsoToken>(vaultToken);
   const isCollateralToken = selectedToken.address.toLowerCase() === vault.address.toLowerCase();
 
+  // Detect if selected input token is a vault token (e.g. yscvgCVX) that needs special routing
+  const inputVaultInfo = useMemo(
+    () => (isCollateralToken ? null : getVaultInfo(selectedToken.address)),
+    [selectedToken.address, isCollateralToken]
+  );
+
   // Balance for non-collateral token
   const isEth = selectedToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
   const { data: altTokenBalance, refetch: refetchBalance } = useBalance({
@@ -623,32 +643,92 @@ export function LeverageTab({
     const timer = setTimeout(async () => {
       try {
         const inputAmount = parseUnits(collateralAmount, effectiveDecimals);
-        const route = await fetchRoute({
-          fromAddress: address,
-          tokenIn: selectedToken.address,
-          tokenOut: vault.address,
-          amountIn: inputAmount.toString(),
-          slippage: "300", // 3% for estimation only
-        });
-        const collateralOut = BigInt(route.amountOut);
+
+        let collateralOut: bigint;
+        let routeSteps: RouteInfo["steps"];
+
+        if (inputVaultInfo && publicClient) {
+          // Vault token input: estimate via previewRedeem + intermediate swaps
+          const isCvgCvxUnderlying = inputVaultInfo.underlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase();
+
+          if (isCvgCvxUnderlying) {
+            // cvgCVX path: previewRedeem → get_dy (cvgCVX→CVX1) → fetchRoute(CVX→collateral)
+            const estimatedUnderlying = await publicClient.readContract({
+              address: inputVaultInfo.address as `0x${string}`,
+              abi: ERC4626_PREVIEW_ABI,
+              functionName: "previewRedeem",
+              args: [inputAmount],
+            }) as bigint;
+            if (stale) return;
+
+            const estimatedCvx1 = await publicClient.readContract({
+              address: TANGENT.CVX1_CVGCVX_POOL as `0x${string}`,
+              abi: CURVE_GET_DY_ABI,
+              functionName: "get_dy",
+              args: [1n, 0n, estimatedUnderlying],
+            }) as bigint;
+            if (stale) return;
+
+            // CVX1→CVX is 1:1, route CVX → collateral token
+            const route = await fetchRoute({
+              fromAddress: address,
+              tokenIn: TOKENS.CVX,
+              tokenOut: vault.address,
+              amountIn: estimatedCvx1.toString(),
+              slippage: "300",
+            });
+            if (stale) return;
+            collateralOut = BigInt(route.amountOut);
+            routeSteps = [
+              { tokenSymbol: selectedToken.symbol, action: "Redeem", description: `for cvgCVX`, protocol: "ERC4626 Vault" },
+              { tokenSymbol: "cvgCVX", action: "Swap", description: `via CVX1 to CVX`, protocol: "Curve + HybridZapper" },
+              { tokenSymbol: "CVX", action: "Swap", description: `for ${vault.symbol}`, protocol: "Enso Router" },
+              { tokenSymbol: vault.symbol, action: "Deposit as Collateral", protocol: "Curve LlamaLend", amount: Number(formatUnits(collateralOut, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 }) },
+            ];
+          } else {
+            // Standard vault: previewRedeem → fetchRoute(underlying → collateral)
+            const estimatedUnderlying = await publicClient.readContract({
+              address: inputVaultInfo.address as `0x${string}`,
+              abi: ERC4626_PREVIEW_ABI,
+              functionName: "previewRedeem",
+              args: [inputAmount],
+            }) as bigint;
+            if (stale) return;
+
+            const route = await fetchRoute({
+              fromAddress: address,
+              tokenIn: inputVaultInfo.underlying,
+              tokenOut: vault.address,
+              amountIn: estimatedUnderlying.toString(),
+              slippage: "300",
+            });
+            if (stale) return;
+            collateralOut = BigInt(route.amountOut);
+            routeSteps = [
+              { tokenSymbol: selectedToken.symbol, action: "Redeem", description: `for ${inputVaultInfo.underlyingSymbol}`, protocol: "ERC4626 Vault" },
+              { tokenSymbol: inputVaultInfo.underlyingSymbol, action: "Swap", description: `for ${vault.symbol}`, protocol: "Enso Router" },
+              { tokenSymbol: vault.symbol, action: "Deposit as Collateral", protocol: "Curve LlamaLend", amount: Number(formatUnits(collateralOut, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 }) },
+            ];
+          }
+        } else {
+          // Standard token: direct route to collateral
+          const route = await fetchRoute({
+            fromAddress: address,
+            tokenIn: selectedToken.address,
+            tokenOut: vault.address,
+            amountIn: inputAmount.toString(),
+            slippage: "300", // 3% for estimation only
+          });
+          collateralOut = BigInt(route.amountOut);
+          routeSteps = [
+            { tokenSymbol: selectedToken.symbol, action: "Swap", description: `for ${vault.symbol}`, protocol: "Enso Router" },
+            { tokenSymbol: vault.symbol, action: "Deposit as Collateral", protocol: "Curve LlamaLend", amount: Number(formatUnits(collateralOut, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 }) },
+          ];
+        }
+
         if (!stale) {
           setEstimatedCollateralFromSwap(collateralOut);
-          setSwapRouteInfo({
-            steps: [
-              {
-                tokenSymbol: selectedToken.symbol,
-                action: "Swap",
-                description: `for ${vault.symbol}`,
-                protocol: "Enso Router",
-              },
-              {
-                tokenSymbol: vault.symbol,
-                action: "Deposit as Collateral",
-                protocol: "Curve LlamaLend",
-                amount: Number(formatUnits(collateralOut, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 }),
-              },
-            ],
-          });
+          setSwapRouteInfo({ steps: routeSteps });
         }
       } catch (err) {
         console.error("[SwapEstimate] Failed:", err);
@@ -662,7 +742,7 @@ export function LeverageTab({
     }, 500); // debounce
     return () => { stale = true; clearTimeout(timer); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCollateralToken, collateralAmount, effectiveDecimals, selectedToken.address, vault.address, address]);
+  }, [isCollateralToken, collateralAmount, effectiveDecimals, selectedToken.address, vault.address, address, inputVaultInfo]);
 
   // Total collateral (existing position + additional input)
   // For non-collateral tokens, use swap quote estimate
@@ -1257,6 +1337,14 @@ export function LeverageTab({
     }
   }, [isApprovalSuccess, status, executeAfterApproval]);
 
+  // Reset stale approval state when user changes inputs
+  useEffect(() => {
+    if (status === "needsApproval") {
+      reset();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collateralAmount, leverage, selectedToken.address]);
+
   const handleSubmit = async () => {
     if (!address || !controllerAddress) return;
 
@@ -1306,14 +1394,22 @@ export function LeverageTab({
             if (openModalIfPreview(result)) return;
           }
           await leverageUpAction(controllerAddress, collateralAmount ? parseUnits(collateralAmount, vault.decimals) : 0n, debtAmount, collateralToken, Number(slippage), false);
-        } else {
-          // ZapperV2 path — loop leverage from any token
+        } else if (position?.hasLoan) {
+          // ZapperV2 path — leverage up existing position from any token
           const inputAmount = collateralAmount ? parseUnits(collateralAmount, effectiveDecimals) : 0n;
           if (preview) {
             const result = await leverageUpFromTokenAction(controllerAddress, selectedToken.address as `0x${string}`, inputAmount, debtAmount, collateralToken, selectedToken.symbol, Number(slippage), true);
             if (openModalIfPreview(result)) return;
           }
           await leverageUpFromTokenAction(controllerAddress, selectedToken.address as `0x${string}`, collateralAmount ? parseUnits(collateralAmount, effectiveDecimals) : 0n, debtAmount, collateralToken, selectedToken.symbol, Number(slippage), false);
+        } else {
+          // ZapperV2 path — create new leveraged loan from any token
+          const inputAmount = collateralAmount ? parseUnits(collateralAmount, effectiveDecimals) : 0n;
+          if (preview) {
+            const result = await createLeveragedLoanFromTokenAction(controllerAddress, selectedToken.address as `0x${string}`, inputAmount, debtAmount, positionBands, collateralToken, selectedToken.symbol, Number(slippage), true);
+            if (openModalIfPreview(result)) return;
+          }
+          await createLeveragedLoanFromTokenAction(controllerAddress, selectedToken.address as `0x${string}`, collateralAmount ? parseUnits(collateralAmount, effectiveDecimals) : 0n, debtAmount, positionBands, collateralToken, selectedToken.symbol, Number(slippage), false);
         }
       } else if (activeMode === "deleverage") {
         if (isClosePosition) {
@@ -1884,6 +1980,7 @@ export function LeverageTab({
           gasPrice={gasPrice}
           ethPrice={ethPrice}
           confirmText="Confirm & Execute"
+          leverageMode={activeMode === "leverageUp"}
         />
       )}
 

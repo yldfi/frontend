@@ -236,7 +236,9 @@ export function useVaultActions(
     const simPromise = (testNetworkType === null && chainId !== 1337)
       ? (async () => {
           try {
-            const nonceResponse = await fetch("/api/simulate/nonce");
+            const nonceResponse = await fetch("/api/simulate/nonce", {
+              signal: AbortSignal.timeout(5_000), // 5s timeout
+            });
             const nonceResult = (await nonceResponse.json()) as {
               success: boolean;
               nonce?: string;
@@ -260,6 +262,7 @@ export function useVaultActions(
                 expires: nonceResult.expires,
                 sig: nonceResult.sig,
               }),
+              signal: AbortSignal.timeout(20_000), // 20s timeout
             });
 
             const result = (await response.json()) as SimulationResult & { retryable?: boolean };

@@ -348,10 +348,25 @@ export function LendingInterface({
   const [positionOpaque, setPositionOpaque] = useState(false);
   const positionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastCollateralAmount = useRef<bigint>(0n);
+  const lastDebtDelta = useRef<bigint>(0n);
+  const lastLeverage = useRef<number>(1);
+  const lastHealth = useRef<number | null>(null);
   if (childCollateralAmount !== null && childCollateralAmount > 0n) {
     lastCollateralAmount.current = childCollateralAmount;
   }
+  if (childDebtDelta !== null && childDebtDelta > 0n) {
+    lastDebtDelta.current = childDebtDelta;
+  }
+  if (childEstimatedLeverage !== null) {
+    lastLeverage.current = childEstimatedLeverage;
+  }
+  if (childEstimatedHealth !== null) {
+    lastHealth.current = childEstimatedHealth;
+  }
   const displayCollateralAmount = childCollateralAmount ?? lastCollateralAmount.current;
+  const displayDebtDelta = childDebtDelta ?? lastDebtDelta.current;
+  const displayLeverage = childEstimatedLeverage ?? lastLeverage.current;
+  const newPositionHealth = childEstimatedHealth ?? lastHealth.current;
   const hasCollateral = childCollateralAmount !== null && childCollateralAmount > 0n;
   useEffect(() => {
     if (positionTimer.current) { clearTimeout(positionTimer.current); positionTimer.current = null; }
@@ -755,6 +770,8 @@ export function LendingInterface({
       try {
         localStorage.removeItem(`yldfi-lending-newloan-amount-${vault.address}`);
         localStorage.removeItem(`yldfi-lending-newloan-debt-${vault.address}`);
+        localStorage.removeItem(`yldfi-lending-newloan-token-${vault.address}`);
+        localStorage.removeItem(`yldfi-lending-newloan-output-${vault.address}`);
       } catch { /* */ }
     }
   }, [vault.address]);
@@ -1118,17 +1135,17 @@ export function LendingInterface({
               <div className="flex items-center gap-1.5">
                 <Image src="/tokens/crvusd.png" alt="" width={14} height={14} className="rounded-full" />
                 <span className="mono text-sm font-medium truncate">
-                  {childDebtDelta !== null && childDebtDelta > 0n
-                    ? Number(formatUnits(childDebtDelta, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                  {displayDebtDelta > 0n
+                    ? Number(formatUnits(displayDebtDelta, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })
                     : "0"}
                 </span>
               </div>
               <div className="text-[10px] text-[var(--muted-foreground)] mt-0.5">
-                ${childDebtDelta !== null && childDebtDelta > 0n
-                  ? Number(formatUnits(childDebtDelta, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                ${displayDebtDelta > 0n
+                  ? Number(formatUnits(displayDebtDelta, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })
                   : "0.00"}
               </div>
-              {(projectedBorrowAPR ?? currentBorrowAPR) != null && childDebtDelta !== null && childDebtDelta > 0n && (
+              {(projectedBorrowAPR ?? currentBorrowAPR) != null && displayDebtDelta > 0n && (
                 <div className="text-[10px] text-red-500 mt-0.5">
                   -{(projectedBorrowAPR ?? currentBorrowAPR!).toFixed(2)}% APR
                 </div>
@@ -1136,17 +1153,17 @@ export function LendingInterface({
             </div>
             <div className="text-right">
               <div className="mono text-sm font-medium">
-                {childEstimatedLeverage !== null ? childEstimatedLeverage.toFixed(2) : "1.00"}x
+                {displayLeverage.toFixed(2)}x
                 {maxLeverage && <span className="text-[var(--muted-foreground)] font-normal">{"\u2009/\u2009"}{maxLeverage.toFixed(2)}x</span>}
               </div>
-              {oraclePrice > 0n && childDebtDelta !== null && childDebtDelta > 0n && (() => {
+              {oraclePrice > 0n && displayDebtDelta > 0n && (() => {
                 const collValue = Number(formatUnits(displayCollateralAmount * oraclePrice / (10n ** BigInt(vault.decimals)), 18));
-                const debt = Number(formatUnits(childDebtDelta, 18));
+                const debt = Number(formatUnits(displayDebtDelta, 18));
                 const ltv = collValue > 0 ? (debt / collValue) * 100 : 0;
                 return <LtvIndicator ltv={ltv} thresholds={ltvThresholds} />;
               })()}
-              {collateralAPR != null && (projectedBorrowAPR ?? currentBorrowAPR) != null && childDebtDelta !== null && childDebtDelta > 0n && (() => {
-                const lev = childEstimatedLeverage ?? 1;
+              {collateralAPR != null && (projectedBorrowAPR ?? currentBorrowAPR) != null && displayDebtDelta > 0n && (() => {
+                const lev = displayLeverage;
                 const borrow = projectedBorrowAPR ?? currentBorrowAPR!;
                 const net = lev * collateralAPR - (lev - 1) * borrow;
                 return (
@@ -1161,12 +1178,12 @@ export function LendingInterface({
           {/* Health Bar */}
           <div className={cn("flex items-center gap-2 px-4 pb-2 h-6 transition-opacity duration-300", positionOpaque ? "opacity-100" : "opacity-0")}>
             <div className={cn("relative flex-1 h-2 rounded-full bg-[var(--muted)] overflow-hidden", childSettling && "animate-pulse")}>
-              {effectiveEstimatedHealth !== null && (
+              {newPositionHealth !== null && (
                 <div
                   className="absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out"
                   style={{
-                    width: `${Math.min(Math.max(effectiveEstimatedHealth, 0), 100)}%`,
-                    backgroundColor: effectiveEstimatedHealth < 5 ? "#ef4444" : effectiveEstimatedHealth < 10 ? "#f97316" : effectiveEstimatedHealth < 20 ? "#eab308" : effectiveEstimatedHealth < 40 ? "#84cc16" : "#22c55e",
+                    width: `${Math.min(Math.max(newPositionHealth, 0), 100)}%`,
+                    backgroundColor: newPositionHealth < 5 ? "#ef4444" : newPositionHealth < 10 ? "#f97316" : newPositionHealth < 20 ? "#eab308" : newPositionHealth < 40 ? "#84cc16" : "#22c55e",
                   }}
                 />
               )}
@@ -1174,19 +1191,21 @@ export function LendingInterface({
             <span
               className="w-[4ch] text-sm font-medium mono leading-none select-none text-right shrink-0"
               style={{
-                color: childSettling || effectiveEstimatedHealth === null
+                color: newPositionHealth === null
                   ? "var(--muted-foreground)"
-                  : effectiveEstimatedHealth < 5 ? "#ef4444" : effectiveEstimatedHealth < 10 ? "#f97316" : effectiveEstimatedHealth < 20 ? "#eab308" : effectiveEstimatedHealth < 40 ? "#84cc16" : "#22c55e",
+                  : newPositionHealth < 5 ? "#ef4444" : newPositionHealth < 10 ? "#f97316" : newPositionHealth < 20 ? "#eab308" : newPositionHealth < 40 ? "#84cc16" : "#22c55e",
               }}
             >
-              {childSettling ? (
+              {childSettling && newPositionHealth !== null ? (
+                `${Math.round(newPositionHealth)}%`
+              ) : childSettling ? (
                 <span className="inline-flex items-center justify-end w-full leading-none"><LoadingDots /></span>
-              ) : effectiveEstimatedHealth === null ? (
+              ) : newPositionHealth === null ? (
                 <span className="block text-center text-xs">—</span>
-              ) : effectiveEstimatedHealth > 999 ? (
+              ) : newPositionHealth > 999 ? (
                 <span className="text-xl leading-none" style={{ position: "relative", top: "1px" }}>∞</span>
               ) : (
-                `${Math.round(effectiveEstimatedHealth)}%`
+                `${Math.round(newPositionHealth)}%`
               )}
             </span>
           </div>

@@ -25,6 +25,12 @@ interface SimulationModalProps {
   confirmText?: string;
   confirmDisabled?: boolean;
   summary?: { label: string; value: string; subValue?: string; subValueColor?: string }[];
+  swapTitle?: string;
+  borrowSwapTitle?: string;
+  /** Per-swap price impacts override the single aggregate price impact */
+  perSwapPriceImpacts?: { input?: number; output?: number };
+  /** When true, groups borrow+deposit as leverage (crvUSD used to buy more collateral) */
+  leverageMode?: boolean;
 }
 
 // Asset change row component
@@ -81,6 +87,35 @@ function AssetChangesSection({
   );
 }
 
+// Inline price impact display — pr-3 aligns with dollar values inside AssetChangeRow's p-3
+function PriceImpactBadge({ impact }: { impact: number }) {
+  return (
+    <span className={cn(
+      "text-xs mono ml-auto pr-3",
+      impact <= 0 ? "text-green-500" : impact < 3 ? "text-yellow-500" : "text-red-500"
+    )}>
+      {impact > 0 ? "" : "+"}{(-impact).toFixed(2)}%
+    </span>
+  );
+}
+
+// Compute price impact from dollar values: ((inUsd - outUsd) / inUsd) * 100
+function computeImpact(inChanges: SimulationAssetChange[], outChanges: SimulationAssetChange[]): number | null {
+  const inUsd = inChanges.filter(c => c.dollarValue).reduce((sum, c) => sum + Number(c.dollarValue), 0);
+  const outUsd = outChanges.filter(c => c.dollarValue).reduce((sum, c) => sum + Number(c.dollarValue), 0);
+  if (inUsd > 0 && outUsd > 0) return ((inUsd - outUsd) / inUsd) * 100;
+  return null;
+}
+
+// Compute price impact from token amounts — used for borrow&swap where one side is crvUSD.
+// Dollar values are unreliable here: crvUSD trades below $1 but debt is at face value ($1).
+function computeAmountImpact(inChanges: SimulationAssetChange[], outChanges: SimulationAssetChange[]): number | null {
+  const inAmt = inChanges.reduce((sum, c) => sum + Math.abs(Number(c.amount)), 0);
+  const outAmt = outChanges.reduce((sum, c) => sum + Math.abs(Number(c.amount)), 0);
+  if (inAmt > 0 && outAmt > 0) return ((inAmt - outAmt) / inAmt) * 100;
+  return null;
+}
+
 // Extract error message from string or object
 function getErrorMessage(error: string | { id?: string; slug?: string; message?: string } | null): string | null {
   if (!error) return null;
@@ -98,6 +133,10 @@ export function SimulationModal({
   confirmText = "Confirm",
   confirmDisabled = false,
   summary,
+  swapTitle = "You Swap",
+  borrowSwapTitle,
+  perSwapPriceImpacts,
+  leverageMode = false,
 }: SimulationModalProps) {
   if (!isOpen) return null;
 
@@ -216,21 +255,210 @@ export function SimulationModal({
         {simulationResult.success && simulationResult.assetChanges.length > 0 && (() => {
           // Deduplicate: if a token appears in both "send" and "deposit" (direct deposit, no swap),
           // hide the redundant "send" entry since "deposit" already conveys the action
-          const depositSymbols = new Set(
-            simulationResult.assetChanges
-              .filter(c => c.type === "deposit")
-              .map(c => c.symbol.toLowerCase())
-          );
+          const deposits = simulationResult.assetChanges.filter(c => c.type === "deposit");
+          const sends = simulationResult.assetChanges.filter(c => c.type === "send");
+          const borrows = simulationResult.assetChanges.filter(c => c.type === "borrow");
+          const receives = simulationResult.assetChanges.filter(c => c.type === "receive");
+          const depositSymbols = new Set(deposits.map(c => c.symbol.toLowerCase()));
+          const sendSymbols = new Set(sends.map(c => c.symbol.toLowerCase()));
+          const borrowSymbols = new Set(borrows.map(c => c.symbol.toLowerCase()));
+          const receiveSymbols = new Set(receives.map(c => c.symbol.toLowerCase()));
+
+          // Detect input swap: "send" token differs from "deposit" token (e.g. yscvgCVX → ycvxCRV)
+          const swapSends = sends.filter(c => !depositSymbols.has(c.symbol.toLowerCase()));
+          const swapDeposits = deposits.filter(c => !sendSymbols.has(c.symbol.toLowerCase()));
+          const hasSwapToDeposit = swapSends.length > 0 && swapDeposits.length > 0;
+
+          // Detect output swap: "borrow" token differs from "receive" token (e.g. crvUSD → USDC)
+          const hasBorrowSwap = borrowSwapTitle
+            && borrows.length > 0 && receives.length > 0
+            && !receives.some(c => borrowSymbols.has(c.symbol.toLowerCase()));
+
           const filteredChanges = simulationResult.assetChanges.filter(
             c => !(c.type === "send" && depositSymbols.has(c.symbol.toLowerCase()))
           );
+
+          const SwapArrow = () => (
+            <div className="flex justify-center text-[var(--muted-foreground)] py-0.5">
+              <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M8 12.5a.5.5 0 0 1-.354-.146l-4-4a.5.5 0 0 1 .708-.708L8 11.293l3.646-3.647a.5.5 0 0 1 .708.708l-4 4A.5.5 0 0 1 8 12.5z" />
+              </svg>
+            </div>
+          );
+
+          // Compute per-swap price impacts from Tenderly USD values
+          const inputSwapImpact = hasSwapToDeposit
+            ? (perSwapPriceImpacts?.input ?? computeImpact(swapSends, swapDeposits))
+            : null;
+          const borrowSwapBorrows = borrows.filter(c => !receiveSymbols.has(c.symbol.toLowerCase()));
+          const borrowSwapReceives = receives.filter(c => !borrowSymbols.has(c.symbol.toLowerCase()));
+          // Use amount-based impact for borrow&swap (crvUSD debt is at face value, not market price)
+          const outputSwapImpact = hasBorrowSwap
+            ? (perSwapPriceImpacts?.output ?? computeAmountImpact(borrowSwapBorrows, borrowSwapReceives))
+            : null;
+
+          // Build action groups, then render with separators between them
+          const groups: React.ReactNode[] = [];
+
+          if (leverageMode && borrows.length > 0 && deposits.length > 0) {
+            // --- Leverage mode ---
+            // Split deposits into "from input swap" vs "from leverage borrow"
+            // The leverage deposit's dollar value is closest to the borrow's dollar value
+            const borrowDollar = borrows.reduce((sum, c) => sum + Number(c.dollarValue ?? 0), 0);
+            const depositToken = deposits[0]; // all deposits are same token in leverage
+
+            let inputDeposits: SimulationAssetChange[];
+            let leverageDeposits: SimulationAssetChange[];
+
+            if (deposits.length >= 2 && borrowDollar > 0) {
+              // Find the deposit closest in dollar value to the borrow (that's the leverage one)
+              const sorted = [...deposits].sort((a, b) => {
+                const diffA = Math.abs(Number(a.dollarValue ?? 0) - borrowDollar);
+                const diffB = Math.abs(Number(b.dollarValue ?? 0) - borrowDollar);
+                return diffA - diffB;
+              });
+              leverageDeposits = [sorted[0]];
+              inputDeposits = sorted.slice(1);
+            } else if (deposits.length >= 2) {
+              // No dollar values — assume smallest deposit is leverage
+              const sorted = [...deposits].sort((a, b) => Number(a.amount) - Number(b.amount));
+              leverageDeposits = [sorted[0]];
+              inputDeposits = sorted.slice(1);
+            } else {
+              // Single deposit — all goes to input, leverage just shows borrow
+              inputDeposits = deposits;
+              leverageDeposits = [];
+            }
+
+            const inputDepositAmount = inputDeposits.reduce((sum, c) => sum + Number(c.amount), 0);
+            const inputDepositDollar = inputDeposits.reduce((sum, c) => sum + Number(c.dollarValue ?? 0), 0);
+
+            // Input group: user's token → collateral from input swap
+            if (sends.length > 0) {
+              groups.push(
+                <div key="input-swap">
+                  <div className="flex items-center text-xs text-[var(--muted-foreground)] mb-2">
+                    Swap & Deposit as Collateral
+                    {inputSwapImpact !== null && <PriceImpactBadge impact={inputSwapImpact} />}
+                  </div>
+                  <div className="space-y-1">
+                    {sends.map((send, i) => (
+                      <AssetChangeRow key={`swap-send-${i}`} change={send} />
+                    ))}
+                    <SwapArrow />
+                    <AssetChangeRow change={{
+                      ...depositToken,
+                      amount: inputDepositAmount.toString(),
+                      dollarValue: inputDepositDollar > 0 ? inputDepositDollar.toString() : undefined,
+                    }} />
+                  </div>
+                </div>
+              );
+            } else {
+              // No input swap — direct collateral deposit
+              if (inputDeposits.length > 0) {
+                groups.push(
+                  <div key="deposit">
+                    <div className="text-xs text-[var(--muted-foreground)] mb-2">You Deposit</div>
+                    {inputDeposits.map((dep, i) => (
+                      <AssetChangeRow key={`input-dep-${i}`} change={dep} />
+                    ))}
+                  </div>
+                );
+              }
+            }
+
+            // Leverage group: borrow crvUSD → swap to more collateral
+            const filteredBorrows = borrows.filter(c => Math.abs(Number(c.amount)) > 0.000001);
+            if (filteredBorrows.length > 0) {
+              groups.push(
+                <div key="leverage">
+                  <div className="text-xs text-[var(--muted-foreground)] mb-2">Leverage</div>
+                  <div className="space-y-1">
+                    {filteredBorrows.map((b, i) => (
+                      <AssetChangeRow key={`leverage-borrow-${i}`} change={b} />
+                    ))}
+                    {leverageDeposits.length > 0 && (
+                      <>
+                        <SwapArrow />
+                        {leverageDeposits.map((dep, i) => (
+                          <AssetChangeRow key={`leverage-dep-${i}`} change={dep} />
+                        ))}
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            }
+          } else {
+            // --- Standard mode ---
+
+            // Input swap or standard send/deposit
+            if (hasSwapToDeposit) {
+              groups.push(
+                <div key="input-swap">
+                  <div className="flex items-center text-xs text-[var(--muted-foreground)] mb-2">
+                    {swapTitle}
+                    {inputSwapImpact !== null && <PriceImpactBadge impact={inputSwapImpact} />}
+                  </div>
+                  <div className="space-y-1">
+                    {swapSends.map((send, i) => (
+                      <AssetChangeRow key={`swap-send-${i}`} change={send} />
+                    ))}
+                    <SwapArrow />
+                    {swapDeposits.map((dep, i) => (
+                      <AssetChangeRow key={`swap-dep-${i}`} change={dep} />
+                    ))}
+                  </div>
+                </div>
+              );
+            } else {
+              const depSection = <AssetChangesSection key="deposit" title="You Deposit" changes={filteredChanges} type="deposit" />;
+              const sendSection = <AssetChangesSection key="send" title="You Send" changes={filteredChanges} type="send" />;
+              if (deposits.length > 0) groups.push(depSection);
+              if (sends.length > 0) groups.push(sendSection);
+            }
+
+            // Output swap or standard borrow/receive
+            if (hasBorrowSwap) {
+              groups.push(
+                <div key="output-swap">
+                  <div className="flex items-center text-xs text-[var(--muted-foreground)] mb-2">
+                    {borrowSwapTitle}
+                    {outputSwapImpact !== null && <PriceImpactBadge impact={outputSwapImpact} />}
+                  </div>
+                  <div className="space-y-1">
+                    {borrowSwapBorrows.map((b, i) => (
+                      <AssetChangeRow key={`bswap-borrow-${i}`} change={b} />
+                    ))}
+                    <SwapArrow />
+                    {borrowSwapReceives.map((r, i) => (
+                      <AssetChangeRow key={`bswap-receive-${i}`} change={r} />
+                    ))}
+                  </div>
+                </div>
+              );
+            } else {
+              const borrowSection = <AssetChangesSection key="borrow" title="You Borrow" changes={filteredChanges} type="borrow" />;
+              const receiveSection = <AssetChangesSection key="receive" title="You Receive" changes={filteredChanges} type="receive" />;
+              if (borrows.length > 0) groups.push(borrowSection);
+              if (receives.length > 0) groups.push(receiveSection);
+            }
+          }
+
+          // Repay
+          const repaySection = <AssetChangesSection key="repay" title="You Repay" changes={filteredChanges} type="repay" />;
+          const hasRepay = filteredChanges.some(c => c.type === "repay" && Math.abs(Number(c.amount)) > 0.000001);
+          if (hasRepay) groups.push(repaySection);
+
           return (
             <div className="space-y-3">
-              <AssetChangesSection title="You Deposit" changes={filteredChanges} type="deposit" />
-              <AssetChangesSection title="You Send" changes={filteredChanges} type="send" />
-              <AssetChangesSection title="You Borrow" changes={filteredChanges} type="borrow" />
-              <AssetChangesSection title="You Receive" changes={filteredChanges} type="receive" />
-              <AssetChangesSection title="You Repay" changes={filteredChanges} type="repay" />
+              {groups.map((group, i) => (
+                <div key={i}>
+                  {i > 0 && <div className="border-t border-[var(--border)] mb-3" />}
+                  {group}
+                </div>
+              ))}
             </div>
           );
         })()}
@@ -262,8 +490,8 @@ export function SimulationModal({
         {/* Gas estimate with ETH and USD cost */}
         {simulationResult.gasUsed && (
           <div className="border-t border-[var(--border)] pt-3 space-y-1">
-            {/* Price impact from Tenderly USD values — only shown when there's an actual swap */}
-            {(() => {
+            {/* Aggregate price impact — hidden when per-swap impacts are shown inline */}
+            {!perSwapPriceImpacts && (() => {
               // Skip price impact if all sent tokens also appear as deposits (direct deposit, no swap)
               const sends = simulationResult.assetChanges.filter(c => c.type === "send");
               const depositSymbols = new Set(

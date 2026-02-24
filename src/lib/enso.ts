@@ -4235,16 +4235,13 @@ export async function fetchCvgCvxZapOutRoute(params: {
       },
     },
     // Action 5: Swap CVX to output token (ETH, USDC, etc.)
-    // Use pre-calculated CVX amount for Enso to plan the route
-    // (CVX1 → CVX is 1:1 unwrap, so expectedCvx1Output = expected CVX)
-    // Note: Using estimated amount because Enso can't resolve useOutputOfCallAt at quote time
+    // useOutputOfCallAt tells Enso CVX comes from the unwrap action, not from the user
     {
       protocol: "enso",
       action: "route",
       args: {
         tokenIn: TOKENS.CVX,
         tokenOut: params.outputToken,
-        // Use estimated CVX amount for route planning; fall back to dynamic if unavailable
         amountIn: expectedCvx1Output?.toString() ?? { useOutputOfCallAt: 4 },
         slippage: params.slippage ?? "100",
       },

@@ -1254,14 +1254,27 @@ export async function fetchCreateLoanWithSwapBundle(params: {
       );
     } else if (isCvgCvxUnderlying) {
       // cvgCVX → CVX1 (Curve pool) → CVX (unwrap via HybridZapper) → route to target vault
-      // CVX1_CVGCVX_POOL: coin0=CVX1, coin1=cvgCVX
-      // CVX1.withdraw() is void — Enso can't track output. Use HybridZapper.unwrapCvx1ToCvx()
-      // which returns uint256, matching the pattern in fetchCvgCvxZapOutRoute.
+      // Uses call/routeMulti([], innerSwapData) pattern instead of route action because:
+      // - route action with skipQuote:true can't resolve useOutputOfCallAt (422 error)
+      // - route action with concrete amountIn adds CVX to outer token pull list (user has no CVX)
       const estimatedUnderlying = await previewRedeem(vaultInfo.address, params.amountIn);
       const expectedCvx1 = await getCurveGetDy(TANGENT.CVX1_CVGCVX_POOL, 1, 0, estimatedUnderlying);
       if (!expectedCvx1 || expectedCvx1 === 0n) throw new Error("cvgCVX → CVX1 swap rate unavailable");
       const slippageBps = params.slippage ?? 100;
       const minDy = calculateMinDy(expectedCvx1, slippageBps);
+
+      // Pre-fetch CVX → vaultAddress route for inner swap data
+      // fromAddress=user so Enso API accepts (ENSO_SHORTCUTS as fromAddress returns 500)
+      // Route output goes to user, then transferFrom pulls it to ENSO_SHORTCUTS
+      // PREREQUISITE: User must approve vaultAddress for ENSO_SHORTCUTS
+      const cvxRoute = await fetchRoute({
+        fromAddress: params.fromAddress,
+        tokenIn: TOKENS.CVX,
+        tokenOut: params.vaultAddress,
+        amountIn: expectedCvx1.toString(), // CVX1→CVX is 1:1
+        slippage,
+      });
+      const innerSwapData = extractInnerSwapData(cvxRoute.tx.data);
 
       // approve cvgCVX → Curve pool
       actions.push({ protocol: "erc20", action: "approve", args: { token: TOKENS.CVGCVX, spender: TANGENT.CVX1_CVGCVX_POOL, amount: { useOutputOfCallAt: 0 } } });
@@ -1270,16 +1283,21 @@ export async function fetchCreateLoanWithSwapBundle(params: {
       actions.push({ protocol: "enso", action: "call", args: { address: TANGENT.CVX1_CVGCVX_POOL.toLowerCase(), method: "exchange", abi: "function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) returns (uint256)", args: [1, 0, { useOutputOfCallAt: 0 }, minDy.toString()] } });
       // transfer CVX1 to HybridZapper (expects CVX1 in its balance)
       actions.push({ protocol: "erc20", action: "transfer", args: { token: TOKENS.CVX1, receiver: CVX_HYBRID_ZAPPER, amount: { useOutputOfCallAt: exchangeIdx } } });
-      // unwrap CVX1 → CVX via HybridZapper (returns uint256, sends CVX to ENSO_ROUTER_EXECUTOR)
-      const unwrapIdx = actions.length;
-      actions.push({ protocol: "enso", action: "call", args: { address: CVX_HYBRID_ZAPPER, method: "unwrapCvx1ToCvx", abi: "function unwrapCvx1ToCvx(uint256 amount, address receiver) returns (uint256)", args: [{ useOutputOfCallAt: exchangeIdx }, ENSO_ROUTER_EXECUTOR] } });
-      // route CVX → target vault (use estimated amount since unwrap is 1:1)
-      const routeIdx = actions.length;
-      actions.push({ protocol: "enso", action: "route", args: { tokenIn: TOKENS.CVX, tokenOut: params.vaultAddress, amountIn: expectedCvx1.toString(), slippage } });
-      // approve + create_loan
+      // unwrap CVX1 → CVX via HybridZapper (sends CVX to ENSO_SHORTCUTS where routeMulti inner data expects it)
+      actions.push({ protocol: "enso", action: "call", args: { address: CVX_HYBRID_ZAPPER, method: "unwrapCvx1ToCvx", abi: "function unwrapCvx1ToCvx(uint256 amount, address receiver) returns (uint256)", args: [{ useOutputOfCallAt: exchangeIdx }, ENSO_SHORTCUTS] } });
+      // Recursive routeMulti: swap CVX (already in ENSO_SHORTCUTS) → vault token → user
+      // call action doesn't add CVX to Enso's outer token pull list (unlike route action)
+      actions.push({ protocol: "enso", action: "call", args: { address: ENSO_ROUTER_EXECUTOR.toLowerCase(), method: "routeMulti", abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)", args: [[], innerSwapData] } });
+      // Get vault token balance from user's wallet (route output destination)
+      const balIdx = actions.length;
+      actions.push({ protocol: "enso", action: "call", args: { address: params.vaultAddress.toLowerCase(), method: "balanceOf", abi: "function balanceOf(address account) returns (uint256)", args: [params.fromAddress] } });
+      // Transfer vault tokens from user to ENSO_SHORTCUTS for create_loan
+      // Requires: vaultAddress.approve(ENSO_SHORTCUTS, maxUint256) from user
+      actions.push({ protocol: "enso", action: "call", args: { address: params.vaultAddress.toLowerCase(), method: "transferFrom", abi: "function transferFrom(address from, address to, uint256 amount) returns (bool)", args: [params.fromAddress, ENSO_SHORTCUTS, { useOutputOfCallAt: balIdx }] } });
+      // approve + create_loan using transferred balance
       actions.push(
-        { protocol: "erc20", action: "approve", args: { token: params.vaultAddress, spender: controllerAddress, amount: { useOutputOfCallAt: routeIdx } } },
-        { protocol: "enso", action: "call", args: { address: controllerAddress.toLowerCase(), method: "create_loan", abi: CONTROLLER_CREATE_LOAN_ABI, args: [{ useOutputOfCallAt: routeIdx }, params.debtAmount, params.bands] } },
+        { protocol: "erc20", action: "approve", args: { token: params.vaultAddress, spender: controllerAddress, amount: { useOutputOfCallAt: balIdx } } },
+        { protocol: "enso", action: "call", args: { address: controllerAddress.toLowerCase(), method: "create_loan", abi: CONTROLLER_CREATE_LOAN_ABI, args: [{ useOutputOfCallAt: balIdx }, params.debtAmount, params.bands] } },
       );
     } else {
       // Standard vault: underlying → route to target vault
@@ -1617,6 +1635,9 @@ export async function fetchCreateLoanWithOutputSwapBundle(params: {
       actions.push({ protocol: "erc4626", action: "redeem", args: { tokenIn: params.tokenIn!, tokenOut: inputVaultInfo.underlying, amountIn: params.amountIn, primaryAddress: params.tokenIn! } });
     }
 
+    // Track the action index that holds the vault token amount
+    let vaultTokenAmountIdx: number;
+
     if (isPxCvxUnderlying) {
       const estimatedPxCvx = await previewRedeem(inputVaultInfo.address, params.amountIn);
       const expectedCvx = await getLpxCvxToCvxSwapRate(estimatedPxCvx);
@@ -1628,34 +1649,48 @@ export async function fetchCreateLoanWithOutputSwapBundle(params: {
         { protocol: "erc20", action: "approve", args: { token: PIREX.LPXCVX, spender: PIREX.LPXCVX_CVX_POOL, amount: { useOutputOfCallAt: 0 } } },
         { protocol: "enso", action: "call", args: { address: PIREX.LPXCVX_CVX_POOL.toLowerCase(), method: "exchange", abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) returns (uint256)", args: [String(PIREX.POOL_INDEX.LPXCVX), String(PIREX.POOL_INDEX.CVX), { useOutputOfCallAt: 0 }, minDyCvx] } },
       );
-      const routeIdx = actions.length;
-      actions.push({ protocol: "enso", action: "route", args: { tokenIn: TOKENS.CVX, tokenOut: params.vaultAddress, amountIn: { useOutputOfCallAt: routeIdx - 1 }, slippage } });
+      vaultTokenAmountIdx = actions.length;
+      actions.push({ protocol: "enso", action: "route", args: { tokenIn: TOKENS.CVX, tokenOut: params.vaultAddress, amountIn: { useOutputOfCallAt: vaultTokenAmountIdx - 1 }, slippage } });
     } else if (isCvgCvxUnderlying) {
-      // Same pattern as fetchCreateLoanWithSwapBundle cvgCVX path — use HybridZapper
+      // Same pattern as fetchCreateLoanWithSwapBundle cvgCVX path
+      // Uses call/routeMulti([], innerSwapData) to avoid route action's token pull issue
       inputUsesHybridZapper = true;
       const estimatedUnderlying = await previewRedeem(inputVaultInfo.address, params.amountIn);
       const expectedCvx1 = await getCurveGetDy(TANGENT.CVX1_CVGCVX_POOL, 1, 0, estimatedUnderlying);
       if (!expectedCvx1 || expectedCvx1 === 0n) throw new Error("cvgCVX → CVX1 swap rate unavailable");
       const minDy = calculateMinDy(expectedCvx1, params.slippage ?? 100);
+
+      // Pre-fetch CVX → vaultAddress route for inner swap data
+      // fromAddress=user so Enso API accepts; route output goes to user, then transferFrom
+      const cvxRoute = await fetchRoute({
+        fromAddress: params.fromAddress,
+        tokenIn: TOKENS.CVX,
+        tokenOut: params.vaultAddress,
+        amountIn: expectedCvx1.toString(),
+        slippage,
+      });
+      const innerSwapData = extractInnerSwapData(cvxRoute.tx.data);
+
       actions.push({ protocol: "erc20", action: "approve", args: { token: TOKENS.CVGCVX, spender: TANGENT.CVX1_CVGCVX_POOL, amount: { useOutputOfCallAt: 0 } } });
       const exchangeIdx = actions.length;
       actions.push({ protocol: "enso", action: "call", args: { address: TANGENT.CVX1_CVGCVX_POOL.toLowerCase(), method: "exchange", abi: "function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) returns (uint256)", args: [1, 0, { useOutputOfCallAt: 0 }, minDy.toString()] } });
       actions.push({ protocol: "erc20", action: "transfer", args: { token: TOKENS.CVX1, receiver: CVX_HYBRID_ZAPPER, amount: { useOutputOfCallAt: exchangeIdx } } });
-      actions.push({ protocol: "enso", action: "call", args: { address: CVX_HYBRID_ZAPPER, method: "unwrapCvx1ToCvx", abi: "function unwrapCvx1ToCvx(uint256 amount, address receiver) returns (uint256)", args: [{ useOutputOfCallAt: exchangeIdx }, ENSO_ROUTER_EXECUTOR] } });
-      actions.push({ protocol: "enso", action: "route", args: { tokenIn: TOKENS.CVX, tokenOut: params.vaultAddress, amountIn: expectedCvx1.toString(), slippage } });
+      actions.push({ protocol: "enso", action: "call", args: { address: CVX_HYBRID_ZAPPER, method: "unwrapCvx1ToCvx", abi: "function unwrapCvx1ToCvx(uint256 amount, address receiver) returns (uint256)", args: [{ useOutputOfCallAt: exchangeIdx }, ENSO_SHORTCUTS] } });
+      // Recursive routeMulti: CVX (in ENSO_SHORTCUTS) → vault token → user
+      actions.push({ protocol: "enso", action: "call", args: { address: ENSO_ROUTER_EXECUTOR.toLowerCase(), method: "routeMulti", abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)", args: [[], innerSwapData] } });
+      // Get vault token balance from user, transfer to ENSO_SHORTCUTS for create_loan
+      vaultTokenAmountIdx = actions.length;
+      actions.push({ protocol: "enso", action: "call", args: { address: params.vaultAddress.toLowerCase(), method: "balanceOf", abi: "function balanceOf(address account) returns (uint256)", args: [params.fromAddress] } });
+      actions.push({ protocol: "enso", action: "call", args: { address: params.vaultAddress.toLowerCase(), method: "transferFrom", abi: "function transferFrom(address from, address to, uint256 amount) returns (bool)", args: [params.fromAddress, ENSO_SHORTCUTS, { useOutputOfCallAt: vaultTokenAmountIdx }] } });
     } else {
       // Standard vault: route underlying → target vault
+      vaultTokenAmountIdx = actions.length;
       actions.push({ protocol: "enso", action: "route", args: { tokenIn: inputVaultInfo.underlying, tokenOut: params.vaultAddress, amountIn: { useOutputOfCallAt: 0 }, slippage } });
     }
 
-    // The last action is a route that outputs vault tokens — use its index for approve/create_loan
-    const lastRouteIdx = actions.length - 1;
-
-    // Approve vault tokens to controller
-    actions.push({ protocol: "erc20", action: "approve", args: { token: params.vaultAddress, spender: controllerAddress, amount: { useOutputOfCallAt: lastRouteIdx } } });
-
-    // Create loan
-    actions.push({ protocol: "enso", action: "call", args: { address: controllerAddress.toLowerCase(), method: "create_loan", abi: CONTROLLER_CREATE_LOAN_ABI, args: [{ useOutputOfCallAt: lastRouteIdx }, params.debtAmount, params.bands] } });
+    // Approve vault tokens to controller + create loan
+    actions.push({ protocol: "erc20", action: "approve", args: { token: params.vaultAddress, spender: controllerAddress, amount: { useOutputOfCallAt: vaultTokenAmountIdx } } });
+    actions.push({ protocol: "enso", action: "call", args: { address: controllerAddress.toLowerCase(), method: "create_loan", abi: CONTROLLER_CREATE_LOAN_ABI, args: [{ useOutputOfCallAt: vaultTokenAmountIdx }, params.debtAmount, params.bands] } });
   } else if (hasInputSwap) {
     // Non-vault input token: simple route → approve → create_loan
     actions.push({ protocol: "enso", action: "route", args: { tokenIn: params.tokenIn!, tokenOut: params.vaultAddress, amountIn: params.amountIn, slippage } });

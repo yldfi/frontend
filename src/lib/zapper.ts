@@ -2,8 +2,45 @@
 // Contract: https://etherscan.io/address/0x39F2a82b6CE1631128829c5Bb7449Cc7a40d2a47
 // Enables leveraged Curve LlamaLend operations via Enso Router swaps
 
-import { fetchRoute } from "@/lib/enso";
+import { fetchRoute, fetchBundle, ENSO_SHORTCUTS, ENSO_ROUTER_EXECUTOR, CVX_HYBRID_ZAPPER } from "@/lib/enso";
+import { calculateMinDy } from "@/lib/curve";
+import { TOKENS, TANGENT } from "@/config/vaults";
 import { CRVUSD_ADDRESS } from "@/config/addresses";
+import type { EnsoBundleAction } from "@/types/enso";
+import { decodeFunctionData } from "viem";
+
+// ABI for decoding routeSingle from Enso route API responses.
+// routeSingle(Token tokenIn, bytes data) where Token = (uint8 tokenType, bytes data)
+const ROUTE_SINGLE_ABI = [{
+  name: "routeSingle",
+  type: "function",
+  inputs: [
+    { name: "tokenIn", type: "tuple", components: [
+      { name: "tokenType", type: "uint8" },
+      { name: "data", type: "bytes" },
+    ]},
+    { name: "data", type: "bytes" },
+  ],
+  outputs: [{ name: "", type: "bytes" }],
+}] as const;
+
+/**
+ * Extract inner swap data from an Enso route response.
+ *
+ * The Enso route API returns routeSingle(Token tokenIn, bytes innerData) calldata.
+ * routeSingle pulls tokenIn from the user BEFORE executing innerData.
+ * We extract innerData to use with routeMulti([], innerData) which skips the pull.
+ */
+function extractInnerSwapData(routeTxData: string): `0x${string}` {
+  const decoded = decodeFunctionData({
+    abi: ROUTE_SINGLE_ABI,
+    data: routeTxData as `0x${string}`,
+  });
+  if (!decoded.args) {
+    throw new Error("Failed to decode routeSingle calldata — no args returned");
+  }
+  return decoded.args[1] as `0x${string}`;
+}
 
 // Re-export for backwards compatibility (prefer importing from @/config/addresses directly)
 export { CRVUSD_ADDRESS };
@@ -317,4 +354,171 @@ export function getDeadline(minutes: number = 20): bigint {
     return BigInt(Math.floor(Date.now() / 1000) + 7 * 86400); // 7 days
   }
   return BigInt(Math.floor(Date.now() / 1000) + minutes * 60);
+}
+
+/**
+ * Build Enso bundle calldata for vault token -> target token conversions.
+ *
+ * For cvgCVX-underlying vaults (e.g. yscvgCVX):
+ *   1. erc4626/redeem(vaultToken -> cvgCVX)
+ *   2. erc20/approve(cvgCVX -> CVX1_CVGCVX_POOL)
+ *   3. call(exchange cvgCVX -> CVX1) with min_dy slippage
+ *   4. erc20/transfer(CVX1 -> CVX_HYBRID_ZAPPER)
+ *   5. call(unwrapCvx1ToCvx -> ENSO_SHORTCUTS)
+ *   6. call(routeMulti([], innerSwapData)) using pre-fetched route
+ *
+ * For standard vault tokens:
+ *   1. erc4626/redeem(vaultToken -> underlying)
+ *   2. route(underlying -> targetToken)
+ *
+ * The bundle API returns calldata starting with 0xb94c3609 (routeSingle)
+ * which is compatible with the ZapperV2 contract's selector validation.
+ *
+ * @param params.vaultAddress - The vault token address (input token)
+ * @param params.underlying - The underlying token of the vault
+ * @param params.targetToken - The target collateral token for the loan
+ * @param params.amountIn - Amount of vault tokens to convert (wei string)
+ * @param params.estimatedUnderlying - Output from previewRedeem (wei string)
+ * @param params.isCvgCvx - Whether the underlying is cvgCVX
+ * @param params.estimatedCvx1 - Output from get_dy for cvgCVX path (wei string)
+ * @param params.slippage - Slippage in basis points (default "100" = 1%)
+ */
+export async function buildVaultInputSwapBundle(params: {
+  vaultAddress: string;
+  underlying: string;
+  targetToken: string;
+  amountIn: string;
+  estimatedUnderlying: string;
+  isCvgCvx: boolean;
+  estimatedCvx1?: string;
+  slippage?: string;
+}): Promise<{ swapData: string; expectedOut: string }> {
+  const slippageBps = Number(params.slippage ?? "100");
+
+  const actions: EnsoBundleAction[] = [];
+
+  // Step 1: Redeem from vault to get underlying
+  actions.push({
+    protocol: "erc4626",
+    action: "redeem",
+    args: {
+      tokenIn: params.vaultAddress,
+      tokenOut: params.underlying,
+      amountIn: params.amountIn,
+      primaryAddress: params.vaultAddress,
+    },
+  });
+
+  if (params.isCvgCvx) {
+    // cvgCVX path: cvgCVX -> CVX1 (Curve pool) -> CVX (HybridZapper) -> route to target
+    if (!params.estimatedCvx1) {
+      throw new Error("estimatedCvx1 required for cvgCVX path");
+    }
+    const minDy = calculateMinDy(BigInt(params.estimatedCvx1), slippageBps);
+
+    // Pre-fetch CVX -> targetToken route for inner swap data
+    // fromAddress=ZAPPER_V2_ADDRESS so Enso builds the route for the zapper context
+    const cvxRoute = await fetchRoute({
+      fromAddress: ZAPPER_V2_ADDRESS,
+      tokenIn: TOKENS.CVX,
+      tokenOut: params.targetToken,
+      amountIn: params.estimatedCvx1, // CVX1->CVX is 1:1
+      slippage: params.slippage ?? "100",
+    });
+    const innerSwapData = extractInnerSwapData(cvxRoute.tx.data);
+
+    // Action 1: approve cvgCVX -> Curve pool
+    actions.push({
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: TOKENS.CVGCVX,
+        spender: TANGENT.CVX1_CVGCVX_POOL,
+        amount: { useOutputOfCallAt: 0 },
+      },
+    });
+
+    // Action 2: exchange cvgCVX -> CVX1
+    const exchangeIdx = actions.length;
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: TANGENT.CVX1_CVGCVX_POOL.toLowerCase(),
+        method: "exchange",
+        abi: "function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) returns (uint256)",
+        args: [1, 0, { useOutputOfCallAt: 0 }, minDy.toString()],
+      },
+    });
+
+    // Action 3: transfer CVX1 to HybridZapper
+    actions.push({
+      protocol: "erc20",
+      action: "transfer",
+      args: {
+        token: TOKENS.CVX1,
+        receiver: CVX_HYBRID_ZAPPER,
+        amount: { useOutputOfCallAt: exchangeIdx },
+      },
+    });
+
+    // Action 4: unwrap CVX1 -> CVX via HybridZapper, send to ENSO_SHORTCUTS
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: CVX_HYBRID_ZAPPER,
+        method: "unwrapCvx1ToCvx",
+        abi: "function unwrapCvx1ToCvx(uint256 amount, address receiver) returns (uint256)",
+        args: [{ useOutputOfCallAt: exchangeIdx }, ENSO_SHORTCUTS],
+      },
+    });
+
+    // Action 5: Recursive routeMulti — swap CVX (already in ENSO_SHORTCUTS) -> target token
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: ENSO_ROUTER_EXECUTOR.toLowerCase(),
+        method: "routeMulti",
+        abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)",
+        args: [[], innerSwapData],
+      },
+    });
+
+    const bundle = await fetchBundle({
+      fromAddress: ZAPPER_V2_ADDRESS,
+      actions,
+      receiver: ZAPPER_V2_ADDRESS,
+      skipQuote: true, // HybridZapper calls can't be simulated by Enso
+    });
+
+    return {
+      swapData: bundle.tx.data,
+      expectedOut: cvxRoute.amountOut,
+    };
+  } else {
+    // Standard vault path: redeem underlying -> route to target
+    actions.push({
+      protocol: "enso",
+      action: "route",
+      args: {
+        tokenIn: params.underlying,
+        tokenOut: params.targetToken,
+        amountIn: { useOutputOfCallAt: 0 },
+        slippage: slippageBps.toString(),
+      },
+    });
+
+    const bundle = await fetchBundle({
+      fromAddress: ZAPPER_V2_ADDRESS,
+      actions,
+      receiver: ZAPPER_V2_ADDRESS,
+    });
+
+    return {
+      swapData: bundle.tx.data,
+      expectedOut: Object.values(bundle.amountsOut ?? {})[0] ?? params.estimatedUnderlying,
+    };
+  }
 }

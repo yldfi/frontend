@@ -962,6 +962,14 @@ export function RepayTab({
     }
   }, [isApprovalSuccess, status, executeAfterApproval]);
 
+  // Reset stale approval state when user changes inputs
+  useEffect(() => {
+    if (status === "needsApproval") {
+      reset();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repayAmount, withdrawAmount, withdrawToken.address]);
+
   // Clear amount and reset action state when switching tokens
   useEffect(() => {
     setRepayAmountState("");

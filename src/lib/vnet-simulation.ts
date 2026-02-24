@@ -85,7 +85,7 @@ export async function runVNetSimulation(
 
     if (process.env.NODE_ENV === "development") {
       console.log("[VNet Simulation] raw response keys:", Object.keys(response ?? {}));
-      console.log("[VNet Simulation] assetChanges:", JSON.stringify(response?.assetChanges?.slice(0, 3), null, 2));
+      console.log("[VNet Simulation] assetChanges:", JSON.stringify(response?.assetChanges?.slice(0, 5), null, 2));
     }
 
     // Check for explicit failure status (if present)
@@ -159,6 +159,8 @@ function processVNetAssetChanges(
     const isUserReceiving = to === normalizedUser;
     const isToController = CURVE_CONTROLLER_ADDRESSES.has(to);
     const isFromController = CURVE_CONTROLLER_ADDRESSES.has(from);
+    // Curve controllers mint crvUSD (from=0x0) rather than transferring from their balance
+    const isMint = from === "0x0000000000000000000000000000000000000000";
 
     // Convert hex rawAmount to decimal string
     const rawAmount = hexToDecimal(change.rawAmount);
@@ -179,8 +181,12 @@ function processVNetAssetChanges(
       continue;
     }
 
-    // crvUSD from controller = borrow
-    if (isCrvUsd && isFromController && isUserReceiving) {
+    // crvUSD from controller or minted = borrow (create_loan/borrow_more mint crvUSD)
+    // May go to user directly or to ENSO_SHORTCUTS for output swap
+    if (isCrvUsd && (isFromController || isMint)) {
+      if (process.env.NODE_ENV === "development") {
+        console.log("[VNet Simulation] crvUSD borrow detected:", { from, to, isMint, isFromController, amount: change.amount });
+      }
       result.push({ ...baseChange, type: "borrow" });
       continue;
     }
