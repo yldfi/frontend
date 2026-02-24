@@ -76,6 +76,8 @@ import { useClearOnNavigation } from "@/hooks/useClearOnNavigation";
 import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS } from "@/lib/enso";
+import { getMaxEthAmount } from "@/lib/eth-gas";
+import { CHAINLINK_ETH_USD } from "@/config/addresses";
 import { getVault, getParentVault, getVaultByAddress, TOKENS, VAULT_UNDERLYING_TOKENS, VAULTS, EXTERNAL_VAULT_TOKENS, CURVE_CONTROLLERS, CURVE_SAVINGS } from "@/config/vaults";
 import { CollateralModal, LendingInterface } from "@/components/lending";
 import type { EnsoToken, ZapDirection, SimulationAssetChange } from "@/types/enso";
@@ -525,8 +527,7 @@ export function VaultPageContent({ id }: { id: string }) {
   const { data: gasPrice } = useGasPrice();
   const publicClient = usePublicClient();
 
-  // Chainlink ETH/USD price feed address on mainnet
-  const CHAINLINK_ETH_USD = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419" as const;
+  // Chainlink ETH/USD price feed address on mainnet (imported from config/addresses)
 
   // Handle token selection
   // Zap in: changing input token resets amount (you're changing what you send)
@@ -706,6 +707,10 @@ export function VaultPageContent({ id }: { id: string }) {
     },
   });
   const zapInputBalanceFormatted = zapInputBalance?.formatted ?? "0";
+  // For ETH: reserve gas from max balance so user doesn't accidentally drain wallet
+  const zapInputMaxFormatted = isZapInputEth && zapInputBalance?.value
+    ? getMaxEthAmount(zapInputBalance.value, gasPrice)
+    : zapInputBalanceFormatted;
   const zapInputBalanceNum = parseFloat(zapInputBalanceFormatted) || 0;
 
   // Vault actions (approve, deposit, withdraw)
@@ -2173,7 +2178,7 @@ export function VaultPageContent({ id }: { id: string }) {
                                 excludeTokens={[...excludedZapAddresses]}
                               />
                               <MaxButton
-                                balance={zapInputBalanceFormatted}
+                                balance={zapInputMaxFormatted}
                                 onSelect={setZapAmount}
                               />
                             </div>

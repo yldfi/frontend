@@ -8,7 +8,7 @@
  * Run with: pnpm vitest src/lib/__tests__/zap-integration.test.ts
  *
  * Requires environment variables:
- * - NEXT_PUBLIC_ENSO_API_KEY: Enso API key
+ * - ENSO_API_KEY: Enso API key
  * - DEBUG_RPC_URL: RPC with debug_traceCall support (optional)
  * - DEBUG_RPC_AUTH: Basic auth for debug RPC (optional)
  * - TOKEN_HOLDER_API_URL: Token holder API endpoint (optional)
@@ -28,7 +28,7 @@ beforeAll(() => {
 });
 
 // Test configuration
-const ENSO_API_KEY = process.env.NEXT_PUBLIC_ENSO_API_KEY;
+const ENSO_API_KEY = process.env.ENSO_API_KEY;
 const DEBUG_RPC_URL = process.env.DEBUG_RPC_URL;
 const DEBUG_RPC_AUTH = process.env.DEBUG_RPC_AUTH;
 
@@ -54,7 +54,7 @@ const VAULTS = {
   YSCVGCVX: "0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359" as const, // cvgCVX vault
   YSPXCVX: "0xB246DB2A73EEE3ee026153660c74657C123f8E42" as const,  // pxCVX vault
   YCVXCRV: "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86" as const,  // cvxCRV vault
-  YSCVXCRV: "0xE36E5c24F7a99f8a8fC3a5f96e4f906C4a129f2C" as const, // staked cvxCRV vault
+  YSCVXCRV: "0xE36e5C24F7a99f8a8fC3a5F96E4F906c4a129F2C" as const, // staked cvxCRV vault
 };
 
 // Fallback whales - used when token holder API is unavailable

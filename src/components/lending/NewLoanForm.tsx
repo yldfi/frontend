@@ -28,10 +28,37 @@ import { MaxButton } from "@/components/MaxButton";
 import { cn } from "@/lib/utils";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { fetchRoute, fetchTokenPrices, ETH_ADDRESS } from "@/lib/enso";
-import { CRVUSD_ADDRESS } from "@/lib/zapper";
+import { getMaxEthAmount } from "@/lib/eth-gas";
+import { CRVUSD_ADDRESS, WETH_ADDRESS, CHAINLINK_ETH_USD } from "@/config/addresses";
+import { CURVE_SAVINGS, TOKENS, TANGENT } from "@/config/vaults";
+import { getVaultInfo } from "@/lib/curve-lending";
 import type { EnsoToken, EnsoRouteResponse } from "@/types/enso";
 
-const WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+// Curve pool get_dy ABI (int128 for old-style pools like CVX1/cvgCVX)
+const CURVE_GET_DY_ABI = [
+  {
+    name: "get_dy",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "i", type: "int128" },
+      { name: "j", type: "int128" },
+      { name: "dx", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+] as const;
+
+// ERC4626 previewRedeem ABI
+const ERC4626_PREVIEW_ABI = [
+  {
+    name: "previewRedeem",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "shares", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+] as const;
 
 // Controller ABI for health calculator + max_borrowable
 const CONTROLLER_ABI = [
@@ -499,8 +526,12 @@ export function NewLoanForm({
     if (isVaultToken) {
       return formatUnits(BigInt(userBalance), vault.decimals);
     }
+    // For ETH: reserve gas from max balance
+    if (isEth && tokenBalance?.value) {
+      return getMaxEthAmount(tokenBalance.value, gasPrice);
+    }
     return tokenBalance?.formatted ?? "0";
-  }, [isVaultToken, userBalance, vault.decimals, tokenBalance]);
+  }, [isVaultToken, isEth, userBalance, vault.decimals, tokenBalance, gasPrice]);
 
   const currentTokenBalance = isVaultToken
     ? BigInt(userBalance)
@@ -514,6 +545,27 @@ export function NewLoanForm({
   // Debounced amount for quotes
   const debouncedAmount = useDebouncedValue(amount, 500);
   const needsSwap = !isVaultToken;
+
+  // Vault token detection for input token (e.g., yscvgCVX → needs redeem + route)
+  const inputVaultInfo = useMemo(
+    () => (needsSwap ? getVaultInfo(selectedToken.address) : null),
+    [selectedToken.address, needsSwap]
+  );
+  const isInputCvgCvxVault = !!(
+    inputVaultInfo && inputVaultInfo.underlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase()
+  );
+
+  // Vault token detection for output token (e.g., scrvUSD → needs deposit after borrow)
+  const outputVaultInfo = useMemo(
+    () => (hasOutputSwap ? getVaultInfo(outputToken.address) : null),
+    [outputToken.address, hasOutputSwap]
+  );
+  const isOutputCrvUsdVault = !!(
+    outputVaultInfo && outputVaultInfo.underlying.toLowerCase() === CRVUSD_ADDRESS.toLowerCase()
+  );
+  const isOutputCvgCvxVault = !!(
+    outputVaultInfo && outputVaultInfo.underlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase()
+  );
 
   // Swap quote: tokenIn → vaultToken
   const {
@@ -533,7 +585,50 @@ export function NewLoanForm({
     queryFn: async (): Promise<EnsoRouteResponse> => {
       if (!address) throw new Error("No address");
       const amountWei = parseUnits(debouncedAmount, selectedToken.decimals).toString();
-      if (process.env.NODE_ENV === "development") console.log("[NewLoan] Swap quote request:", { tokenIn: selectedToken.symbol, tokenOut: vault.symbol, amount: debouncedAmount });
+      if (process.env.NODE_ENV === "development") console.log("[NewLoan] Swap quote request:", { tokenIn: selectedToken.symbol, tokenOut: vault.symbol, amount: debouncedAmount, inputVault: !!inputVaultInfo });
+
+      if (inputVaultInfo) {
+        // Vault token input: previewRedeem to get underlying, then route underlying → target vault
+        const underlyingAmount = await publicClient!.readContract({
+          address: inputVaultInfo.address as `0x${string}`,
+          abi: ERC4626_PREVIEW_ABI,
+          functionName: "previewRedeem",
+          args: [BigInt(amountWei)],
+        });
+
+        if (isInputCvgCvxVault) {
+          // cvgCVX vault: previewRedeem → get_dy(cvgCVX→CVX) → fetchRoute(CVX → targetVault)
+          const cvxAmount = await publicClient!.readContract({
+            address: TANGENT.CVX1_CVGCVX_POOL as `0x${string}`,
+            abi: CURVE_GET_DY_ABI,
+            functionName: "get_dy",
+            args: [1n, 0n, underlyingAmount],
+          });
+          if (!cvxAmount || cvxAmount === 0n) throw new Error("cvgCVX → CVX swap rate unavailable");
+          const result = await fetchRoute({
+            fromAddress: address,
+            tokenIn: TOKENS.CVX,
+            tokenOut: vault.address,
+            amountIn: cvxAmount.toString(),
+            slippage,
+          });
+          if (process.env.NODE_ENV === "development") console.log("[NewLoan] Swap quote result (cvgCVX vault):", { amountOut: result.amountOut });
+          return result;
+        }
+
+        // Standard vault: previewRedeem → fetchRoute(underlying → targetVault)
+        const result = await fetchRoute({
+          fromAddress: address,
+          tokenIn: inputVaultInfo.underlying,
+          tokenOut: vault.address,
+          amountIn: underlyingAmount.toString(),
+          slippage,
+        });
+        if (process.env.NODE_ENV === "development") console.log("[NewLoan] Swap quote result (vault token):", { amountOut: result.amountOut });
+        return result;
+      }
+
+      // Non-vault token: direct route
       const result = await fetchRoute({
         fromAddress: address,
         tokenIn: selectedToken.address,
@@ -547,6 +642,7 @@ export function NewLoanForm({
     enabled:
       needsSwap &&
       !!address &&
+      !!publicClient &&
       !!debouncedAmount &&
       Number(debouncedAmount) > 0,
     refetchInterval: 30_000,
@@ -572,7 +668,61 @@ export function NewLoanForm({
     queryFn: async (): Promise<EnsoRouteResponse> => {
       if (!address) throw new Error("No address");
       const amountWei = parseUnits(debouncedDebtInput, outputToken.decimals).toString();
-      if (process.env.NODE_ENV === "development") console.log("[NewLoan] Output swap quote request:", { tokenIn: outputToken.symbol, tokenOut: "crvUSD", amount: debouncedDebtInput });
+      if (process.env.NODE_ENV === "development") console.log("[NewLoan] Output swap quote request:", { tokenIn: outputToken.symbol, tokenOut: "crvUSD", amount: debouncedDebtInput, outputVault: !!outputVaultInfo });
+
+      if (outputVaultInfo) {
+        // Vault token output: reverse quote — how much crvUSD is needed for desired vault shares
+        const underlyingAmount = await publicClient!.readContract({
+          address: outputVaultInfo.address as `0x${string}`,
+          abi: ERC4626_PREVIEW_ABI,
+          functionName: "previewRedeem",
+          args: [BigInt(amountWei)],
+        });
+
+        if (isOutputCrvUsdVault) {
+          // crvUSD-underlying vault (e.g., scrvUSD): previewRedeem gives crvUSD needed directly
+          // Return synthetic response — no Enso route needed
+          return {
+            amountOut: underlyingAmount.toString(),
+            gas: "0",
+            tx: { data: "0x", to: "", value: "0", from: "" },
+            route: [],
+          } as EnsoRouteResponse;
+        }
+
+        if (isOutputCvgCvxVault) {
+          // cvgCVX vault: previewRedeem → get_dy(cvgCVX→CVX) → fetchRoute(CVX → crvUSD)
+          const cvxAmount = await publicClient!.readContract({
+            address: TANGENT.CVX1_CVGCVX_POOL as `0x${string}`,
+            abi: CURVE_GET_DY_ABI,
+            functionName: "get_dy",
+            args: [1n, 0n, underlyingAmount],
+          });
+          if (!cvxAmount || cvxAmount === 0n) throw new Error("cvgCVX → CVX swap rate unavailable");
+          const result = await fetchRoute({
+            fromAddress: address,
+            tokenIn: TOKENS.CVX,
+            tokenOut: CRVUSD_ADDRESS,
+            amountIn: cvxAmount.toString(),
+            slippage,
+          });
+          if (process.env.NODE_ENV === "development") console.log("[NewLoan] Output swap quote result (cvgCVX vault):", { amountOut: result.amountOut });
+          return result;
+        }
+
+        // Standard vault: previewRedeem → fetchRoute(underlying → crvUSD)
+        const result = await fetchRoute({
+          fromAddress: address,
+          tokenIn: outputVaultInfo.underlying,
+          tokenOut: CRVUSD_ADDRESS,
+          amountIn: underlyingAmount.toString(),
+          slippage,
+        });
+        if (process.env.NODE_ENV === "development") console.log("[NewLoan] Output swap quote result (vault token):", { amountOut: result.amountOut });
+        return result;
+      }
+
+      // Non-vault token: direct route
       const result = await fetchRoute({
         fromAddress: address,
         tokenIn: outputToken.address,
@@ -587,6 +737,7 @@ export function NewLoanForm({
       hasOutputSwap &&
       loanTab === "loan" &&
       !!address &&
+      !!publicClient &&
       !!debouncedDebtInput &&
       Number(debouncedDebtInput) > 0,
     refetchInterval: 30_000,
@@ -801,7 +952,75 @@ export function NewLoanForm({
     ],
     queryFn: async () => {
       if (!address || !maxBorrowableStr) throw new Error("Missing params");
-      if (process.env.NODE_ENV === "development") console.log("[NewLoan] Max output token quote request:", { tokenOut: outputToken.symbol, maxCrvUSD: formatUnits(BigInt(maxBorrowableStr), 18) });
+      if (process.env.NODE_ENV === "development") console.log("[NewLoan] Max output token quote request:", { tokenOut: outputToken.symbol, maxCrvUSD: formatUnits(BigInt(maxBorrowableStr), 18), outputVault: !!outputVaultInfo });
+
+      if (outputVaultInfo) {
+        if (isOutputCrvUsdVault) {
+          // crvUSD-underlying vault (e.g., scrvUSD): estimate deposit shares
+          const oneShare = 10n ** 18n;
+          const crvUsdPerShare = await publicClient!.readContract({
+            address: outputVaultInfo.address as `0x${string}`,
+            abi: ERC4626_PREVIEW_ABI,
+            functionName: "previewRedeem",
+            args: [oneShare],
+          });
+          const maxShares = (maxBorrowable * oneShare) / BigInt(crvUsdPerShare);
+          const haircut = maxShares * 999n / 1000n;
+          return formatUnits(haircut, outputToken.decimals);
+        }
+
+        if (isOutputCvgCvxVault) {
+          // cvgCVX vault: route crvUSD → CVX, then CVX → cvgCVX (Curve pool), then shares
+          const cvxQuote = await fetchRoute({
+            fromAddress: address,
+            tokenIn: CRVUSD_ADDRESS,
+            tokenOut: TOKENS.CVX,
+            amountIn: maxBorrowableStr,
+            slippage: "300",
+          });
+          if (!cvxQuote?.amountOut) return null;
+          const cvgCvxAmount = await publicClient!.readContract({
+            address: TANGENT.CVX1_CVGCVX_POOL as `0x${string}`,
+            abi: CURVE_GET_DY_ABI,
+            functionName: "get_dy",
+            args: [0n, 1n, BigInt(cvxQuote.amountOut)],
+          });
+          if (!cvgCvxAmount || cvgCvxAmount === 0n) return null;
+          const oneShare = 10n ** 18n;
+          const cvgCvxPerShare = await publicClient!.readContract({
+            address: outputVaultInfo.address as `0x${string}`,
+            abi: ERC4626_PREVIEW_ABI,
+            functionName: "previewRedeem",
+            args: [oneShare],
+          });
+          const maxShares = (cvgCvxAmount * oneShare) / cvgCvxPerShare;
+          const haircut = maxShares * 199n / 200n;
+          return formatUnits(haircut, outputToken.decimals);
+        }
+
+        // Standard vault: route crvUSD → underlying, then estimate vault shares
+        const quote = await fetchRoute({
+          fromAddress: address,
+          tokenIn: CRVUSD_ADDRESS,
+          tokenOut: outputVaultInfo.underlying,
+          amountIn: maxBorrowableStr,
+          slippage: "300",
+        });
+        if (!quote?.amountOut) return null;
+        const underlyingAmount = BigInt(quote.amountOut);
+        const oneShare = 10n ** 18n;
+        const underlyingPerShare = await publicClient!.readContract({
+          address: outputVaultInfo.address as `0x${string}`,
+          abi: ERC4626_PREVIEW_ABI,
+          functionName: "previewRedeem",
+          args: [oneShare],
+        });
+        const maxShares = (underlyingAmount * oneShare) / underlyingPerShare;
+        const haircut = maxShares * 99n / 100n;
+        return formatUnits(haircut, outputToken.decimals);
+      }
+
+      // Non-vault token: forward quote crvUSD → outputToken
       const quote = await fetchRoute({
         fromAddress: address,
         tokenIn: CRVUSD_ADDRESS,
@@ -820,6 +1039,7 @@ export function NewLoanForm({
       hasOutputSwap &&
       loanTab === "loan" &&
       !!address &&
+      !!publicClient &&
       maxBorrowable > 0n,
     refetchInterval: 60_000,
     staleTime: 30_000,
@@ -1348,7 +1568,7 @@ export function NewLoanForm({
     if (!publicClient) return;
     try {
       const data = await publicClient.readContract({
-        address: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
+        address: CHAINLINK_ETH_USD,
         abi: [{
           name: "latestRoundData",
           type: "function",

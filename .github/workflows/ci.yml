@@ -120,7 +120,7 @@ jobs:
             }
           done
         env:
-          NEXT_PUBLIC_ENSO_API_KEY: ${{ secrets.NEXT_PUBLIC_ENSO_API_KEY }}
+          ENSO_API_KEY: ${{ secrets.ENSO_API_KEY }}
           TOKEN_HOLDER_API_KEY: ${{ secrets.TOKEN_HOLDER_API_KEY }}
           TOKEN_HOLDER_API_URL: ${{ secrets.TOKEN_HOLDER_API_URL }}
           MORALIS_API_KEY: ${{ secrets.MORALIS_API_KEY }}
@@ -211,7 +211,7 @@ jobs:
         env:
           NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID }}
           NEXT_PUBLIC_GA_ID: ${{ secrets.NEXT_PUBLIC_GA_ID }}
-          NEXT_PUBLIC_ENSO_API_KEY: ${{ secrets.NEXT_PUBLIC_ENSO_API_KEY }}
+          ENSO_API_KEY: ${{ secrets.ENSO_API_KEY }}
           # Server-side secrets (MORALIS_API_KEY, TOKEN_HOLDER_API_KEY) are
           # configured in Cloudflare dashboard, not at build time
 

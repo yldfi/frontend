@@ -97,7 +97,7 @@ describe("useImportedTokens", () => {
 
     it("handles case-insensitive address matching", () => {
       const { result } = renderHook(() => useImportedTokens());
-      const token1 = createToken("TEST1", "0xABCDEF1234567890123456789012345678901234");
+      const token1 = createToken("TEST1", "0xaBcDef1234567890123456789012345678901234");
       const token2 = createToken("TEST2", "0xabcdef1234567890123456789012345678901234");
 
       act(() => {
@@ -145,7 +145,7 @@ describe("useImportedTokens", () => {
     });
 
     it("handles case-insensitive address matching when removing", () => {
-      const tokens = [createToken("TEST", "0xABCDEF1234567890123456789012345678901234")];
+      const tokens = [createToken("TEST", "0xaBcDef1234567890123456789012345678901234")];
       mockLocalStorage[STORAGE_KEY] = JSON.stringify(tokens);
 
       const { result } = renderHook(() => useImportedTokens());
@@ -193,7 +193,7 @@ describe("useImportedTokens", () => {
 
       const { result } = renderHook(() => useImportedTokens());
 
-      expect(result.current.isImported("0xABCDEF1234567890123456789012345678901234")).toBe(true);
+      expect(result.current.isImported("0xaBcDef1234567890123456789012345678901234")).toBe(true);
     });
   });
 

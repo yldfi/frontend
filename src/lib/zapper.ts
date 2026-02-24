@@ -3,15 +3,16 @@
 // Enables leveraged Curve LlamaLend operations via Enso Router swaps
 
 import { fetchRoute } from "@/lib/enso";
+import { CRVUSD_ADDRESS } from "@/config/addresses";
+
+// Re-export for backwards compatibility (prefer importing from @/config/addresses directly)
+export { CRVUSD_ADDRESS };
 
 // LlamaLendZapper V1 contract address (mainnet, deprecated)
 export const ZAPPER_ADDRESS = "0x18Fb52A4D65E03ebD25FbD2Fae60452c286eC5F1" as const;
 
 // LlamaLendZapperV2 contract address (mainnet)
 export const ZAPPER_V2_ADDRESS = "0x39F2a82b6CE1631128829c5Bb7449Cc7a40d2a47" as const;
-
-// crvUSD token address
-export const CRVUSD_ADDRESS = "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E" as const;
 
 // LlamaLendZapperV2 ABI - write functions only (views via DeFi Saver's CurveUsdView/CurveUsdWithdraw)
 export const ZAPPER_ABI = [

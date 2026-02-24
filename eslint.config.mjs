@@ -1,6 +1,7 @@
 import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
+import evmAddressChecksum from "./eslint-rules/evm-address-checksum.js";
 
 const eslintConfig = defineConfig([
   ...nextVitals,
@@ -18,6 +19,8 @@ const eslintConfig = defineConfig([
     "workers/**",
     // Test output:
     "coverage/**",
+    // Custom ESLint rules (CJS, not part of the app):
+    "eslint-rules/**",
   ]),
   // Configure no-unused-vars to ignore underscore-prefixed variables
   {
@@ -30,6 +33,15 @@ const eslintConfig = defineConfig([
           caughtErrorsIgnorePattern: "^_",
         },
       ],
+    },
+  },
+  // Enforce EIP-55 checksummed or fully lowercase Ethereum addresses
+  {
+    plugins: {
+      "evm-address": { rules: { checksum: evmAddressChecksum } },
+    },
+    rules: {
+      "evm-address/checksum": "error",
     },
   },
 ]);

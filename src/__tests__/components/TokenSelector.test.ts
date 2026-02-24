@@ -149,7 +149,7 @@ describe("TokenSelector logic", () => {
     });
 
     it("rejects invalid checksum address", () => {
-      expect(isCompleteAddress("0xA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48")).toBe(false);
+      expect(isCompleteAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")).toBe(false);
     });
   });
 

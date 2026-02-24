@@ -145,7 +145,7 @@ describe("vault-to-vault detection logic", () => {
   });
 
   it("detects vault with uppercase address", () => {
-    expect(isYldfiVault("0x583019FF0F430721ADA9CFB4FAC8F06CA104D0B4")).toBe(true);
+    expect(isYldfiVault("0x583019fF0f430721aDa9cfb4fac8F06cA104d0B4")).toBe(true);
   });
 
   it("returns false for non-vault address", () => {

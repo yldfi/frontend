@@ -28,9 +28,9 @@ import { MaxButton } from "@/components/MaxButton";
 import { cn } from "@/lib/utils";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { fetchRoute, fetchTokenPrices, ETH_ADDRESS } from "@/lib/enso";
+import { getMaxEthAmount } from "@/lib/eth-gas";
+import { WETH_ADDRESS, CHAINLINK_ETH_USD } from "@/config/addresses";
 import type { EnsoToken, EnsoRouteResponse } from "@/types/enso";
-
-const WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 
 // Controller ABI for health calculator
 const CONTROLLER_ABI = [
@@ -224,8 +224,11 @@ export function CollateralTab({
     if (isVaultToken) {
       return formatUnits(BigInt(userBalance), vault.decimals);
     }
+    if (isEth && tokenBalance?.value) {
+      return getMaxEthAmount(tokenBalance.value, gasPrice);
+    }
     return tokenBalance?.formatted ?? "0";
-  }, [isVaultToken, userBalance, vault.decimals, tokenBalance]);
+  }, [isVaultToken, isEth, userBalance, vault.decimals, tokenBalance, gasPrice]);
 
   // Max balance for remove mode (max withdrawable without breaking health)
   const removeMaxBalance = useMemo(() => {
@@ -584,7 +587,7 @@ export function CollateralTab({
     if (!publicClient) return;
     try {
       const data = await publicClient.readContract({
-        address: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
+        address: CHAINLINK_ETH_USD,
         abi: [{
           name: "latestRoundData",
           type: "function",

@@ -28,6 +28,7 @@ import { MaxButton } from "@/components/MaxButton";
 import { cn } from "@/lib/utils";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { fetchRoute, fetchTokenPrices, ETH_ADDRESS } from "@/lib/enso";
+import { CHAINLINK_ETH_USD } from "@/config/addresses";
 import { CRVUSD_ADDRESS } from "@/lib/zapper";
 import { CURVE_SAVINGS, TOKENS, TANGENT } from "@/config/vaults";
 import { getVaultInfo } from "@/lib/curve-lending";
@@ -926,7 +927,7 @@ export function BorrowTab({
             setShowSimulationModal(true);
             if (publicClient) {
               publicClient.readContract({
-                address: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419" as `0x${string}`,
+                address: CHAINLINK_ETH_USD,
                 abi: [{
                   name: "latestRoundData",
                   type: "function",
@@ -974,7 +975,7 @@ export function BorrowTab({
             setShowSimulationModal(true);
             if (publicClient) {
               publicClient.readContract({
-                address: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
+                address: CHAINLINK_ETH_USD,
                 abi: [{
                   name: "latestRoundData",
                   type: "function",

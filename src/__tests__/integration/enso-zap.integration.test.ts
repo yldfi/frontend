@@ -108,7 +108,7 @@ const ENSO_SHORTCUTS = "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003"; // EnsoShor
 const CVX1_ADDRESS = "0x6C9815826FdF8c7a45cCfEd2064dbaB33a078712";
 
 // Additional intermediate tokens that may appear in routes
-const CRV_ADDRESS = "0xD533a9D4E4E73Fb5fB8D0E26a2A8Ede82F5b7cfC"; // CRV token
+const CRV_ADDRESS = "0xd533A9d4E4e73fB5FB8D0E26A2A8EdE82F5b7cFc"; // CRV token
 const WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"; // WETH token
 
 // Token balance storage slots (different tokens use different slots)
@@ -316,13 +316,13 @@ async function buildStateOverrides(
     "0x9D0464996170c6B9e75eED71c68B99dDEDf279e8", // Curve cvxcrv-f pool (original)
     "0x99a58482BD75cbab83b27EC03CA68fF489b5788f", // Curve Router
     "0x16C6521Dff6baB339122a0FE25a9116693265353", // Curve Router NG
-    "0x8c1d5a3FC5BAeE17E81a9dCb1E3cf2E9C28E1a4e", // Curve Exchange Router
+    "0x8c1D5a3fc5BAee17e81A9dcb1E3Cf2E9c28E1A4e", // Curve Exchange Router
     "0xF0d4c12A5768D806021F80a262B4d39d26C58b8D", // Curve CRV/ETH pool
     "0xE592427A0AEce92De3Edee1F18E0157C05861564", // Uniswap V3 SwapRouter
     "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45", // Uniswap SwapRouter02
     "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD", // Uniswap Universal Router
     "0x1111111254EEB25477B68fb85Ed929f73A960582", // 1inch V5
-    "0x111111125421ca6dc452d289314280a0f8842A65", // 1inch V6
+    "0x111111125421cA6dc452d289314280a0f8842A65", // 1inch V6
     "0xDEF171Fe48CF0115B1d80b88dc8eAB59176FEe57", // Paraswap Augustus
     "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5", // KyberSwap
     "0x617Dee16B86534a5d792A4d7A62FB491B544111E", // KyberSwap V3
@@ -332,7 +332,7 @@ async function buildStateOverrides(
     STKCVXCRV_ADDRESS, // cvxCRV staking
     // Curve CVX-related pools
     "0xB576491F1E6e5E62f1d8F26062Ee822B40B0E0d4", // CVX/ETH (duplicate but explicit)
-    "0xeEfC5D419A6Df926fa7cE65F498B45c1E7a21F85", // CRV/cvxCRV pool (cvxcrv-crv-f-v2)
+    "0xeEfC5d419a6Df926Fa7Ce65F498b45C1e7a21F85", // CRV/cvxCRV pool (cvxcrv-crv-f-v2)
     "0x8301AE4fc9c624d1D396cbDAa1ed877821D7C511", // Curve crvUSD/USDC pool
     // CoW Protocol / Balancer used by 1inch/Paraswap
     "0xBA12222222228d8Ba445958a75a0704d566BF2C8", // Balancer V2 Vault

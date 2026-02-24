@@ -10,9 +10,7 @@
 
 import type { SimulationResult, SimulationAssetChange } from "@/types/enso";
 import { CURVE_CONTROLLERS, getVaultByAddress } from "@/config/vaults";
-
-// crvUSD address (lowercase for comparison)
-const CRVUSD_ADDRESS = "0xf939e0a03fb07f59a73314e73794be0e57ac1b4e";
+import { CRVUSD_ADDRESS } from "@/config/addresses";
 
 // Build sets of known addresses for asset change classification
 const CURVE_CONTROLLER_ADDRESSES = new Set(
@@ -155,7 +153,7 @@ function processVNetAssetChanges(
     const from = change.from?.toLowerCase() ?? "";
     const to = change.to?.toLowerCase() ?? "";
     const tokenAddress = change.assetInfo?.contractAddress?.toLowerCase() ?? "";
-    const isCrvUsd = tokenAddress === CRVUSD_ADDRESS;
+    const isCrvUsd = tokenAddress === CRVUSD_ADDRESS.toLowerCase();
 
     const isUserSending = from === normalizedUser;
     const isUserReceiving = to === normalizedUser;

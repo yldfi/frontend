@@ -18,7 +18,7 @@ describe("lib/enso", () => {
     ETH_ADDRESS,
     "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // USDC
     "0xdAC17F958D2ee523a2206206994597C13D831ec7", // USDT
-    "0x6B175474E89094C44Da98b954EedcdeCB5BE4dBf", // DAI
+    "0x6B175474E89094C44da98B954EeDcDecB5BE4dBf", // DAI
     "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // WETH
     "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", // WBTC
     "0xD533a949740bb3306d119CC777fa900bA034cd52", // CRV
@@ -122,7 +122,7 @@ describe("lib/enso", () => {
 
     it("sorts USDC before DAI", () => {
       const tokens = [
-        createToken("DAI", "0x6B175474E89094C44Da98b954EedcdeCB5BE4dBf"),
+        createToken("DAI", "0x6B175474E89094C44da98B954EeDcDecB5BE4dBf"),
         createToken("USDC", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
       ];
       const sorted = sortTokensByPopularity(tokens);
