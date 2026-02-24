@@ -21,7 +21,8 @@ const normalTransport = anvilRpc
   ? fallback([http(anvilRpc), http(PUBLIC_RPC_URLS.drpc)])
   : fallback([
       http(PUBLIC_RPC_URLS.drpc),
-      http(PUBLIC_RPC_URLS.cloudflare),
+      http(PUBLIC_RPC_URLS.publicnode),
+      http(PUBLIC_RPC_URLS.onerpc),
       unstable_connector(injected),
     ]);
 

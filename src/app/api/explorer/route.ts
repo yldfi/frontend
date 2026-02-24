@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { RPC_URL_LIST } from "@/config/rpc";
 
 /**
  * Explorer API - Server-side Etherscan proxy with Cloudflare KV caching
@@ -374,32 +375,39 @@ async function getImplementationAddress(
   chainId: string
 ): Promise<string | null> {
   try {
-    const rpcUrl = chainId === "1" ? "https://eth.llamarpc.com" : null;
-    if (!rpcUrl) return null;
+    if (chainId !== "1") return null;
 
-    // Try each known implementation slot
+    // Try each known implementation slot, with RPC fallback
     for (const slot of IMPLEMENTATION_SLOTS) {
-      const response = await fetch(rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          method: "eth_getStorageAt",
-          params: [proxyAddress, slot, "latest"],
-          id: 1,
-        }),
-      });
+      for (const rpcUrl of RPC_URL_LIST) {
+        try {
+          const response = await fetch(rpcUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              method: "eth_getStorageAt",
+              params: [proxyAddress, slot, "latest"],
+              id: 1,
+            }),
+          });
 
-      const data = (await response.json()) as { result?: string };
-      if (data.result && data.result !== "0x0000000000000000000000000000000000000000000000000000000000000000") {
-        // Extract address from 32-byte slot (last 20 bytes)
-        const implAddress = "0x" + data.result.slice(-40);
-        // Validate it's a different address and looks like a valid address
-        if (
-          implAddress.toLowerCase() !== proxyAddress.toLowerCase() &&
-          implAddress !== "0x0000000000000000000000000000000000000000"
-        ) {
-          return implAddress;
+          if (!response.ok) continue;
+          const data = (await response.json()) as { result?: string };
+          if (data.result && data.result !== "0x0000000000000000000000000000000000000000000000000000000000000000") {
+            // Extract address from 32-byte slot (last 20 bytes)
+            const implAddress = "0x" + data.result.slice(-40);
+            // Validate it's a different address and looks like a valid address
+            if (
+              implAddress.toLowerCase() !== proxyAddress.toLowerCase() &&
+              implAddress !== "0x0000000000000000000000000000000000000000"
+            ) {
+              return implAddress;
+            }
+          }
+          break; // RPC succeeded for this slot, move to next slot
+        } catch {
+          continue; // Try next RPC URL
         }
       }
     }

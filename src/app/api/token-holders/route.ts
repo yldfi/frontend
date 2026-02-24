@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PUBLIC_RPC_URLS } from "@/config/rpc";
+import { RPC_URL_LIST } from "@/config/rpc";
 
 export const dynamic = "force-dynamic";
 
@@ -36,24 +36,28 @@ interface MoralisResponse {
 /**
  * Check if an address is an EOA (not a contract) by checking code size
  */
-async function isEOA(address: string, rpcUrl: string): Promise<boolean> {
-  try {
-    const response = await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "eth_getCode",
-        params: [address, "latest"],
-      }),
-    });
-    const data = (await response.json()) as { result?: string };
-    // EOA has no code (0x or 0x0)
-    return !data.result || data.result === "0x" || data.result === "0x0";
-  } catch {
-    return false;
+async function isEOA(address: string, rpcUrls: string[]): Promise<boolean> {
+  for (const rpcUrl of rpcUrls) {
+    try {
+      const response = await fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_getCode",
+          params: [address, "latest"],
+        }),
+      });
+      if (!response.ok) continue;
+      const data = (await response.json()) as { result?: string };
+      // EOA has no code (0x or 0x0)
+      return !data.result || data.result === "0x" || data.result === "0x0";
+    } catch {
+      continue;
+    }
   }
+  return false;
 }
 
 /**
@@ -89,8 +93,10 @@ async function fetchFromMoralis(
   }
   const holders: string[] = [];
 
-  // Use public RPC for EOA checks
-  const rpcUrl = process.env.DEBUG_RPC_URL || PUBLIC_RPC_URLS.llamarpc;
+  // Use public RPCs with fallback for EOA checks
+  const rpcUrls = process.env.DEBUG_RPC_URL
+    ? [process.env.DEBUG_RPC_URL, ...RPC_URL_LIST]
+    : [...RPC_URL_LIST];
 
   for (const holder of data.result || []) {
     if (holders.length >= maxHolders) break;
@@ -102,7 +108,7 @@ async function fetchFromMoralis(
     if (holder.is_contract) continue;
 
     // Double-check it's an EOA
-    const isEoa = await isEOA(holder.owner_address, rpcUrl);
+    const isEoa = await isEOA(holder.owner_address, rpcUrls);
     if (!isEoa) continue;
 
     holders.push(holder.owner_address.toLowerCase());
