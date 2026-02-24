@@ -7,9 +7,23 @@ const CHAINLIST_URL = "https://chainid.network/chains.json";
 const RPC_CACHE_KEY = "eth-rpc-urls";
 const RPC_CACHE_TTL = 3600; // 1 hour
 
+// Domains verified as tracking: "none" in DefiLlama chainlist
+const PRIVACY_SAFE_DOMAINS = new Set([
+  "eth.drpc.org",
+  "ethereum-rpc.publicnode.com",
+  "1rpc.io",
+  "rpc.mevblocker.io",
+  "rpc.flashbots.net",
+  "rpc.payload.de",
+  "eth.meowrpc.com",
+  "api.securerpc.com",
+  "rpc.builder0x69.io",
+]);
+
 /**
  * Fetch public keyless Ethereum RPCs from chainlist.org, cached in KV for 1h.
- * Filters to HTTPS-only, no API keys, no websocket, shuffled for load distribution.
+ * Filters to HTTPS-only, no API keys, no websocket, privacy-safe domains only,
+ * shuffled for load distribution.
  */
 async function getPublicRpcUrls(kv: KVNamespace): Promise<string[]> {
   // Check KV cache first
@@ -24,13 +38,17 @@ async function getPublicRpcUrls(kv: KVNamespace): Promise<string[]> {
     const eth = chains.find((c) => c.chainId === 1);
     if (!eth) throw new Error("Ethereum not found in chainlist");
 
-    const rpcs = eth.rpc.filter((url) =>
-      url.startsWith("https://") &&
-      !url.includes("${") &&           // skip template vars like ${INFURA_API_KEY}
-      !url.includes("wss://") &&
-      !url.includes("api_key=") &&
-      !url.includes("apikey=")
-    );
+    const rpcs = eth.rpc.filter((url) => {
+      if (!url.startsWith("https://")) return false;
+      if (url.includes("${") || url.includes("wss://")) return false;
+      if (url.includes("api_key=") || url.includes("apikey=")) return false;
+      try {
+        const hostname = new URL(url).hostname;
+        return PRIVACY_SAFE_DOMAINS.has(hostname);
+      } catch {
+        return false;
+      }
+    });
 
     // Shuffle so we spread load across RPCs
     for (let i = rpcs.length - 1; i > 0; i--) {
@@ -41,9 +59,8 @@ async function getPublicRpcUrls(kv: KVNamespace): Promise<string[]> {
     await kv.put(RPC_CACHE_KEY, JSON.stringify(rpcs), { expirationTtl: RPC_CACHE_TTL });
     return rpcs;
   } catch {
-    // Hardcoded fallback if chainlist is down
+    // Minimal fallback if chainlist is down (privacy-safe RPCs only)
     return [
-      "https://eth.llamarpc.com",
       "https://eth.drpc.org",
       "https://ethereum-rpc.publicnode.com",
       "https://1rpc.io/eth",

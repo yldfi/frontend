@@ -5,7 +5,7 @@
 import { EnsoClient } from "@ensofinance/sdk";
 import type { EnsoToken, EnsoTokensResponse, EnsoRouteResponse, EnsoBundleAction, EnsoBundleResponse, RouteInfo, RouteStep, CustomBundleResponse } from "@/types/enso";
 import { TOKENS, VAULTS, VAULT_ADDRESSES, CURVE_SAVINGS, isYldfiVault as checkIsYldfiVault } from "@/config/vaults";
-import { PUBLIC_RPC_URLS } from "@/config/rpc";
+import { getAllRpcUrls } from "@/config/rpc";
 
 // Import Curve helpers from dedicated module
 import {
@@ -793,11 +793,11 @@ async function estimateRouteOutput(
   return result.amountOut;
 }
 
-const getRpcUrl = (): string => {
+const getRpcUrls = (): string[] => {
   if (typeof process !== "undefined" && process.env?.DEBUG_RPC_URL) {
-    return process.env.DEBUG_RPC_URL;
+    return [process.env.DEBUG_RPC_URL, ...getAllRpcUrls()];
   }
-  return PUBLIC_RPC_URLS.llamarpc;
+  return getAllRpcUrls();
 };
 
 const getRpcAuth = (): string | undefined => {
@@ -812,33 +812,67 @@ const isDevEnv = (): boolean => process.env.NODE_ENV !== "production";
 const getErc20TotalSupply = async (token: string): Promise<bigint> => {
   const selector = "0x18160ddd"; // totalSupply()
   const rpcAuth = getRpcAuth();
-  try {
-    const result = await fetch(getRpcUrl(), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(rpcAuth ? { Authorization: rpcAuth.startsWith("Basic ") ? rpcAuth : `Basic ${rpcAuth}` } : {}),
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "eth_call",
-        params: [{ to: token, data: selector }, "latest"],
-      }),
-    });
-    if (!result || !result.ok) {
-      return 0n;
+  const rpcUrls = getRpcUrls();
+
+  for (const rpcUrl of rpcUrls) {
+    try {
+      const result = await fetch(rpcUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(rpcAuth ? { Authorization: rpcAuth.startsWith("Basic ") ? rpcAuth : `Basic ${rpcAuth}` } : {}),
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_call",
+          params: [{ to: token, data: selector }, "latest"],
+        }),
+      });
+      if (!result || !result.ok) continue;
+      const response = await result.json() as { result?: string };
+      if (!response.result || response.result === "0x") continue;
+      return BigInt(response.result);
+    } catch {
+      continue;
     }
-    const response = await result.json() as { result?: string };
-    if (!response.result || response.result === "0x") {
-      return 0n;
-    }
-    return BigInt(response.result);
-  } catch {
-    // Network failure - return 0n to skip clamping
-    return 0n;
   }
+  // All RPCs failed - return 0n to skip clamping
+  return 0n;
 };
+
+/**
+ * Make a JSON-RPC request with RPC URL fallback. Tries each available
+ * RPC URL until one returns a successful response.
+ * Works for both single calls and batch calls.
+ */
+async function rpcWithFallback<T = unknown>(body: unknown): Promise<T> {
+  const rpcUrls = getRpcUrls();
+  const rpcAuth = getRpcAuth();
+  let lastError: Error | undefined;
+
+  for (const rpcUrl of rpcUrls) {
+    try {
+      const response = await fetch(rpcUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(rpcAuth ? { Authorization: rpcAuth.startsWith("Basic ") ? rpcAuth : `Basic ${rpcAuth}` } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+      if (!response || !response.ok) {
+        lastError = new Error(`RPC ${rpcUrl} returned ${response?.status}`);
+        continue;
+      }
+      return (await response.json()) as T;
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
+      continue;
+    }
+  }
+  throw lastError ?? new Error("All RPC URLs failed");
+}
 
 const clampVaultAmountIn = async (vault: string, amountIn: string): Promise<string> => {
   if (!isDevEnv()) {
@@ -1840,17 +1874,10 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
     try {
       const previewDepositSelector = "0xef8b30f7"; // previewDeposit(uint256)
       const previewData = previewDepositSelector + expectedCvxCrvOutput.toString(16).padStart(64, "0");
-      const previewResponse = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "eth_call",
-          params: [{ to: params.targetVault, data: previewData }, "latest"],
-        }),
+      const previewResult = await rpcWithFallback<{ result?: string }>({
+        jsonrpc: "2.0", id: 1, method: "eth_call",
+        params: [{ to: params.targetVault, data: previewData }, "latest"],
       });
-      const previewResult = await previewResponse.json() as { result?: string };
       if (previewResult.result && previewResult.result !== "0x") {
         expectedShares = BigInt(previewResult.result).toString();
       }
@@ -2437,13 +2464,7 @@ export async function getCvgCvxPoolBalances(): Promise<{ cvx1Balance: bigint; cv
     { jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: TANGENT.CVX1_CVGCVX_POOL, data: "0x4903b0d10000000000000000000000000000000000000000000000000000000000000001" }, "latest"] },
   ];
 
-  const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(batch),
-  });
-
-  const results = (await response.json()) as Array<{ id: number; result?: string }>;
+  const results = await rpcWithFallback<Array<{ id: number; result?: string }>>(batch);
   results.sort((a, b) => a.id - b.id);
 
   return {
@@ -3073,17 +3094,10 @@ export async function fetchCvgCvxZapInRoute(params: {
   try {
     const previewDepositSelector = "0xef8b30f7"; // previewDeposit(uint256)
     const previewData = previewDepositSelector + BigInt(expectedCvgCvxOutput).toString(16).padStart(64, "0");
-    const previewResponse = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "eth_call",
-        params: [{ to: params.vaultAddress, data: previewData }, "latest"],
-      }),
+    const previewResult = await rpcWithFallback<{ result?: string }>({
+      jsonrpc: "2.0", id: 1, method: "eth_call",
+      params: [{ to: params.vaultAddress, data: previewData }, "latest"],
     });
-    const previewResult = await previewResponse.json() as { result?: string };
     if (previewResult.result && previewResult.result !== "0x") {
       expectedShares = BigInt(previewResult.result).toString();
       bundle.amountsOut = {
@@ -3863,17 +3877,10 @@ export async function fetchCvgCvxZapOutRoute(params: {
 
   let expectedCvgCvxOutput: string;
   try {
-    const rpcResponse = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "eth_call",
-        params: [{ to: params.vaultAddress, data: convertData }, "latest"],
-        id: 1,
-      }),
+    const result = await rpcWithFallback<{ result?: string }>({
+      jsonrpc: "2.0", id: 1, method: "eth_call",
+      params: [{ to: params.vaultAddress, data: convertData }, "latest"],
     });
-    const result = await rpcResponse.json() as { result?: string };
     expectedCvgCvxOutput = result.result && result.result !== "0x"
       ? BigInt(result.result).toString()
       : amountIn; // Fallback to 1:1
@@ -4457,18 +4464,10 @@ export async function getPxCvxSwapRate(amountIn: string): Promise<bigint> {
     const j = "1".padStart(64, "0"); // lpxCVX index
     const dx = BigInt(amountIn).toString(16).padStart(64, "0");
 
-    const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "eth_call",
-        params: [{ to: PIREX.LPXCVX_CVX_POOL, data: selector + i + j + dx }, "latest"],
-        id: 1,
-      }),
+    const result = await rpcWithFallback<{ result?: string }>({
+      jsonrpc: "2.0", id: 1, method: "eth_call",
+      params: [{ to: PIREX.LPXCVX_CVX_POOL, data: selector + i + j + dx }, "latest"],
     });
-
-    const result = (await response.json()) as { result?: string };
     return BigInt(result.result || "0");
   }
 }
@@ -4494,18 +4493,10 @@ export async function getLpxCvxToCvxSwapRate(amountIn: string): Promise<bigint> 
     const j = "0".padStart(64, "0"); // CVX index
     const dx = BigInt(amountIn).toString(16).padStart(64, "0");
 
-    const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "eth_call",
-        params: [{ to: PIREX.LPXCVX_CVX_POOL, data: selector + i + j + dx }, "latest"],
-        id: 1,
-      }),
+    const result = await rpcWithFallback<{ result?: string }>({
+      jsonrpc: "2.0", id: 1, method: "eth_call",
+      params: [{ to: PIREX.LPXCVX_CVX_POOL, data: selector + i + j + dx }, "latest"],
     });
-
-    const result = (await response.json()) as { result?: string };
     return BigInt(result.result || "0");
   }
 }
@@ -4523,13 +4514,7 @@ export async function getPxCvxPoolBalances(): Promise<{ cvxBalance: bigint; lpxC
     { jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: PIREX.LPXCVX_CVX_POOL, data: "0x4903b0d10000000000000000000000000000000000000000000000000000000000000001" }, "latest"] },
   ];
 
-  const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(batch),
-  });
-
-  const results = (await response.json()) as Array<{ id: number; result?: string }>;
+  const results = await rpcWithFallback<Array<{ id: number; result?: string }>>(batch);
   results.sort((a, b) => a.id - b.id);
 
   return {
@@ -5081,7 +5066,6 @@ export async function fetchPxCvxZapInRoute(params: {
  */
 export async function previewUCrvWithdraw(shares: string): Promise<string> {
   const { LLAMA_AIRFORCE } = await import("@/config/vaults");
-  const { PUBLIC_RPC_URLS } = await import("@/config/rpc");
 
   // Batch RPC calls: totalUnderlying() and totalSupply()
   const batch = [
@@ -5089,13 +5073,7 @@ export async function previewUCrvWithdraw(shares: string): Promise<string> {
     { jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: LLAMA_AIRFORCE.UCRV, data: "0x18160ddd" }, "latest"] }, // totalSupply()
   ];
 
-  const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(batch),
-  });
-
-  const results = (await response.json()) as Array<{ id: number; result?: string }>;
+  const results = await rpcWithFallback<Array<{ id: number; result?: string }>>(batch);
   results.sort((a, b) => a.id - b.id);
 
   const totalUnderlying = BigInt(results[0].result || "0");
@@ -5445,21 +5423,11 @@ export async function fetchUCvxZapInRoute(params: {
  * Formula: shares * pricePerFullShare / 1e18
  */
 export async function previewBeefyWithdraw(vaultAddress: string, shares: string): Promise<string> {
-  const { PUBLIC_RPC_URLS } = await import("@/config/rpc");
-
   // pricePerFullShare() selector: 0x77c7b8fc
-  const response = await fetch(PUBLIC_RPC_URLS.llamarpc, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      method: "eth_call",
-      params: [{ to: vaultAddress, data: "0x77c7b8fc" }, "latest"],
-      id: 1,
-    }),
+  const result = await rpcWithFallback<{ result?: string }>({
+    jsonrpc: "2.0", id: 1, method: "eth_call",
+    params: [{ to: vaultAddress, data: "0x77c7b8fc" }, "latest"],
   });
-
-  const result = (await response.json()) as { result?: string };
   const pricePerFullShare = BigInt(result.result || "1000000000000000000"); // Default 1:1
 
   // shares * pricePerFullShare / 1e18
