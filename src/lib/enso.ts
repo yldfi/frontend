@@ -31,7 +31,7 @@ const CHAIN_ID = 1; // Ethereum mainnet
 
 // Initialize Enso SDK client
 const ensoClient = new EnsoClient({
-  apiKey: process.env.ENSO_API_KEY || process.env.NEXT_PUBLIC_ENSO_API_KEY || "",
+  apiKey: process.env.ENSO_API_KEY || "",
 });
 
 // Rate limit disabled - testing shows Enso API handles rapid requests fine
@@ -96,19 +96,19 @@ export const ENSO_ROUTER_EXECUTOR = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf"
 // EnsoShortcuts contract - executes calls, tokens must be here for external contract calls
 // This is the msg.sender when Enso calls external contracts via the "call" action
 export const ENSO_SHORTCUTS = "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003";
-const CVX_HYBRID_ZAPPER =
+export const CVX_HYBRID_ZAPPER =
   process.env.NEXT_PUBLIC_CVX_HYBRID_ZAPPER || process.env.CVX_HYBRID_ZAPPER || "0xEE3FF294c7156090F5b2A37acd131FD3DC652182";
 const HYBRID_EXTRA_BUFFER_BPS = Number(process.env.ENSO_HYBRID_EXTRA_BUFFER_BPS ?? "200");
 
 // yld referral code for Enso attribution
 export const ENSO_REFERRAL_CODE = "yldfi";
 
+import { WETH_ADDRESS, CRVUSD_ADDRESS, CURVE_CVX_ETH_POOL } from "@/config/addresses";
+
 const CRV_ADDRESS = "0xD533a949740bb3306d119CC777fa900bA034cd52";
-const CURVE_CVX_ETH_POOL = "0xB576491F1E6e5E62f1d8F26062Ee822B40B0E0d4";
 const CURVE_TRICRV_POOL = "0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14";
 const CURVE_CRV_CVXCRV_POOL = "0x9D0464996170c6B9e75eED71c68B99dDEDf279e8";
 const CURVE_ROUTER = "0x99a58482BD75cbab83b27EC03CA68fF489b5788f";
-const WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 
 // Custom tokens not in Uniswap list (Convex ecosystem + yld vaults)
 export const CUSTOM_TOKENS: EnsoToken[] = [
@@ -131,7 +131,7 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
     type: "base",
   },
   {
-    address: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E",
+    address: CRVUSD_ADDRESS,
     chainId: 1,
     name: "crvUSD",
     symbol: "crvUSD",
@@ -160,7 +160,7 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
     type: "defi",
   },
   {
-    address: "0xde2bEF0A01845257b4aEF2A2EAa48f6EAeAfa8B7",
+    address: "0xde2bEF0A01845257b4aEf2A2EAa48f6EAeAfa8B7",
     chainId: 1,
     name: "Unionized Convex CRV",
     symbol: "uCRV",
@@ -262,16 +262,16 @@ export const POPULAR_TOKENS = [
   ETH_ADDRESS, // ETH
   "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // USDC
   "0xdAC17F958D2ee523a2206206994597C13D831ec7", // USDT
-  "0x6B175474E89094C44Da98b954EedcdeCB5BE4dBf", // DAI
-  "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // WETH
+  "0x6B175474E89094C44da98B954EeDcDecB5BE4dBf", // DAI
+  WETH_ADDRESS, // WETH
   "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", // WBTC
   "0xD533a949740bb3306d119CC777fa900bA034cd52", // CRV
   "0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B", // CVX
   CVXCRV_ADDRESS, // cvxCRV
-  "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E", // crvUSD
+  CRVUSD_ADDRESS, // crvUSD
   // Llama Airforce (Union) vault tokens
   "0x8659Fc767cad6005de79AF65dAfE4249C57927AF", // uCVX
-  "0xde2bEF0A01845257b4aEF2A2EAa48f6EAeAfa8B7", // uCRV
+  "0xde2bEF0A01845257b4aEf2A2EAa48f6EAeAfa8B7", // uCRV
   // Concentrator (Aladdin) vault tokens
   "0xb0903Ab70a7467eE5756074b31ac88aEBb8fB777", // aCVX
   "0x2b95A1Dcc3D405535f9ed33c219ab38E8d7e0884", // aCRV
@@ -307,6 +307,110 @@ function getBufferedSlippageBps(slippageBps: number): number {
   return Math.min(10000, slippageBps + HYBRID_EXTRA_BUFFER_BPS);
 }
 
+/**
+ * Compute parameters for HybridZapper call (CVX → cvgCVX or pxCVX).
+ * Calculates optimal swap/mint split and slippage protection values.
+ * Used by both enso.ts zap-in and curve-lending.ts borrow+swap/create_loan+swap.
+ */
+export async function computeHybridZapParams(
+  cvxAmountEstimate: string,
+  type: "cvgCvx" | "pxCvx",
+  slippageBps: number,
+): Promise<{ swapAmount: bigint; minSwapDy: string; minTotalOut: string }> {
+  const totalSlippageBps = getBufferedSlippageBps(slippageBps);
+
+  if (type === "cvgCvx") {
+    const { swapAmount, mintAmount } = await getOptimalSwapAmount(cvxAmountEstimate);
+    let expectedSwapOutput = swapAmount; // fallback: 1:1
+    if (swapAmount > 0n) {
+      const swapOut = await getCvgCvxSwapRate(swapAmount.toString());
+      if (swapOut > 0n) expectedSwapOutput = swapOut;
+    }
+    const totalExpected = expectedSwapOutput + mintAmount;
+    return {
+      swapAmount,
+      minSwapDy: swapAmount > 0n ? calculateMinDy(expectedSwapOutput, totalSlippageBps) : "0",
+      minTotalOut: applySlippageBuffer(totalExpected, totalSlippageBps),
+    };
+  } else {
+    const { swapAmount, mintAmount } = await getOptimalPxCvxSwapAmount(cvxAmountEstimate);
+    let expectedSwapOutput = swapAmount; // fallback: 1:1
+    if (swapAmount > 0n) {
+      const swapOut = await getPxCvxSwapRate(swapAmount.toString());
+      if (swapOut > 0n) expectedSwapOutput = swapOut;
+    }
+    const totalExpected = expectedSwapOutput + mintAmount;
+    return {
+      swapAmount,
+      minSwapDy: swapAmount > 0n ? calculateMinDy(expectedSwapOutput, totalSlippageBps) : "0",
+      minTotalOut: applySlippageBuffer(totalExpected, totalSlippageBps),
+    };
+  }
+}
+
+/**
+ * Build Enso bundle actions for CVX → cvgCVX/pxCVX → vault deposit via HybridZapper.
+ * Returns actions to append to an existing bundle. Requires CVX_HYBRID_ZAPPER.
+ *
+ * Actions: approve CVX → zapper, zap call, balance, approve → vault, deposit → vault.
+ * The `actionsOffset` is the current `actions.length` before appending — needed for
+ * correct `useOutputOfCallAt` references.
+ */
+export function buildHybridZapperActions(params: {
+  type: "cvgCvx" | "pxCvx";
+  cvxAmountRef: string | { useOutputOfCallAt: number };
+  swapAmount: bigint;
+  minSwapDy: string;
+  minTotalOut: string;
+  vaultAddress: string;
+  depositReceiver: string;
+  actionsOffset: number;
+}): EnsoBundleAction[] {
+  if (!CVX_HYBRID_ZAPPER) throw new Error("CVX_HYBRID_ZAPPER not configured");
+
+  const underlyingToken = params.type === "cvgCvx" ? TOKENS.CVGCVX : TOKENS.PXCVX;
+  const method = params.type === "cvgCvx" ? "zapCvxToCvgCvxWithParams" : "zapCvxToPxCvxWithParams";
+  const abi = params.type === "cvgCvx"
+    ? "function zapCvxToCvgCvxWithParams(uint256 amountIn, uint256 swapAmount, uint256 minDy, uint256 minTotalOut, address receiver, uint256 deadline) returns (uint256)"
+    : "function zapCvxToPxCvxWithParams(uint256 amountIn, uint256 swapAmount, uint256 minDy, uint256 minTotalOut, address receiver, uint256 deadline) returns (uint256)";
+
+  // Balance action is at offset + 2 (after approve + zap call)
+  const balIdx = params.actionsOffset + 2;
+
+  return [
+    // 0: Approve CVX → HybridZapper
+    {
+      protocol: "enso", action: "call",
+      args: { address: TOKENS.CVX.toLowerCase(), method: "approve", abi: "function approve(address spender, uint256 amount) returns (bool)", args: [CVX_HYBRID_ZAPPER, params.cvxAmountRef] },
+    },
+    // 1: Zap CVX → cvgCVX/pxCVX with optimal swap/mint split
+    {
+      protocol: "enso", action: "call",
+      args: {
+        address: CVX_HYBRID_ZAPPER,
+        method,
+        abi,
+        args: [params.cvxAmountRef, params.swapAmount.toString(), params.minSwapDy, params.minTotalOut, ENSO_SHORTCUTS, "0"],
+      },
+    },
+    // 2: Get underlying token balance
+    {
+      protocol: "enso", action: "call",
+      args: { address: underlyingToken.toLowerCase(), method: "balanceOf", abi: "function balanceOf(address account) returns (uint256)", args: [ENSO_SHORTCUTS] },
+    },
+    // 3: Approve underlying → vault
+    {
+      protocol: "enso", action: "call",
+      args: { address: underlyingToken.toLowerCase(), method: "approve", abi: "function approve(address spender, uint256 amount) returns (bool)", args: [params.vaultAddress.toLowerCase(), { useOutputOfCallAt: balIdx }] },
+    },
+    // 4: Deposit underlying → vault
+    {
+      protocol: "enso", action: "call",
+      args: { address: params.vaultAddress.toLowerCase(), method: "deposit", abi: "function deposit(uint256 assets, address receiver) returns (uint256)", args: [{ useOutputOfCallAt: balIdx }, params.depositReceiver] },
+    },
+  ];
+}
+
 // Additional token symbols for route display
 const TOKEN_SYMBOLS: Record<string, string> = {
   [ETH_ADDRESS.toLowerCase()]: "ETH",
@@ -317,8 +421,8 @@ const TOKEN_SYMBOLS: Record<string, string> = {
   [TOKENS.PXCVX.toLowerCase()]: "pxCVX",
   "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "USDC",
   "0xdac17f958d2ee523a2206206994597c13d831ec7": "USDT",
-  "0x6b175474e89094c44da98b954eedcdecb5be4dBf": "DAI",
-  "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": "WETH",
+  "0x6b175474e89094c44da98b954eedcdecb5be4dbf": "DAI",
+  [WETH_ADDRESS.toLowerCase()]: "WETH",
   "0xd533a949740bb3306d119cc777fa900ba034cd52": "CRV",
   // Llama Airforce (Union) vault tokens
   "0x8659fc767cad6005de79af65dafe4249c57927af": "uCVX",
@@ -358,17 +462,38 @@ export function getTokenSymbol(address: string): string {
 }
 
 /**
- * Fetch token list from Enso API with metadata using SDK
+ * Fetch token list from Enso API with metadata.
+ * Client-side: proxied through /api/enso/tokens.
+ * Server-side: calls SDK directly.
  */
 export async function fetchEnsoTokenList(): Promise<EnsoToken[]> {
-  // SDK pages are fixed at 1000 tokens per page
+  if (typeof window !== "undefined") {
+    const res = await fetch("/api/enso/tokens", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "base", includeMetadata: true }),
+    });
+    if (!res.ok) throw new Error(`Enso tokens proxy error: ${res.status}`);
+    const tokenData = await res.json() as { data: Array<{ address: string; chainId: number; name?: string; symbol?: string; decimals: number; logosUri?: string[]; type?: EnsoToken["type"] }> };
+    return tokenData.data
+      .filter((t) => t.address && t.symbol)
+      .map((t) => ({
+        address: t.address,
+        chainId: t.chainId,
+        name: t.name || t.symbol || "Unknown",
+        symbol: t.symbol || "???",
+        decimals: t.decimals,
+        logoURI: t.logosUri?.[0],
+        type: t.type ?? ("base" as const),
+      }));
+  }
+
   const tokenData = await enqueueEnsoCall(() => ensoClient.getTokenData({
     chainId: CHAIN_ID,
     type: "base",
     includeMetadata: true,
   }));
 
-  // Map to our type
   return tokenData.data
     .filter((t) => t.address && t.symbol)
     .map((t) => ({
@@ -377,7 +502,7 @@ export async function fetchEnsoTokenList(): Promise<EnsoToken[]> {
       name: t.name || t.symbol || "Unknown",
       symbol: t.symbol || "???",
       decimals: t.decimals,
-      logoURI: t.logosUri?.[0], // Take first logo
+      logoURI: t.logosUri?.[0],
       type: t.type,
     }));
 }
@@ -398,13 +523,32 @@ export interface EnsoWalletBalance {
 }
 
 export async function fetchWalletBalances(walletAddress: string): Promise<EnsoWalletBalance[]> {
+  if (typeof window !== "undefined") {
+    const res = await fetch("/api/enso/balances", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ eoaAddress: walletAddress }),
+    });
+    if (!res.ok) throw new Error(`Enso balances proxy error: ${res.status}`);
+    const balances = await res.json() as Array<{ token: string; amount: unknown; decimals: number; price: unknown; name?: string; symbol?: string; logoUri?: string }>;
+    return balances.map((b) => ({
+      token: b.token,
+      amount: String(b.amount),
+      chainId: CHAIN_ID,
+      decimals: b.decimals,
+      price: Number(b.price),
+      name: b.name,
+      symbol: b.symbol,
+      logoUri: b.logoUri,
+    }));
+  }
+
   const balances = await enqueueEnsoCall(() => ensoClient.getBalances({
     chainId: CHAIN_ID,
     eoaAddress: walletAddress as `0x${string}`,
     useEoa: true,
   }));
 
-  // Transform SDK response to match our expected type
   return balances.map((b) => ({
     token: b.token,
     amount: String(b.amount),
@@ -432,19 +576,36 @@ export interface EnsoTokenPrice {
 export async function fetchTokenPrices(addresses: string[]): Promise<EnsoTokenPrice[]> {
   if (addresses.length === 0) return [];
 
+  if (typeof window !== "undefined") {
+    const res = await fetch("/api/enso/prices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ addresses }),
+    });
+    if (!res.ok) throw new Error(`Enso prices proxy error: ${res.status}`);
+    const priceData = await res.json() as Array<{ chainId: number; address: string; price: unknown; decimals: number; symbol?: string }>;
+    return priceData.map((p) => ({
+      chainId: p.chainId,
+      address: p.address,
+      price: Number(p.price),
+      decimals: p.decimals,
+      symbol: p.symbol,
+      name: undefined,
+    }));
+  }
+
   const priceData = await enqueueEnsoCall(() => ensoClient.getMultiplePriceData({
     chainId: CHAIN_ID,
     addresses: addresses as `0x${string}`[],
   }));
 
-  // Transform SDK response to match our expected type
   return priceData.map((p) => ({
     chainId: p.chainId,
     address: p.address,
     price: Number(p.price),
     decimals: p.decimals,
     symbol: p.symbol,
-    name: undefined, // SDK doesn't return name
+    name: undefined,
   }));
 }
 
@@ -456,13 +617,38 @@ export async function fetchTokens(params?: {
   type?: "base" | "defi";
   page?: number;
 }): Promise<EnsoTokensResponse> {
+  if (typeof window !== "undefined") {
+    const res = await fetch("/api/enso/tokens", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chainId: params?.chainId ?? CHAIN_ID,
+        type: params?.type,
+        page: params?.page,
+      }),
+    });
+    if (!res.ok) throw new Error(`Enso tokens proxy error: ${res.status}`);
+    const tokenData = await res.json() as { data: Array<{ address: string; chainId: number; name?: string; symbol?: string; decimals: number; logosUri?: string[]; type?: EnsoToken["type"] }>; meta: EnsoTokensResponse["meta"] };
+    return {
+      data: tokenData.data.map((t) => ({
+        address: t.address,
+        chainId: t.chainId,
+        name: t.name ?? "",
+        symbol: t.symbol ?? "",
+        decimals: t.decimals,
+        logoURI: t.logosUri?.[0],
+        type: t.type ?? ("base" as const),
+      })),
+      meta: tokenData.meta,
+    };
+  }
+
   const tokenData = await enqueueEnsoCall(() => ensoClient.getTokenData({
     chainId: params?.chainId ?? CHAIN_ID,
     type: params?.type,
     page: params?.page,
   }));
 
-  // Transform SDK response to match our expected type
   return {
     data: tokenData.data.map((t) => ({
       address: t.address,
@@ -483,7 +669,9 @@ export async function fetchTokens(params?: {
 }
 
 /**
- * Fetch optimal route/quote from Enso API using SDK
+ * Fetch optimal route/quote from Enso API.
+ * Client-side: proxied through /api/enso/route (API key stays server-side).
+ * Server-side: calls SDK directly.
  */
 export async function fetchRoute(params: {
   fromAddress: string;
@@ -500,13 +688,41 @@ export async function fetchRoute(params: {
     slippage: params.slippage ?? "100",
   });
 
+  // Client-side: proxy through our API route to keep API key server-side
+  if (typeof window !== "undefined") {
+    const res = await fetch("/api/enso/route", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fromAddress: params.fromAddress,
+        tokenIn: [params.tokenIn],
+        tokenOut: [params.tokenOut],
+        amountIn: [params.amountIn],
+        slippage: params.slippage ?? "100",
+        receiver: params.receiver,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+      throw new Error(err.error || `Enso route proxy error: ${res.status}`);
+    }
+    const result = await res.json() as EnsoRouteResponse;
+    console.log("[Enso Route] Response (via proxy):", {
+      amountOut: result.amountOut,
+      gas: result.gas,
+      priceImpact: result.priceImpact,
+    });
+    return result;
+  }
+
+  // Server-side: use SDK directly
   const routeData = await enqueueEnsoCall(() => ensoClient.getRouteData({
     chainId: CHAIN_ID,
     fromAddress: params.fromAddress as `0x${string}`,
     tokenIn: [params.tokenIn as `0x${string}`],
     tokenOut: [params.tokenOut as `0x${string}`],
     amountIn: [params.amountIn],
-    slippage: params.slippage ?? "100", // Default 1% slippage
+    slippage: params.slippage ?? "100",
     routingStrategy: "router",
     referralCode: ENSO_REFERRAL_CODE,
     receiver: params.receiver as `0x${string}` | undefined,
@@ -519,7 +735,6 @@ export async function fetchRoute(params: {
     route: routeData.route.map((hop) => `${hop.action} via ${hop.protocol}`),
   });
 
-  // Transform SDK response to match our expected type
   return {
     tx: {
       to: routeData.tx.to,
@@ -534,7 +749,7 @@ export async function fetchRoute(params: {
       protocol: hop.protocol,
       tokenIn: hop.tokenIn as string[],
       tokenOut: hop.tokenOut as string[],
-      amountIn: [], // SDK Hop type doesn't include amounts
+      amountIn: [],
       amountOut: [],
     })),
   };
@@ -701,8 +916,9 @@ export const YLDFI_VAULT_ADDRESSES = {
 export const isYldfiVault = checkIsYldfiVault;
 
 /**
- * Bundle multiple DeFi actions into a single transaction
- * Used for vault-to-vault zaps (redeem from one vault, deposit to another)
+ * Bundle multiple DeFi actions into a single transaction.
+ * Client-side: proxied through /api/enso/bundle (API key stays server-side).
+ * Server-side: calls SDK directly.
  *
  * @param routingStrategy - "router" for standard routing via Enso executor,
  *                          "delegate" for delegateCalls from user's context
@@ -722,8 +938,35 @@ export async function fetchBundle(params: {
     console.log("[Enso Bundle] Actions:", JSON.stringify(params.actions, null, 2));
   }
 
-  // Use SDK to call bundle API
-  // Note: SDK BundleAction type is a complex union, we cast our actions
+  // Client-side: proxy through our API route to keep API key server-side
+  if (typeof window !== "undefined") {
+    const res = await fetch("/api/enso/bundle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fromAddress: params.fromAddress,
+        actions: params.actions,
+        receiver: params.receiver,
+        routingStrategy: params.routingStrategy ?? "router",
+        skipQuote: params.skipQuote ?? isDev,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+      if (isDev) console.error("[Enso Bundle] Proxy error:", err);
+      throw new Error(err.error || `Enso bundle proxy error: ${res.status}`);
+    }
+    const result = await res.json() as EnsoBundleResponse;
+    if (isDev) {
+      console.log("[Enso Bundle] Response (via proxy):", {
+        to: result.tx.to,
+        gas: result.gas,
+      });
+    }
+    return result;
+  }
+
+  // Server-side: use SDK directly
   let bundleData: Awaited<ReturnType<typeof ensoClient.getBundleData>>;
   try {
     bundleData = await enqueueEnsoCall(() => ensoClient.getBundleData(
@@ -733,12 +976,8 @@ export async function fetchBundle(params: {
         routingStrategy: params.routingStrategy ?? "router",
         referralCode: ENSO_REFERRAL_CODE,
         receiver: params.receiver as `0x${string}` | undefined,
-        // In development (Anvil fork), skip Enso's server-side simulation which runs
-        // against mainnet state. Operations requiring account-specific state (loans, etc.)
-        // fail because the test account has no position on mainnet.
         skipQuote: params.skipQuote ?? isDev,
       },
-      // Cast our generic actions to SDK's union type
       params.actions as unknown as Parameters<typeof ensoClient.getBundleData>[1]
     ));
   } catch (error: unknown) {
@@ -749,7 +988,6 @@ export async function fetchBundle(params: {
     throw error;
   }
 
-  // Log response from Enso (dev only)
   if (isDev) {
     console.log("[Enso Bundle] Response:", {
       to: bundleData.tx.to,
@@ -759,13 +997,10 @@ export async function fetchBundle(params: {
       gas: bundleData.gas,
       amountsOut: bundleData.amountsOut,
       amountsIn: (bundleData as Record<string, unknown>).amountsIn ?? "(not returned)",
-      route: bundleData.route, // Check if route has hop amounts
+      route: bundleData.route,
     });
   }
 
-
-  // Transform SDK response to match our expected type
-  // Note: amountsOut may be null when skipQuote is true
   return {
     tx: {
       to: bundleData.tx.to,
@@ -779,7 +1014,7 @@ export async function fetchBundle(params: {
           Object.entries(bundleData.amountsOut).map(([k, v]) => [k, String(v)])
         )
       : {},
-    route: bundleData.route,  // Pass through route steps from SDK
+    route: bundleData.route,
     priceImpact: bundleData.priceImpact,
   };
 }
@@ -2741,7 +2976,7 @@ export async function fetchCvgCvxZapInRoute(params: {
 
       const TANGENT_WITH_ETH = {
         ...TANGENT,
-        CVX_ETH_POOL: "0xB576491F1E6e5E62f1d8F26062Ee822B40B0E0d4" as const,
+        CVX_ETH_POOL: CURVE_CVX_ETH_POOL,
       };
 
       bundle = await buildEthHybridBundle(
@@ -3262,54 +3497,16 @@ async function buildHybridBundle(
     const conservativeTotalCvgCvx = applySlippageBuffer(totalExpectedCvgCvx, totalSlippageBps);
 
     if (CVX_HYBRID_ZAPPER) {
-      const actions: EnsoBundleAction[] = [
-        {
-          protocol: "erc20",
-          action: "approve",
-          args: {
-            token: TOKENS.CVX,
-            spender: CVX_HYBRID_ZAPPER,
-            amount: params.amountIn,
-          },
-        },
-        {
-          protocol: "enso",
-          action: "call",
-          args: {
-            address: CVX_HYBRID_ZAPPER,
-            method: "zapCvxToCvgCvxWithParams",
-            abi: "function zapCvxToCvgCvxWithParams(uint256 amountIn, uint256 swapAmount, uint256 minDy, uint256 minTotalOut, address receiver, uint256 deadline) returns (uint256)",
-            args: [
-              params.amountIn,
-              swapAmount.toString(),
-              minSwapDy,
-              conservativeTotalCvgCvx,
-              ENSO_SHORTCUTS,
-              "0", // deadline: 0 = no expiration
-            ],
-          },
-        },
-        {
-          protocol: "enso",
-          action: "balance",
-          args: { token: TOKENS.CVGCVX },
-        },
-        {
-          protocol: "erc20",
-          action: "approve",
-          args: { token: TOKENS.CVGCVX, spender: params.vaultAddress, amount: { useOutputOfCallAt: 2 } },
-        },
-        {
-          protocol: "erc4626",
-          action: "deposit",
-          args: {
-            tokenIn: TOKENS.CVGCVX,
-            tokenOut: params.vaultAddress,
-            amountIn: { useOutputOfCallAt: 2 },
-            primaryAddress: params.vaultAddress,
-          },
-        },
-      ];
+      const actions = buildHybridZapperActions({
+        type: "cvgCvx",
+        cvxAmountRef: params.amountIn,
+        swapAmount,
+        minSwapDy,
+        minTotalOut: conservativeTotalCvgCvx,
+        vaultAddress: params.vaultAddress,
+        depositReceiver: params.fromAddress,
+        actionsOffset: 0,
+      });
 
       const bundleResult = await fetchBundle({
         fromAddress: params.fromAddress,
@@ -4518,51 +4715,16 @@ export async function fetchPxCvxZapInRoute(params: {
   const conservativeTotalPxCvx = applySlippageBuffer(totalExpectedPxCvx, totalSlippageBps);
 
   if (inputIsCvx && CVX_HYBRID_ZAPPER) {
-      const actions: EnsoBundleAction[] = [
-        {
-          protocol: "erc20",
-          action: "approve",
-          args: {
-            token: TOKENS.CVX,
-            spender: CVX_HYBRID_ZAPPER,
-            amount: params.amountIn,
-          },
-        },
-      {
-        protocol: "enso",
-        action: "call",
-        args: {
-          address: CVX_HYBRID_ZAPPER,
-          method: "zapCvxToPxCvxWithParams",
-          abi: "function zapCvxToPxCvxWithParams(uint256 amountIn, uint256 swapAmount, uint256 minDy, uint256 minTotalOut, address receiver, uint256 deadline) returns (uint256)",
-          args: [
-            params.amountIn,
-            swapAmount.toString(),
-            swapMinDy,
-            conservativeTotalPxCvx,
-            ENSO_SHORTCUTS,
-            "0", // deadline: 0 = no expiration
-          ],
-        },
-      },
-      {
-        protocol: "enso",
-        action: "balance",
-        args: {
-          token: PIREX.PXCVX,
-        },
-      },
-      {
-        protocol: "erc4626",
-        action: "deposit",
-        args: {
-          tokenIn: TOKENS.PXCVX,
-          tokenOut: params.vaultAddress,
-          amountIn: { useOutputOfCallAt: 2 },
-          primaryAddress: params.vaultAddress,
-        },
-      },
-    ];
+    const actions = buildHybridZapperActions({
+      type: "pxCvx",
+      cvxAmountRef: params.amountIn,
+      swapAmount,
+      minSwapDy: swapMinDy,
+      minTotalOut: conservativeTotalPxCvx,
+      vaultAddress: params.vaultAddress,
+      depositReceiver: params.fromAddress,
+      actionsOffset: 0,
+    });
 
     const bundleResult = await fetchBundle({
       fromAddress: params.fromAddress,

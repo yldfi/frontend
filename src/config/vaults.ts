@@ -87,7 +87,7 @@ export const LLAMA_AIRFORCE = {
 
   // uCRV - Custom vault for cvxCRV (NOT ERC4626!)
   // Uses withdraw(_to, _shares) instead of redeem(shares, receiver, owner)
-  UCRV: "0xde2bEF0A01845257b4aEF2A2EAa48f6EAeAfa8B7" as const,
+  UCRV: "0xde2bEF0A01845257b4aEf2A2EAa48f6EAeAfa8B7" as const,
   UCRV_UNDERLYING: "0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7" as const, // cvxCRV
 } as const;
 

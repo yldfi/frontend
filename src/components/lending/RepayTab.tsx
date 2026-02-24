@@ -28,7 +28,8 @@ import { RouteDisplay } from "@/components/RouteDisplay";
 import { cn } from "@/lib/utils";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { fetchRoute, fetchTokenPrices, ETH_ADDRESS } from "@/lib/enso";
-import { CRVUSD_ADDRESS } from "@/lib/zapper";
+import { getMaxEthAmount } from "@/lib/eth-gas";
+import { CRVUSD_ADDRESS, WETH_ADDRESS } from "@/config/addresses";
 import { CURVE_SAVINGS } from "@/config/vaults";
 import { getVaultInfo } from "@/lib/curve-lending";
 // previewRedeem ABI for ERC4626 vaults
@@ -40,8 +41,6 @@ const PREVIEW_REDEEM_ABI = [{
   type: "function",
 }] as const;
 import type { EnsoToken, EnsoRouteResponse } from "@/types/enso";
-
-const WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 
 // ERC4626 convertToAssets ABI (for vault token pricing)
 const ERC4626_CONVERT_ABI = [
@@ -271,7 +270,10 @@ export function RepayTab({
     token: isEth ? undefined : (repayToken.address as `0x${string}`),
     query: { enabled: !!address },
   });
-  const balanceFormatted = repayTokenBalance?.formatted ?? "0";
+  // For ETH: reserve gas from max balance
+  const balanceFormatted = isEth && repayTokenBalance?.value
+    ? getMaxEthAmount(repayTokenBalance.value, gasPrice)
+    : repayTokenBalance?.formatted ?? "0";
   const currentBalance = repayTokenBalance?.value ?? 0n;
 
   const formattedBalance = useMemo(() => {

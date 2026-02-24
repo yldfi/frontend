@@ -6,6 +6,7 @@
  */
 
 import { PUBLIC_RPC_URLS } from "@/config/rpc";
+import { CURVE_CVX_ETH_POOL } from "@/config/addresses";
 
 // Use DEBUG_RPC_URL if available (more reliable, higher rate limits)
 // Falls back to public llamarpc for production
@@ -75,7 +76,7 @@ const isTestEnv = typeof process !== "undefined" && (
  * These need normal retry settings to handle network latency/rate limits
  */
 const isLiveIntegrationTest = isTestEnv && typeof process !== "undefined" &&
-  Boolean(process.env.NEXT_PUBLIC_ENSO_API_KEY);
+  Boolean(process.env.ENSO_API_KEY);
 
 /**
  * Execute multiple eth_call requests in a single HTTP request
@@ -333,7 +334,7 @@ export async function getCurveGetDyFactory(
 
 // Curve V2 ETH/CVX Pool (WETH/CVX) - used for on-chain price discovery
 // Index 0: WETH, Index 1: CVX
-const CURVE_ETH_CVX_POOL = "0xB576491F1E6e5E62f1d8F26062Ee822B40B0E0d4";
+const CURVE_ETH_CVX_POOL = CURVE_CVX_ETH_POOL;
 
 // Cache for ETH→CVX rate (valid for 30 seconds to reduce RPC calls)
 let ethToCvxRateCache: {

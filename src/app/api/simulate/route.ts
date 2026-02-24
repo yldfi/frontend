@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createPublicClient, encodeAbiParameters, http, keccak256, pad, parseAbiParameters, toHex } from "viem";
 import { mainnet } from "viem/chains";
 import { TOKENS, VAULT_ADDRESSES, CURVE_CONTROLLERS, getVaultByAddress } from "@/config/vaults";
-import { fetchTokenPrices } from "@/lib/enso";
+import { fetchTokenPrices, ENSO_ROUTER, ENSO_ROUTER_EXECUTOR } from "@/lib/enso";
+import { CRVUSD_ADDRESS } from "@/config/addresses";
 
 export const dynamic = "force-dynamic";
 
@@ -23,9 +24,6 @@ function getCorsHeaders(request: NextRequest): Record<string, string> {
     "Access-Control-Max-Age": "86400",
   };
 }
-
-const ENSO_ROUTER = "0x80EbA3855878739F4710233A8a19d89Bdd2ffB8E";
-const ENSO_ROUTER_EXECUTOR = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf";
 const CVX_BALANCE_SLOT = 0n;
 const CVX_ALLOWANCE_SLOT = 1n;
 const MAX_UINT256 = (1n << 256n) - 1n;
@@ -180,8 +178,7 @@ const VAULT_COLLATERAL_TOKENS = new Set([
   "0x95f19b19aff698169a1a0bbc28a2e47b14cb9a86", // ycvxCRV
 ]);
 
-// crvUSD address
-const CRVUSD_ADDRESS = "0xf939e0a03fb07f59a73314e73794be0e57ac1b4e";
+// crvUSD address imported from @/config/addresses
 
 function processAssetChanges(
   assetChanges: TenderlyAssetChange[] | undefined,
@@ -196,7 +193,7 @@ function processAssetChanges(
     const from = change.from?.toLowerCase() ?? "";
     const to = change.to?.toLowerCase() ?? "";
     const tokenAddress = change.token_info?.contract_address?.toLowerCase() ?? "";
-    const isCrvUsd = tokenAddress === CRVUSD_ADDRESS;
+    const isCrvUsd = tokenAddress === CRVUSD_ADDRESS.toLowerCase();
 
     const isUserSending = from === normalizedUser;
     const isUserReceiving = to === normalizedUser;

@@ -12,9 +12,11 @@ import type { VaultConfig } from "@/config/vaults";
 import { CURVE_CONTROLLERS } from "@/config/vaults";
 import type { LendingPosition } from "@/hooks/useCurveLendingPosition";
 import { useZapperActions } from "@/hooks/useZapperActions";
-import { ZAPPER_ABI, CRVUSD_ADDRESS, ZAPPER_V2_ADDRESS } from "@/lib/zapper";
+import { CRVUSD_ADDRESS, CHAINLINK_ETH_USD } from "@/config/addresses";
+import { ZAPPER_ABI, ZAPPER_V2_ADDRESS } from "@/lib/zapper";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS, fetchRoute } from "@/lib/enso";
+import { getMaxEthAmount } from "@/lib/eth-gas";
 import type { EnsoToken, RouteInfo } from "@/types/enso";
 import { RouteDisplay } from "@/components/RouteDisplay";
 import { MaxButton } from "@/components/MaxButton";
@@ -1267,7 +1269,7 @@ export function LeverageTab({
           setShowSimulationModal(true);
           if (publicClient) {
             publicClient.readContract({
-              address: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419" as `0x${string}`,
+              address: CHAINLINK_ETH_USD,
               abi: [{
                 name: "latestRoundData",
                 type: "function",
@@ -1463,7 +1465,7 @@ export function LeverageTab({
                     excludeDefiTokens
                   />
                   <MaxButton
-                    balance={isCollateralToken ? formatUnits(userBalanceBn, vault.decimals) : formatUnits(effectiveBalance, effectiveDecimals)}
+                    balance={isCollateralToken ? formatUnits(userBalanceBn, vault.decimals) : (isEth && altTokenBalance?.value ? getMaxEthAmount(altTokenBalance.value, gasPrice) : formatUnits(effectiveBalance, effectiveDecimals))}
                     onSelect={setCollateralAmount}
                   />
                 </div>

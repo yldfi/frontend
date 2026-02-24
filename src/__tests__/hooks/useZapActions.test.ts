@@ -18,11 +18,11 @@ describe("useZapActions logic", () => {
     });
 
     it("detects ETH address (uppercase)", () => {
-      expect(isEth("0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")).toBe(true);
+      expect(isEth("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE")).toBe(true);
     });
 
     it("detects ETH address (mixed case)", () => {
-      expect(isEth("0xEeeeEeeeEEeEEEeEeEEEEeeEEEeEeEeEEeeEeEee")).toBe(true);
+      expect(isEth("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE")).toBe(true);
     });
 
     it("returns false for USDC address", () => {

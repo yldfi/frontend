@@ -9,7 +9,7 @@ dotenv.config({ path: ".env.local" });
 export default defineConfig({
   plugins: [react()],
   define: {
-    "process.env.NEXT_PUBLIC_ENSO_API_KEY": JSON.stringify(process.env.NEXT_PUBLIC_ENSO_API_KEY),
+    "process.env.ENSO_API_KEY": JSON.stringify(process.env.ENSO_API_KEY),
   },
   test: {
     environment: "jsdom",
