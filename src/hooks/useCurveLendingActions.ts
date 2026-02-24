@@ -740,10 +740,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setPendingBundle(bundle);
       setPendingInputToken(inputToken);
 
-      // Get the spender address from the bundle's tx.to
-      const spender = bundle.tx.to as `0x${string}`;
+      // In router mode, bundle.tx.to is ENSO_ROUTER_EXECUTOR, but the actual
+      // token pull (transferFrom) is done by ENSO_SHORTCUTS inside the bundle.
+      // We must check/request approval for ENSO_SHORTCUTS, not the router executor.
+      const spender = ENSO_SHORTCUTS as `0x${string}`;
 
-      // Check allowance against the actual spender (bundle.tx.to)
+      // Check allowance against the actual spender (ENSO_SHORTCUTS)
       // Skip for actions that don't require approval:
       // - ETH (native token, not ERC20)
       // - Remove collateral, self-liquidate (we receive tokens, not send)
