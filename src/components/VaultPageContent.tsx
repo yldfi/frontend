@@ -1465,7 +1465,7 @@ export function VaultPageContent({ id }: { id: string }) {
                         <span className="hidden sm:inline">Performance Fee</span><span className="sm:hidden">Fee</span>
                       </td>
                       <td className="px-3 sm:px-4 py-2.5 text-right mono font-medium">
-                        {vault.type === "vault" ? (<><span className="hidden sm:inline">15% Vault + 5% Strategy</span><span className="sm:hidden">15% + 5%</span></>) : `${vault.fees.performance}%`}
+                        {vault.type === "vault" ? "15% Vault + 5% Strategy" : `${vault.fees.performance}%`}
                       </td>
                     </tr>
                     <tr className={vault.underlyingStrategy && vault.type === "vault" ? "border-b border-[var(--border)]/50" : ""}>

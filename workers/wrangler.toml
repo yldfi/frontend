@@ -8,3 +8,8 @@ crons = ["*/5 * * * *"]  # Every 5 minutes
 [[kv_namespaces]]
 binding = "VAULT_CACHE"
 id = "196d1aceae10469bb4bde0495b3e3ae0"
+
+[[d1_databases]]
+binding = "LOGS"
+database_name = "yldfi-logs"
+database_id = "b2f2df39-1663-4507-8e58-5a21c4b14770"

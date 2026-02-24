@@ -746,7 +746,18 @@ export function LendingInterface({
   const setLoanSource = useCallback((v: "choice" | "yldfi") => {
     setLoanSourceState(v);
     try { localStorage.setItem("yldfi-loan-source", v); } catch { /* */ }
-  }, []);
+    // Reset child state when going back to choice screen
+    if (v === "choice") {
+      setChildCollateralAmount(null);
+      setChildDebtDelta(null);
+      setChildEstimatedLeverage(null);
+      lastCollateralAmount.current = 0n;
+      try {
+        localStorage.removeItem(`yldfi-lending-newloan-amount-${vault.address}`);
+        localStorage.removeItem(`yldfi-lending-newloan-debt-${vault.address}`);
+      } catch { /* */ }
+    }
+  }, [vault.address]);
 
   // --- Loading: show skeleton while position data loads ---
   if (positionLoading) {
