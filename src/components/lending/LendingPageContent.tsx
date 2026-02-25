@@ -83,7 +83,10 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
     `yldfi-lending-leverage-${vaultAddr}`,
     `yldfi-lending-newloan-amount-${vaultAddr}`,
     `yldfi-lending-newloan-debt-${vaultAddr}`,
-    "yldfi-lending-tab",
+    `yldfi-lending-newloan-token-${vaultAddr}`,
+    `yldfi-lending-newloan-output-${vaultAddr}`,
+    "yldfi-newloan-tab",
+    "yldfi-loan-source",
   ], "yldfi-lending-is-refresh");
 
   const shouldRedirect = !vault || !controllerAddress;

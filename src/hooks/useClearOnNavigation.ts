@@ -1,14 +1,14 @@
 import { useEffect, useRef } from "react";
 
 /**
- * Clears specified localStorage keys when navigating away (SPA navigation),
+ * Clears specified sessionStorage keys when navigating away (SPA navigation),
  * but preserves them on page refresh.
  *
  * How it works:
  * - On refresh: beforeunload fires, sets a sessionStorage flag, cleanup sees flag and skips clear
- * - On navigation: cleanup runs without flag, clears the localStorage keys
+ * - On navigation: cleanup runs without flag, clears the sessionStorage keys
  *
- * @param keys - Array of localStorage keys to clear on navigation
+ * @param keys - Array of sessionStorage keys to clear on navigation
  * @param refreshKey - Unique key for the sessionStorage refresh flag (default: "yldfi-is-refresh")
  */
 export function useClearOnNavigation(keys: string[], refreshKey = "yldfi-is-refresh") {
@@ -35,7 +35,7 @@ export function useClearOnNavigation(keys: string[], refreshKey = "yldfi-is-refr
         // Only clear if not a refresh (SPA navigation)
         if (!sessionStorage.getItem(refreshKey)) {
           for (const key of keysRef.current) {
-            localStorage.removeItem(key);
+            sessionStorage.removeItem(key);
           }
         }
         sessionStorage.removeItem(refreshKey);

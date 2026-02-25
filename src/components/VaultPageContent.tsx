@@ -296,14 +296,14 @@ export function VaultPageContent({ id }: { id: string }) {
   const { isOpen: explorerOpen, address: explorerAddress, title: explorerTitle, lastUpdated: explorerLastUpdated, icon: explorerIcon, showFlowTab: explorerShowFlowTab, activeTab: explorerActiveTab, openExplorer, switchContract, closeExplorer, setActiveTab: setExplorerActiveTab } = useContractExplorer();
   const [amount, setAmountState] = useState(() => {
     if (typeof window === "undefined") return "";
-    try { return sanitizeAmount(localStorage.getItem(`yldfi-amount-${id}`) ?? ""); } catch { return ""; }
+    try { return sanitizeAmount(sessionStorage.getItem(`yldfi-amount-${id}`) ?? ""); } catch { return ""; }
   });
   const setAmount = useCallback((value: string) => {
     const sanitized = sanitizeAmount(value);
     setAmountState(sanitized);
     try {
-      if (sanitized) localStorage.setItem(`yldfi-amount-${id}`, sanitized);
-      else localStorage.removeItem(`yldfi-amount-${id}`);
+      if (sanitized) sessionStorage.setItem(`yldfi-amount-${id}`, sanitized);
+      else sessionStorage.removeItem(`yldfi-amount-${id}`);
     } catch { /* */ }
   }, [id]);
 
@@ -323,7 +323,7 @@ export function VaultPageContent({ id }: { id: string }) {
   const [zapDirection, setZapDirectionState] = useState<ZapDirection>(() => {
     if (typeof window === "undefined") return "in";
     try {
-      const saved = localStorage.getItem(`yldfi-zap-direction-${id}`);
+      const saved = sessionStorage.getItem(`yldfi-zap-direction-${id}`);
       return saved === "out" ? "out" : "in";
     } catch {
       return "in";
@@ -332,15 +332,15 @@ export function VaultPageContent({ id }: { id: string }) {
   const setZapDirection = (dir: ZapDirection) => {
     setZapDirectionState(dir);
     try {
-      localStorage.setItem(`yldfi-zap-direction-${id}`, dir);
+      sessionStorage.setItem(`yldfi-zap-direction-${id}`, dir);
     } catch {
-      // localStorage unavailable
+      // sessionStorage unavailable
     }
   };
   const [zapInputToken, setZapInputTokenState] = useState<EnsoToken | null>(() => {
     if (typeof window === "undefined") return DEFAULT_ETH_TOKEN;
     try {
-      const saved = localStorage.getItem(`yldfi-zap-input-token-${id}`);
+      const saved = sessionStorage.getItem(`yldfi-zap-input-token-${id}`);
       return saved ? JSON.parse(saved) : DEFAULT_ETH_TOKEN;
     } catch {
       return DEFAULT_ETH_TOKEN;
@@ -350,18 +350,18 @@ export function VaultPageContent({ id }: { id: string }) {
     setZapInputTokenState(token);
     try {
       if (token) {
-        localStorage.setItem(`yldfi-zap-input-token-${id}`, JSON.stringify(token));
+        sessionStorage.setItem(`yldfi-zap-input-token-${id}`, JSON.stringify(token));
       } else {
-        localStorage.removeItem(`yldfi-zap-input-token-${id}`);
+        sessionStorage.removeItem(`yldfi-zap-input-token-${id}`);
       }
     } catch {
-      // localStorage unavailable
+      // sessionStorage unavailable
     }
   };
   const [zapOutputToken, setZapOutputTokenState] = useState<EnsoToken | null>(() => {
     if (typeof window === "undefined") return DEFAULT_ETH_TOKEN;
     try {
-      const saved = localStorage.getItem(`yldfi-zap-output-token-${id}`);
+      const saved = sessionStorage.getItem(`yldfi-zap-output-token-${id}`);
       return saved ? JSON.parse(saved) : DEFAULT_ETH_TOKEN;
     } catch {
       return DEFAULT_ETH_TOKEN;
@@ -371,18 +371,18 @@ export function VaultPageContent({ id }: { id: string }) {
     setZapOutputTokenState(token);
     try {
       if (token) {
-        localStorage.setItem(`yldfi-zap-output-token-${id}`, JSON.stringify(token));
+        sessionStorage.setItem(`yldfi-zap-output-token-${id}`, JSON.stringify(token));
       } else {
-        localStorage.removeItem(`yldfi-zap-output-token-${id}`);
+        sessionStorage.removeItem(`yldfi-zap-output-token-${id}`);
       }
     } catch {
-      // localStorage unavailable
+      // sessionStorage unavailable
     }
   };
   const [zapAmount, setZapAmountState] = useState(() => {
     if (typeof window === "undefined") return "";
     try {
-      return sanitizeAmount(localStorage.getItem(`yldfi-zap-amount-${id}`) ?? "");
+      return sanitizeAmount(sessionStorage.getItem(`yldfi-zap-amount-${id}`) ?? "");
     } catch {
       return "";
     }
@@ -392,12 +392,12 @@ export function VaultPageContent({ id }: { id: string }) {
     setZapAmountState(sanitized);
     try {
       if (sanitized) {
-        localStorage.setItem(`yldfi-zap-amount-${id}`, sanitized);
+        sessionStorage.setItem(`yldfi-zap-amount-${id}`, sanitized);
       } else {
-        localStorage.removeItem(`yldfi-zap-amount-${id}`);
+        sessionStorage.removeItem(`yldfi-zap-amount-${id}`);
       }
     } catch {
-      // localStorage unavailable
+      // sessionStorage unavailable
     }
   }, [id]);
 
@@ -438,7 +438,8 @@ export function VaultPageContent({ id }: { id: string }) {
     `yldfi-amount-${id}`,
     `yldfi-zap-amount-${id}`,
     `yldfi-zap-direction-${id}`,
-    "yldfi-active-tab",
+    `yldfi-zap-input-token-${id}`,
+    `yldfi-zap-output-token-${id}`,
   ]);
 
   // Debounce zap amount to prevent rate limiting from Enso API (1 req/sec)

@@ -73,7 +73,7 @@ export function RepayTab({
   const repayStorageKey = `yldfi-lending-repay-${vault.address}`;
   const [repayAmount, setRepayAmountState] = useState(() => {
     if (typeof window === "undefined") return "";
-    try { return sanitizeAmount(localStorage.getItem(repayStorageKey) ?? ""); } catch { return ""; }
+    try { return sanitizeAmount(sessionStorage.getItem(repayStorageKey) ?? ""); } catch { return ""; }
   });
   const setRepayAmount = useCallback(
     (v: string) => {
@@ -82,8 +82,8 @@ export function RepayTab({
       setIsClosingLoan(false);
       hasAutoCapped.current = false;
       try {
-        if (sanitized) localStorage.setItem(repayStorageKey, sanitized);
-        else localStorage.removeItem(repayStorageKey);
+        if (sanitized) sessionStorage.setItem(repayStorageKey, sanitized);
+        else sessionStorage.removeItem(repayStorageKey);
       } catch { /* */ }
     },
     [repayStorageKey]
@@ -867,7 +867,7 @@ export function RepayTab({
     if (status === "success") {
       setRepayAmountState("");
       setWithdrawAmountState("");
-      try { localStorage.removeItem(repayStorageKey); } catch { /* */ }
+      try { sessionStorage.removeItem(repayStorageKey); } catch { /* */ }
       onTransactionSuccess();
       refetchBalance();
       reset();

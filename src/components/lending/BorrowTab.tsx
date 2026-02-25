@@ -81,15 +81,15 @@ export function BorrowTab({
   const collateralStorageKey = `yldfi-lending-borrow-collateral-${vault.address}`;
   const [collateralAmount, setCollateralAmountState] = useState(() => {
     if (typeof window === "undefined") return "";
-    try { return sanitizeAmount(localStorage.getItem(collateralStorageKey) ?? ""); } catch { return ""; }
+    try { return sanitizeAmount(sessionStorage.getItem(collateralStorageKey) ?? ""); } catch { return ""; }
   });
   const setCollateralAmount = useCallback(
     (v: string) => {
       const sanitized = sanitizeAmount(v);
       setCollateralAmountState(sanitized);
       try {
-        if (sanitized) localStorage.setItem(collateralStorageKey, sanitized);
-        else localStorage.removeItem(collateralStorageKey);
+        if (sanitized) sessionStorage.setItem(collateralStorageKey, sanitized);
+        else sessionStorage.removeItem(collateralStorageKey);
       } catch { /* */ }
     },
     [collateralStorageKey]
@@ -237,15 +237,15 @@ export function BorrowTab({
   const borrowStorageKey = `yldfi-lending-borrow-amount-${vault.address}`;
   const [borrowAmount, setBorrowAmountState] = useState(() => {
     if (typeof window === "undefined") return "";
-    try { return sanitizeAmount(localStorage.getItem(borrowStorageKey) ?? ""); } catch { return ""; }
+    try { return sanitizeAmount(sessionStorage.getItem(borrowStorageKey) ?? ""); } catch { return ""; }
   });
   const setBorrowAmount = useCallback(
     (v: string) => {
       const sanitized = sanitizeAmount(v);
       setBorrowAmountState(sanitized);
       try {
-        if (sanitized) localStorage.setItem(borrowStorageKey, sanitized);
-        else localStorage.removeItem(borrowStorageKey);
+        if (sanitized) sessionStorage.setItem(borrowStorageKey, sanitized);
+        else sessionStorage.removeItem(borrowStorageKey);
       } catch { /* */ }
     },
     [borrowStorageKey]
@@ -771,8 +771,8 @@ export function BorrowTab({
     if (status === "success") {
       setBorrowAmountState("");
       setCollateralAmountState("");
-      try { localStorage.removeItem(borrowStorageKey); } catch { /* */ }
-      try { localStorage.removeItem(collateralStorageKey); } catch { /* */ }
+      try { sessionStorage.removeItem(borrowStorageKey); } catch { /* */ }
+      try { sessionStorage.removeItem(collateralStorageKey); } catch { /* */ }
       onTransactionSuccess();
       reset();
     }
