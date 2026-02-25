@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Loader2, FileCode, Copy, ChevronDown } from "lucide-react";
+import { FileCode, Copy, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { LoadingDots } from "@/components/LoadingDots";
 
 interface SourceFile {
   name: string;
@@ -132,8 +133,7 @@ export function ContractSourceViewer({ address }: ContractSourceViewerProps) {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-48">
-        <Loader2 className="w-6 h-6 animate-spin text-[var(--accent)]" />
-        <span className="ml-3 text-[var(--muted-foreground)]">Fetching source code...</span>
+        <LoadingDots />
       </div>
     );
   }

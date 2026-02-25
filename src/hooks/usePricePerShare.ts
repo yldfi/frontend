@@ -2,24 +2,7 @@
 
 import { useReadContracts, useAccount } from "wagmi";
 import { formatUnits } from "viem";
-
-// ERC-4626 standard ABI for price per share calculation
-const ERC4626_ABI = [
-  {
-    name: "convertToAssets",
-    type: "function",
-    stateMutability: "view",
-    inputs: [{ name: "shares", type: "uint256" }],
-    outputs: [{ name: "assets", type: "uint256" }],
-  },
-  {
-    name: "decimals",
-    type: "function",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint8" }],
-  },
-] as const;
+import { ERC4626_ABI } from "@/lib/abis";
 
 export function usePricePerShare(vaultAddress: `0x${string}`) {
   const { chainId } = useAccount();

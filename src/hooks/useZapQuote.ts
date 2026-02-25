@@ -8,6 +8,7 @@ import { fetchZapInRoute, fetchZapOutRoute, fetchVaultToVaultRoute, fetchCvgCvxZ
 import { TOKENS, getVaultByAddress, isExternalVaultToken, getExternalVaultConfig } from "@/config/vaults";
 import { useTenderly } from "@/contexts/TenderlyContext";
 import type { EnsoToken, ZapQuote, ZapDirection, RouteInfo, RouteStep } from "@/types/enso";
+import { ERC4626_ABI } from "@/lib/abis";
 
 /**
  * Build route info for vault-to-vault zaps
@@ -185,16 +186,6 @@ function buildZapOutRouteInfo(
   return { steps };
 }
 
-// ERC4626 ABI for convertToAssets
-const ERC4626_ABI = [
-  {
-    inputs: [{ name: "shares", type: "uint256" }],
-    name: "convertToAssets",
-    outputs: [{ name: "assets", type: "uint256" }],
-    stateMutability: "view",
-    type: "function",
-  },
-] as const;
 
 interface UseZapQuoteParams {
   inputToken: EnsoToken | null;

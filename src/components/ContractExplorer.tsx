@@ -261,8 +261,8 @@ export function ContractExplorer({
           )}
         </div>
 
-        {/* Content - scrollable */}
-        <div className="flex-1 overflow-y-auto p-4">
+        {/* Content - scrollable, min-h prevents collapse during loading transitions */}
+        <div className="flex-1 overflow-y-auto p-4 min-h-[60vh]">
           {activeTab === "state" && <ContractView address={address} />}
           {activeTab === "flow" && <StrategyFlowViewer address={address} />}
           {activeTab === "source" && <ContractSourceViewer address={address} />}

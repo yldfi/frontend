@@ -2,16 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { use, Suspense } from "react";
-
-function LoadingDots() {
-  return (
-    <span className="inline-flex items-center gap-0.5 text-[var(--muted-foreground)]">
-      <span className="animate-bounce" style={{ animationDelay: "0ms", animationDuration: "600ms" }}>.</span>
-      <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
-      <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
-    </span>
-  );
-}
+import { LoadingDots } from "@/components/LoadingDots";
 
 const loadingFallback = (
   <div className="min-h-screen bg-[var(--background)] flex items-center justify-center text-lg">

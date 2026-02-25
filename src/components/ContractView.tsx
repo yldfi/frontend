@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Loader2, ChevronRight, ChevronDown } from "lucide-react";
+import { ChevronRight, ChevronDown } from "lucide-react";
 import type { ContractData } from "@/types/explorer";
 import {
   readAllViewValues,
@@ -19,6 +19,7 @@ import {
   type NatSpec,
 } from "@/lib/explorer/etherscan";
 import { useContractReaderClient } from "@/hooks/useContractReaderClient";
+import { LoadingDots } from "@/components/LoadingDots";
 
 // Cache for pre-fetched contract names and EOA detection
 const prefetchedNames = new Map<string, string | null>();
@@ -516,8 +517,7 @@ export function ContractView({
 
           {contractData.isLoading ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 size={32} className="animate-spin text-[var(--accent)]" />
-              <span className="ml-3 text-[var(--muted-foreground)]">Loading contract data...</span>
+              <LoadingDots />
             </div>
           ) : (
             <>
