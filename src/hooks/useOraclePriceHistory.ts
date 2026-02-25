@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { usePublicClient } from "wagmi";
 import { formatUnits } from "viem";
 import { CACHE_TIMES } from "@/config/query";
+import { CONTROLLER_ABI } from "@/lib/abis";
 
 const CURVE_PRICES_API = "https://prices.curve.finance";
 
@@ -23,16 +24,6 @@ export interface OraclePriceHistory {
   data: OraclePricePoint[];
   currentOraclePrice: number | null;
 }
-
-const CONTROLLER_ABI = [
-  {
-    name: "amm",
-    type: "function",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "address" }],
-  },
-] as const;
 
 const AMM_ABI = [
   {
@@ -106,8 +97,6 @@ const AMM_ABI = [
     outputs: [{ name: "", type: "uint256" }],
   },
 ] as const;
-
-export { AMM_ABI };
 
 async function fetchSnapshotHistory(
   controllerAddress: string,

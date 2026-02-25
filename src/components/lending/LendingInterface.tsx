@@ -13,10 +13,11 @@ import { RepayTab } from "./RepayTab";
 import { BorrowTab } from "./BorrowTab";
 import { CollateralTab } from "./CollateralTab";
 import { NewLoanForm } from "./NewLoanForm";
-import { Loader2, Check, X, ExternalLink, ArrowRight, ChevronLeft } from "lucide-react";
+import { Check, X, ExternalLink, ArrowRight, ChevronLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CACHE_TIMES } from "@/config/query";
 import { useYearnVault, formatYearnVaultData } from "@/hooks/useYearnVault";
+import { LoadingDots } from "@/components/LoadingDots";
 
 export type LendingTxState = {
   status: "pending" | "success" | "reverted";
@@ -61,16 +62,6 @@ function semilogBorrowAPR(utilization: number, minRate: number, maxRate: number)
   if (minRate <= 0 || maxRate <= 0 || utilization < 0) return 0;
   const util = Math.min(utilization, 1);
   return minRate * Math.pow(maxRate / minRate, util);
-}
-
-function LoadingDots() {
-  return (
-    <span className="inline-flex items-center gap-0.5">
-      <span className="animate-bounce" style={{ animationDelay: "0ms", animationDuration: "600ms" }}>.</span>
-      <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
-      <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
-    </span>
-  );
 }
 
 // LTV indicator with soft/hard liquidation thresholds
@@ -793,7 +784,7 @@ export function LendingInterface({
       {effectiveTxState.status === "pending" && (
         <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
           <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
-            <Loader2 className="w-8 h-8 text-[var(--accent)] animate-spin" />
+            <LoadingDots />
           </div>
           <h3 className="text-lg font-medium mb-2">Awaiting Confirmation</h3>
           {effectiveTxState.details && (() => {

@@ -8,22 +8,12 @@ import { parseUnits, formatUnits } from "viem";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
 import { MaxButton } from "@/components/MaxButton";
-import { ArrowUpRight, ExternalLink, Loader2, Search, Route, RouteOff, Copy, ChevronDown, ChevronRight, Check, X, Clock, ArrowRightLeft, HeartPulse, Shield, Wallet, Banknote, Percent, TrendingUp, Info, Coins } from "lucide-react";
+import { ArrowUpRight, ExternalLink, Search, Route, RouteOff, Copy, ChevronDown, ChevronRight, Check, X, Clock, ArrowRightLeft, HeartPulse, Shield, Wallet, Banknote, Percent, TrendingUp, Info, Coins } from "lucide-react";
 import { RouteDisplay } from "@/components/RouteDisplay";
 import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
 import { ApprovalCard } from "@/components/ApprovalCard";
-
-// Animated loading dots for quote fetching
-function LoadingDots() {
-  return (
-    <span className="inline-flex items-center gap-0.5 text-[var(--muted-foreground)]">
-      <span className="animate-bounce" style={{ animationDelay: "0ms", animationDuration: "600ms" }}>.</span>
-      <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
-      <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
-    </span>
-  );
-}
+import { LoadingDots } from "@/components/LoadingDots";
 
 // Parse Enso API errors into user-friendly messages
 function parseQuoteError(error: Error | null): string {
@@ -1665,7 +1655,7 @@ export function VaultPageContent({ id }: { id: string }) {
                   {isVaultDeployed && pendingMultiStep?.type === "deposit" && (txStatus === "approving" || txStatus === "waitingApproval" || (txStatus === "idle" && pendingMultiStep.step === 1)) && (
                     <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
                       <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
-                        <Loader2 className="w-8 h-8 text-[var(--accent)] animate-spin" />
+                        <LoadingDots />
                       </div>
                       <h3 className="text-lg font-medium mb-4">Transaction in Progress</h3>
                       {/* Multi-Step List */}
@@ -1684,7 +1674,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               : "bg-green-500 text-white"
                           )}>
                             {pendingMultiStep.step === 1 ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              <LoadingDots />
                             ) : (
                               <Check className="w-4 h-4" />
                             )}
@@ -1726,7 +1716,7 @@ export function VaultPageContent({ id }: { id: string }) {
                   {isVaultDeployed && (((isDebugDeposit || isDebugWithdraw) && isDebugPending) || (txStatus === "waitingTx" && (depositHash || withdrawHash))) && (
                     <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
                       <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
-                        <Loader2 className="w-8 h-8 text-[var(--accent)] animate-spin" />
+                        <LoadingDots />
                       </div>
                       <h3 className="text-lg font-medium mb-2">Awaiting Confirmation</h3>
                       {/* Multi-Step List (when in multi-step mode) */}
@@ -1744,7 +1734,7 @@ export function VaultPageContent({ id }: { id: string }) {
                           {/* Step 2: Deposit (active) */}
                           <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/30">
                             <div className="w-6 h-6 flex-shrink-0 rounded-full bg-[var(--accent)] flex items-center justify-center text-[var(--background)]">
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              <LoadingDots />
                             </div>
                             <div className="flex items-center gap-1.5 text-sm">
                               <span>Deposit</span>
@@ -2050,7 +2040,7 @@ export function VaultPageContent({ id }: { id: string }) {
                   {isVaultDeployed && ((isDebugZap && isDebugPending) || (zapStatus === "waitingTx" && zapHash)) && (
                     <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
                       <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
-                        <Loader2 className="w-8 h-8 text-[var(--accent)] animate-spin" />
+                        <LoadingDots />
                       </div>
                       <h3 className="text-lg font-medium mb-2">Awaiting Confirmation</h3>
                       {/* Transaction Details */}

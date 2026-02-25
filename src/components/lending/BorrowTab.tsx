@@ -6,7 +6,6 @@ import { SimulationModal } from "@/components/SimulationModal";
 import { toast } from "sonner";
 import { isUserRejection } from "@/lib/analytics";
 import {
-  Loader2,
   AlertTriangle,
   ArrowRightLeft,
   Route,
@@ -26,108 +25,16 @@ import { TokenSelector } from "@/components/TokenSelector";
 import { RouteDisplay } from "@/components/RouteDisplay";
 import { MaxButton } from "@/components/MaxButton";
 import { cn } from "@/lib/utils";
+import { LoadingDots } from "@/components/LoadingDots";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { fetchRoute, fetchTokenPrices, ETH_ADDRESS } from "@/lib/enso";
 import { CHAINLINK_ETH_USD } from "@/config/addresses";
 import { CRVUSD_ADDRESS } from "@/lib/zapper";
-import { CURVE_SAVINGS, TOKENS, TANGENT } from "@/config/vaults";
+import { TOKENS, TANGENT } from "@/config/vaults";
 import { getVaultInfo } from "@/lib/curve-lending";
 import type { EnsoToken, EnsoRouteResponse } from "@/types/enso";
-
-// Curve pool get_dy ABI (int128 for old-style pools like CVX1/cvgCVX)
-const CURVE_GET_DY_ABI = [
-  {
-    name: "get_dy",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "i", type: "int128" },
-      { name: "j", type: "int128" },
-      { name: "dx", type: "uint256" },
-    ],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-] as const;
-
-// ERC4626 previewRedeem ABI
-const ERC4626_PREVIEW_ABI = [
-  {
-    name: "previewRedeem",
-    type: "function",
-    stateMutability: "view",
-    inputs: [{ name: "shares", type: "uint256" }],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-] as const;
-
-// ERC20 balanceOf ABI (for checking controller's available crvUSD)
-const BALANCE_OF_ABI = [{
-  name: "balanceOf",
-  type: "function",
-  stateMutability: "view",
-  inputs: [{ name: "account", type: "address" }],
-  outputs: [{ name: "", type: "uint256" }],
-}] as const;
-
-// Controller ABI for health calculator + max_borrowable
-const CONTROLLER_ABI = [
-  {
-    name: "health_calculator",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "user", type: "address" },
-      { name: "d_collateral", type: "int256" },
-      { name: "d_debt", type: "int256" },
-      { name: "full", type: "bool" },
-      { name: "N", type: "uint256" },
-    ],
-    outputs: [{ name: "", type: "int256" }],
-  },
-  {
-    name: "max_borrowable",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "collateral", type: "uint256" },
-      { name: "N", type: "uint256" },
-      { name: "current_debt", type: "uint256" },
-    ],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-] as const;
-
-// crvUSD default token for TokenSelector
-const CRVUSD_TOKEN: EnsoToken = {
-  address: CRVUSD_ADDRESS,
-  chainId: 1,
-  name: "Curve.Fi USD Stablecoin",
-  symbol: "crvUSD",
-  decimals: 18,
-  logoURI: "/tokens/crvusd.png",
-  type: "base",
-};
-
-// scrvUSD (Savings crvUSD)
-const SCRVUSD_TOKEN: EnsoToken = {
-  address: CURVE_SAVINGS.SCRVUSD,
-  chainId: 1,
-  name: "Savings crvUSD",
-  symbol: "scrvUSD",
-  decimals: 18,
-  logoURI: "/tokens/scrvusd.png",
-  type: "defi",
-};
-
-function LoadingDots() {
-  return (
-    <span className="inline-flex items-center gap-0.5">
-      <span className="animate-bounce" style={{ animationDelay: "0ms", animationDuration: "600ms" }}>.</span>
-      <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
-      <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
-    </span>
-  );
-}
+import { CONTROLLER_ABI, ERC4626_ABI, CURVE_GET_DY_ABI, ERC20_BALANCE_ABI } from "@/lib/abis";
+import { CRVUSD_TOKEN, SCRVUSD_TOKEN } from "@/config/tokens";
 
 interface BorrowTabProps {
   vault: VaultConfig;
@@ -307,7 +214,7 @@ export function BorrowTab({
       if (!publicClient) throw new Error("No client");
       return publicClient.readContract({
         address: CRVUSD_ADDRESS as `0x${string}`,
-        abi: BALANCE_OF_ABI,
+        abi: ERC20_BALANCE_ABI,
         functionName: "balanceOf",
         args: [controllerAddress],
       });
@@ -503,7 +410,7 @@ export function BorrowTab({
         const oneShare = 10n ** 18n;
         const crvUsdPerShare = await publicClient!.readContract({
           address: vaultInfo!.address as `0x${string}`,
-          abi: ERC4626_PREVIEW_ABI,
+          abi: ERC4626_ABI,
           functionName: "previewRedeem",
           args: [oneShare],
         });
@@ -536,7 +443,7 @@ export function BorrowTab({
         const oneShareBn = 10n ** 18n;
         const cvgCvxPerShare = await publicClient!.readContract({
           address: vaultInfo!.address as `0x${string}`,
-          abi: ERC4626_PREVIEW_ABI,
+          abi: ERC4626_ABI,
           functionName: "previewRedeem",
           args: [oneShareBn],
         });
@@ -563,7 +470,7 @@ export function BorrowTab({
         const oneShare = 10n ** 18n;
         const underlyingPerShare = await publicClient!.readContract({
           address: vaultInfo.address as `0x${string}`,
-          abi: ERC4626_PREVIEW_ABI,
+          abi: ERC4626_ABI,
           functionName: "previewRedeem",
           args: [oneShare],
         });
@@ -598,7 +505,7 @@ export function BorrowTab({
       const amountWei = parseUnits(debouncedAmount, borrowToken.decimals);
       const result = await publicClient!.readContract({
         address: vaultInfo!.address as `0x${string}`,
-        abi: ERC4626_PREVIEW_ABI,
+        abi: ERC4626_ABI,
         functionName: "previewRedeem",
         args: [amountWei],
       });
@@ -642,7 +549,7 @@ export function BorrowTab({
         // cvgCVX vault: vault shares → cvgCVX (previewRedeem) → CVX (Curve pool) → crvUSD (Enso)
         const cvgCvxAmount = (await publicClient!.readContract({
           address: vaultInfo!.address as `0x${string}`,
-          abi: ERC4626_PREVIEW_ABI,
+          abi: ERC4626_ABI,
           functionName: "previewRedeem",
           args: [BigInt(amountWei)],
         })).toString();
@@ -673,7 +580,7 @@ export function BorrowTab({
         // Vault token: quote underlying → crvUSD (we'll redeem vault shares to underlying first)
         const underlyingAmount = await publicClient!.readContract({
           address: vaultInfo.address as `0x${string}`,
-          abi: ERC4626_PREVIEW_ABI,
+          abi: ERC4626_ABI,
           functionName: "previewRedeem",
           args: [BigInt(amountWei)],
         });

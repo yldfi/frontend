@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { Loader2, AlertTriangle, TrendingUp, TrendingDown, Route as RouteIcon, RouteOff } from "lucide-react";
+import { AlertTriangle, TrendingUp, TrendingDown, Route as RouteIcon, RouteOff } from "lucide-react";
 import { ApprovalCard } from "@/components/ApprovalCard";
 import { useAccount, usePublicClient, useGasPrice, useBlockNumber, useBalance } from "wagmi";
 import { SimulationModal } from "@/components/SimulationModal";
@@ -23,84 +23,9 @@ import { RouteDisplay } from "@/components/RouteDisplay";
 import { MaxButton } from "@/components/MaxButton";
 import { SlippageModal } from "@/components/SlippageModal";
 import { cn } from "@/lib/utils";
+import { LoadingDots } from "@/components/LoadingDots";
 import { sanitizeAmount } from "@/lib/sanitize";
-
-// Controller ABI for health calculator + max_borrowable (2-arg & 3-arg overloads) + amm
-const CONTROLLER_ABI = [
-  {
-    name: "health_calculator",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "user", type: "address" },
-      { name: "d_collateral", type: "int256" },
-      { name: "d_debt", type: "int256" },
-      { name: "full", type: "bool" },
-      { name: "N", type: "uint256" },
-    ],
-    outputs: [{ name: "", type: "int256" }],
-  },
-  {
-    name: "max_borrowable",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "collateral", type: "uint256" },
-      { name: "N", type: "uint256" },
-    ],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    name: "max_borrowable",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "collateral", type: "uint256" },
-      { name: "N", type: "uint256" },
-      { name: "current_debt", type: "uint256" },
-    ],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    name: "amm",
-    type: "function",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "address" }],
-  },
-  {
-    name: "tokens_to_liquidate",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "user", type: "address" },
-      { name: "frac", type: "uint256" },
-    ],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-] as const;
-
-const AMM_ABI = [
-  {
-    name: "price_oracle",
-    type: "function",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-] as const;
-
-const ERC4626_PREVIEW_ABI = [
-  { name: "previewRedeem", type: "function", stateMutability: "view",
-    inputs: [{ name: "shares", type: "uint256" }],
-    outputs: [{ name: "", type: "uint256" }] },
-] as const;
-
-const CURVE_GET_DY_ABI = [
-  { name: "get_dy", type: "function", stateMutability: "view",
-    inputs: [{ name: "i", type: "int128" }, { name: "j", type: "int128" }, { name: "dx", type: "uint256" }],
-    outputs: [{ name: "", type: "uint256" }] },
-] as const;
+import { CONTROLLER_ABI, AMM_ABI, ERC4626_ABI, CURVE_GET_DY_ABI } from "@/lib/abis";
 
 // Combined MAX button with hover options: MAX ALL (above) + Reset (below)
 function LeverageMaxButton({
@@ -304,16 +229,6 @@ interface LeverageTabProps {
 }
 
 type LeverageMode = "leverageUp" | "deleverage" | "selfLiquidate";
-
-function LoadingDots() {
-  return (
-    <span className="inline-flex items-center gap-0.5">
-      <span className="animate-bounce" style={{ animationDelay: "0ms", animationDuration: "600ms" }}>.</span>
-      <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
-      <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
-    </span>
-  );
-}
 
 export function LeverageTab({
   vault,
@@ -655,7 +570,7 @@ export function LeverageTab({
             // cvgCVX path: previewRedeem → get_dy (cvgCVX→CVX1) → fetchRoute(CVX→collateral)
             const estimatedUnderlying = await publicClient.readContract({
               address: inputVaultInfo.address as `0x${string}`,
-              abi: ERC4626_PREVIEW_ABI,
+              abi: ERC4626_ABI,
               functionName: "previewRedeem",
               args: [inputAmount],
             }) as bigint;
@@ -689,7 +604,7 @@ export function LeverageTab({
             // Standard vault: previewRedeem → fetchRoute(underlying → collateral)
             const estimatedUnderlying = await publicClient.readContract({
               address: inputVaultInfo.address as `0x${string}`,
-              abi: ERC4626_PREVIEW_ABI,
+              abi: ERC4626_ABI,
               functionName: "previewRedeem",
               args: [inputAmount],
             }) as bigint;

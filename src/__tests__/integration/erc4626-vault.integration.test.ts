@@ -11,6 +11,10 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { parseEther, encodeFunctionData, keccak256, toHex, pad, concat } from "viem";
 import crossFetch from "cross-fetch";
 import { VAULT_ADDRESSES, TOKENS } from "@/config/vaults";
+import { ERC4626_ABI as ERC4626_VIEW_ABI, VAULT_ABI } from "@/lib/abis";
+
+// Combined ABI for ERC4626 view + write operations used in tests
+const ERC4626_ABI = [...ERC4626_VIEW_ABI, ...VAULT_ABI] as const;
 
 // RPC configuration
 const SIMULATION_RPC_URL = process.env.DEBUG_RPC_URL || "https://eth.llamarpc.com";
@@ -26,41 +30,6 @@ const skipIfNoRpc = SIMULATION_RPC_URL ? it : it.skip;
 
 // Test timeout
 const TEST_TIMEOUT = 30000;
-
-// ERC4626 ABI for deposit/redeem
-const ERC4626_ABI = [
-  {
-    name: "deposit",
-    type: "function",
-    inputs: [
-      { name: "assets", type: "uint256" },
-      { name: "receiver", type: "address" },
-    ],
-    outputs: [{ name: "shares", type: "uint256" }],
-  },
-  {
-    name: "redeem",
-    type: "function",
-    inputs: [
-      { name: "shares", type: "uint256" },
-      { name: "receiver", type: "address" },
-      { name: "owner", type: "address" },
-    ],
-    outputs: [{ name: "assets", type: "uint256" }],
-  },
-  {
-    name: "previewDeposit",
-    type: "function",
-    inputs: [{ name: "assets", type: "uint256" }],
-    outputs: [{ name: "shares", type: "uint256" }],
-  },
-  {
-    name: "previewRedeem",
-    type: "function",
-    inputs: [{ name: "shares", type: "uint256" }],
-    outputs: [{ name: "assets", type: "uint256" }],
-  },
-] as const;
 
 // Vault configurations with their underlying tokens and storage slots
 const VAULT_CONFIGS = {

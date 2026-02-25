@@ -45,19 +45,7 @@ const CONTROLLER_LIQUIDATE_ABI = [
   },
 ] as const;
 
-const ERC4626_PREVIEW_ABI = [
-  { name: "previewRedeem", type: "function", stateMutability: "view",
-    inputs: [{ name: "shares", type: "uint256" }],
-    outputs: [{ name: "", type: "uint256" }] },
-] as const;
-
-const CURVE_GET_DY_ABI = [
-  { name: "get_dy", type: "function", stateMutability: "view",
-    inputs: [{ name: "i", type: "int128" }, { name: "j", type: "int128" }, { name: "dx", type: "uint256" }],
-    outputs: [{ name: "", type: "uint256" }] },
-] as const;
-
-import { ERC20_APPROVAL_ABI } from "@/lib/abis";
+import { ERC20_APPROVAL_ABI, ERC4626_ABI, CURVE_GET_DY_ABI } from "@/lib/abis";
 import type { SimulationResult } from "@/types/enso";
 import { useTenderly } from "@/contexts/TenderlyContext";
 import { runVNetSimulation } from "@/lib/vnet-simulation";
@@ -1498,7 +1486,7 @@ export function useZapperActions(): UseZapperActionsResult {
         // Vault token input: build bundle for vault → collateral conversion
         const estimatedUnderlying = await publicClient.readContract({
           address: inputVaultInfo.address as `0x${string}`,
-          abi: ERC4626_PREVIEW_ABI,
+          abi: ERC4626_ABI,
           functionName: "previewRedeem",
           args: [inputAmount],
         });
@@ -1637,7 +1625,7 @@ export function useZapperActions(): UseZapperActionsResult {
         // Vault token input: build bundle for vault → collateral conversion
         const estimatedUnderlying = await publicClient.readContract({
           address: inputVaultInfo.address as `0x${string}`,
-          abi: ERC4626_PREVIEW_ABI,
+          abi: ERC4626_ABI,
           functionName: "previewRedeem",
           args: [inputAmount],
         });

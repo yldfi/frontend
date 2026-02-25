@@ -5,16 +5,7 @@ import { Check, ExternalLink } from "lucide-react";
 import { formatUnits } from "viem";
 import { cn } from "@/lib/utils";
 import type { PendingApproval, ApprovalProgress } from "@/types/approval";
-
-function LoadingDots() {
-  return (
-    <span className="inline-flex items-center gap-0.5">
-      <span className="animate-bounce" style={{ animationDelay: "0ms", animationDuration: "600ms" }}>.</span>
-      <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
-      <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
-    </span>
-  );
-}
+import { LoadingDots } from "@/components/LoadingDots";
 
 interface ApprovalCardProps {
   show: boolean;

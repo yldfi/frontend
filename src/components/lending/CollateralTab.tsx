@@ -6,7 +6,6 @@ import { SimulationModal } from "@/components/SimulationModal";
 import { toast } from "sonner";
 import { isUserRejection } from "@/lib/analytics";
 import {
-  Loader2,
   AlertTriangle,
   Route,
   RouteOff,
@@ -26,50 +25,13 @@ import { TokenSelector } from "@/components/TokenSelector";
 import { RouteDisplay } from "@/components/RouteDisplay";
 import { MaxButton } from "@/components/MaxButton";
 import { cn } from "@/lib/utils";
+import { LoadingDots } from "@/components/LoadingDots";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { fetchRoute, fetchTokenPrices, ETH_ADDRESS } from "@/lib/enso";
 import { getMaxEthAmount } from "@/lib/eth-gas";
 import { WETH_ADDRESS, CHAINLINK_ETH_USD } from "@/config/addresses";
 import type { EnsoToken, EnsoRouteResponse } from "@/types/enso";
-
-// Controller ABI for health calculator
-const CONTROLLER_ABI = [
-  {
-    name: "health_calculator",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "user", type: "address" },
-      { name: "d_collateral", type: "int256" },
-      { name: "d_debt", type: "int256" },
-      { name: "full", type: "bool" },
-      { name: "N", type: "uint256" },
-    ],
-    outputs: [{ name: "", type: "int256" }],
-  },
-] as const;
-
-// ERC4626 convertToAssets ABI
-const ERC4626_CONVERT_ABI = [
-  {
-    name: "convertToAssets",
-    type: "function",
-    stateMutability: "view",
-    inputs: [{ name: "shares", type: "uint256" }],
-    outputs: [{ name: "assets", type: "uint256" }],
-  },
-] as const;
-
-// Animated loading dots (matches BorrowTab pattern)
-function LoadingDots() {
-  return (
-    <span className="inline-flex items-center gap-0.5">
-      <span className="animate-bounce" style={{ animationDelay: "0ms", animationDuration: "600ms" }}>.</span>
-      <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
-      <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
-    </span>
-  );
-}
+import { CONTROLLER_ABI, ERC4626_ABI } from "@/lib/abis";
 
 type CollateralMode = "add" | "remove";
 
@@ -372,7 +334,7 @@ export function CollateralTab({
       if (!publicClient || !vaultTokenAmountForPricing) throw new Error("Missing");
       const result = await publicClient.readContract({
         address: vault.address as `0x${string}`,
-        abi: ERC4626_CONVERT_ABI,
+        abi: ERC4626_ABI,
         functionName: "convertToAssets",
         args: [vaultTokenAmountForPricing],
       });

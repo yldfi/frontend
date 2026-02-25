@@ -5,6 +5,7 @@ import { TOKENS, VAULT_ADDRESSES, CURVE_CONTROLLERS, getVaultByAddress } from "@
 import { fetchTokenPrices, ENSO_ROUTER, ENSO_ROUTER_EXECUTOR } from "@/lib/enso";
 import { CRVUSD_ADDRESS } from "@/config/addresses";
 import { ZAPPER_ADDRESS, ZAPPER_V2_ADDRESS } from "@/lib/zapper";
+import { ERC4626_ABI } from "@/lib/abis";
 
 export const dynamic = "force-dynamic";
 
@@ -29,31 +30,6 @@ const CVX_BALANCE_SLOT = 0n;
 const CVX_ALLOWANCE_SLOT = 1n;
 const MAX_UINT256 = (1n << 256n) - 1n;
 const MAX_REQUESTS_PER_MINUTE = 8;
-
-// ERC4626 ABI for convertToAssets and asset discovery
-const ERC4626_ABI = [
-  {
-    inputs: [{ name: "shares", type: "uint256" }],
-    name: "convertToAssets",
-    outputs: [{ name: "assets", type: "uint256" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [],
-    name: "asset",
-    outputs: [{ name: "", type: "address" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [],
-    name: "decimals",
-    outputs: [{ name: "", type: "uint8" }],
-    stateMutability: "view",
-    type: "function",
-  },
-] as const;
 
 // Create public client for RPC calls
 const publicClient = createPublicClient({
