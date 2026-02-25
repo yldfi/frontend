@@ -282,6 +282,8 @@ interface ExplorerStorageState {
   icon?: string;
   showFlowTab?: boolean;
   activeTab?: ExplorerTab;
+  /** Page path when the explorer was opened — only restore on same page (refresh) */
+  path?: string;
 }
 
 function loadExplorerState(): ExplorerStorageState {
@@ -289,33 +291,42 @@ function loadExplorerState(): ExplorerStorageState {
     return { isOpen: false, address: "" };
   }
   try {
-    const saved = localStorage.getItem(EXPLORER_STORAGE_KEY);
+    const saved = sessionStorage.getItem(EXPLORER_STORAGE_KEY);
     if (saved) {
-      return JSON.parse(saved);
+      const parsed: ExplorerStorageState = JSON.parse(saved);
+      // Only restore open state on same-page refresh, not cross-page navigation
+      if (parsed.isOpen && parsed.path !== window.location.pathname) {
+        return { isOpen: false, address: "" };
+      }
+      return parsed;
     }
   } catch {
-    // localStorage unavailable or invalid JSON
+    // sessionStorage unavailable or invalid JSON
   }
   return { isOpen: false, address: "" };
 }
 
 function saveExplorerState(state: ExplorerStorageState) {
   try {
-    localStorage.setItem(EXPLORER_STORAGE_KEY, JSON.stringify(state));
+    sessionStorage.setItem(EXPLORER_STORAGE_KEY, JSON.stringify({
+      ...state,
+      path: typeof window !== "undefined" ? window.location.pathname : undefined,
+    }));
   } catch {
-    // localStorage unavailable
+    // sessionStorage unavailable
   }
 }
 
 function clearExplorerState() {
   try {
-    localStorage.removeItem(EXPLORER_STORAGE_KEY);
+    sessionStorage.removeItem(EXPLORER_STORAGE_KEY);
   } catch {
-    // localStorage unavailable
+    // sessionStorage unavailable
   }
 }
 
-// Hook for managing explorer state with localStorage persistence
+// Hook for managing explorer state with sessionStorage persistence
+// Persists across page refresh (same URL) but not across navigation or tab close
 export function useContractExplorer() {
   const [explorerState, setExplorerState] = useState<{
     isOpen: boolean;

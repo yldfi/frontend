@@ -268,7 +268,7 @@ export function LeverageTab({
   const leverageStorageKey = `yldfi-lending-leverage-${vault.address}`;
   const [collateralAmount, setCollateralAmountRaw] = useState(() => {
     if (typeof window === "undefined") return "";
-    try { return sanitizeAmount(localStorage.getItem(leverageStorageKey) ?? ""); } catch { return ""; }
+    try { return sanitizeAmount(sessionStorage.getItem(leverageStorageKey) ?? ""); } catch { return ""; }
   });
   const setCollateralAmount = useCallback((v: string) => {
     const sanitized = sanitizeAmount(v);
@@ -279,8 +279,8 @@ export function LeverageTab({
       setMaxBorrowableLoaded(false); // force clamp to wait for fresh calcMax
     }
     try {
-      if (sanitized) localStorage.setItem(leverageStorageKey, sanitized);
-      else localStorage.removeItem(leverageStorageKey);
+      if (sanitized) sessionStorage.setItem(leverageStorageKey, sanitized);
+      else sessionStorage.removeItem(leverageStorageKey);
     } catch { /* */ }
   }, [leverageStorageKey]);
   const [leverage, setLeverage] = useState(2.0);
@@ -1225,7 +1225,7 @@ export function LeverageTab({
   useEffect(() => {
     if (status === "success") {
       setCollateralAmountRaw("");
-      try { localStorage.removeItem(leverageStorageKey); } catch { /* */ }
+      try { sessionStorage.removeItem(leverageStorageKey); } catch { /* */ }
       onTransactionSuccess();
       refetchBalance();
       reset();

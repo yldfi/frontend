@@ -744,14 +744,14 @@ export function LendingInterface({
   const [loanSource, setLoanSourceState] = useState<"choice" | "yldfi">(() => {
     if (typeof window === "undefined") return "choice";
     try {
-      const saved = localStorage.getItem("yldfi-loan-source");
+      const saved = sessionStorage.getItem("yldfi-loan-source");
       if (saved === "yldfi") return saved;
-    } catch { /* localStorage unavailable */ }
+    } catch { /* sessionStorage unavailable */ }
     return "choice";
   });
   const setLoanSource = useCallback((v: "choice" | "yldfi") => {
     setLoanSourceState(v);
-    try { localStorage.setItem("yldfi-loan-source", v); } catch { /* */ }
+    try { sessionStorage.setItem("yldfi-loan-source", v); } catch { /* */ }
     // Reset child state when going back to choice screen
     if (v === "choice") {
       setChildCollateralAmount(null);
@@ -759,10 +759,10 @@ export function LendingInterface({
       setChildEstimatedLeverage(null);
       lastCollateralAmount.current = 0n;
       try {
-        localStorage.removeItem(`yldfi-lending-newloan-amount-${vault.address}`);
-        localStorage.removeItem(`yldfi-lending-newloan-debt-${vault.address}`);
-        localStorage.removeItem(`yldfi-lending-newloan-token-${vault.address}`);
-        localStorage.removeItem(`yldfi-lending-newloan-output-${vault.address}`);
+        sessionStorage.removeItem(`yldfi-lending-newloan-amount-${vault.address}`);
+        sessionStorage.removeItem(`yldfi-lending-newloan-debt-${vault.address}`);
+        sessionStorage.removeItem(`yldfi-lending-newloan-token-${vault.address}`);
+        sessionStorage.removeItem(`yldfi-lending-newloan-output-${vault.address}`);
       } catch { /* */ }
     }
   }, [vault.address]);

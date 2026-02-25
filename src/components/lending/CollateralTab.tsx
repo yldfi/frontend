@@ -84,14 +84,14 @@ export function CollateralTab({
   const storageKey = `yldfi-lending-collateral-${vault.address}`;
   const [amount, setAmountState] = useState(() => {
     if (typeof window === "undefined") return "";
-    try { return sanitizeAmount(localStorage.getItem(storageKey) ?? ""); } catch { return ""; }
+    try { return sanitizeAmount(sessionStorage.getItem(storageKey) ?? ""); } catch { return ""; }
   });
   const setAmount = useCallback((v: string) => {
     const sanitized = sanitizeAmount(v);
     setAmountState(sanitized);
     try {
-      if (sanitized) localStorage.setItem(storageKey, sanitized);
-      else localStorage.removeItem(storageKey);
+      if (sanitized) sessionStorage.setItem(storageKey, sanitized);
+      else sessionStorage.removeItem(storageKey);
     } catch { /* */ }
   }, [storageKey]);
 
@@ -500,7 +500,7 @@ export function CollateralTab({
   useEffect(() => {
     if (status === "success" && txHash) {
       setAmountState("");
-      try { localStorage.removeItem(storageKey); } catch { /* */ }
+      try { sessionStorage.removeItem(storageKey); } catch { /* */ }
       toast.success(mode === "add" ? "Collateral added!" : "Collateral removed!", {
         action: {
           label: "View Tx",

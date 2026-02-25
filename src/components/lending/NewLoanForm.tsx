@@ -179,9 +179,9 @@ export function NewLoanForm({
   const [loanTab, setLoanTab] = useState<"loan" | "leverage">(() => {
     if (typeof window === "undefined") return "loan";
     try {
-      const saved = localStorage.getItem("yldfi-newloan-tab");
+      const saved = sessionStorage.getItem("yldfi-newloan-tab");
       if (saved === "loan" || saved === "leverage") return saved;
-    } catch { /* localStorage unavailable */ }
+    } catch { /* sessionStorage unavailable */ }
     return "loan";
   });
 
@@ -208,7 +208,7 @@ export function NewLoanForm({
   const [outputToken, setOutputTokenState] = useState<EnsoToken>(() => {
     if (typeof window === "undefined") return crvUsdToken;
     try {
-      const stored = localStorage.getItem(outputTokenStorageKey);
+      const stored = sessionStorage.getItem(outputTokenStorageKey);
       if (stored) {
         const parsed = JSON.parse(stored) as EnsoToken;
         if (parsed.address && parsed.symbol && parsed.decimals) return parsed;
@@ -220,9 +220,9 @@ export function NewLoanForm({
     setOutputTokenState(token);
     try {
       if (token.address.toLowerCase() === CRVUSD_ADDRESS.toLowerCase()) {
-        localStorage.removeItem(outputTokenStorageKey);
+        sessionStorage.removeItem(outputTokenStorageKey);
       } else {
-        localStorage.setItem(outputTokenStorageKey, JSON.stringify(token));
+        sessionStorage.setItem(outputTokenStorageKey, JSON.stringify(token));
       }
     } catch { /* */ }
   }, [outputTokenStorageKey]);
@@ -233,7 +233,7 @@ export function NewLoanForm({
   const [selectedToken, setSelectedTokenState] = useState<EnsoToken>(() => {
     if (typeof window === "undefined") return defaultToken ?? vaultToken;
     try {
-      const stored = localStorage.getItem(tokenStorageKey);
+      const stored = sessionStorage.getItem(tokenStorageKey);
       if (stored) {
         const parsed = JSON.parse(stored) as EnsoToken;
         if (parsed.address && parsed.symbol && parsed.decimals) return parsed;
@@ -249,19 +249,19 @@ export function NewLoanForm({
   const debtStorageKey = `yldfi-lending-newloan-debt-${vault.address}`;
   const [amount, setAmountState] = useState(() => {
     if (typeof window === "undefined") return "";
-    try { return sanitizeAmount(localStorage.getItem(amountStorageKey) ?? ""); } catch { return ""; }
+    try { return sanitizeAmount(sessionStorage.getItem(amountStorageKey) ?? ""); } catch { return ""; }
   });
   const setAmount = useCallback((v: string) => {
     const sanitized = sanitizeAmount(v);
     setAmountState(sanitized);
     try {
-      if (sanitized) localStorage.setItem(amountStorageKey, sanitized);
-      else localStorage.removeItem(amountStorageKey);
+      if (sanitized) sessionStorage.setItem(amountStorageKey, sanitized);
+      else sessionStorage.removeItem(amountStorageKey);
     } catch { /* */ }
   }, [amountStorageKey]);
   const [debtInput, setDebtInputState] = useState(() => {
     if (typeof window === "undefined") return "";
-    try { return sanitizeAmount(localStorage.getItem(debtStorageKey) ?? ""); } catch { return ""; }
+    try { return sanitizeAmount(sessionStorage.getItem(debtStorageKey) ?? ""); } catch { return ""; }
   });
   const debtRatio = useRef<number | null>(null); // ratio of debt to maxBorrowable (0-1)
   const setDebtInput = useCallback((v: string) => {
@@ -269,8 +269,8 @@ export function NewLoanForm({
     setDebtInputState(sanitized);
     debtRatio.current = null; // will be recalculated in effect
     try {
-      if (sanitized) localStorage.setItem(debtStorageKey, sanitized);
-      else localStorage.removeItem(debtStorageKey);
+      if (sanitized) sessionStorage.setItem(debtStorageKey, sanitized);
+      else sessionStorage.removeItem(debtStorageKey);
     } catch { /* */ }
   }, [debtStorageKey]);
   const [bands, setBands] = useState(10);
@@ -458,7 +458,7 @@ export function NewLoanForm({
   // Switch between Loan and Leverage tabs
   const switchTab = useCallback((tab: "loan" | "leverage") => {
     setLoanTab(tab);
-    try { localStorage.setItem("yldfi-newloan-tab", tab); } catch { /* */ }
+    try { sessionStorage.setItem("yldfi-newloan-tab", tab); } catch { /* */ }
     lendingReset();
     zapperReset();
     setShowSimulationModal(false);
@@ -1480,10 +1480,10 @@ export function NewLoanForm({
       setAmountState("");
       setDebtInputState("");
       debtRatio.current = null;
-      try { localStorage.removeItem(amountStorageKey); } catch { /* */ }
-      try { localStorage.removeItem(debtStorageKey); } catch { /* */ }
-      try { localStorage.removeItem(tokenStorageKey); } catch { /* */ }
-      try { localStorage.removeItem(outputTokenStorageKey); } catch { /* */ }
+      try { sessionStorage.removeItem(amountStorageKey); } catch { /* */ }
+      try { sessionStorage.removeItem(debtStorageKey); } catch { /* */ }
+      try { sessionStorage.removeItem(tokenStorageKey); } catch { /* */ }
+      try { sessionStorage.removeItem(outputTokenStorageKey); } catch { /* */ }
       toast.success("Loan created!", {
         action: {
           label: "View Tx",
@@ -1544,9 +1544,9 @@ export function NewLoanForm({
     setSelectedTokenState(token);
     try {
       if (token.address.toLowerCase() === vault.address.toLowerCase()) {
-        localStorage.removeItem(tokenStorageKey);
+        sessionStorage.removeItem(tokenStorageKey);
       } else {
-        localStorage.setItem(tokenStorageKey, JSON.stringify(token));
+        sessionStorage.setItem(tokenStorageKey, JSON.stringify(token));
       }
     } catch { /* */ }
     setAmountState("");
