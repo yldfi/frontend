@@ -180,6 +180,75 @@ const blockedPageHtml = `<!DOCTYPE html>
 </body>
 </html>`;
 
+// =====================================================================
+// MAINTENANCE MODE — set to true to show maintenance page to all users
+// =====================================================================
+const MAINTENANCE_MODE = true;
+
+const maintenancePageHtml = `<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Maintenance | yld</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <style>
+    :root {
+      --background: #09090b;
+      --foreground: #fafafa;
+      --muted: #18181b;
+      --muted-foreground: #a1a1aa;
+      --border: #27272a;
+      --accent: #f59e0b;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background: var(--background);
+      color: var(--foreground);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      -webkit-font-smoothing: antialiased;
+      line-height: 1.6;
+    }
+    .container { max-width: 480px; text-align: center; }
+    .logo { width: 64px; height: 64px; border-radius: 50%; }
+    .brand { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 32px; }
+    .brand-text { font-family: 'JetBrains Mono', monospace; font-size: 1.25rem; font-weight: 500; margin-bottom: 0; }
+    h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 16px; }
+    p { color: var(--muted-foreground); line-height: 1.6; margin-bottom: 12px; font-size: 0.9375rem; }
+    .card { background: var(--muted); border: 1px solid var(--border); border-radius: 8px; padding: 24px; margin: 24px 0; }
+    .card p:last-child { margin-bottom: 0; }
+    .status { display: inline-flex; align-items: center; gap: 8px; color: var(--accent); font-size: 0.875rem; font-weight: 500; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 2s ease-in-out infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .footer { margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--border); }
+    .footer p { font-size: 0.75rem; margin-bottom: 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="brand">
+      <img src="/logo-128.png" alt="yld" class="logo">
+      <p class="brand-text">yld</p>
+    </div>
+    <h1>Under Development</h1>
+    <div class="card">
+      <p>This application is currently under development and will be available soon.</p>
+    </div>
+    <div class="footer">
+      <p>&copy; 2026 yld. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
 // API endpoints that should bypass geo-blocking (for CI/testing and programmatic access)
 const GEO_EXEMPT_API_PATHS = [
   "/api/token-holders",
@@ -188,12 +257,9 @@ const GEO_EXEMPT_API_PATHS = [
 ];
 
 export function middleware(request: NextRequest) {
-  // Get country from Cloudflare headers (available on Cloudflare Workers)
-  // cf-ipcountry is set by Cloudflare for all proxied requests
-  const country = request.headers.get("cf-ipcountry") || "";
-
-  // Allow static assets to load (for better UX if someone bypasses geo-check)
   const { pathname } = request.nextUrl;
+
+  // Allow static assets in all modes
   if (
     pathname.startsWith("/_next/") ||
     pathname.startsWith("/favicon") ||
@@ -206,6 +272,25 @@ export function middleware(request: NextRequest) {
   ) {
     return NextResponse.next();
   }
+
+  // MAINTENANCE MODE — block everything except static assets and exempt APIs
+  if (MAINTENANCE_MODE) {
+    if (GEO_EXEMPT_API_PATHS.some((path) => pathname.startsWith(path))) {
+      return NextResponse.next();
+    }
+    return new NextResponse(maintenancePageHtml, {
+      status: 503,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Retry-After": "3600",
+      },
+    });
+  }
+
+  // Get country from Cloudflare headers (available on Cloudflare Workers)
+  // cf-ipcountry is set by Cloudflare for all proxied requests
+  const country = request.headers.get("cf-ipcountry") || "";
 
   // Allow geo-exempt API endpoints (for CI/testing)
   if (GEO_EXEMPT_API_PATHS.some((path) => pathname.startsWith(path))) {
