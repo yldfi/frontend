@@ -149,3 +149,11 @@ export function MaxButton({ balance, onSelect, showClose, onClose }: MaxButtonPr
     </div>
   );
 }
+
+export function MaxButtonSkeleton({ showClose }: { showClose?: boolean } = {}) {
+  return (
+    <div className="animate-pulse pointer-events-none">
+      <MaxButton balance="0" onSelect={() => {}} showClose={showClose} />
+    </div>
+  );
+}

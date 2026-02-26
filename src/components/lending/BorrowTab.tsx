@@ -23,7 +23,7 @@ import { useCurveLendingActions } from "@/hooks/useCurveLendingActions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { TokenSelector } from "@/components/TokenSelector";
 import { RouteDisplay } from "@/components/RouteDisplay";
-import { MaxButton } from "@/components/MaxButton";
+import { MaxButton, MaxButtonSkeleton } from "@/components/MaxButton";
 import { cn } from "@/lib/utils";
 import { LoadingDots } from "@/components/LoadingDots";
 import { sanitizeAmount } from "@/lib/sanitize";
@@ -1020,9 +1020,7 @@ export function BorrowTab({
                 onSelect={setBorrowAmount}
               />
             ) : (
-              <span className="shrink-0 px-2 py-1 text-xs font-medium text-[var(--muted-foreground)] animate-pulse">
-                MAX
-              </span>
+              <MaxButtonSkeleton />
             )
           )}
         </div>
@@ -1177,9 +1175,7 @@ export function BorrowTab({
                     onSelect={setCollateralAmount}
                   />
                 ) : (
-                  <span className="shrink-0 px-2 py-1 text-xs font-medium text-[var(--muted-foreground)] animate-pulse">
-                    MAX
-                  </span>
+                  <MaxButtonSkeleton />
                 )}
               </div>
               {/* Collateral swap quote details */}

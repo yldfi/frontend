@@ -23,7 +23,7 @@ import { useZapperActions } from "@/hooks/useZapperActions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { TokenSelector } from "@/components/TokenSelector";
 import { RouteDisplay } from "@/components/RouteDisplay";
-import { MaxButton } from "@/components/MaxButton";
+import { MaxButton, MaxButtonSkeleton } from "@/components/MaxButton";
 import { cn } from "@/lib/utils";
 import { LoadingDots } from "@/components/LoadingDots";
 import { sanitizeAmount } from "@/lib/sanitize";
@@ -1767,9 +1767,7 @@ export function NewLoanForm({
             excludeDefiTokens
           />
           {!isVaultToken && tokenBalanceLoading ? (
-            <div className="animate-pulse pointer-events-none">
-              <MaxButton balance="0" onSelect={() => {}} />
-            </div>
+            <MaxButtonSkeleton />
           ) : (
             <MaxButton
               balance={maxBalance}
@@ -1995,9 +1993,7 @@ export function NewLoanForm({
                   onSelect={setDebtInput}
                 />
               ) : maxOutputTokenFetching || maxBorrowableFetching ? (
-                <div className="animate-pulse pointer-events-none">
-                  <MaxButton balance="0" onSelect={() => {}} />
-                </div>
+                <MaxButtonSkeleton />
               ) : (
                 <MaxButton balance="0" onSelect={setDebtInput} />
               )
@@ -2007,9 +2003,7 @@ export function NewLoanForm({
                 onSelect={setDebtInput}
               />
             ) : maxBorrowableFetching ? (
-              <div className="animate-pulse pointer-events-none">
-                <MaxButton balance="0" onSelect={() => {}} />
-              </div>
+              <MaxButtonSkeleton />
             ) : (
               <MaxButton balance="0" onSelect={setDebtInput} />
             )}
