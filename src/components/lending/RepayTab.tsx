@@ -22,7 +22,7 @@ import type { LendingPosition } from "@/hooks/useCurveLendingPosition";
 import { useCurveLendingActions } from "@/hooks/useCurveLendingActions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { TokenSelector } from "@/components/TokenSelector";
-import { MaxButton } from "@/components/MaxButton";
+import { MaxButton, MaxButtonSkeleton } from "@/components/MaxButton";
 import { RouteDisplay } from "@/components/RouteDisplay";
 import { cn } from "@/lib/utils";
 import { LoadingDots } from "@/components/LoadingDots";
@@ -1165,9 +1165,7 @@ export function RepayTab({
               }}
             />
           ) : (
-            <span className="shrink-0 px-2 py-1 text-xs font-medium text-[var(--muted-foreground)] animate-pulse">
-              MAX
-            </span>
+            <MaxButtonSkeleton showClose={!!position?.hasLoan} />
           )}
         </div>
       </div>
@@ -1254,7 +1252,7 @@ export function RepayTab({
             className="grid transition-[grid-template-rows] duration-300 ease-in-out"
             style={{ gridTemplateRows: showWithdrawInput ? "1fr" : "0fr" }}
           >
-            <div className="overflow-hidden">
+            <div className={showWithdrawInput ? "overflow-visible" : "overflow-hidden"}>
               <div className="pt-3 space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-sm text-[var(--muted-foreground)]">
@@ -1284,9 +1282,7 @@ export function RepayTab({
                         onSelect={setWithdrawAmount}
                       />
                     ) : (
-                      <span className="shrink-0 px-2 py-1 text-xs font-medium text-[var(--muted-foreground)] animate-pulse">
-                        MAX
-                      </span>
+                      <MaxButtonSkeleton />
                     )
                   ) : (
                     <MaxButton
