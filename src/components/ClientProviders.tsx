@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { type ReactNode } from "react";
 import { CookieConsent } from "@/components/CookieConsent";
 import { GoogleAnalytics } from "@/components/GoogleAnalytics";
+import { BetaBanner } from "@/components/BetaBanner";
 import { TestNetworkBanner } from "@/components/TestNetworkBanner";
 
 const Providers = dynamic(
@@ -16,6 +17,7 @@ export function ClientProviders({ children }: { children: ReactNode }) {
 
   return (
     <Providers>
+      <BetaBanner />
       <TestNetworkBanner />
       {children}
       <CookieConsent />
