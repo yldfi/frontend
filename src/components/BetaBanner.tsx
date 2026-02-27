@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { X } from "lucide-react";
 
 const STORAGE_KEY = "yldfi-beta-banner-dismissed";
@@ -13,8 +13,8 @@ export function BetaBanner() {
 
   const show = !dismissed;
 
-  // Set CSS variable for header offset (same as TestNetworkBanner)
-  useEffect(() => {
+  // Set CSS variable for header offset before paint to avoid overlap
+  useLayoutEffect(() => {
     // Only set if test banner isn't already showing
     const hasTestBanner = document.documentElement.hasAttribute("data-test-network");
     if (show && !hasTestBanner) {
