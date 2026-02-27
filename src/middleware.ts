@@ -183,7 +183,7 @@ const blockedPageHtml = `<!DOCTYPE html>
 // =====================================================================
 // MAINTENANCE MODE — set to true to show maintenance page to all users
 // =====================================================================
-const MAINTENANCE_MODE = true;
+const MAINTENANCE_MODE = false;
 
 const maintenancePageHtml = `<!DOCTYPE html>
 <html lang="en" class="dark">

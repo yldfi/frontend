@@ -1,5 +1,5 @@
-// LlamaLendZapperV2 contract integration
-// Contract: https://etherscan.io/address/0x39F2a82b6CE1631128829c5Bb7449Cc7a40d2a47
+// LlamaLendZapperV3 contract integration
+// Contract: https://etherscan.io/address/0x7097aF57f5A1C14a8f28F7d624e8A464A006e08e
 // Enables leveraged Curve LlamaLend operations via Enso Router swaps
 
 import { fetchRoute, fetchBundle, ENSO_SHORTCUTS, ENSO_ROUTER_EXECUTOR, CVX_HYBRID_ZAPPER } from "@/lib/enso";
@@ -48,8 +48,8 @@ export { CRVUSD_ADDRESS };
 // LlamaLendZapper V1 contract address (mainnet, deprecated)
 export const ZAPPER_ADDRESS = "0x18Fb52A4D65E03ebD25FbD2Fae60452c286eC5F1" as const;
 
-// LlamaLendZapperV2 contract address (mainnet)
-export const ZAPPER_V2_ADDRESS = "0x39F2a82b6CE1631128829c5Bb7449Cc7a40d2a47" as const;
+// LlamaLendZapperV3 contract address (mainnet, overridable via env for fork testing)
+export const ZAPPER_V3_ADDRESS = (process.env.NEXT_PUBLIC_ZAPPER_V3_ADDRESS ?? "0x7097aF57f5A1C14a8f28F7d624e8A464A006e08e") as `0x${string}`;
 
 // LlamaLendZapperV2 ABI - write functions only (views via DeFi Saver's CurveUsdView/CurveUsdWithdraw)
 export const ZAPPER_ABI = [
@@ -278,7 +278,7 @@ export const CONTROLLER_APPROVE_ABI = [
 
 /**
  * Fetch swap data from Enso route for zapper operations.
- * The zapper holds tokens during callbacks, so fromAddress = ZAPPER_V2_ADDRESS.
+ * The zapper holds tokens during callbacks, so fromAddress = ZAPPER_V3_ADDRESS.
  */
 export async function fetchZapperSwapData(params: {
   tokenIn: string;
@@ -287,8 +287,8 @@ export async function fetchZapperSwapData(params: {
   slippage?: string;
 }): Promise<{ swapData: string; expectedOut: string }> {
   const route = await fetchRoute({
-    fromAddress: ZAPPER_V2_ADDRESS,
-    receiver: ZAPPER_V2_ADDRESS,
+    fromAddress: ZAPPER_V3_ADDRESS,
+    receiver: ZAPPER_V3_ADDRESS,
     tokenIn: params.tokenIn,
     tokenOut: params.tokenOut,
     amountIn: params.amountIn,
@@ -306,7 +306,7 @@ export async function fetchZapperSwapData(params: {
  *  1. inputSwapData: inputToken → collateral (pre-swap)
  *  2. leverageSwapData: crvUSD → collateral (callback loop)
  *
- * The zapper holds tokens during callbacks, so fromAddress = ZAPPER_V2_ADDRESS for both.
+ * The zapper holds tokens during callbacks, so fromAddress = ZAPPER_V3_ADDRESS for both.
  */
 export async function fetchFromTokenSwapData(params: {
   inputToken: string;
@@ -417,9 +417,9 @@ export async function buildVaultInputSwapBundle(params: {
     const minDy = calculateMinDy(BigInt(params.estimatedCvx1), slippageBps);
 
     // Pre-fetch CVX -> targetToken route for inner swap data
-    // fromAddress=ZAPPER_V2_ADDRESS so Enso builds the route for the zapper context
+    // fromAddress=ZAPPER_V3_ADDRESS so Enso builds the route for the zapper context
     const cvxRoute = await fetchRoute({
-      fromAddress: ZAPPER_V2_ADDRESS,
+      fromAddress: ZAPPER_V3_ADDRESS,
       tokenIn: TOKENS.CVX,
       tokenOut: params.targetToken,
       amountIn: params.estimatedCvx1, // CVX1->CVX is 1:1
@@ -487,9 +487,9 @@ export async function buildVaultInputSwapBundle(params: {
     });
 
     const bundle = await fetchBundle({
-      fromAddress: ZAPPER_V2_ADDRESS,
+      fromAddress: ZAPPER_V3_ADDRESS,
       actions,
-      receiver: ZAPPER_V2_ADDRESS,
+      receiver: ZAPPER_V3_ADDRESS,
       skipQuote: true, // HybridZapper calls can't be simulated by Enso
     });
 
@@ -511,9 +511,9 @@ export async function buildVaultInputSwapBundle(params: {
     });
 
     const bundle = await fetchBundle({
-      fromAddress: ZAPPER_V2_ADDRESS,
+      fromAddress: ZAPPER_V3_ADDRESS,
       actions,
-      receiver: ZAPPER_V2_ADDRESS,
+      receiver: ZAPPER_V3_ADDRESS,
     });
 
     return {

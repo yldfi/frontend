@@ -6,7 +6,7 @@ import { useVNetSendTransaction as useSendTransaction } from "@/hooks/useVNetSen
 import { useVNetWriteContract as useWriteContract } from "@/hooks/useVNetWriteContract";
 import { encodeFunctionData, formatUnits, maxUint256, toFunctionSelector } from "viem";
 import {
-  ZAPPER_V2_ADDRESS,
+  ZAPPER_V3_ADDRESS,
   ZAPPER_ABI,
   CONTROLLER_APPROVE_ABI,
   CRVUSD_ADDRESS,
@@ -841,9 +841,9 @@ export function useZapperActions(): UseZapperActionsResult {
     // Check both approvals in parallel
     const [erc20Allowance, controllerApproved] = await Promise.all([
       inputAmount > 0n
-        ? checkAllowance(publicClient, address, collateralToken, ZAPPER_V2_ADDRESS as `0x${string}`)
+        ? checkAllowance(publicClient, address, collateralToken, ZAPPER_V3_ADDRESS as `0x${string}`)
         : Promise.resolve(inputAmount), // no check needed if 0
-      checkControllerApproval(publicClient, controller, address, ZAPPER_V2_ADDRESS as `0x${string}`),
+      checkControllerApproval(publicClient, controller, address, ZAPPER_V3_ADDRESS as `0x${string}`),
     ]);
 
     const erc20Needed = inputAmount > 0n && erc20Allowance < inputAmount;
@@ -858,14 +858,14 @@ export function useZapperActions(): UseZapperActionsResult {
           type: "erc20",
           token: collateralToken,
           tokenSymbol,
-          spender: ZAPPER_V2_ADDRESS as `0x${string}`,
+          spender: ZAPPER_V3_ADDRESS as `0x${string}`,
           spenderName: "yld Zapper",
           amount: inputAmount,
         },
         needed: erc20Needed,
         label: tokenSymbol,
         description: `Allow yld Zapper to spend ${tokenSymbol}`,
-        spender: ZAPPER_V2_ADDRESS,
+        spender: ZAPPER_V3_ADDRESS,
       });
     }
 
@@ -874,13 +874,13 @@ export function useZapperActions(): UseZapperActionsResult {
         type: "controller",
         token: controller,
         tokenSymbol: "Controller",
-        spender: ZAPPER_V2_ADDRESS as `0x${string}`,
+        spender: ZAPPER_V3_ADDRESS as `0x${string}`,
         spenderName: "yld Zapper",
       },
       needed: controllerNeeded,
       label: "yld Zapper",
       description: "Allow yld Zapper to manage position on LlamaLend controller",
-      spender: ZAPPER_V2_ADDRESS,
+      spender: ZAPPER_V3_ADDRESS,
     });
 
     const missing = allSteps.filter((s) => s.needed).map((s) => s.approval);
@@ -949,7 +949,7 @@ export function useZapperActions(): UseZapperActionsResult {
       });
 
       const tx: PendingTx = {
-        to: ZAPPER_V2_ADDRESS as `0x${string}`,
+        to: ZAPPER_V3_ADDRESS as `0x${string}`,
         data: data as `0x${string}`,
         value: 0n,
         inputToken: collateralToken,
@@ -1020,7 +1020,7 @@ export function useZapperActions(): UseZapperActionsResult {
       });
 
       const tx: PendingTx = {
-        to: ZAPPER_V2_ADDRESS as `0x${string}`,
+        to: ZAPPER_V3_ADDRESS as `0x${string}`,
         data: data as `0x${string}`,
         value: 0n,
         inputToken: collateralToken,
@@ -1089,7 +1089,7 @@ export function useZapperActions(): UseZapperActionsResult {
       });
 
       const tx: PendingTx = {
-        to: ZAPPER_V2_ADDRESS as `0x${string}`,
+        to: ZAPPER_V3_ADDRESS as `0x${string}`,
         data: data as `0x${string}`,
         value: 0n,
         inputToken: collateralToken,
@@ -1102,14 +1102,14 @@ export function useZapperActions(): UseZapperActionsResult {
         publicClient,
         controller,
         address,
-        ZAPPER_V2_ADDRESS as `0x${string}`
+        ZAPPER_V3_ADDRESS as `0x${string}`
       );
       if (!controllerApproved) {
         setPendingApproval({
           type: "controller",
           token: controller,
           tokenSymbol: "Controller",
-          spender: ZAPPER_V2_ADDRESS as `0x${string}`,
+          spender: ZAPPER_V3_ADDRESS as `0x${string}`,
           spenderName: "yld Zapper",
         });
         setStatus("needsApproval");
@@ -1176,7 +1176,7 @@ export function useZapperActions(): UseZapperActionsResult {
       });
 
       const tx: PendingTx = {
-        to: ZAPPER_V2_ADDRESS as `0x${string}`,
+        to: ZAPPER_V3_ADDRESS as `0x${string}`,
         data: data as `0x${string}`,
         value: 0n,
         inputToken: collateralToken,
@@ -1187,14 +1187,14 @@ export function useZapperActions(): UseZapperActionsResult {
         publicClient,
         controller,
         address,
-        ZAPPER_V2_ADDRESS as `0x${string}`
+        ZAPPER_V3_ADDRESS as `0x${string}`
       );
       if (!controllerApproved) {
         setPendingApproval({
           type: "controller",
           token: controller,
           tokenSymbol: "Controller",
-          spender: ZAPPER_V2_ADDRESS as `0x${string}`,
+          spender: ZAPPER_V3_ADDRESS as `0x${string}`,
           spenderName: "yld Zapper",
         });
         setStatus("needsApproval");
@@ -1220,10 +1220,10 @@ export function useZapperActions(): UseZapperActionsResult {
 
     const [erc20Allowance, controllerApproved] = await Promise.all([
       inputAmount > 0n
-        ? checkAllowance(publicClient, address, inputToken, ZAPPER_V2_ADDRESS)
+        ? checkAllowance(publicClient, address, inputToken, ZAPPER_V3_ADDRESS)
         : Promise.resolve(inputAmount),
       controller
-        ? checkControllerApproval(publicClient, controller, address, ZAPPER_V2_ADDRESS)
+        ? checkControllerApproval(publicClient, controller, address, ZAPPER_V3_ADDRESS)
         : Promise.resolve(true),
     ]);
 
@@ -1238,14 +1238,14 @@ export function useZapperActions(): UseZapperActionsResult {
           type: "erc20",
           token: inputToken,
           tokenSymbol,
-          spender: ZAPPER_V2_ADDRESS,
+          spender: ZAPPER_V3_ADDRESS,
           spenderName: "yld Zapper",
           amount: inputAmount,
         },
         needed: erc20Needed,
         label: tokenSymbol,
         description: `Allow yld Zapper to spend ${tokenSymbol}`,
-        spender: ZAPPER_V2_ADDRESS,
+        spender: ZAPPER_V3_ADDRESS,
       });
     }
 
@@ -1255,13 +1255,13 @@ export function useZapperActions(): UseZapperActionsResult {
           type: "controller",
           token: controller,
           tokenSymbol: "Controller",
-          spender: ZAPPER_V2_ADDRESS,
+          spender: ZAPPER_V3_ADDRESS,
           spenderName: "yld Zapper",
         },
         needed: controllerNeeded,
         label: "yld Zapper",
         description: "Allow yld Zapper to manage position on LlamaLend controller",
-        spender: ZAPPER_V2_ADDRESS,
+        spender: ZAPPER_V3_ADDRESS,
       });
     }
 
@@ -1328,7 +1328,7 @@ export function useZapperActions(): UseZapperActionsResult {
       });
 
       const tx: PendingTx = {
-        to: ZAPPER_V2_ADDRESS,
+        to: ZAPPER_V3_ADDRESS,
         data: data as `0x${string}`,
         value: 0n,
         inputToken: collateralToken,
@@ -1418,7 +1418,7 @@ export function useZapperActions(): UseZapperActionsResult {
       });
 
       const tx: PendingTx = {
-        to: ZAPPER_V2_ADDRESS,
+        to: ZAPPER_V3_ADDRESS,
         data: data as `0x${string}`,
         value: 0n,
         inputToken: collateralToken,
@@ -1560,7 +1560,7 @@ export function useZapperActions(): UseZapperActionsResult {
       });
 
       const tx: PendingTx = {
-        to: ZAPPER_V2_ADDRESS,
+        to: ZAPPER_V3_ADDRESS,
         data: data as `0x${string}`,
         value: 0n,
         inputToken,
@@ -1698,7 +1698,7 @@ export function useZapperActions(): UseZapperActionsResult {
       });
 
       const tx: PendingTx = {
-        to: ZAPPER_V2_ADDRESS,
+        to: ZAPPER_V3_ADDRESS,
         data: data as `0x${string}`,
         value: 0n,
         inputToken,

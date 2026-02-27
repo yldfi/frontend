@@ -6,7 +6,7 @@ import { CURVE_CONTROLLERS, VAULTS, EXTERNAL_VAULT_CONFIG, TOKENS, PIREX, LLAMA_
 import { calculateMinDy } from "@/lib/curve";
 import { getLpxCvxToCvxSwapRate, ENSO_SHORTCUTS, ENSO_ROUTER_EXECUTOR, fetchRoute, CVX_HYBRID_ZAPPER, computeHybridZapParams, buildHybridZapperActions } from "@/lib/enso";
 import { previewRedeem, getCurveGetDy } from "@/lib/curve/rpc";
-import { CRVUSD_ADDRESS, ZAPPER_V2_ADDRESS } from "@/lib/zapper";
+import { CRVUSD_ADDRESS, ZAPPER_V3_ADDRESS } from "@/lib/zapper";
 import { decodeFunctionData } from "viem";
 
 const CRVUSD = CRVUSD_ADDRESS;
@@ -1079,7 +1079,7 @@ export async function fetchBorrowAndSwapBundle(params: {
 
     // Fetch standalone Enso route for the swap calldata
     const route = await fetchRoute({
-      fromAddress: ZAPPER_V2_ADDRESS,
+      fromAddress: ZAPPER_V3_ADDRESS,
       tokenIn: CRVUSD,
       tokenOut: params.tokenOut,
       amountIn: params.debtAmount,
@@ -1516,10 +1516,10 @@ export async function fetchRemoveCollateralAndSwapBundle(params: {
   const slippage = (params.slippage ?? 100).toString();
 
   // Fetch standalone Enso route for vault token → output token
-  // fromAddress=ZAPPER_V2_ADDRESS so tokens are treated as coming from ENSO_SHORTCUTS context
+  // fromAddress=ZAPPER_V3_ADDRESS so tokens are treated as coming from ENSO_SHORTCUTS context
   // receiver=user so output goes directly to user
   const route = await fetchRoute({
-    fromAddress: ZAPPER_V2_ADDRESS,
+    fromAddress: ZAPPER_V3_ADDRESS,
     tokenIn: params.vaultAddress,
     tokenOut: params.tokenOut,
     amountIn: params.collateralAmount,
@@ -1871,7 +1871,7 @@ export async function fetchCreateLoanWithOutputSwapBundle(params: {
   } else {
     // Non-vault ERC20 output: routeMulti crvUSD → tokenOut directly to user
     const route = await fetchRoute({
-      fromAddress: ZAPPER_V2_ADDRESS,
+      fromAddress: ZAPPER_V3_ADDRESS,
       tokenIn: CRVUSD,
       tokenOut: params.tokenOut,
       amountIn: params.debtAmount,
