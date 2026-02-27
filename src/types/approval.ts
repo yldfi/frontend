@@ -5,6 +5,7 @@ export interface PendingApproval {
   spender: `0x${string}`;
   spenderName?: string;
   amount?: bigint;
+  decimals?: number;
 }
 
 export interface ApprovalStep {
