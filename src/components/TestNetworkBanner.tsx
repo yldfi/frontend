@@ -15,13 +15,13 @@ export function TestNetworkBanner() {
 
   // Set CSS variable for header offset when on test network
   useEffect(() => {
-    if (showBanner) {
-      document.documentElement.style.setProperty("--test-banner-height", BANNER_HEIGHT);
-      document.documentElement.setAttribute("data-test-network", "true");
-    } else {
+    if (!showBanner) return;
+    document.documentElement.style.setProperty("--test-banner-height", BANNER_HEIGHT);
+    document.documentElement.setAttribute("data-test-network", "true");
+    return () => {
       document.documentElement.style.setProperty("--test-banner-height", "0px");
       document.documentElement.removeAttribute("data-test-network");
-    }
+    };
   }, [showBanner]);
 
   if (!showBanner) {
