@@ -29,6 +29,7 @@ const FEATURED_VAULT_TOKENS: EnsoToken[] = Object.values(VAULTS)
 const ALWAYS_AVAILABLE_ADDRESSES = new Set([
   ...FEATURED_VAULT_TOKENS.map((t) => t.address.toLowerCase()),
   CURVE_SAVINGS.SCRVUSD.toLowerCase(),
+  "0xbe53a109b494e5c9f97b9cd39fe969be68bf6204", // yvUSDC-1 (Yearn V3)
 ]);
 
 interface TokenSelectorProps {
