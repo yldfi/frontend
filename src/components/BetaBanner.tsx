@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { X } from "lucide-react";
 
 const STORAGE_KEY = "yldfi-beta-banner-dismissed";
