@@ -14,7 +14,7 @@ import { getVaultInfo } from "@/lib/curve-lending";
 import type { LendingPosition } from "@/hooks/useCurveLendingPosition";
 import { useZapperActions } from "@/hooks/useZapperActions";
 import { CRVUSD_ADDRESS, CHAINLINK_ETH_USD } from "@/config/addresses";
-import { ZAPPER_ABI, ZAPPER_V2_ADDRESS } from "@/lib/zapper";
+import { ZAPPER_ABI, ZAPPER_V3_ADDRESS } from "@/lib/zapper";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS, fetchRoute } from "@/lib/enso";
 import { getMaxEthAmount } from "@/lib/eth-gas";

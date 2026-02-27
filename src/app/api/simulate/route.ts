@@ -4,7 +4,7 @@ import { mainnet } from "viem/chains";
 import { TOKENS, VAULT_ADDRESSES, CURVE_CONTROLLERS, getVaultByAddress } from "@/config/vaults";
 import { fetchTokenPrices, ENSO_ROUTER, ENSO_ROUTER_EXECUTOR } from "@/lib/enso";
 import { CRVUSD_ADDRESS } from "@/config/addresses";
-import { ZAPPER_ADDRESS, ZAPPER_V2_ADDRESS } from "@/lib/zapper";
+import { ZAPPER_ADDRESS, ZAPPER_V3_ADDRESS } from "@/lib/zapper";
 import { ERC4626_ABI } from "@/lib/abis";
 
 export const dynamic = "force-dynamic";
@@ -473,7 +473,7 @@ export async function POST(request: NextRequest) {
   const allowedTargets = new Set<string>([
     ENSO_ROUTER_EXECUTOR.toLowerCase(),
     ZAPPER_ADDRESS.toLowerCase(),
-    ZAPPER_V2_ADDRESS.toLowerCase(),
+    ZAPPER_V3_ADDRESS.toLowerCase(),
     ...Object.values(VAULT_ADDRESSES).map((a) => a.toLowerCase()),
     ...Object.values(CURVE_CONTROLLERS).map((a) => a.toLowerCase()),
   ]);
