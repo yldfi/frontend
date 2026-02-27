@@ -346,7 +346,8 @@ export interface UseZapperActionsResult {
     collateralToken: `0x${string}`,
     tokenSymbol: string,
     slippage?: number,
-    previewOnly?: boolean
+    previewOnly?: boolean,
+    tokenDecimals?: number,
   ) => Promise<SimulationResult | null>;
   leverageUpFromToken: (
     controller: `0x${string}`,
@@ -356,7 +357,8 @@ export interface UseZapperActionsResult {
     collateralToken: `0x${string}`,
     tokenSymbol: string,
     slippage?: number,
-    previewOnly?: boolean
+    previewOnly?: boolean,
+    tokenDecimals?: number,
   ) => Promise<SimulationResult | null>;
 
   // Approval
@@ -861,6 +863,7 @@ export function useZapperActions(): UseZapperActionsResult {
           spender: ZAPPER_V3_ADDRESS as `0x${string}`,
           spenderName: "yld Zapper",
           amount: inputAmount,
+          decimals: 18,
         },
         needed: erc20Needed,
         label: tokenSymbol,
@@ -1215,6 +1218,7 @@ export function useZapperActions(): UseZapperActionsResult {
     inputAmount: bigint,
     tokenSymbol: string,
     controller?: `0x${string}`,
+    tokenDecimals?: number,
   ): Promise<PendingApproval[]> => {
     if (!publicClient || !address) return [];
 
@@ -1241,6 +1245,7 @@ export function useZapperActions(): UseZapperActionsResult {
           spender: ZAPPER_V3_ADDRESS,
           spenderName: "yld Zapper",
           amount: inputAmount,
+          decimals: tokenDecimals,
         },
         needed: erc20Needed,
         label: tokenSymbol,
@@ -1454,7 +1459,8 @@ export function useZapperActions(): UseZapperActionsResult {
     collateralToken: `0x${string}`,
     tokenSymbol: string,
     slippage: number = 100,
-    previewOnly: boolean = false
+    previewOnly: boolean = false,
+    tokenDecimals?: number,
   ): Promise<SimulationResult | null> => {
     if (!address || !publicClient) {
       setError("Wallet not connected");
@@ -1568,7 +1574,7 @@ export function useZapperActions(): UseZapperActionsResult {
       setPendingTx(tx);
 
       // Only need inputToken → ZapperV2 approval (no controller approval for new loans)
-      const missingApprovals = await checkFromTokenApprovals(inputToken, inputAmount, tokenSymbol);
+      const missingApprovals = await checkFromTokenApprovals(inputToken, inputAmount, tokenSymbol, undefined, tokenDecimals);
       if (missingApprovals.length > 0) {
         setPendingApproval(missingApprovals[0]);
         setApprovalQueue(missingApprovals.slice(1));
@@ -1593,7 +1599,8 @@ export function useZapperActions(): UseZapperActionsResult {
     collateralToken: `0x${string}`,
     tokenSymbol: string,
     slippage: number = 100,
-    previewOnly: boolean = false
+    previewOnly: boolean = false,
+    tokenDecimals?: number,
   ): Promise<SimulationResult | null> => {
     if (!address || !publicClient) {
       setError("Wallet not connected");
@@ -1706,7 +1713,7 @@ export function useZapperActions(): UseZapperActionsResult {
       setPendingTx(tx);
 
       // Need inputToken → ZapperV2 + controller → ZapperV2 (existing position)
-      const missingApprovals = await checkFromTokenApprovals(inputToken, inputAmount, tokenSymbol, controller);
+      const missingApprovals = await checkFromTokenApprovals(inputToken, inputAmount, tokenSymbol, controller, tokenDecimals);
       if (missingApprovals.length > 0) {
         setPendingApproval(missingApprovals[0]);
         setApprovalQueue(missingApprovals.slice(1));
@@ -1784,6 +1791,7 @@ export function useZapperActions(): UseZapperActionsResult {
             tokenSymbol: "crvUSD",
             spender: controller,
             amount: crvUsdGap,
+            decimals: 18,
           };
           setPendingApproval(approval);
           setApprovalQueue([]);

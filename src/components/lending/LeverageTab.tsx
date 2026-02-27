@@ -1313,18 +1313,18 @@ export function LeverageTab({
           // ZapperV2 path — leverage up existing position from any token
           const inputAmount = collateralAmount ? parseUnits(collateralAmount, effectiveDecimals) : 0n;
           if (preview) {
-            const result = await leverageUpFromTokenAction(controllerAddress, selectedToken.address as `0x${string}`, inputAmount, debtAmount, collateralToken, selectedToken.symbol, Number(slippage), true);
+            const result = await leverageUpFromTokenAction(controllerAddress, selectedToken.address as `0x${string}`, inputAmount, debtAmount, collateralToken, selectedToken.symbol, Number(slippage), true, effectiveDecimals);
             if (openModalIfPreview(result)) return;
           }
-          await leverageUpFromTokenAction(controllerAddress, selectedToken.address as `0x${string}`, collateralAmount ? parseUnits(collateralAmount, effectiveDecimals) : 0n, debtAmount, collateralToken, selectedToken.symbol, Number(slippage), false);
+          await leverageUpFromTokenAction(controllerAddress, selectedToken.address as `0x${string}`, collateralAmount ? parseUnits(collateralAmount, effectiveDecimals) : 0n, debtAmount, collateralToken, selectedToken.symbol, Number(slippage), false, effectiveDecimals);
         } else {
           // ZapperV2 path — create new leveraged loan from any token
           const inputAmount = collateralAmount ? parseUnits(collateralAmount, effectiveDecimals) : 0n;
           if (preview) {
-            const result = await createLeveragedLoanFromTokenAction(controllerAddress, selectedToken.address as `0x${string}`, inputAmount, debtAmount, positionBands, collateralToken, selectedToken.symbol, Number(slippage), true);
+            const result = await createLeveragedLoanFromTokenAction(controllerAddress, selectedToken.address as `0x${string}`, inputAmount, debtAmount, positionBands, collateralToken, selectedToken.symbol, Number(slippage), true, effectiveDecimals);
             if (openModalIfPreview(result)) return;
           }
-          await createLeveragedLoanFromTokenAction(controllerAddress, selectedToken.address as `0x${string}`, collateralAmount ? parseUnits(collateralAmount, effectiveDecimals) : 0n, debtAmount, positionBands, collateralToken, selectedToken.symbol, Number(slippage), false);
+          await createLeveragedLoanFromTokenAction(controllerAddress, selectedToken.address as `0x${string}`, collateralAmount ? parseUnits(collateralAmount, effectiveDecimals) : 0n, debtAmount, positionBands, collateralToken, selectedToken.symbol, Number(slippage), false, effectiveDecimals);
         }
       } else if (activeMode === "deleverage") {
         if (isClosePosition) {

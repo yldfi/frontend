@@ -719,7 +719,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     bundleFn: () => Promise<EnsoBundleResponse>,
     inputToken: string,
     inputAmount: bigint,
-    options?: { previewOnly?: boolean; tokenSymbol?: string }
+    options?: { previewOnly?: boolean; tokenSymbol?: string; tokenDecimals?: number }
   ): Promise<SimulationResult | null> => {
     if (!address || !publicClient) {
       setError("Wallet not connected");
@@ -768,6 +768,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
             spender,
             spenderName: "Enso Shortcuts",
             amount: inputAmount,
+            decimals: options?.tokenDecimals,
           });
           setStatus("needsApproval");
           return null;
@@ -961,6 +962,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           spender: controllerAddress as `0x${string}`,
           spenderName: "Curve Controller",
           amount: amountWei,
+          decimals: 18,
         });
         setStatus("needsApproval");
         return null;
@@ -1243,6 +1245,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           spender: controllerAddress as `0x${string}`,
           spenderName: "Curve Controller",
           amount: amountWei,
+          decimals: 18,
         });
         setStatus("needsApproval");
         return null;
@@ -1605,6 +1608,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           spender: ENSO_SHORTCUTS as `0x${string}`,
           spenderName: "Enso",
           amount: amountWei,
+          decimals: 18,
         },
         needed: vaultTokenAllowance < amountWei,
         label: tokenSymbol,
@@ -1712,6 +1716,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
             spender: controllerAddress as `0x${string}`,
             spenderName: "Curve Controller",
             amount: collateralWei,
+            decimals: 18,
           });
           setStatus("needsApproval");
           return null;
@@ -1948,6 +1953,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           spender: controllerAddress,
           spenderName: "Curve Controller",
           amount: repayAmount,
+          decimals: 18,
         });
         setStatus("needsApproval");
         return null;
@@ -2122,6 +2128,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           tokenSymbol: "crvUSD",
           spender: ENSO_SHORTCUTS as `0x${string}`,
           amount: repayAmount,
+          decimals: 18,
         },
         needed: crvUsdAllowance < repayAmount,
         label: "crvUSD",
@@ -2135,6 +2142,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           spender: ENSO_SHORTCUTS as `0x${string}`,
           spenderName: "Enso",
           amount: withdrawAmount,
+          decimals: 18,
         },
         needed: collateralAllowance < withdrawAmount,
         label: options?.withdrawTokenSymbol ?? (getVaultByAddress(vaultAddress)?.symbol ?? "Collateral"),
@@ -2231,6 +2239,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
             tokenSymbol,
             spender: ENSO_SHORTCUTS as `0x${string}`,
             amount: amountWei,
+            decimals,
           },
           needed: tokenAllowance < amountWei,
           label: tokenSymbol,
@@ -2244,6 +2253,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
             spender: ENSO_SHORTCUTS as `0x${string}`,
             spenderName: "Enso",
             amount: withdrawAmountWei,
+            decimals: 18,
           },
           needed: collateralAllowance < withdrawAmountWei,
           label: options?.withdrawTokenSymbol ?? (getVaultByAddress(vaultAddress)?.symbol ?? "Collateral"),
@@ -2294,7 +2304,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       }),
       tokenIn, // The token being swapped is the input
       amountWei,
-      options
+      { ...options, tokenDecimals: decimals }
     );
   }, [address, publicClient, executeBundle]);
 
@@ -2384,6 +2394,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           tokenSymbol: "crvUSD",
           spender: ENSO_SHORTCUTS as `0x${string}`,
           amount: debtWei,
+          decimals: 18,
         },
         needed: crvUsdAllowance < debtWei,
         label: "crvUSD",
@@ -2402,6 +2413,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           spender: ENSO_SHORTCUTS as `0x${string}`,
           spenderName: "Enso",
           amount: collateralWei,
+          decimals: 18,
         },
         needed: vaultTokenAllowance < collateralWei,
         label: vaultSymbol,
@@ -2420,6 +2432,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           tokenSymbol: swapTargetSymbol!,
           spender: ENSO_SHORTCUTS as `0x${string}`,
           amount: swapAmount,
+          decimals: 18,
         },
         needed: swapTargetAllowance === 0n,
         label: swapTargetSymbol!,

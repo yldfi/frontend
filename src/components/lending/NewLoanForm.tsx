@@ -1627,10 +1627,10 @@ export function NewLoanForm({
         if (process.env.NODE_ENV === "development") console.log("[NewLoan] Submit: leveraged loan (swap)", { token: selectedToken.symbol, amount, debt: debtAmount.toString(), leverage: effectiveLeverage.toFixed(2), bands });
         const inputWei = parseUnits(amount, selectedToken.decimals);
         if (preview) {
-          const result = await createLeveragedLoanFromToken(controllerAddress, selectedToken.address as `0x${string}`, inputWei, debtAmount, bands, vault.address as `0x${string}`, selectedToken.symbol, Number(slippage), true);
+          const result = await createLeveragedLoanFromToken(controllerAddress, selectedToken.address as `0x${string}`, inputWei, debtAmount, bands, vault.address as `0x${string}`, selectedToken.symbol, Number(slippage), true, selectedToken.decimals);
           if (openModalIfPreview(result)) return;
         }
-        await createLeveragedLoanFromToken(controllerAddress, selectedToken.address as `0x${string}`, parseUnits(amount, selectedToken.decimals), debtAmount, bands, vault.address as `0x${string}`, selectedToken.symbol, Number(slippage), false);
+        await createLeveragedLoanFromToken(controllerAddress, selectedToken.address as `0x${string}`, parseUnits(amount, selectedToken.decimals), debtAmount, bands, vault.address as `0x${string}`, selectedToken.symbol, Number(slippage), false, selectedToken.decimals);
       } else if (hasOutputSwap) {
         // Loan tab + output swap → create_loan + swap crvUSD to output token
         if (process.env.NODE_ENV === "development") console.log("[NewLoan] Submit: borrow & swap", { token: selectedToken.symbol, amount, debt: debtAmount.toString(), outputToken: outputToken.symbol, bands });

@@ -22,10 +22,11 @@ export function ApprovalCard({
   pendingApproval,
   approvalProgress,
   description,
-  decimals = 18,
+  decimals: decimalsProp,
   isApproving,
   onApprove,
 }: ApprovalCardProps) {
+  const decimals = pendingApproval?.decimals ?? decimalsProp ?? 18;
   const [approvingTypeRaw, setApprovingType] = useState<"exact" | "unlimited" | "single" | null>(null);
   // Derive effective value: reset to null when not approving (avoids setState in useEffect)
   const approvingType = isApproving ? approvingTypeRaw : null;
