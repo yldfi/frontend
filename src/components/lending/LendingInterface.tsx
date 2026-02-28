@@ -1362,17 +1362,20 @@ export function LendingInterface({
               <span className="mono text-sm font-medium">
                 {estimatedCollateral ?? positionCollateral}
               </span>
-              {position?.hasLoan && position.stablecoin > 0n && (
-                <span className="text-[10px] font-normal text-[var(--muted-foreground)] whitespace-nowrap">({Number(formatUnits(position.stablecoin, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} crvUSD)</span>
-              )}
             </div>
             {position?.hasLoan && oraclePrice > 0n && (() => {
               const coll = childCollateralDelta !== null ? position.collateral + childCollateralDelta : position.collateral;
               const vaultTokenValue = coll * oraclePrice / (10n ** BigInt(vault.decimals));
               const totalValue = Number(formatUnits(vaultTokenValue + position.stablecoin, 18));
               return (
-                <div className="text-[10px] text-[var(--muted-foreground)] mt-0.5">
-                  ${totalValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                <div className="text-[10px] text-[var(--muted-foreground)] mt-0.5 flex items-center gap-1">
+                  <span>${totalValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                  {position.stablecoin > 0n && (
+                    <span className="flex items-center gap-0.5 whitespace-nowrap text-[var(--accent)]">
+                      (<Image src="/tokens/crvusd.png" alt="" width={10} height={10} className="rounded-full inline" />
+                      {Number(formatUnits(position.stablecoin, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })})
+                    </span>
+                  )}
                 </div>
               );
             })()}
