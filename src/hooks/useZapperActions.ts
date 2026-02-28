@@ -17,6 +17,7 @@ import {
 } from "@/lib/zapper";
 import { getVaultInfo } from "@/lib/curve-lending";
 import { TOKENS, TANGENT } from "@/config/vaults";
+import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
 
 // ABI for direct controller.liquidate (no Zapper needed)
 const CONTROLLER_LIQUIDATE_ABI = [
@@ -388,6 +389,27 @@ export function useZapperActions(): UseZapperActionsResult {
   const publicClient = usePublicClient();
   const { sendTransactionAsync } = useSendTransaction();
   const { isTenderlyVNet, testNetworkType } = useTenderly();
+  const { isFlashbotsEnabled, sendViaFlashbots } = useFlashbotsProtect();
+
+  // Flashbots-aware transaction sender: routes through private mempool on mainnet
+  const sendTx = useCallback(async (
+    txParams: { to: `0x${string}`; data: `0x${string}`; value?: bigint; gas?: bigint }
+  ): Promise<`0x${string}`> => {
+    if (isFlashbotsEnabled && testNetworkType === null && chainId === 1) {
+      try {
+        return await sendViaFlashbots(txParams);
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        const isUnsupportedMethod = errorMsg.includes("eth_signTransaction") &&
+          (errorMsg.includes("not supported") || errorMsg.includes("does not exist"));
+        if (isUnsupportedMethod) {
+          return sendTransactionAsync(txParams);
+        }
+        throw err;
+      }
+    }
+    return sendTransactionAsync(txParams);
+  }, [isFlashbotsEnabled, sendViaFlashbots, sendTransactionAsync, testNetworkType, chainId]);
 
   const [status, setStatus] = useState<ZapperStatus>("idle");
   const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
@@ -697,9 +719,9 @@ export function useZapperActions(): UseZapperActionsResult {
       snapBefore = await snapshotTx(publicClient, address, pendingController, [txData.inputToken]);
     }
 
-    // Execute
+    // Execute (Flashbots-protected on mainnet when enabled)
     setStatus("executing");
-    const hash = await sendTransactionAsync({
+    const hash = await sendTx({
       to: txData.to,
       data: txData.data,
       value: txData.value,
@@ -730,7 +752,7 @@ export function useZapperActions(): UseZapperActionsResult {
     }
 
     return simulationResult;
-  }, [address, publicClient, sendTransactionAsync, testNetworkType, chainId, simulationResult, pendingController]);
+  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult, pendingController]);
 
   const executeAfterApproval = useCallback(async () => {
     if (!pendingTx) {
@@ -796,7 +818,7 @@ export function useZapperActions(): UseZapperActionsResult {
       }
 
       setStatus("executing");
-      const hash = await sendTransactionAsync({
+      const hash = await sendTx({
         to: pendingTx.to,
         data: pendingTx.data,
         value: pendingTx.value,
@@ -829,7 +851,7 @@ export function useZapperActions(): UseZapperActionsResult {
       setError(parseErrorMessage(err));
       setStatus("error");
     }
-  }, [pendingTx, publicClient, sendTransactionAsync, address, pendingController]);
+  }, [pendingTx, publicClient, sendTx, address, pendingController]);
 
   // Check both ERC20 and controller approvals, return first missing
   const checkApprovals = useCallback(async (

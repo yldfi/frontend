@@ -89,12 +89,22 @@ export const ETH_ADDRESS = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 export const CVXCRV_ADDRESS = TOKENS.CVXCRV;
 
 // Enso router contract addresses
-// EnsoShortcutRouter - for approvals
+// Old EnsoShortcutRouter
 export const ENSO_ROUTER = "0x80EbA3855878739F4710233A8a19d89Bdd2ffB8E";
-// Enso Router - holds tokens during bundle execution
+// Enso Router Executor — the CORRECT spender for user token approvals.
+// Enso's own /wallet/approve endpoint returns this address as the spender.
+// The Router pulls tokens via safeTransferFrom(msg.sender, enso, amount) in tokensIn.
 export const ENSO_ROUTER_EXECUTOR = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf";
-// EnsoShortcuts contract - executes calls, tokens must be here for external contract calls
-// This is the msg.sender when Enso calls external contracts via the "call" action
+// EnsoShortcuts contract — shared singleton execution context.
+// This is msg.sender when Enso calls external contracts via the "call" action.
+// Used as a DESTINATION for tokens during bundle execution (e.g., mint/unwrap to here).
+//
+// !! SECURITY: NEVER ask users to approve ENSO_SHORTCUTS as a token spender !!
+// ENSO_SHORTCUTS is a shared contract — anyone can submit weiroll commands through
+// the Router that execute in ENSO_SHORTCUTS' context. If a user approves
+// ENSO_SHORTCUTS, their tokens can be drained via crafted routeMulti commands.
+// For user approvals, use ENSO_ROUTER_EXECUTOR (the Router) instead.
+// For complex flows needing mid-bundle token pulls, use the V3 Zapper contract.
 export const ENSO_SHORTCUTS = "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003";
 export const CVX_HYBRID_ZAPPER =
   process.env.NEXT_PUBLIC_CVX_HYBRID_ZAPPER || process.env.CVX_HYBRID_ZAPPER || "0xEE3FF294c7156090F5b2A37acd131FD3DC652182";

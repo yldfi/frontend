@@ -1,8 +1,9 @@
 "use client";
 
-import { useReadContract, useWaitForTransactionReceipt, useAccount, usePublicClient } from "wagmi";
+import { useReadContract, useWaitForTransactionReceipt, useAccount, usePublicClient, useSendTransaction } from "wagmi";
 import { useVNetWriteContract as useWriteContract } from "@/hooks/useVNetWriteContract";
 import { parseUnits, maxUint256, encodeFunctionData } from "viem";
+import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { ERC20_APPROVAL_ABI, VAULT_ABI } from "@/lib/abis";
 import type { SimulationResult } from "@/types/enso";
@@ -60,7 +61,7 @@ export function useVaultActions(
 ) {
   const { address: userAddress, chainId } = useAccount();
   const publicClient = usePublicClient();
-  const { testNetworkType } = useTenderly();
+  const { testNetworkType, vnetEnabled, vnetAddress, vnetRpcUrl } = useTenderly();
   const [actionState, setActionState] = useState<"idle" | "approving" | "simulating" | "depositing" | "withdrawing">("idle");
   const [simulationError, setSimulationError] = useState<string | null>(null);
   const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
@@ -83,7 +84,7 @@ export function useVaultActions(
     },
   });
 
-  // Write contracts
+  // Approval via writeContract (no MEV risk)
   const {
     writeContract: writeApprove,
     data: approveHash,
@@ -91,19 +92,59 @@ export function useVaultActions(
     error: approveError,
   } = useWriteContract();
 
-  const {
-    writeContract: writeDeposit,
-    data: depositHash,
-    reset: resetDeposit,
-    error: depositError,
-  } = useWriteContract();
+  const { sendTransactionAsync } = useSendTransaction();
+  const { isFlashbotsEnabled, sendViaFlashbots } = useFlashbotsProtect();
+  const [depositHash, setDepositHash] = useState<`0x${string}` | undefined>();
+  const [withdrawHash, setWithdrawHash] = useState<`0x${string}` | undefined>();
+  const [txError, setTxError] = useState<Error | null>(null);
 
-  const {
-    writeContract: writeWithdraw,
-    data: withdrawHash,
-    reset: resetWithdraw,
-    error: withdrawError,
-  } = useWriteContract();
+  // Send transaction with Flashbots/VNet support
+  const sendTx = useCallback(async (
+    txParams: { to: `0x${string}`; data: `0x${string}`; value?: bigint }
+  ): Promise<`0x${string}`> => {
+    // VNet mode: impersonated send directly to VNet RPC
+    if (vnetEnabled && vnetRpcUrl) {
+      const fromAddr = vnetAddress ?? userAddress;
+      const response = await fetch(vnetRpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: Date.now(),
+          method: "eth_sendTransaction",
+          params: [{
+            from: fromAddr,
+            to: txParams.to,
+            data: txParams.data,
+            value: txParams.value ? `0x${txParams.value.toString(16)}` : "0x0",
+          }],
+        }),
+      });
+      const json = await response.json() as { result?: string; error?: { message: string } };
+      if (json.error) throw new Error(json.error.message);
+      if (process.env.NODE_ENV === "development") {
+        console.log("[VNet] sendTx", { from: fromAddr, to: txParams.to, hash: json.result });
+      }
+      return json.result as `0x${string}`;
+    }
+
+    // Flashbots path for mainnet
+    if (isFlashbotsEnabled && testNetworkType === null && chainId === 1) {
+      try {
+        return await sendViaFlashbots(txParams);
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        const isUnsupportedMethod = errorMsg.includes("eth_signTransaction") &&
+          (errorMsg.includes("not supported") || errorMsg.includes("does not exist"));
+        if (isUnsupportedMethod) {
+          return sendTransactionAsync(txParams);
+        }
+        throw err;
+      }
+    }
+
+    return sendTransactionAsync(txParams);
+  }, [vnetEnabled, vnetRpcUrl, vnetAddress, userAddress, isFlashbotsEnabled, sendViaFlashbots, sendTransactionAsync, testNetworkType, chainId]);
 
   // Wait for transactions - poll every 1 second until confirmed
   const { isLoading: isApprovalPending, isSuccess: isApprovalSuccess, data: approvalReceipt } = useWaitForTransactionReceipt({
@@ -153,7 +194,7 @@ export function useVaultActions(
     if (isDepositSuccess || isWithdrawSuccess) return "success";
     if (isApprovalSuccess) return "idle";
     // Error states for pre-send failures (wallet rejection, simulation failure, RPC errors)
-    if (approveError || depositError || withdrawError || simulationError) return "error";
+    if (approveError || txError || simulationError) return "error";
     // Pending transaction states
     if (isApprovalPending) return "waitingApproval";
     if (isDepositPending || isWithdrawPending) return "waitingTx";
@@ -164,7 +205,7 @@ export function useVaultActions(
     if (actionState === "withdrawing") return "withdrawing";
     return "idle";
   }, [
-    approveError, depositError, withdrawError, simulationError,
+    approveError, txError, simulationError,
     isApprovalReverted, isDepositReverted, isWithdrawReverted,
     isDepositSuccess, isWithdrawSuccess, isApprovalSuccess,
     isApprovalPending, isDepositPending, isWithdrawPending,
@@ -175,13 +216,12 @@ export function useVaultActions(
   const error = useMemo(() => {
     if (simulationError) return simulationError;
     if (approveError) return parseErrorMessage(approveError, "Approval failed");
-    if (depositError) return parseErrorMessage(depositError, "Deposit failed");
-    if (withdrawError) return parseErrorMessage(withdrawError, "Withdraw failed");
+    if (txError) return parseErrorMessage(txError, "Transaction failed");
     if (isApprovalReverted) return "Approval transaction reverted";
     if (isDepositReverted) return "Deposit transaction reverted";
     if (isWithdrawReverted) return "Withdraw transaction reverted";
     return null;
-  }, [simulationError, approveError, depositError, withdrawError, isApprovalReverted, isDepositReverted, isWithdrawReverted]);
+  }, [simulationError, approveError, txError, isApprovalReverted, isDepositReverted, isWithdrawReverted]);
 
   // Refetch allowance after approval success (external side effect only)
   useEffect(() => {
@@ -348,6 +388,8 @@ export function useVaultActions(
 
     setSimulationError(null);
     setSimulationResult(null);
+    setTxError(null);
+    setDepositHash(undefined);
     setActionState("simulating");
 
     const amountWei = parseUnits(amount, decimals);
@@ -392,14 +434,20 @@ export function useVaultActions(
     if (process.env.NODE_ENV === "development") {
       console.log("[TX]", { fn: "deposit", to: vaultAddress, amount: amountWei.toString(), receiver: userAddress });
     }
-    writeDeposit({
-      address: vaultAddress,
-      abi: VAULT_ABI,
-      functionName: "deposit",
-      args: [amountWei, userAddress],
-    });
+    try {
+      const calldata = encodeFunctionData({
+        abi: VAULT_ABI,
+        functionName: "deposit",
+        args: [amountWei, userAddress],
+      });
+      const hash = await sendTx({ to: vaultAddress, data: calldata });
+      setDepositHash(hash);
+    } catch (err) {
+      setTxError(err instanceof Error ? err : new Error(String(err)));
+      setActionState("idle");
+    }
     return null;
-  }, [userAddress, vaultAddress, decimals, publicClient, writeDeposit, runSimulation]);
+  }, [userAddress, vaultAddress, decimals, publicClient, sendTx, runSimulation]);
 
   // Withdraw with pre-flight simulation (using redeem for shares)
   // Options: previewOnly — when true, run Tenderly simulation and return result without sending tx
@@ -408,6 +456,8 @@ export function useVaultActions(
 
     setSimulationError(null);
     setSimulationResult(null);
+    setTxError(null);
+    setWithdrawHash(undefined);
     setActionState("simulating");
 
     const sharesWei = parseUnits(shares, decimals);
@@ -450,51 +500,65 @@ export function useVaultActions(
     if (process.env.NODE_ENV === "development") {
       console.log("[TX]", { fn: "redeem", to: vaultAddress, shares: sharesWei.toString(), receiver: userAddress });
     }
-    writeWithdraw({
-      address: vaultAddress,
-      abi: VAULT_ABI,
-      functionName: "redeem",
-      args: [sharesWei, userAddress, userAddress],
-    });
+    try {
+      const calldata = encodeFunctionData({
+        abi: VAULT_ABI,
+        functionName: "redeem",
+        args: [sharesWei, userAddress, userAddress],
+      });
+      const hash = await sendTx({ to: vaultAddress, data: calldata });
+      setWithdrawHash(hash);
+    } catch (err) {
+      setTxError(err instanceof Error ? err : new Error(String(err)));
+      setActionState("idle");
+    }
     return null;
-  }, [userAddress, vaultAddress, decimals, publicClient, writeWithdraw, runSimulation]);
+  }, [userAddress, vaultAddress, decimals, publicClient, sendTx, runSimulation]);
 
   // Execute stored pending tx after user confirms simulation preview
-  const executeAfterPreview = useCallback(() => {
+  const executeAfterPreview = useCallback(async () => {
     if (!pendingTx.current) return;
 
     const { type, args } = pendingTx.current;
     pendingTx.current = null;
 
-    if (type === "deposit") {
-      setActionState("depositing");
-      writeDeposit({
-        address: vaultAddress,
-        abi: VAULT_ABI,
-        functionName: "deposit",
-        args: args as readonly [bigint, `0x${string}`],
-      });
-    } else {
-      setActionState("withdrawing");
-      writeWithdraw({
-        address: vaultAddress,
-        abi: VAULT_ABI,
-        functionName: "redeem",
-        args: args as readonly [bigint, `0x${string}`, `0x${string}`],
-      });
+    try {
+      if (type === "deposit") {
+        setActionState("depositing");
+        const calldata = encodeFunctionData({
+          abi: VAULT_ABI,
+          functionName: "deposit",
+          args: args as readonly [bigint, `0x${string}`],
+        });
+        const hash = await sendTx({ to: vaultAddress, data: calldata });
+        setDepositHash(hash);
+      } else {
+        setActionState("withdrawing");
+        const calldata = encodeFunctionData({
+          abi: VAULT_ABI,
+          functionName: "redeem",
+          args: args as readonly [bigint, `0x${string}`, `0x${string}`],
+        });
+        const hash = await sendTx({ to: vaultAddress, data: calldata });
+        setWithdrawHash(hash);
+      }
+    } catch (err) {
+      setTxError(err instanceof Error ? err : new Error(String(err)));
+      setActionState("idle");
     }
-  }, [vaultAddress, writeDeposit, writeWithdraw]);
+  }, [vaultAddress, sendTx]);
 
   // Reset state
   const reset = useCallback(() => {
     setActionState("idle");
     setSimulationError(null);
     setSimulationResult(null);
+    setTxError(null);
+    setDepositHash(undefined);
+    setWithdrawHash(undefined);
     pendingTx.current = null;
     resetApprove();
-    resetDeposit();
-    resetWithdraw();
-  }, [resetApprove, resetDeposit, resetWithdraw]);
+  }, [resetApprove]);
 
   return {
     allowance: allowance as bigint | undefined,
