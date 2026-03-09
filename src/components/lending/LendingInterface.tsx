@@ -276,7 +276,7 @@ export function LendingInterface({
   const { data: yearnRaw } = useYearnVault(vault.address);
   const collateralAPR = useMemo(() => {
     const formatted = formatYearnVaultData(yearnRaw?.vault);
-    return formatted?.grossApr ?? null;
+    return formatted?.weeklyApy ?? null;
   }, [yearnRaw]);
 
   // Active tab with localStorage persistence
@@ -1118,7 +1118,7 @@ export function LendingInterface({
               )}
               {collateralAPR != null && collateralAPR > 0 && (
                 <div className="text-[10px] text-green-500 mt-0.5">
-                  +{collateralAPR.toFixed(2)}% APR
+                  +{collateralAPR.toFixed(2)}% APY
                 </div>
               )}
             </div>
@@ -1381,7 +1381,7 @@ export function LendingInterface({
             })()}
             {collateralAPR != null && (
               <div className="text-[10px] text-green-500 mt-0.5">
-                +{(position?.collateral === 0n ? 0 : collateralAPR).toFixed(2)}% APR
+                +{(position?.collateral === 0n ? 0 : collateralAPR).toFixed(2)}% APY
               </div>
             )}
           </div>

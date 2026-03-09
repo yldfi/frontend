@@ -131,7 +131,7 @@ export function HomePageContent() {
   const cvxCrvPrice = cvxCrvPriceOnChain || cacheData?.cvxCrvPrice || 0;
   // cvgCVX and pxCVX still use cache (no on-chain oracle hooks yet)
   const cvgCvxPrice = cacheData?.cvgCvxPrice ?? 0;
-  const pxCvxPrice = cacheData?.pxCvxPrice ?? 0;
+  const pxCvxPrice = 0; // TODO: uncomment when yspxcvx is live — cacheData?.pxCvxPrice ?? 0
 
   // Fetch lending position for vaults with LlamaLend markets
   const { position: ycvxcrvLendingPosition } = useCurveLendingPosition(
@@ -180,28 +180,17 @@ export function HomePageContent() {
   const isLoading = cacheLoading && ycvxcrvLoading;
 
   // Build vault list with live data
-  // Kong returns net APY for vaults (after fees) but gross for strategies
-  // We need to apply strategy performance fees manually using config values
-  const ycvxcrvNetApy = ycvxcrvVault?.apy ?? 0; // Kong already applies vault fee
-
-  // Apply strategy fees from config (Kong doesn't know about strategy fees)
-  const yscvxcrvGrossApy = yscvxcrvVault?.apy ?? 0;
-  const yscvxcrvFeeRate = VAULTS.yscvxcrv.fees.performance / 100; // e.g., 5 -> 0.05
-  const yscvxcrvNetApy = yscvxcrvGrossApy * (1 - yscvxcrvFeeRate);
-
-  const yscvgcvxGrossApy = yscvgcvxVault?.apy ?? 0;
-  const yscvgcvxFeeRate = VAULTS.yscvgcvx.fees.performance / 100; // e.g., 0 -> 0
-  const yscvgcvxNetApy = yscvgcvxGrossApy * (1 - yscvgcvxFeeRate);
-
-  const yspxcvxGrossApy = yspxcvxVault?.apy ?? 0;
-  const yspxcvxFeeRate = VAULTS.yspxcvx.fees.performance / 100; // e.g., 5 -> 0.05
-  const yspxcvxNetApy = yspxcvxGrossApy * (1 - yspxcvxFeeRate);
+  // Kong returns net APY (after fees) for all vaults and strategies
+  const ycvxcrvNetApy = ycvxcrvVault?.weeklyApy ?? 0;
+  const yscvxcrvNetApy = yscvxcrvVault?.weeklyApy ?? 0;
+  const yscvgcvxNetApy = yscvgcvxVault?.weeklyApy ?? 0;
+  const yspxcvxNetApy = yspxcvxVault?.weeklyApy ?? 0;
 
   // Use cached TVL (fast) or fall back to Yearn API TVL
   const ycvxcrvTvl = cacheData?.ycvxcrv?.tvlUsd ?? ycvxcrvVault?.tvl ?? 0;
   const yscvxcrvTvl = cacheData?.yscvxcrv?.tvlUsd ?? yscvxcrvVault?.tvl ?? 0;
   const yscvgcvxTvl = cacheData?.yscvgcvx?.tvlUsd ?? 0;
-  const yspxcvxTvl = cacheData?.yspxcvx?.tvlUsd ?? yspxcvxVault?.tvl ?? 0;
+  const yspxcvxTvl = yspxcvxVault?.tvl ?? 0; // TODO: uncomment when yspxcvx is live — cacheData?.yspxcvx?.tvlUsd ?? ...
 
   // Get TVL for each vault by ID
   const getTvlForVault = (id: string): number => {
