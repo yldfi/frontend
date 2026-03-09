@@ -386,6 +386,11 @@ export function LendingInterface({
   const handleTxStateChange = useCallback((state: LendingTxState) => {
     setActiveTxState(state);
     if (state?.status === "success") {
+      // After loan creation, switch to "borrow" tab once position refetches
+      if (state.action === "Create Loan") {
+        setActiveTabState("borrow");
+        try { localStorage.setItem("yldfi-lending-tab", "borrow"); } catch {}
+      }
       setTimeout(() => setActiveTxState(null), 2000);
     }
     if (state?.status === "reverted") {
@@ -455,7 +460,7 @@ export function LendingInterface({
       "erc20-1of2": {
         type: "erc20", tokenSymbol: vault.symbol, amount: mockAmount,
         progress: { step: 1, total: 2, steps: [
-          { label: vault.symbol, description: `Allow yld Zapper to spend ${vault.symbol}`, done: false },
+          { label: vault.symbol, description: `Approve ${vault.symbol} for yld Zapper`, done: false },
           { label: "yld Zapper", description: "Allow yld Zapper to manage position on LlamaLend controller", done: false },
         ]},
         isApproving: false,
@@ -463,7 +468,7 @@ export function LendingInterface({
       "ctrl-2of2": {
         type: "controller", tokenSymbol: "Controller",
         progress: { step: 2, total: 2, steps: [
-          { label: vault.symbol, description: `Allow yld Zapper to spend ${vault.symbol}`, done: true },
+          { label: vault.symbol, description: `Approve ${vault.symbol} for yld Zapper`, done: true },
           { label: "yld Zapper", description: "Allow yld Zapper to manage position on LlamaLend controller", done: false },
         ]},
         isApproving: false,
@@ -471,7 +476,7 @@ export function LendingInterface({
       "approving": {
         type: "erc20", tokenSymbol: vault.symbol, amount: mockAmount,
         progress: { step: 1, total: 2, steps: [
-          { label: vault.symbol, description: `Allow yld Zapper to spend ${vault.symbol}`, done: false },
+          { label: vault.symbol, description: `Approve ${vault.symbol} for yld Zapper`, done: false },
           { label: "yld Zapper", description: "Allow yld Zapper to manage position on LlamaLend controller", done: false },
         ]},
         isApproving: true,
@@ -730,15 +735,20 @@ export function LendingInterface({
   }, [position, debugSoftLiq]);
 
   // Reset to "borrow" tab when a loan is first created
-  // Guard: skip when position is null (refetch flicker) to avoid false resets
+  // Tracks hasLoan transitions: false→true triggers tab switch to "borrow"
   const prevHasLoan = useRef(hasLoan);
   useEffect(() => {
-    if (position === null) return;
     if (hasLoan && !prevHasLoan.current) {
       setActiveTab("borrow");
     }
+    // Safety net: if loan closed (true→false) while a pending overlay is showing,
+    // the tab component unmounted before reporting success — auto-clear the overlay
+    if (!hasLoan && prevHasLoan.current && activeTxState?.status === "pending") {
+      setActiveTxState({ ...activeTxState, status: "success" });
+      setTimeout(() => setActiveTxState(null), 2000);
+    }
     prevHasLoan.current = hasLoan;
-  }, [hasLoan, position]);
+  }, [hasLoan, activeTxState]);
 
   // New loan source choice (Curve vs yld)
   const [loanSource, setLoanSourceState] = useState<"choice" | "yldfi">(() => {
@@ -1039,7 +1049,7 @@ export function LendingInterface({
             <button
               onClick={() =>
                 window.open(
-                  `https://lend.curve.fi/ethereum/markets/${controllerAddress}/create`,
+                  `https://www.curve.finance/lend/ethereum/markets/one-way-market-35/create`,
                   "_blank"
                 )
               }
@@ -1188,7 +1198,9 @@ export function LendingInterface({
               }}
             >
               {childSettling && newPositionHealth !== null ? (
-                `${Math.round(newPositionHealth)}%`
+                newPositionHealth > 999
+                  ? <span className="text-xl leading-none" style={{ position: "relative", top: "1px" }}>∞</span>
+                  : `${Math.round(newPositionHealth)}%`
               ) : childSettling ? (
                 <span className="inline-flex items-center justify-end w-full leading-none"><LoadingDots /></span>
               ) : newPositionHealth === null ? (
