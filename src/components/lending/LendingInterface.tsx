@@ -1128,7 +1128,7 @@ export function LendingInterface({
               )}
               {collateralAPR != null && collateralAPR > 0 && (
                 <div className="text-[10px] text-green-500 mt-0.5">
-                  +{collateralAPR.toFixed(2)}% APY
+                  +{collateralAPR.toFixed(2)}% APR
                 </div>
               )}
             </div>
@@ -1393,7 +1393,7 @@ export function LendingInterface({
             })()}
             {collateralAPR != null && (
               <div className="text-[10px] text-green-500 mt-0.5">
-                +{(position?.collateral === 0n ? 0 : collateralAPR).toFixed(2)}% APY
+                +{(position?.collateral === 0n ? 0 : collateralAPR).toFixed(2)}% APR
               </div>
             )}
           </div>
