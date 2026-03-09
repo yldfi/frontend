@@ -27,9 +27,9 @@ import { MaxButton, MaxButtonSkeleton } from "@/components/MaxButton";
 import { cn } from "@/lib/utils";
 import { LoadingDots } from "@/components/LoadingDots";
 import { sanitizeAmount } from "@/lib/sanitize";
+import { useSettings } from "@/hooks/useSettings";
 import { fetchRoute, fetchTokenPrices, ETH_ADDRESS } from "@/lib/enso";
-import { CHAINLINK_ETH_USD } from "@/config/addresses";
-import { CRVUSD_ADDRESS } from "@/lib/zapper";
+import { CHAINLINK_ETH_USD, CRVUSD_ADDRESS } from "@/config/addresses";
 import { TOKENS, TANGENT } from "@/config/vaults";
 import { getVaultInfo } from "@/lib/curve-lending";
 import type { EnsoToken, EnsoRouteResponse } from "@/types/enso";
@@ -79,10 +79,7 @@ export function BorrowTab({
   const isCollateralToken = collateralToken.address.toLowerCase() === vault.address.toLowerCase();
   const [showCollateralInput, setShowCollateralInput] = useState(false);
   const collateralStorageKey = `yldfi-lending-borrow-collateral-${vault.address}`;
-  const [collateralAmount, setCollateralAmountState] = useState(() => {
-    if (typeof window === "undefined") return "";
-    try { return sanitizeAmount(sessionStorage.getItem(collateralStorageKey) ?? ""); } catch { return ""; }
-  });
+  const [collateralAmount, setCollateralAmountState] = useState("");
   const setCollateralAmount = useCallback(
     (v: string) => {
       const sanitized = sanitizeAmount(v);
@@ -111,7 +108,7 @@ export function BorrowTab({
 
   // Swap quote: collateral token → vault token (for non-vault tokens)
   const debouncedCollateral = useDebouncedValue(collateralAmount, 500);
-  const { data: collateralSwapQuote, isLoading: collateralSwapLoading } = useQuery({
+  const { data: collateralSwapQuote, isLoading: collateralSwapLoading, isFetching: collateralSwapFetching } = useQuery({
     queryKey: ["borrow-collateral-swap", collateralToken.address, debouncedCollateral, address],
     queryFn: async () => {
       if (!address) throw new Error("No address");
@@ -128,18 +125,19 @@ export function BorrowTab({
     refetchInterval: 30_000,
     staleTime: 10_000,
     retry: 1,
+    placeholderData: (prev: EnsoRouteResponse | undefined) => prev,
   });
 
   // Effective collateral in vault token terms (for health calc + maxBorrowable)
   const collateralWei = useMemo(() => {
-    if (!collateralAmount || Number(collateralAmount) <= 0) return 0n;
+    if (!showCollateralInput || !collateralAmount || Number(collateralAmount) <= 0) return 0n;
     if (isCollateralToken) {
       try { return parseUnits(collateralAmount, vault.decimals); } catch { return 0n; }
     }
     // Non-vault token: use swap quote output (vault token amount)
     if (collateralSwapQuote?.amountOut) return BigInt(collateralSwapQuote.amountOut);
     return 0n;
-  }, [collateralAmount, vault.decimals, isCollateralToken, collateralSwapQuote]);
+  }, [showCollateralInput, collateralAmount, vault.decimals, isCollateralToken, collateralSwapQuote]);
 
   const formattedCollateralBalance = useMemo(() => {
     try {
@@ -149,12 +147,12 @@ export function BorrowTab({
   }, [effectiveCollateralBalance, effectiveCollateralDecimals]);
 
   const hasInsufficientCollateral = useMemo(() => {
-    if (!collateralAmount || Number(collateralAmount) <= 0) return false;
+    if (!showCollateralInput || !collateralAmount || Number(collateralAmount) <= 0) return false;
     try {
       const inputWei = parseUnits(collateralAmount, effectiveCollateralDecimals);
       return inputWei > effectiveCollateralBalance;
     } catch { return false; }
-  }, [collateralAmount, effectiveCollateralDecimals, effectiveCollateralBalance]);
+  }, [showCollateralInput, collateralAmount, effectiveCollateralDecimals, effectiveCollateralBalance]);
 
   // Collateral swap exchange rate: 1 inputToken = X vaultToken
   const collateralExchangeRate = useMemo(() => {
@@ -165,12 +163,32 @@ export function BorrowTab({
     return outFormatted / Number(debouncedCollateral);
   }, [isCollateralToken, debouncedCollateral, collateralSwapQuote, vault.decimals]);
 
-  // Collateral swap price impact from Enso quote
+  // Collateral swap price impact: USD-based comparison like borrow price impact
+  // Enso's raw priceImpact is unreliable for vault tokens (conflates vault premium with slippage)
+  const collateralPriceCompareToken = collateralToken.address;
+  const { data: collateralTokenPrices } = useQuery({
+    queryKey: ["collateral-swap-prices", collateralPriceCompareToken, vault.address],
+    queryFn: () => fetchTokenPrices([collateralPriceCompareToken, vault.address]),
+    enabled: !isCollateralToken && showCollateralInput,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
   const collateralPriceImpact = useMemo(() => {
     if (isCollateralToken || collateralSwapLoading) return null;
-    if (!collateralSwapQuote?.priceImpact) return null;
-    return Number(collateralSwapQuote.priceImpact);
-  }, [isCollateralToken, collateralSwapLoading, collateralSwapQuote]);
+    if (!collateralSwapQuote?.amountOut || !debouncedCollateral || Number(debouncedCollateral) <= 0) return null;
+    if (!collateralTokenPrices || collateralTokenPrices.length < 2) return null;
+    const inputPrice = collateralTokenPrices.find(
+      (p) => p.address.toLowerCase() === collateralPriceCompareToken.toLowerCase()
+    )?.price;
+    const outputPrice = collateralTokenPrices.find(
+      (p) => p.address.toLowerCase() === vault.address.toLowerCase()
+    )?.price;
+    if (!inputPrice || !outputPrice) return null;
+    const inputUsd = Number(debouncedCollateral) * inputPrice;
+    const outputUsd = Number(formatUnits(BigInt(collateralSwapQuote.amountOut), vault.decimals)) * outputPrice;
+    if (inputUsd === 0) return null;
+    return ((inputUsd - outputUsd) / inputUsd) * 100;
+  }, [isCollateralToken, collateralSwapLoading, collateralSwapQuote, debouncedCollateral, collateralTokenPrices, collateralPriceCompareToken, vault]);
 
   // Token selection (default: crvUSD) — declared here so maxBorrowable can depend on it
   const [borrowToken, setBorrowToken] = useState<EnsoToken>(CRVUSD_TOKEN);
@@ -251,22 +269,12 @@ export function BorrowTab({
     [borrowStorageKey]
   );
 
-  // Slippage (basis points) - persisted to localStorage
-  const [slippage, setSlippage] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("yldfi-slippage") || "50";
-    }
-    return "50";
-  });
-  const [showSlippageModal, setShowSlippageModal] = useState(false);
-
-  // Route display toggle - persisted to localStorage
-  const [showRoute, setShowRoute] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("yldfi-lending-show-route") !== "false";
-    }
-    return true;
-  });
+  const {
+    slippage, updateSlippage, showSlippageModal, setShowSlippageModal,
+    showSimulationPreview, setShowSimulationPreview, refreshSimulationPreview,
+    showSimulationModal, setShowSimulationModal,
+    showRoute, toggleRoute,
+  } = useSettings();
 
   // Rate inversion toggle
   const [rateInverted, setRateInverted] = useState(false);
@@ -276,22 +284,6 @@ export function BorrowTab({
   const [estimatedHealth, setEstimatedHealth] = useState<number | null>(null);
   const [debtTooHigh, setDebtTooHigh] = useState(false);
 
-  const updateSlippage = useCallback((value: string) => {
-    setSlippage(value);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("yldfi-slippage", value);
-    }
-  }, []);
-
-  const toggleRoute = useCallback(() => {
-    setShowRoute((prev) => {
-      const next = !prev;
-      if (typeof window !== "undefined") {
-        localStorage.setItem("yldfi-lending-show-route", String(next));
-      }
-      return next;
-    });
-  }, []);
 
   // Lending actions
   const {
@@ -319,15 +311,6 @@ export function BorrowTab({
   const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
 
 
-  // Simulation toggle from settings
-  const [showSimulationPreview, setShowSimulationPreview] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("yldfi-show-simulation") === "true";
-    }
-    return false;
-  });
-
-  const [showSimulationModal, setShowSimulationModal] = useState(false);
   const [ethPrice, setEthPrice] = useState<number | null>(null);
   const { data: gasPrice } = useGasPrice();
   const { data: currentBlock } = useBlockNumber({ watch: true });
@@ -499,6 +482,7 @@ export function BorrowTab({
   const {
     data: redeemPreview,
     isLoading: redeemPreviewLoading,
+    isFetching: redeemPreviewFetching,
   } = useQuery({
     queryKey: ["borrow-deposit-preview", borrowToken.address, debouncedAmount],
     queryFn: async () => {
@@ -517,6 +501,7 @@ export function BorrowTab({
       Number(debouncedAmount) > 0,
     refetchInterval: 30_000,
     staleTime: 10_000,
+    placeholderData: (prev: string | undefined) => prev,
     retry: 1,
   });
 
@@ -533,6 +518,7 @@ export function BorrowTab({
   const {
     data: swapQuote,
     isLoading: swapQuoteLoading,
+    isFetching: swapQuoteFetching,
   } = useQuery({
     queryKey: [
       "borrow-swap-quote",
@@ -615,6 +601,7 @@ export function BorrowTab({
       Number(debouncedAmount) > 0,
     refetchInterval: 30_000,
     staleTime: 10_000,
+    placeholderData: (prev: EnsoRouteResponse | undefined) => prev,
     retry: 1,
   });
 
@@ -640,6 +627,13 @@ export function BorrowTab({
   const quoteLoading = isVaultWithCrvUsdUnderlying
     ? redeemPreviewLoading
     : (!isCrvUsd && swapQuoteLoading);
+
+  // Fetching includes re-fetches when previous data is kept via placeholderData
+  // Also treat input-changed-but-debounce-not-fired-yet as fetching so values stay locked
+  const borrowDebouncePending = borrowAmount !== debouncedAmount;
+  const quoteFetching = isVaultWithCrvUsdUnderlying
+    ? (redeemPreviewFetching || borrowDebouncePending)
+    : (!isCrvUsd && (swapQuoteFetching || borrowDebouncePending));
 
   // Exchange rate: 1 selectedToken = X crvUSD
   const exchangeRate = useMemo(() => {
@@ -766,29 +760,23 @@ export function BorrowTab({
     }
   }, [status, txHash, onTxStateChange, estimatedCrvUsdBorrow, borrowAmount, borrowToken]);
 
-  // Handle transaction success — clear inputs and reset to idle
+  // Handle transaction success — clear all inputs and reset to idle
   useEffect(() => {
     if (status === "success") {
       setBorrowAmountState("");
       setCollateralAmountState("");
+      setCollateralToken(vaultToken);
       try { sessionStorage.removeItem(borrowStorageKey); } catch { /* */ }
       try { sessionStorage.removeItem(collateralStorageKey); } catch { /* */ }
       onTransactionSuccess();
       reset();
     }
-  }, [status, onTransactionSuccess, reset, borrowStorageKey, collateralStorageKey]);
+  }, [status, onTransactionSuccess, reset, borrowStorageKey, collateralStorageKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Handle approval success -> continue execution
-  // For swap path: re-run full flow to check next approval (controller → crvUSD → execute)
-  // For direct borrow: executeAfterApproval is sufficient (single approval)
-  const handleSubmitRef = useRef<(() => Promise<void>) | undefined>(undefined);
+  // Handle approval success -> continue execution (queue handles multi-step)
   useEffect(() => {
     if (isApprovalSuccess && status === "approving") {
-      if (isCrvUsd) {
-        executeAfterApproval();
-      } else {
-        handleSubmitRef.current?.();
-      }
+      executeAfterApproval();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isApprovalSuccess, status]);
@@ -917,7 +905,6 @@ export function BorrowTab({
       console.error("Borrow action failed:", err);
     }
   };
-  handleSubmitRef.current = handleSubmit;
 
   const handleExecute = async () => {
     try {
@@ -943,7 +930,9 @@ export function BorrowTab({
     status !== "reverted" &&
     status !== "needsApproval";
 
-  const collateralSwapPending = !isCollateralToken && !!collateralAmount && Number(collateralAmount) > 0 && collateralSwapLoading;
+  const collateralDebouncePending = collateralAmount !== debouncedCollateral;
+  const collateralQuoteFetching = collateralSwapFetching || collateralDebouncePending;
+  const collateralSwapPending = showCollateralInput && !isCollateralToken && !!collateralAmount && Number(collateralAmount) > 0 && (collateralSwapLoading || collateralQuoteFetching);
 
   const isFormValid =
     !!borrowAmount &&
@@ -990,7 +979,13 @@ export function BorrowTab({
           </label>
           {maxBorrowable !== null && maxBorrowable > 0n && (
             <span className="text-xs text-[var(--muted-foreground)]">
-              Max: {Number(formatUnits(maxBorrowable, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} crvUSD
+              {isCrvUsd ? (
+                <>Max: {Number(formatUnits(maxBorrowable, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} crvUSD</>
+              ) : maxTokenLoading || !maxTokenEquivalent ? (
+                <>Max: <LoadingDots /></>
+              ) : (
+                <>Max: {Number(maxTokenEquivalent).toLocaleString(undefined, { maximumFractionDigits: 4 })} {borrowToken.symbol}</>
+              )}
             </span>
           )}
         </div>
@@ -1026,95 +1021,127 @@ export function BorrowTab({
         </div>
       </div>
 
-      {/* Quote details (non-crvUSD, when amount entered and quote loaded) */}
+      {/* Quote details (non-crvUSD, when amount entered and quote loaded or loading with previous data) */}
       {!isCrvUsd && borrowAmount && Number(borrowAmount) > 0 && (
         <>
           {/* Vault with crvUSD underlying (e.g., scrvUSD): show estimated debt */}
-          {isVaultWithCrvUsdUnderlying && estimatedCrvUsdBorrow !== null && !quoteLoading && (
-            <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-[var(--muted-foreground)]">Borrowing</span>
-                <span className="mono">
-                  ~{Number(formatUnits(estimatedCrvUsdBorrow, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })}{" "}
-                  crvUSD
-                </span>
-              </div>
-              {exchangeRate !== null && (
-                <div className="flex justify-between items-center">
-                  <span className="text-[var(--muted-foreground)]">Rate</span>
-                  <button
-                    type="button"
-                    onClick={() => setRateInverted(v => !v)}
-                    className="flex items-center gap-1 mono hover:text-[var(--accent)] transition-colors"
-                  >
-                    {rateInverted
-                      ? <>1 crvUSD = {(1 / exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 4 })} {borrowToken.symbol}</>
-                      : <>1 {borrowToken.symbol} = {exchangeRate.toLocaleString(undefined, { maximumFractionDigits: 4 })} crvUSD</>
-                    }
-                    <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
-                  </button>
+          {isVaultWithCrvUsdUnderlying && estimatedCrvUsdBorrow !== null && (
+            <div className="relative p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
+              {quoteFetching && (
+                <div className="absolute inset-0 flex items-center justify-center z-10">
+                  <span className="inline-flex items-center gap-1 text-[var(--muted-foreground)] text-2xl">
+                    <span className="animate-bounce" style={{ animationDelay: "0ms", animationDuration: "600ms" }}>.</span>
+                    <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
+                    <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
+                  </span>
                 </div>
               )}
+              <div className={cn("space-y-2 transition-opacity duration-200", quoteFetching && "opacity-0")}>
+                <div className="flex justify-between">
+                  <span className="text-[var(--muted-foreground)]">Receiving</span>
+                  <span className="mono">
+                    {Number(borrowAmount).toLocaleString(undefined, { maximumFractionDigits: 4 })} {borrowToken.symbol}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[var(--muted-foreground)]">Borrowing</span>
+                  <span className="mono">
+                    ~{Number(formatUnits(estimatedCrvUsdBorrow, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} crvUSD
+                  </span>
+                </div>
+                {exchangeRate !== null && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-[var(--muted-foreground)]">Rate</span>
+                    <button
+                      type="button"
+                      onClick={() => setRateInverted(v => !v)}
+                      className="flex items-center gap-1 mono hover:text-[var(--accent)] transition-colors"
+                    >
+                      {rateInverted
+                        ? <>1 crvUSD = {(1 / exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 4 })} {borrowToken.symbol}</>
+                        : <>1 {borrowToken.symbol} = {exchangeRate.toLocaleString(undefined, { maximumFractionDigits: 4 })} crvUSD</>
+                      }
+                      <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
           {/* Regular swap: show estimated debt, rate, impact */}
-          {!isVaultWithCrvUsdUnderlying && swapQuote && !quoteLoading && (
-            <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
-              {/* Estimated crvUSD debt */}
-              {estimatedCrvUsdBorrow !== null && (
-                <div className="flex justify-between">
-                  <span className="text-[var(--muted-foreground)]">
-                    Borrowing
+          {!isVaultWithCrvUsdUnderlying && swapQuote && (
+            <div className="relative p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
+              {quoteFetching && (
+                <div className="absolute inset-0 flex items-center justify-center z-10">
+                  <span className="inline-flex items-center gap-1 text-[var(--muted-foreground)] text-2xl">
+                    <span className="animate-bounce" style={{ animationDelay: "0ms", animationDuration: "600ms" }}>.</span>
+                    <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
+                    <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
                   </span>
+                </div>
+              )}
+              <div className={cn("space-y-2 transition-opacity duration-200", quoteFetching && "opacity-0")}>
+                {/* Receiving + estimated crvUSD debt */}
+                <div className="flex justify-between">
+                  <span className="text-[var(--muted-foreground)]">Receiving</span>
                   <span className="mono">
-                    ~{Number(
-                      formatUnits(estimatedCrvUsdBorrow, 18)
-                    ).toLocaleString(undefined, { maximumFractionDigits: 2 })}{" "}
-                    crvUSD
+                    {Number(borrowAmount).toLocaleString(undefined, { maximumFractionDigits: 4 })} {borrowToken.symbol}
                   </span>
                 </div>
-              )}
+                {estimatedCrvUsdBorrow !== null && (
+                  <div className="flex justify-between">
+                    <span className="text-[var(--muted-foreground)]">
+                      Borrowing
+                    </span>
+                    <span className="mono">
+                      ~{Number(
+                        formatUnits(estimatedCrvUsdBorrow, 18)
+                      ).toLocaleString(undefined, { maximumFractionDigits: 2 })}{" "}
+                      crvUSD
+                    </span>
+                  </div>
+                )}
 
-              {/* Exchange rate */}
-              {exchangeRate !== null && (
-                <div className="flex justify-between items-center">
-                  <span className="text-[var(--muted-foreground)]">Rate</span>
-                  <button
-                    type="button"
-                    onClick={() => setRateInverted(v => !v)}
-                    className="flex items-center gap-1 mono hover:text-[var(--accent)] transition-colors"
-                  >
-                    {rateInverted
-                      ? <>1 crvUSD = {(1 / exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 4 })} {borrowToken.symbol}</>
-                      : <>1 {borrowToken.symbol} = {exchangeRate.toLocaleString(undefined, { maximumFractionDigits: 2 })} crvUSD</>
-                    }
-                    <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
-                  </button>
-                </div>
-              )}
+                {/* Exchange rate */}
+                {exchangeRate !== null && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-[var(--muted-foreground)]">Rate</span>
+                    <button
+                      type="button"
+                      onClick={() => setRateInverted(v => !v)}
+                      className="flex items-center gap-1 mono hover:text-[var(--accent)] transition-colors"
+                    >
+                      {rateInverted
+                        ? <>1 crvUSD = {(1 / exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 4 })} {borrowToken.symbol}</>
+                        : <>1 {borrowToken.symbol} = {exchangeRate.toLocaleString(undefined, { maximumFractionDigits: 2 })} crvUSD</>
+                      }
+                      <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
+                    </button>
+                  </div>
+                )}
 
-              {/* Price impact (from forward quote: crvUSD → token) */}
-              {priceImpact !== null && (
-                <div className="flex justify-between">
-                  <span className="text-[var(--muted-foreground)]">
-                    Price Impact
-                  </span>
-                  <span
-                    className={cn(
-                      "mono",
-                      priceImpact <= 0
-                        ? "text-green-500"
-                        : priceImpact < 3
-                          ? "text-yellow-500"
-                          : "text-red-500"
-                    )}
-                  >
-                    {priceImpact > 0 ? "" : "+"}{(-priceImpact).toFixed(2)}%
-                  </span>
-                </div>
-              )}
-
+                {/* Price impact (from forward quote: crvUSD → token) */}
+                {priceImpact !== null && (
+                  <div className="flex justify-between">
+                    <span className="text-[var(--muted-foreground)]">
+                      Price Impact
+                    </span>
+                    <span
+                      className={cn(
+                        "mono",
+                        priceImpact <= 0
+                          ? "text-green-500"
+                          : priceImpact < 3
+                            ? "text-yellow-500"
+                            : "text-red-500"
+                      )}
+                    >
+                      {priceImpact > 0 ? "" : "+"}{(-priceImpact).toFixed(2)}%
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </>
@@ -1128,6 +1155,7 @@ export function BorrowTab({
             if (showCollateralInput) {
               setCollateralAmountState("");
               setCollateralToken(vaultToken);
+              try { sessionStorage.removeItem(collateralStorageKey); } catch {}
             }
             setShowCollateralInput(v => !v);
           }}
@@ -1141,15 +1169,16 @@ export function BorrowTab({
           style={{ gridTemplateRows: showCollateralInput ? "1fr" : "0fr" }}
         >
           <div className={showCollateralInput ? "overflow-visible" : "overflow-hidden"}>
-            <div className="pt-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-sm text-[var(--muted-foreground)]">
-                  Add {isCollateralToken ? "Collateral" : "Input"}
-                </label>
-                <span className="text-xs text-[var(--muted-foreground)]">
-                  Max: {formattedCollateralBalance}
-                </span>
-              </div>
+            <div className="pt-3 space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm text-[var(--muted-foreground)]">
+                    Add Collateral
+                  </label>
+                  <span className="text-xs text-[var(--muted-foreground)]">
+                    Max: {formattedCollateralBalance} {collateralToken.symbol}
+                  </span>
+                </div>
               <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--muted)] border border-[var(--border)] focus-within:ring-2 focus-within:ring-inset focus-within:ring-[var(--accent)] transition-shadow">
                 <input
                   type="text"
@@ -1178,13 +1207,30 @@ export function BorrowTab({
                   <MaxButtonSkeleton />
                 )}
               </div>
+              </div>
               {/* Collateral swap quote details */}
-              {!isCollateralToken && collateralAmount && Number(collateralAmount) > 0 && !collateralSwapLoading && collateralSwapQuote?.amountOut && (
-                <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
+              {!isCollateralToken && collateralAmount && Number(collateralAmount) > 0 && collateralSwapQuote?.amountOut && (
+                <div className="relative p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
+                  {collateralQuoteFetching && (
+                    <div className="absolute inset-0 flex items-center justify-center z-10">
+                      <span className="inline-flex items-center gap-1 text-[var(--muted-foreground)] text-2xl">
+                        <span className="animate-bounce" style={{ animationDelay: "0ms", animationDuration: "600ms" }}>.</span>
+                        <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
+                        <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
+                      </span>
+                    </div>
+                  )}
+                  <div className={cn("space-y-2 transition-opacity duration-200", collateralQuoteFetching && "opacity-0")}>
+                  <div className="flex justify-between">
+                    <span className="text-[var(--muted-foreground)]">Sending</span>
+                    <span className="mono">
+                      {Number(collateralAmount).toLocaleString(undefined, { maximumFractionDigits: 4 })} {collateralToken.symbol}
+                    </span>
+                  </div>
                   <div className="flex justify-between">
                     <span className="text-[var(--muted-foreground)]">Depositing</span>
                     <span className="mono">
-                      ≈ {Number(formatUnits(BigInt(collateralSwapQuote.amountOut), vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })} {vault.symbol}
+                      ~{Number(formatUnits(BigInt(collateralSwapQuote.amountOut), vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })} {vault.symbol}
                     </span>
                   </div>
                   {collateralExchangeRate !== null && (
@@ -1218,6 +1264,7 @@ export function BorrowTab({
                       </span>
                     </div>
                   )}
+                  </div>
                 </div>
               )}
             </div>
@@ -1301,19 +1348,19 @@ export function BorrowTab({
               } else if (simulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
                 // Re-open cached simulation modal if same block
                 setShowSimulationModal(true);
-              } else if (!quoteLoading) {
+              } else if (!quoteFetching && !collateralSwapPending) {
                 handleSubmit();
               }
             }}
-            disabled={showApprovalCard || isProcessing || quoteLoading || (!isFormValid && status === "idle")}
+            disabled={showApprovalCard || isProcessing || quoteFetching || collateralSwapPending || (!isFormValid && status === "idle")}
             className={cn(
               "w-full py-3 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
-              isProcessing || quoteLoading || (!isFormValid && status === "idle")
+              isProcessing || quoteFetching || collateralSwapPending || (!isFormValid && status === "idle")
                 ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
                 : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
             )}
           >
-            {!isCrvUsd && quoteLoading && status === "idle" ? (
+            {(quoteFetching || collateralSwapPending) && status === "idle" ? (
               <>Getting quote<LoadingDots /></>
             ) : (
               getButtonText()
@@ -1443,13 +1490,16 @@ export function BorrowTab({
                     }
 
                     // Borrow + output swap steps
+                    const borrowAmountStr = estimatedCrvUsdBorrow
+                      ? Number(formatUnits(estimatedCrvUsdBorrow, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                      : undefined;
                     if (isVaultWithCrvUsdUnderlying && estimatedCrvUsdBorrow !== null) {
                       steps.push(
-                        { tokenSymbol: "crvUSD", action: "Borrow", protocol: "Curve LlamaLend" },
+                        { tokenSymbol: "crvUSD", amount: borrowAmountStr, action: "Borrow", protocol: "Curve LlamaLend" },
                         { tokenSymbol: borrowToken.symbol, action: "Deposit", description: "from crvUSD", protocol: "Curve Savings" },
                       );
                     } else if (swapQuote) {
-                      steps.push({ tokenSymbol: "crvUSD", action: "Borrow", protocol: "Curve LlamaLend" });
+                      steps.push({ tokenSymbol: "crvUSD", amount: borrowAmountStr, action: "Borrow", protocol: "Curve LlamaLend" });
                       if (isCvgCvxVault) {
                         steps.push(
                           { tokenSymbol: "CVX", amount: cvgCvxRouteAmounts?.cvx, action: "Swap", description: "from crvUSD", protocol: "Enso Router" },
@@ -1468,7 +1518,7 @@ export function BorrowTab({
                       }
                     } else if (isCrvUsd && borrowAmount && Number(borrowAmount) > 0 && steps.length > 0) {
                       // Direct crvUSD borrow — only show borrow step when collateral swap is also in the route
-                      steps.push({ tokenSymbol: "crvUSD", action: "Borrow", protocol: "Curve LlamaLend" });
+                      steps.push({ tokenSymbol: "crvUSD", amount: borrowAmountStr, action: "Borrow", protocol: "Curve LlamaLend" });
                     }
 
                     return steps.length > 0 ? { steps } : undefined;
@@ -1502,9 +1552,7 @@ export function BorrowTab({
         open={showSlippageModal}
         onClose={() => {
           setShowSlippageModal(false);
-          try {
-            setShowSimulationPreview(localStorage.getItem("yldfi-show-simulation") === "true");
-          } catch { /* ignore */ }
+          refreshSimulationPreview();
         }}
         slippage={slippage}
         onSlippageChange={updateSlippage}

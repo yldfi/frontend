@@ -1,58 +1,17 @@
 "use client";
 
-import { useReadContract, useWaitForTransactionReceipt, useAccount, usePublicClient, useSendTransaction } from "wagmi";
-import { useVNetWriteContract as useWriteContract } from "@/hooks/useVNetWriteContract";
+import { useReadContract, useWaitForTransactionReceipt, useAccount, usePublicClient } from "wagmi";
+import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
 import { parseUnits, maxUint256, encodeFunctionData } from "viem";
-import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { ERC20_APPROVAL_ABI, VAULT_ABI } from "@/lib/abis";
 import type { SimulationResult } from "@/types/enso";
-import { useTenderly } from "@/contexts/TenderlyContext";
+import { useTestNetwork } from "@/contexts/TestNetworkContext";
+import { useSendTx } from "@/hooks/useSendTx";
 import { runVNetSimulation } from "@/lib/vnet-simulation";
+import { parseErrorMessage, anvilCall } from "@/lib/tx-utils";
 
 export type TransactionStatus = "idle" | "approving" | "waitingApproval" | "depositing" | "withdrawing" | "waitingTx" | "success" | "reverted" | "error";
-
-// Helper to parse error messages into user-friendly format
-function parseErrorMessage(error: Error | null, defaultMsg: string): string | null {
-  if (!error) return null;
-  const msg = error.message || defaultMsg;
-
-  // User rejection
-  if (msg.includes("User rejected") || msg.includes("user rejected") || msg.includes("User declined")) {
-    return "Transaction cancelled";
-  }
-
-  // Insufficient funds
-  if (msg.includes("insufficient funds") || msg.includes("exceeds balance")) {
-    return "Insufficient funds for transaction";
-  }
-
-  // Gas estimation failed
-  if (msg.includes("gas required exceeds") || msg.includes("out of gas")) {
-    return "Transaction would fail: out of gas";
-  }
-
-  // Extract revert reason
-  const revertMatch = msg.match(/reverted with the following reason:\s*\n?\s*(.+?)(?:\n|$)/i);
-  if (revertMatch) {
-    const reason = revertMatch[1].trim();
-    if (reason.toLowerCase() === "execution reverted") {
-      return "Transaction failed: execution reverted";
-    }
-    return `Transaction failed: ${reason}`;
-  }
-
-  // Fallback: truncate very long messages
-  if (msg.length > 100) {
-    const firstLine = msg.split('\n')[0];
-    if (firstLine.length <= 100) {
-      return firstLine;
-    }
-    return msg.slice(0, 97) + "...";
-  }
-
-  return msg;
-}
 
 export function useVaultActions(
   vaultAddress: `0x${string}`,
@@ -61,7 +20,8 @@ export function useVaultActions(
 ) {
   const { address: userAddress, chainId } = useAccount();
   const publicClient = usePublicClient();
-  const { testNetworkType, vnetEnabled, vnetAddress, vnetRpcUrl } = useTenderly();
+  const { testNetworkType } = useTestNetwork();
+  const { sendTx } = useSendTx();
   const [actionState, setActionState] = useState<"idle" | "approving" | "simulating" | "depositing" | "withdrawing">("idle");
   const [simulationError, setSimulationError] = useState<string | null>(null);
   const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
@@ -92,59 +52,9 @@ export function useVaultActions(
     error: approveError,
   } = useWriteContract();
 
-  const { sendTransactionAsync } = useSendTransaction();
-  const { isFlashbotsEnabled, sendViaFlashbots } = useFlashbotsProtect();
   const [depositHash, setDepositHash] = useState<`0x${string}` | undefined>();
   const [withdrawHash, setWithdrawHash] = useState<`0x${string}` | undefined>();
   const [txError, setTxError] = useState<Error | null>(null);
-
-  // Send transaction with Flashbots/VNet support
-  const sendTx = useCallback(async (
-    txParams: { to: `0x${string}`; data: `0x${string}`; value?: bigint }
-  ): Promise<`0x${string}`> => {
-    // VNet mode: impersonated send directly to VNet RPC
-    if (vnetEnabled && vnetRpcUrl) {
-      const fromAddr = vnetAddress ?? userAddress;
-      const response = await fetch(vnetRpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: Date.now(),
-          method: "eth_sendTransaction",
-          params: [{
-            from: fromAddr,
-            to: txParams.to,
-            data: txParams.data,
-            value: txParams.value ? `0x${txParams.value.toString(16)}` : "0x0",
-          }],
-        }),
-      });
-      const json = await response.json() as { result?: string; error?: { message: string } };
-      if (json.error) throw new Error(json.error.message);
-      if (process.env.NODE_ENV === "development") {
-        console.log("[VNet] sendTx", { from: fromAddr, to: txParams.to, hash: json.result });
-      }
-      return json.result as `0x${string}`;
-    }
-
-    // Flashbots path for mainnet
-    if (isFlashbotsEnabled && testNetworkType === null && chainId === 1) {
-      try {
-        return await sendViaFlashbots(txParams);
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        const isUnsupportedMethod = errorMsg.includes("eth_signTransaction") &&
-          (errorMsg.includes("not supported") || errorMsg.includes("does not exist"));
-        if (isUnsupportedMethod) {
-          return sendTransactionAsync(txParams);
-        }
-        throw err;
-      }
-    }
-
-    return sendTransactionAsync(txParams);
-  }, [vnetEnabled, vnetRpcUrl, vnetAddress, userAddress, isFlashbotsEnabled, sendViaFlashbots, sendTransactionAsync, testNetworkType, chainId]);
 
   // Wait for transactions - poll every 1 second until confirmed
   const { isLoading: isApprovalPending, isSuccess: isApprovalSuccess, data: approvalReceipt } = useWaitForTransactionReceipt({
@@ -343,7 +253,7 @@ export function useVaultActions(
 
     const ethCallPromise = (async () => {
       try {
-        await publicClient.call({
+        await anvilCall(publicClient, {
           account: userAddress,
           to: vaultAddress,
           data: calldata,

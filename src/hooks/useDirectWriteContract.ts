@@ -3,36 +3,50 @@
 import { useState, useCallback } from "react";
 import { useWriteContract, useAccount } from "wagmi";
 import { encodeFunctionData } from "viem";
-import { useTenderly } from "@/contexts/TenderlyContext";
+import { useTestNetwork } from "@/contexts/TestNetworkContext";
 
 /**
  * Drop-in wrapper for wagmi's useWriteContract.
- * When VNet mode is enabled, encodes the call with encodeFunctionData
- * and sends via eth_sendTransaction to VNet RPC (impersonation, no signing).
- * When VNet mode is disabled, delegates to wagmi's useWriteContract unchanged.
+ * When VNet or Anvil mode is detected, encodes the call with encodeFunctionData
+ * and sends via eth_sendTransaction directly to the test RPC (no signing).
+ * Otherwise, delegates to wagmi's useWriteContract unchanged.
  */
-export function useVNetWriteContract() {
+export function useDirectWriteContract() {
   const wagmi = useWriteContract();
   const { address: walletAddress } = useAccount();
-  const { vnetEnabled, vnetAddress, vnetRpcUrl } = useTenderly();
+  const { vnetEnabled, vnetAddress, vnetRpcUrl, testNetworkType, anvilRpcUrl } = useTestNetwork();
 
-  // VNet-specific state
-  const [vnetHash, setVnetHash] = useState<`0x${string}` | undefined>(undefined);
-  const [vnetError, setVnetError] = useState<Error | null>(null);
-  const [vnetStatus, setVnetStatus] = useState<"idle" | "pending" | "success" | "error">("idle");
+  // Direct-send RPC: VNet takes priority, then Anvil
+  const directRpcUrl = (vnetEnabled && vnetRpcUrl) ? vnetRpcUrl
+    : (testNetworkType === "anvil" && anvilRpcUrl) ? anvilRpcUrl
+    : null;
+  const directLabel = vnetEnabled ? "VNet" : "Anvil";
+
+  // Direct-send state (used for both VNet and Anvil)
+  const [directHash, setDirectHash] = useState<`0x${string}` | undefined>(undefined);
+  const [directError, setDirectError] = useState<Error | null>(null);
+  const [directStatus, setDirectStatus] = useState<"idle" | "pending" | "success" | "error">("idle");
 
   const fromAddress = vnetAddress ?? walletAddress;
 
+  // Destructure stable function references from wagmi to avoid depending on the
+  // entire return object (which is a new reference every render).
+  const {
+    writeContractAsync: wagmiWriteContractAsync,
+    writeContract: wagmiWriteContract,
+    reset: wagmiReset,
+  } = wagmi;
+
   const writeContractAsync = useCallback(
     async (params: { address: `0x${string}`; abi: readonly unknown[]; functionName: string; args?: readonly unknown[]; value?: bigint }) => {
-      if (!vnetEnabled || !vnetRpcUrl) {
+      if (!directRpcUrl) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return wagmi.writeContractAsync(params as any);
+        return wagmiWriteContractAsync(params as any);
       }
 
-      setVnetStatus("pending");
-      setVnetError(null);
-      setVnetHash(undefined);
+      setDirectStatus("pending");
+      setDirectError(null);
+      setDirectHash(undefined);
 
       try {
         // Encode the function call
@@ -43,7 +57,7 @@ export function useVNetWriteContract() {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } as any);
 
-        const response = await fetch(vnetRpcUrl, {
+        const response = await fetch(directRpcUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -65,52 +79,52 @@ export function useVNetWriteContract() {
         }
 
         const hash = json.result as `0x${string}`;
-        setVnetHash(hash);
-        setVnetStatus("success");
+        setDirectHash(hash);
+        setDirectStatus("success");
 
         if (process.env.NODE_ENV === "development") {
-          console.log("[VNet] writeContract", { from: fromAddress, to: params.address, fn: params.functionName, hash });
+          console.log(`[${directLabel}] writeContract`, { from: fromAddress, to: params.address, fn: params.functionName, hash });
         }
 
         return hash;
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
-        setVnetError(error);
-        setVnetStatus("error");
+        setDirectError(error);
+        setDirectStatus("error");
         throw error;
       }
     },
-    [vnetEnabled, vnetRpcUrl, fromAddress, wagmi]
+    [directRpcUrl, directLabel, fromAddress, wagmiWriteContractAsync]
   );
 
   const writeContract = useCallback(
     (params: { address: `0x${string}`; abi: readonly unknown[]; functionName: string; args?: readonly unknown[]; value?: bigint }) => {
-      if (!vnetEnabled || !vnetRpcUrl) {
+      if (!directRpcUrl) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        wagmi.writeContract(params as any);
+        wagmiWriteContract(params as any);
         return;
       }
       writeContractAsync(params).catch(() => {});
     },
-    [vnetEnabled, vnetRpcUrl, wagmi, writeContractAsync]
+    [directRpcUrl, wagmiWriteContract, writeContractAsync]
   );
 
   const reset = useCallback(() => {
-    wagmi.reset();
-    setVnetHash(undefined);
-    setVnetError(null);
-    setVnetStatus("idle");
-  }, [wagmi]);
+    wagmiReset();
+    setDirectHash(undefined);
+    setDirectError(null);
+    setDirectStatus("idle");
+  }, [wagmiReset]);
 
-  if (vnetEnabled && vnetRpcUrl) {
+  if (directRpcUrl) {
     return {
       writeContract,
       writeContractAsync,
-      data: vnetHash,
-      error: vnetError,
-      status: vnetStatus,
+      data: directHash,
+      error: directError,
+      status: directStatus,
       reset,
-      isError: vnetStatus === "error",
+      isError: directStatus === "error",
     };
   }
 

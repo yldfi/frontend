@@ -14,11 +14,9 @@ const VNET_ADDRESS = process.env.NODE_ENV === "development"
   ? (process.env.NEXT_PUBLIC_TENDERLY_VNET_ADDRESS || "")
   : "";
 
-interface TenderlyContextValue {
+interface TestNetworkContextValue {
   /** True when connected to any test network (Anvil fork, Tenderly VNet, chain 1337) */
   isTestNetwork: boolean;
-  /** @deprecated Use isTestNetwork instead */
-  isTenderlyVNet: boolean;
   /** "anvil" | "tenderly" | null — only for display (banner label) */
   testNetworkType: TestNetworkType;
   isDetecting: boolean;
@@ -30,24 +28,26 @@ interface TenderlyContextValue {
   vnetAddress: `0x${string}` | null;
   /** VNet RPC URL (from env var) */
   vnetRpcUrl: string | null;
+  /** Anvil RPC URL (from NEXT_PUBLIC_ANVIL_RPC) — null when not on Anvil */
+  anvilRpcUrl: string | null;
   /** Toggle VNet mode on/off */
   toggleVNet: () => void;
 }
 
-const TenderlyContext = createContext<TenderlyContextValue>({
+const TestNetworkContext = createContext<TestNetworkContextValue>({
   isTestNetwork: false,
-  isTenderlyVNet: false,
   testNetworkType: null,
   isDetecting: false,
   vnetEnabled: false,
   vnetAvailable: false,
   vnetAddress: null,
   vnetRpcUrl: null,
+  anvilRpcUrl: null,
   toggleVNet: () => {},
 });
 
-export function useTenderly() {
-  return useContext(TenderlyContext);
+export function useTestNetwork() {
+  return useContext(TestNetworkContext);
 }
 
 // Test network detection:
@@ -61,7 +61,7 @@ export function useTenderly() {
 const ERROR_ACCESS_FORBIDDEN = -32004; // Tenderly Public RPC
 const ERROR_METHOD_NOT_FOUND = -32601; // Standard mainnet nodes
 
-export function TenderlyProvider({ children }: { children: ReactNode }) {
+export function TestNetworkProvider({ children }: { children: ReactNode }) {
   const { isConnected, connector } = useAccount();
   const publicClient = usePublicClient();
   const queryClient = useQueryClient();
@@ -82,6 +82,7 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
 
   const vnetAddress: `0x${string}` | null = VNET_ADDRESS ? (VNET_ADDRESS as `0x${string}`) : null;
   const vnetRpcUrl = vnetAvailable ? VNET_RPC_URL : null;
+  const anvilRpcUrl = anvilActive ? (process.env.NEXT_PUBLIC_ANVIL_RPC || null) : null;
 
   // When VNet is enabled, force testNetworkType to "tenderly"
   const effectiveTestNetworkType = vnetEnabled ? "tenderly" : testNetworkType;
@@ -166,6 +167,27 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
 
         const rpc = (provider as { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> }).request.bind(provider);
 
+        // Fast path: when NEXT_PUBLIC_ANVIL_RPC is set, skip evm_snapshot (can hang
+        // on Anvil after heavy state modifications) and probe anvil_nodeInfo directly
+        // via the wagmi transport which routes to Anvil.
+        if (anvilActive && publicClient) {
+          try {
+            const nodeInfoPromise = publicClient.transport.request({ method: "anvil_nodeInfo", params: [] });
+            const timeoutPromise = new Promise((_, reject) =>
+              setTimeout(() => reject(new Error("timeout")), 3000)
+            );
+            await Promise.race([nodeInfoPromise, timeoutPromise]);
+            if (cancelled) return;
+            setTestNetworkType((prev) => {
+              if (prev !== "anvil") console.log("[TestNetwork] Detected Anvil fork");
+              return "anvil";
+            });
+            return;
+          } catch {
+            // Anvil not reachable — fall through to normal detection
+          }
+        }
+
         try {
           // evm_snapshot: succeeds on Anvil/Tenderly, fails on mainnet
           const rpcPromise = rpc({ method: "evm_snapshot", params: [] });
@@ -205,31 +227,6 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
           } else if ((err as Error)?.message === "timeout") {
             console.log("[TestNetwork] Detection timed out, keeping previous state");
           } else {
-            // Wallet provider rejected evm_snapshot — could be real mainnet,
-            // or wallet filtering methods (e.g. Rabby returns -32601 even on Anvil).
-            // Only probe wagmi transport when Anvil env var is set (transport routes to Anvil).
-            // Without it, probing hits public RPCs (drpc/cloudflare) causing 400 error spam.
-            if (anvilActive && publicClient) {
-              try {
-                await publicClient.transport.request({ method: "evm_snapshot", params: [] });
-                if (cancelled) return;
-                try {
-                  await publicClient.transport.request({ method: "anvil_nodeInfo", params: [] });
-                  setTestNetworkType((prev) => {
-                    if (prev !== "anvil") console.log("[TestNetwork] Detected Anvil fork via wagmi transport");
-                    return "anvil";
-                  });
-                } catch {
-                  setTestNetworkType((prev) => {
-                    if (prev !== "tenderly") console.log("[TestNetwork] Detected Tenderly VNet via wagmi transport");
-                    return "tenderly";
-                  });
-                }
-                return;
-              } catch {
-                // wagmi transport also not a test network
-              }
-            }
             setTestNetworkType((prev) => {
               if (prev !== null) console.log("[TestNetwork] Mainnet detected (error code:", errorCode, ")");
               return null;
@@ -295,21 +292,21 @@ export function TenderlyProvider({ children }: { children: ReactNode }) {
   const contextValue = useMemo(
     () => ({
       isTestNetwork,
-      isTenderlyVNet: isTestNetwork, // backwards compat — all consumers just need "am I on a test network?"
       testNetworkType: effectiveTestNetworkType,
       isDetecting,
       vnetEnabled,
       vnetAvailable,
       vnetAddress,
       vnetRpcUrl,
+      anvilRpcUrl,
       toggleVNet,
     }),
-    [isTestNetwork, effectiveTestNetworkType, isDetecting, vnetEnabled, vnetAvailable, vnetAddress, vnetRpcUrl, toggleVNet]
+    [isTestNetwork, effectiveTestNetworkType, isDetecting, vnetEnabled, vnetAvailable, vnetAddress, vnetRpcUrl, anvilRpcUrl, toggleVNet]
   );
 
   return (
-    <TenderlyContext.Provider value={contextValue}>
+    <TestNetworkContext.Provider value={contextValue}>
       {children}
-    </TenderlyContext.Provider>
+    </TestNetworkContext.Provider>
   );
 }

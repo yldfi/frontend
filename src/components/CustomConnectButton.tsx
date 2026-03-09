@@ -4,7 +4,7 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useSwitchChain } from "wagmi";
 import { mainnet } from "wagmi/chains";
 import { createPortal } from "react-dom";
-import { useTenderly } from "@/contexts/TenderlyContext";
+import { useTestNetwork } from "@/contexts/TestNetworkContext";
 
 // Inner component to properly use hooks
 function ConnectButtonContent({
@@ -93,7 +93,7 @@ function ConnectButtonContent({
 
 export function CustomConnectButton() {
   const { switchChain } = useSwitchChain();
-  const { vnetAvailable, vnetEnabled, toggleVNet } = useTenderly();
+  const { vnetAvailable, vnetEnabled, toggleVNet } = useTestNetwork();
 
   const handleSwitchToEthereum = () => {
     switchChain({ chainId: mainnet.id });

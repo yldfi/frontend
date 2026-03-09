@@ -14,7 +14,7 @@ import { getVaultInfo } from "@/lib/curve-lending";
 import type { LendingPosition } from "@/hooks/useCurveLendingPosition";
 import { useZapperActions } from "@/hooks/useZapperActions";
 import { CRVUSD_ADDRESS, CHAINLINK_ETH_USD } from "@/config/addresses";
-import { ZAPPER_ABI, ZAPPER_V3_ADDRESS } from "@/lib/zapper";
+import { ZAPPER_ABI, ZAPPER_ADDRESS } from "@/lib/zapper";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS, fetchRoute } from "@/lib/enso";
 import { getMaxEthAmount } from "@/lib/eth-gas";
@@ -25,6 +25,7 @@ import { SlippageModal } from "@/components/SlippageModal";
 import { cn } from "@/lib/utils";
 import { LoadingDots } from "@/components/LoadingDots";
 import { sanitizeAmount } from "@/lib/sanitize";
+import { useSettings } from "@/hooks/useSettings";
 import { CONTROLLER_ABI, AMM_ABI, ERC4626_ABI, CURVE_GET_DY_ABI } from "@/lib/abis";
 
 // Combined MAX button with hover options: MAX ALL (above) + Reset (below)
@@ -370,6 +371,8 @@ export function LeverageTab({
       setWithdrawRate(0);
       return;
     }
+    // Immediately clear stale rate from previous token so Max/MAX don't show wrong values
+    setWithdrawRate(0);
     let stale = false;
     const timer = setTimeout(async () => {
       try {
@@ -401,42 +404,12 @@ export function LeverageTab({
   }, [forceFullLiquidation]);
   const [canDirectLiquidate, setCanDirectLiquidate] = useState(false);
 
-  // Slippage (basis points) - persisted to localStorage
-  const [slippage, setSlippage] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("yldfi-slippage") || "50";
-    }
-    return "50";
-  });
-  const [showSlippageModal, setShowSlippageModal] = useState(false);
-
-  // Route display toggle - persisted to localStorage
-  const [showRoute, setShowRoute] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("yldfi-lending-show-route") !== "false";
-    }
-    return true;
-  });
-  const toggleRoute = useCallback(() => {
-    setShowRoute((prev) => {
-      const next = !prev;
-      if (typeof window !== "undefined") {
-        localStorage.setItem("yldfi-lending-show-route", String(next));
-      }
-      return next;
-    });
-  }, []);
-
-  // Simulation toggle from settings
-  const [showSimulationPreview, setShowSimulationPreview] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("yldfi-show-simulation") === "true";
-    }
-    return false;
-  });
-
-  // Simulation preview
-  const [showSimulationModal, setShowSimulationModal] = useState(false);
+  const {
+    slippage, updateSlippage, showSlippageModal, setShowSlippageModal,
+    showSimulationPreview, setShowSimulationPreview, refreshSimulationPreview,
+    showSimulationModal, setShowSimulationModal,
+    showRoute, toggleRoute,
+  } = useSettings();
   const simulationBlock = useRef<bigint>(0n);
   const [ethPrice, setEthPrice] = useState<number | null>(null);
 
@@ -444,12 +417,6 @@ export function LeverageTab({
   const { data: currentBlock } = useBlockNumber({ watch: true });
   const { data: gasPrice } = useGasPrice({ query: { refetchInterval: 12_000 } });
 
-  const updateSlippage = useCallback((value: string) => {
-    setSlippage(value);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("yldfi-slippage", value);
-    }
-  }, []);
 
   // Calculated values
   const [maxBorrowable, setMaxBorrowable] = useState<bigint>(0n); // max total debt for totalCollateral
@@ -783,10 +750,17 @@ export function LeverageTab({
     // Leverage loop adjustment (matches curve-lending-js geometric series):
     // r = LTV ratio, loopMaxD = singleStepMaxD / (1 - r), then 0.2% safety margin
     const r = collValue > 0 ? Number(formatUnits(maxBorrowable, 18)) / collValue : 0;
-    const loopMaxD = r < 0.99 ? singleStepMaxD / (1 - r) * 0.998 : singleStepMaxD;
+    let loopMaxD = r < 0.99 ? singleStepMaxD / (1 - r) * 0.998 : singleStepMaxD;
+    // Cap by actual pool liquidity — Zapper's borrow_more_extended does a single
+    // borrow, so the controller must have enough crvUSD to transfer in one shot.
+    // No extra margin here — maxBorrowable already has 0.2% safety margin.
+    if (controllerCrvUsdBalance != null) {
+      const poolCap = Number(formatUnits(controllerCrvUsdBalance, 18));
+      loopMaxD = Math.min(loopMaxD, poolCap);
+    }
     const maxLev = (collValue + loopMaxD) / equity;
     return Math.min(Math.max(maxLev, 1.1), 10);
-  }, [totalCollateral, oraclePrice, vault.decimals, existingDebt, maxAdditionalBorrow, maxBorrowable]);
+  }, [totalCollateral, oraclePrice, vault.decimals, existingDebt, maxAdditionalBorrow, maxBorrowable, controllerCrvUsdBalance]);
 
   // Current effective leverage (existing position only, for display)
   const currentLeverage = useMemo(() => {
@@ -906,20 +880,34 @@ export function LeverageTab({
     // Loop-adjusted cap: singleStepMax / (1 - LTV_ratio), with 0.2% safety margin
     const singleStepMaxD = Number(formatUnits(maxAdditionalBorrow, 18));
     const r = collValue > 0 ? Number(formatUnits(maxBorrowable, 18)) / collValue : 0;
-    const loopMaxD = r < 0.99 ? singleStepMaxD / (1 - r) * 0.998 : singleStepMaxD;
+    let loopMaxD = r < 0.99 ? singleStepMaxD / (1 - r) * 0.998 : singleStepMaxD;
+    // Cap by actual pool liquidity — Zapper does a single borrow_more_extended,
+    // so controller must have enough crvUSD to transfer in one shot.
+    // No extra margin — maxBorrowable already has 0.2% safety margin.
+    if (controllerCrvUsdBalance != null) {
+      const poolCap = Number(formatUnits(controllerCrvUsdBalance, 18));
+      loopMaxD = Math.min(loopMaxD, poolCap);
+    }
     const capped = Math.min(additionalD, loopMaxD);
     try {
-      return parseUnits(capped.toFixed(6), 18);
+      let result = parseUnits(capped.toFixed(6), 18);
+      // toFixed(6) can round up past the actual controller balance — clamp to avoid revert
+      if (controllerCrvUsdBalance != null && result > controllerCrvUsdBalance) {
+        result = controllerCrvUsdBalance;
+      }
+      return result;
     } catch {
       return 0n;
     }
-  }, [effectiveLeverage, oraclePrice, totalCollateral, vault.decimals, existingDebt, maxAdditionalBorrow, maxBorrowable]);
+  }, [effectiveLeverage, oraclePrice, totalCollateral, vault.decimals, existingDebt, maxAdditionalBorrow, maxBorrowable, controllerCrvUsdBalance]);
 
   // Parse withdrawal amount (convert from withdraw token units to ycvxCRV)
   const withdrawAmountBn = useMemo(() => {
     if (!withdrawAmount) return 0n;
     try {
-      if (isWithdrawToOtherToken && withdrawRate > 0) {
+      if (isWithdrawToOtherToken) {
+        // Rate not yet loaded — don't guess, return 0 to avoid stale health bar flicker
+        if (withdrawRate <= 0) return 0n;
         // Convert: input amount (in withdraw token) × rate = ycvxCRV amount
         const inputVal = Number(withdrawAmount);
         if (isNaN(inputVal) || inputVal <= 0) return 0n;
@@ -981,6 +969,39 @@ export function LeverageTab({
     const minCollProjected = minCollCurrent * remainingDebt / position.debt;
     return remainingCollateral > minCollProjected ? remainingCollateral - minCollProjected : 0n;
   }, [position, deleverageCollateralToSell, debtToRepay]);
+
+  // Stable max withdrawable for MaxButton display — computed with W_val=0 to break the
+  // circular dependency: withdrawAmountBn → deleverageCollateralToSell → projectedMax → MAX → withdrawAmount
+  const stableMaxWithdrawable = useMemo(() => {
+    if (!position?.hasLoan || oraclePrice === 0n) return 0n;
+
+    // Compute deleverageCollateralToSell with W_val = 0
+    const C = Number(formatUnits(position.collateral * oraclePrice / (10n ** BigInt(vault.decimals)), 18));
+    const D = Number(formatUnits(position.debt, 18));
+    const L = deleverageTarget;
+    const baseSellValue = C - L * (C - D); // S = C(1-L) + LD
+    if (baseSellValue <= 0) return position.maxWithdrawable;
+
+    const P = Number(formatUnits(oraclePrice, 18));
+    const baseSellTokens = baseSellValue / P;
+    const decimals = vault.decimals > 6 ? 6 : vault.decimals;
+    let baseSellBn: bigint;
+    try { baseSellBn = parseUnits(baseSellTokens.toFixed(decimals), vault.decimals); } catch { return 0n; }
+
+    const baseDebtRepaid = baseSellBn * oraclePrice / (10n ** BigInt(vault.decimals));
+
+    const remainingCollateral = position.collateral > baseSellBn
+      ? position.collateral - baseSellBn : 0n;
+    const remainingDebt = position.debt > baseDebtRepaid
+      ? position.debt - baseDebtRepaid : 0n;
+
+    if (remainingDebt === 0n) return remainingCollateral;
+    if (position.debt === 0n) return 0n;
+
+    const minCollCurrent = position.collateral - position.maxWithdrawable;
+    const minCollProjected = minCollCurrent * remainingDebt / position.debt;
+    return remainingCollateral > minCollProjected ? remainingCollateral - minCollProjected : 0n;
+  }, [position, oraclePrice, vault, deleverageTarget]);
 
   // Route info for deleverage (static, computed from state)
   const deleverageRouteInfo = useMemo((): RouteInfo | undefined => {
@@ -1221,10 +1242,12 @@ export function LeverageTab({
     return () => { stale = true; };
   }, [mode, publicClient, address, controllerAddress, effectiveSelfLiqPercent]);
 
-  // Handle transaction success — clear inputs and reset to idle
+  // Handle transaction success — clear all inputs and reset to idle
   useEffect(() => {
     if (status === "success") {
       setCollateralAmountRaw("");
+      setWithdrawAmount("");
+      leverageFollowsBase.current = true;
       try { sessionStorage.removeItem(leverageStorageKey); } catch { /* */ }
       onTransactionSuccess();
       refetchBalance();
@@ -1266,31 +1289,29 @@ export function LeverageTab({
     const preview = showSimulationPreview;
 
     const openModalIfPreview = (result: unknown): boolean => {
-      if (preview) {
-        if (result) {
-          simulationBlock.current = currentBlock ?? 0n;
-          setShowSimulationModal(true);
-          if (publicClient) {
-            publicClient.readContract({
-              address: CHAINLINK_ETH_USD,
-              abi: [{
-                name: "latestRoundData",
-                type: "function",
-                stateMutability: "view",
-                inputs: [],
-                outputs: [
-                  { name: "roundId", type: "uint80" },
-                  { name: "answer", type: "int256" },
-                  { name: "startedAt", type: "uint256" },
-                  { name: "updatedAt", type: "uint256" },
-                  { name: "answeredInRound", type: "uint80" },
-                ],
-              }],
-              functionName: "latestRoundData",
-            }).then(data => {
-              setEthPrice(Number(data[1] as bigint) / 1e8);
-            }).catch(() => {});
-          }
+      if (preview && result) {
+        simulationBlock.current = currentBlock ?? 0n;
+        setShowSimulationModal(true);
+        if (publicClient) {
+          publicClient.readContract({
+            address: CHAINLINK_ETH_USD,
+            abi: [{
+              name: "latestRoundData",
+              type: "function",
+              stateMutability: "view",
+              inputs: [],
+              outputs: [
+                { name: "roundId", type: "uint80" },
+                { name: "answer", type: "int256" },
+                { name: "startedAt", type: "uint256" },
+                { name: "updatedAt", type: "uint256" },
+                { name: "answeredInRound", type: "uint80" },
+              ],
+            }],
+            functionName: "latestRoundData",
+          }).then(data => {
+            setEthPrice(Number(data[1] as bigint) / 1e8);
+          }).catch(() => {});
         }
         // Modal opened — bail from handleSubmit
         return true;
@@ -1338,10 +1359,10 @@ export function LeverageTab({
           if (isWithdrawToOtherToken) {
             // Deleverage + withdraw as different token via V2
             if (preview) {
-              const result = await deleverageAndWithdrawToTokenAction(controllerAddress, deleverageCollateralToSell, withdrawAmountBn, collateralToken, withdrawToken.address as `0x${string}`, withdrawToken.symbol, Number(slippage), true);
+              const result = await deleverageAndWithdrawToTokenAction(controllerAddress, deleverageCollateralToSell, withdrawAmountBn, collateralToken, withdrawToken.address as `0x${string}`, withdrawToken.symbol, vault.symbol, Number(slippage), true);
               if (openModalIfPreview(result)) return;
             }
-            await deleverageAndWithdrawToTokenAction(controllerAddress, deleverageCollateralToSell, withdrawAmountBn, collateralToken, withdrawToken.address as `0x${string}`, withdrawToken.symbol, Number(slippage), false);
+            await deleverageAndWithdrawToTokenAction(controllerAddress, deleverageCollateralToSell, withdrawAmountBn, collateralToken, withdrawToken.address as `0x${string}`, withdrawToken.symbol, vault.symbol, Number(slippage), false);
           } else {
             // Deleverage + withdraw as collateral via V2
             if (preview) {
@@ -1383,11 +1404,15 @@ export function LeverageTab({
 
   const isProcessing = status !== "idle" && status !== "success" && status !== "error" && status !== "reverted" && status !== "needsApproval";
 
+  const quoteLoading = (activeMode === "leverageUp" && !isCollateralToken && swapQuoteLoading)
+    || (activeMode === "deleverage" && isWithdrawToOtherToken && withdrawRate === 0 && withdrawAmount !== "");
+
   const getButtonText = () => {
     if (status === "building") return <>Building transaction<LoadingDots /></>;
     if (status === "simulating") return <>Simulating<LoadingDots /></>;
     if (status === "executing") return <>Confirm in wallet<LoadingDots /></>;
     if (status === "waitingTx") return <>Waiting for confirmation<LoadingDots /></>;
+    if (quoteLoading && status === "idle") return <>Getting quote<LoadingDots /></>;
     if (activeMode === "leverageUp") return isCollateralToken ? "Leverage Up" : "Swap & Leverage Up";
     if (activeMode === "deleverage") {
       if (isClosePosition) return "Close Position";
@@ -1408,7 +1433,7 @@ export function LeverageTab({
       // Must have debt AND user must have actually increased leverage or added collateral
       return debtAmount > 0n && (effectiveLeverage > baseLeverage + 0.005 || collateralAmount !== "");
     }
-    if (activeMode === "deleverage") return deleverageCollateralToSell > 0n || withdrawAmountBn > 0n;
+    if (activeMode === "deleverage") return position?.hasLoan === true && position.collateral > 0n && (deleverageCollateralToSell > 0n || withdrawAmountBn > 0n);
     if (activeMode === "selfLiquidate") {
       if (isUnderwater && !underwaterConfirmed) return false;
       return effectiveSelfLiqPercent > 0 && canDirectLiquidate;
@@ -1583,9 +1608,25 @@ export function LeverageTab({
               )}
 
               {debtAmount > 0n && Number(formatUnits(debtAmount, 18)) >= 0.1 && (
-                <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] text-sm">
+                <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
+                  {!isCollateralToken && collateralAmount && Number(collateralAmount) > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-[var(--muted-foreground)]">Sending</span>
+                      <span className="mono">
+                        {Number(collateralAmount).toLocaleString(undefined, { maximumFractionDigits: 4 })} {selectedToken.symbol}
+                      </span>
+                    </div>
+                  )}
+                  {!isCollateralToken && estimatedCollateralFromSwap > 0n && (
+                    <div className="flex justify-between">
+                      <span className="text-[var(--muted-foreground)]">Depositing</span>
+                      <span className="mono">
+                        ~{Number(formatUnits(estimatedCollateralFromSwap, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })} {vault.symbol}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex justify-between">
-                    <span className="text-[var(--muted-foreground)]">Additional Borrow</span>
+                    <span className="text-[var(--muted-foreground)]">Borrowing</span>
                     <span className="mono">
                       {Number(formatUnits(debtAmount, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} crvUSD
                     </span>
@@ -1607,14 +1648,18 @@ export function LeverageTab({
                       Withdraw {isWithdrawToOtherToken ? `as ${withdrawToken.symbol}` : ""} (optional)
                     </label>
                     <span className="text-xs text-[var(--muted-foreground)]">
-                      Max: {(() => {
-                        if (!position?.hasLoan) return "0";
-                        const maxYcvxcrv = Number(formatUnits(projectedMaxWithdrawable, vault.decimals));
-                        if (isWithdrawToOtherToken && withdrawRate > 0) {
-                          return (maxYcvxcrv / withdrawRate).toLocaleString(undefined, { maximumFractionDigits: 4 });
-                        }
-                        return maxYcvxcrv.toLocaleString(undefined, { maximumFractionDigits: 4 });
-                      })()} {isWithdrawToOtherToken ? withdrawToken.symbol : vault.symbol}
+                      {isWithdrawToOtherToken && withdrawRate === 0 && position?.hasLoan ? (
+                        <>Max: <LoadingDots /></>
+                      ) : (
+                        <>Max: {(() => {
+                          if (!position?.hasLoan) return "0";
+                          const maxYcvxcrv = Number(formatUnits(stableMaxWithdrawable, vault.decimals));
+                          if (isWithdrawToOtherToken && withdrawRate > 0) {
+                            return (maxYcvxcrv / withdrawRate).toLocaleString(undefined, { maximumFractionDigits: 4 });
+                          }
+                          return maxYcvxcrv.toLocaleString(undefined, { maximumFractionDigits: 4 });
+                        })()} {isWithdrawToOtherToken ? withdrawToken.symbol : vault.symbol}</>
+                      )}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--muted)] border border-[var(--border)] focus-within:ring-2 focus-within:ring-[var(--accent)] transition-shadow">
@@ -1634,11 +1679,12 @@ export function LeverageTab({
                     <MaxButton
                       balance={(() => {
                         if (!position?.hasLoan) return "0";
-                        const maxYcvxcrv = Number(formatUnits(projectedMaxWithdrawable, vault.decimals));
+                        if (isWithdrawToOtherToken && withdrawRate === 0) return "0";
+                        const maxYcvxcrv = Number(formatUnits(stableMaxWithdrawable, vault.decimals));
                         if (isWithdrawToOtherToken && withdrawRate > 0) {
                           return (maxYcvxcrv / withdrawRate).toFixed(withdrawTokenDecimals > 8 ? 8 : withdrawTokenDecimals);
                         }
-                        return formatUnits(projectedMaxWithdrawable, vault.decimals);
+                        return formatUnits(stableMaxWithdrawable, vault.decimals);
                       })()}
                       onSelect={setWithdrawAmount}
                     />
@@ -1722,6 +1768,38 @@ export function LeverageTab({
                     <span>1.00x (close loan)</span>
                     <span>{currentLeverage.toFixed(2)}x (current)</span>
                   </div>
+                </div>
+              )}
+
+              {(deleverageCollateralToSell > 0n || withdrawAmountBn > 0n) && (
+                <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
+                  {deleverageCollateralToSell > 0n && (
+                    <div className="flex justify-between">
+                      <span className="text-[var(--muted-foreground)]">Selling</span>
+                      <span className="mono">
+                        {Number(formatUnits(deleverageCollateralToSell, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })} {vault.symbol}
+                      </span>
+                    </div>
+                  )}
+                  {debtToRepay > 0n && (
+                    <div className="flex justify-between">
+                      <span className="text-[var(--muted-foreground)]">Repaying</span>
+                      <span className="mono">
+                        ~{Number(formatUnits(debtToRepay, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} crvUSD
+                      </span>
+                    </div>
+                  )}
+                  {withdrawAmountBn > 0n && (
+                    <div className="flex justify-between">
+                      <span className="text-[var(--muted-foreground)]">Withdrawing</span>
+                      <span className="mono">
+                        {isWithdrawToOtherToken
+                          ? <>{withdrawAmount} {withdrawToken?.symbol}</>
+                          : <>{Number(formatUnits(withdrawAmountBn, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })} {vault.symbol}</>
+                        }
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1918,14 +1996,14 @@ export function LeverageTab({
               } else if (simulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
                 // Re-open cached simulation modal if same block
                 setShowSimulationModal(true);
-              } else {
+              } else if (!quoteLoading) {
                 handleSubmit();
               }
             }}
-            disabled={showApprovalCard || isProcessing || (!isFormValid() && status === "idle")}
+            disabled={showApprovalCard || isProcessing || quoteLoading || (!isFormValid() && status === "idle")}
             className={cn(
               "w-full py-3 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
-              isProcessing || (!isFormValid() && status === "idle")
+              isProcessing || quoteLoading || (!isFormValid() && status === "idle")
                 ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
                 : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
             )}
@@ -2035,9 +2113,7 @@ export function LeverageTab({
         open={showSlippageModal}
         onClose={() => {
           setShowSlippageModal(false);
-          try {
-            setShowSimulationPreview(localStorage.getItem("yldfi-show-simulation") === "true");
-          } catch { /* ignore */ }
+          refreshSimulationPreview();
         }}
         slippage={slippage}
         onSlippageChange={updateSlippage}

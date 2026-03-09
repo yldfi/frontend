@@ -41,7 +41,7 @@ export function clearVaultCurveCache(): void {
  * @param i - Input token index in pool
  * @param j - Output token index in pool
  * @param conservativeBuffer - Reduce input by this factor (default 0.99 = 1% buffer)
- * @returns Redeem amount and estimated swap output
+ * @returns Redeem amount, conservative swap output (buffered), and raw swap output (un-buffered for display)
  */
 export async function batchRedeemAndEstimateSwap(
   vaultAddress: string,
@@ -50,7 +50,7 @@ export async function batchRedeemAndEstimateSwap(
   i: number,
   j: number,
   conservativeBuffer: number = 0.99
-): Promise<{ redeemAmount: bigint; swapOutput: bigint }> {
+): Promise<{ redeemAmount: bigint; swapOutput: bigint; rawSwapOutput: bigint }> {
   // Check pool params cache first
   const cacheKey = poolAddress.toLowerCase();
   const now = Date.now();
@@ -115,10 +115,21 @@ export async function batchRedeemAndEstimateSwap(
     poolParams = cachedParams!.data;
   }
 
-  // Apply conservative buffer to redeem amount
+  // Calculate raw (un-buffered) swap output for accurate display estimates
+  const rawSwapOutput = getDy(
+    i,
+    j,
+    redeemAmount,
+    poolParams.balances,
+    poolParams.Ann,
+    poolParams.fee,
+    poolParams.offpegFeeMultiplier
+  );
+
+  // Apply conservative buffer to redeem amount for min_dy safety
   const conservativeInput = BigInt(Math.floor(Number(redeemAmount) * conservativeBuffer));
 
-  // Calculate swap output using off-chain math
+  // Calculate buffered swap output using off-chain math
   const swapOutput = getDy(
     i,
     j,
@@ -132,5 +143,6 @@ export async function batchRedeemAndEstimateSwap(
   return {
     redeemAmount,
     swapOutput,
+    rawSwapOutput,
   };
 }

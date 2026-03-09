@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useEnsoTokens } from "@/hooks/useEnsoTokens";
 import { useTokenMetadata } from "@/hooks/useTokenMetadata";
@@ -10,6 +10,25 @@ import { cn } from "@/lib/utils";
 import { VAULTS, CURVE_SAVINGS } from "@/config/vaults";
 import type { EnsoToken } from "@/types/enso";
 import { LoadingDots } from "@/components/LoadingDots";
+import { ExternalLink, Copy, Check } from "lucide-react";
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      }}
+      className="text-[var(--muted-foreground)] hover:text-[var(--accent)] transition-colors flex-shrink-0"
+    >
+      {copied ? <Check size={12} /> : <Copy size={12} />}
+    </button>
+  );
+}
 
 // Our vault tokens to show in yld Vaults tab
 const FEATURED_VAULT_TOKENS: EnsoToken[] = Object.values(VAULTS)
@@ -304,9 +323,18 @@ export function TokenSelector({
                   <div className="text-xs text-[var(--muted-foreground)] truncate">{confirmImportToken.name}</div>
                 </div>
               </div>
-              <p className="text-sm text-[var(--muted-foreground)] mb-1">
-                <span className="mono text-xs break-all">{confirmImportToken.address}</span>
-              </p>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="mono text-xs text-[var(--muted-foreground)] break-all">{confirmImportToken.address}</span>
+                <CopyButton text={confirmImportToken.address} />
+                <a
+                  href={`https://etherscan.io/address/${confirmImportToken.address}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[var(--muted-foreground)] hover:text-[var(--accent)] transition-colors flex-shrink-0"
+                >
+                  <ExternalLink size={12} />
+                </a>
+              </div>
               <p className="text-sm text-[var(--muted-foreground)] mb-4">
                 This token isn&apos;t on the default token list. Make sure you&apos;ve verified the contract address before importing.
               </p>

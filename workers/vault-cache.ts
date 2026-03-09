@@ -376,14 +376,9 @@ async function fetchVaultData(env: Env, logger: Logger) {
     ycvxcrv: formatKongVault(YCVXCRV_VAULT, kongData.data.ycvxcrv),
     yscvxcrv: formatKongVault(YSCVXCRV_VAULT, kongData.data.yscvxcrv),
     yscvgcvx: formatKongVault(YSCVGCVX_VAULT, kongData.data.yscvgcvx),
-    yspxcvx: {
-      address: YSPXCVX_VAULT,
-      ...yspxcvxData,
-      tvlUsd: yspxcvxData.tvl * pxCvxPrice,
-    },
+    // yspxcvx excluded until vault is live
     cvxCrvPrice,
     cvgCvxPrice,
-    pxCvxPrice,
     lastUpdated: new Date().toISOString(),
   };
 }

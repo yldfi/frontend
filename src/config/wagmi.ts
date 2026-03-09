@@ -17,8 +17,10 @@ const vnetRpc: string | undefined = process.env.NODE_ENV === "development"
   : undefined;
 
 // Normal transport chain (used as fallback or when VNet is off)
+// When Anvil is set, use it exclusively — no mainnet fallback that would silently
+// return wrong state (mainnet balances, different contract storage, etc.)
 const normalTransport = anvilRpc
-  ? fallback([http(anvilRpc), http(PUBLIC_RPC_URLS.drpc)])
+  ? http(anvilRpc)
   : fallback([
       http(PUBLIC_RPC_URLS.drpc),
       http(PUBLIC_RPC_URLS.publicnode),

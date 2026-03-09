@@ -7,7 +7,7 @@ const isRateLimited = createRateLimiter(60);
 const ALLOWED_ORIGINS = [
   "https://yldfi.co",
   "https://www.yldfi.co",
-  "http://localhost:3000",
+  ...(process.env.NODE_ENV === "development" ? ["http://localhost:3000"] : []),
 ];
 
 function getCorsHeaders(request: NextRequest): Record<string, string> {

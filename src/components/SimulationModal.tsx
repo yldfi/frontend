@@ -36,7 +36,7 @@ interface SimulationModalProps {
 // Asset change row component
 function AssetChangeRow({ change }: { change: SimulationAssetChange }) {
   // Get token logo from Tenderly, vault config, custom tokens, or fallback
-  const customToken = CUSTOM_TOKENS.find(t => t.address.toLowerCase() === change.address.toLowerCase());
+  const customToken = change.address ? CUSTOM_TOKENS.find(t => t.address.toLowerCase() === change.address!.toLowerCase()) : undefined;
   const tokenLogo = change.logo
     || VAULTS[change.symbol.toLowerCase() as keyof typeof VAULTS]?.logo
     || customToken?.logoURI
