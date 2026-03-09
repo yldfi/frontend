@@ -10,7 +10,11 @@
 
 // ── Tokens ──────────────────────────────────────────────────────────
 export const WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2" as const;
+export const USDC_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as const;
 export const CRVUSD_ADDRESS = "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E" as const;
+
+// ── External Vaults ─────────────────────────────────────────────────
+export const YVUSDC1_ADDRESS = "0xBe53A109B494E5c9f97b9Cd39Fe969BE68BF6204" as const; // Yearn V3 yvUSDC-1
 
 // ── Oracles ─────────────────────────────────────────────────────────
 export const CHAINLINK_ETH_USD = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419" as const;

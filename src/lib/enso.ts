@@ -107,13 +107,59 @@ export const ENSO_ROUTER_EXECUTOR = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf"
 // For complex flows needing mid-bundle token pulls, use the V3 Zapper contract.
 export const ENSO_SHORTCUTS = "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003";
 export const CVX_HYBRID_ZAPPER =
-  process.env.NEXT_PUBLIC_CVX_HYBRID_ZAPPER || process.env.CVX_HYBRID_ZAPPER || "0xEE3FF294c7156090F5b2A37acd131FD3DC652182";
+  process.env.NEXT_PUBLIC_CVX_HYBRID_ZAPPER || process.env.CVX_HYBRID_ZAPPER || "0x95AC5F9947F8d68185D1B2503c765e774386f0a6";
 const HYBRID_EXTRA_BUFFER_BPS = Number(process.env.ENSO_HYBRID_EXTRA_BUFFER_BPS ?? "200");
 
 // yld referral code for Enso attribution
 export const ENSO_REFERRAL_CODE = "yldfi";
 
 import { WETH_ADDRESS, CRVUSD_ADDRESS, CURVE_CVX_ETH_POOL } from "@/config/addresses";
+
+/**
+ * Check if a token address is native ETH (the 0xeee...eee sentinel).
+ * When ETH is the output of an Enso bundle route action, the weiroll VM's
+ * slippage check fails because ETH is sent to the user before the check
+ * reads the balance at EnsoShortcuts (which is 0). The fix is to route to
+ * WETH instead and append a `wrapped-native/redeem` action to unwrap.
+ */
+const isNativeETH = (token: string) =>
+  token.toLowerCase() === ETH_ADDRESS.toLowerCase();
+
+/**
+ * If the last route action targets ETH, rewrite it to target WETH and
+ * append a wrapped-native/redeem action to unwrap WETH → ETH.
+ * This avoids the weiroll slippage check failure for native ETH output.
+ */
+function appendETHUnwrapIfNeeded(actions: EnsoBundleAction[], outputToken: string): EnsoBundleAction[] {
+  if (!isNativeETH(outputToken)) return actions;
+
+  // Find the last route action and change tokenOut to WETH
+  const lastRouteIdx = actions.length - 1;
+  const lastAction = actions[lastRouteIdx];
+  if (lastAction.protocol === "enso" && lastAction.action === "route") {
+    actions[lastRouteIdx] = {
+      ...lastAction,
+      args: {
+        ...lastAction.args,
+        tokenOut: WETH_ADDRESS.toLowerCase(),
+      },
+    };
+  }
+
+  // Append wrapped-native/redeem to unwrap WETH → ETH
+  actions.push({
+    protocol: "wrapped-native",
+    action: "redeem",
+    args: {
+      tokenIn: WETH_ADDRESS.toLowerCase(),
+      tokenOut: ETH_ADDRESS,
+      amountIn: { useOutputOfCallAt: lastRouteIdx },
+      primaryAddress: WETH_ADDRESS.toLowerCase(),
+    },
+  });
+
+  return actions;
+}
 
 const CRV_ADDRESS = "0xD533a949740bb3306d119CC777fa900bA034cd52";
 const CURVE_TRICRV_POOL = "0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14";
@@ -129,6 +175,15 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
     symbol: "ETH",
     decimals: 18,
     logoURI: "https://assets.coingecko.com/coins/images/279/thumb/ethereum.png",
+    type: "base",
+  },
+  {
+    address: WETH_ADDRESS,
+    chainId: 1,
+    name: "Wrapped Ether",
+    symbol: "WETH",
+    decimals: 18,
+    logoURI: "https://assets.coingecko.com/coins/images/2518/thumb/weth.png",
     type: "base",
   },
   {
@@ -620,6 +675,26 @@ export async function fetchTokenPrices(addresses: string[]): Promise<EnsoTokenPr
 }
 
 /**
+ * Fetch token prices bypassing the rate-limited queue.
+ * Use only in contexts where queue contention would cause timeouts (e.g., simulation API).
+ */
+export async function fetchTokenPricesDirect(addresses: string[]): Promise<EnsoTokenPrice[]> {
+  if (addresses.length === 0) return [];
+  const priceData = await ensoClient.getMultiplePriceData({
+    chainId: CHAIN_ID,
+    addresses: addresses as `0x${string}`[],
+  });
+  return priceData.map((p) => ({
+    chainId: p.chainId,
+    address: p.address,
+    price: Number(p.price),
+    decimals: p.decimals,
+    symbol: p.symbol,
+    name: undefined,
+  }));
+}
+
+/**
  * Fetch available tokens from Enso API using SDK
  */
 export async function fetchTokens(params?: {
@@ -884,19 +959,8 @@ async function rpcWithFallback<T = unknown>(body: unknown): Promise<T> {
   throw lastError ?? new Error("All RPC URLs failed");
 }
 
-const clampVaultAmountIn = async (vault: string, amountIn: string): Promise<string> => {
-  if (!isDevEnv()) {
-    return amountIn;
-  }
-  const totalSupply = await getErc20TotalSupply(vault);
-  const requested = BigInt(amountIn);
-  if (totalSupply === 0n) {
-    return amountIn;
-  }
-  return requested > totalSupply ? totalSupply.toString() : amountIn;
-};
-
-const clampTokenAmountIn = async (token: string, amountIn: string): Promise<string> => {
+/** Dev-only: clamp amountIn to token/vault totalSupply to prevent simulation errors */
+const clampAmountIn = async (token: string, amountIn: string): Promise<string> => {
   if (!isDevEnv()) {
     return amountIn;
   }
@@ -1076,7 +1140,7 @@ export async function fetchZapOutRoute(params: {
   underlyingToken?: string; // defaults to cvxCRV
 }): Promise<EnsoBundleResponse> {
   const underlying = params.underlyingToken || CVXCRV_ADDRESS;
-  const amountIn = await clampVaultAmountIn(params.vaultAddress, params.amountIn);
+  const amountIn = await clampAmountIn(params.vaultAddress, params.amountIn);
 
   const actions: EnsoBundleAction[] = [
     // Step 1: Redeem from vault to get underlying token (cvxCRV)
@@ -1090,7 +1154,7 @@ export async function fetchZapOutRoute(params: {
         primaryAddress: params.vaultAddress,
       },
     },
-    // Step 2: Swap underlying (cvxCRV) to output token (ETH, USDC, etc.)
+    // Step 2: Swap underlying (cvxCRV) to output token
     {
       protocol: "enso",
       action: "route",
@@ -1102,6 +1166,9 @@ export async function fetchZapOutRoute(params: {
       },
     },
   ];
+
+  // For ETH output: route to WETH + unwrap (avoids weiroll slippage check failure)
+  appendETHUnwrapIfNeeded(actions, params.outputToken);
 
   return fetchBundle({
     fromAddress: params.fromAddress,
@@ -1124,7 +1191,7 @@ export async function fetchZapInRoute(params: {
   underlyingToken?: string; // defaults to cvxCRV
 }): Promise<EnsoBundleResponse> {
   const underlying = params.underlyingToken || CVXCRV_ADDRESS;
-  const amountIn = await clampTokenAmountIn(params.inputToken, params.amountIn);
+  const amountIn = await clampAmountIn(params.inputToken, params.amountIn);
 
   const actions: EnsoBundleAction[] = [
     // Step 1: Swap input token to underlying (cvxCRV)
@@ -1185,7 +1252,7 @@ export async function fetchVaultToVaultRoute(params: {
   const sourceUnderlying = params.sourceUnderlyingToken ?? sourceVaultConfig?.assetAddress ?? TOKENS.CVXCRV;
   const targetUnderlying = params.targetUnderlyingToken ?? targetVaultConfig?.assetAddress ?? TOKENS.CVXCRV;
   const slippage = params.slippage ?? "100";
-  const amountIn = await clampVaultAmountIn(params.sourceVault, params.amountIn);
+  const amountIn = await clampAmountIn(params.sourceVault, params.amountIn);
 
   // Same-underlying vault-to-vault: simple redeem → deposit (no swap needed)
   const sameUnderlying = sourceUnderlying.toLowerCase() === targetUnderlying.toLowerCase();
@@ -1344,7 +1411,6 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
 
   // Validate slippage parameter
   const slippageBps = validateSlippage(params.slippage);
-  const _totalSlippageBps = getBufferedSlippageBps(slippageBps);
 
   // Get symbols for route info
   const sourceVaultSymbol = getTokenSymbol(params.sourceVault);
@@ -1368,8 +1434,8 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
   const conservativeCvx = BigInt(applySlippageBuffer(BigInt(estimatedCvx), slippageBps));
 
   // CVX wraps 1:1 to CVX1
-  // Estimate cvgCVX output from Curve swap (CVX1 → cvgCVX)
-  const expectedCvgCvx = await getCurveGetDy(
+  // Conservative estimate for min_dy (with slippage buffer)
+  const conservativeCvgCvx = await getCurveGetDy(
     TANGENT.CVX1_CVGCVX_POOL,
     0, // CVX1 index
     1, // cvgCVX index
@@ -1377,21 +1443,28 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
   );
 
   // CRITICAL: Throw if estimation fails or returns zero - never use min_dy=0
-  if (expectedCvgCvx === null || expectedCvgCvx === 0n) {
+  if (conservativeCvgCvx === null || conservativeCvgCvx === 0n) {
     throw new Error("Failed to estimate Curve CVX1→cvgCVX swap output for slippage protection");
   }
 
-  // Calculate swap bonus: (output / input - 1) * 100
-  // CVX wraps 1:1 to CVX1, so compare cvgCVX output to CVX input
-  const swapBonus = (Number(expectedCvgCvx) / Number(conservativeCvx) - 1) * 100;
+  // Un-buffered estimate for display (more accurate price impact)
+  const displayCvgCvx = await getCurveGetDy(
+    TANGENT.CVX1_CVGCVX_POOL,
+    0, 1,
+    estimatedCvx
+  );
+  const expectedCvgCvx = displayCvgCvx ?? conservativeCvgCvx;
+
+  // Calculate swap bonus using un-buffered estimates for display accuracy
+  const swapBonus = (Number(expectedCvgCvx) / Number(BigInt(estimatedCvx)) - 1) * 100;
 
   // Calculate bonus amount in tokens (cvgCVX received - CVX input)
   // Positive = extra tokens from swap, Negative = fewer tokens than 1:1 mint
-  const bonusAmountWei = expectedCvgCvx - conservativeCvx;
+  const bonusAmountWei = expectedCvgCvx - BigInt(estimatedCvx);
   const bonusAmountFormatted = (Number(bonusAmountWei) / 1e18).toFixed(4);
 
-  // Calculate min_dy with slippage tolerance
-  const minDyCvgCvx = calculateMinDy(expectedCvgCvx, slippageBps);
+  // Calculate min_dy with slippage tolerance (use conservative estimate for safety)
+  const minDyCvgCvx = calculateMinDy(conservativeCvgCvx, slippageBps);
 
   // Note: Using concrete estimates for amounts to help Enso simulate the bundle correctly
   const actions: EnsoBundleAction[] = [
@@ -1476,20 +1549,48 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
     },
   ];
 
+  // Use skipQuote to bypass Enso's simulation which fails with complex output chaining.
+  // The bundle uses useOutputOfCallAt across 8 actions, which Enso's simulator can't handle.
   const bundle = await fetchBundle({
     fromAddress: params.fromAddress,
     actions,
     routingStrategy: "router",
+    skipQuote: true,
   });
 
-  // Build route info showing the actual path
+  // Manually calculate amountsOut since skipQuote returns null
+  // Use previewDeposit to convert estimated cvgCVX → vault shares
+  let expectedShares: string = expectedCvgCvx.toString();
+  try {
+    const previewDepositSelector = "0xef8b30f7"; // previewDeposit(uint256)
+    const previewData = previewDepositSelector + expectedCvgCvx.toString(16).padStart(64, "0");
+    const previewResult = await rpcWithFallback<{ result?: string }>({
+      jsonrpc: "2.0", id: 1, method: "eth_call",
+      params: [{ to: params.targetVault, data: previewData }, "latest"],
+    });
+    if (previewResult.result && previewResult.result !== "0x") {
+      expectedShares = BigInt(previewResult.result).toString();
+    }
+  } catch {
+    // Fall back to cvgCVX amount if previewDeposit fails
+  }
+
+  bundle.amountsOut = {
+    [params.targetVault.toLowerCase()]: expectedShares,
+    [TOKENS.CVGCVX.toLowerCase()]: expectedCvgCvx.toString(),
+  };
+
+  // Format amounts for route display
+  const formatWei = (wei: string | bigint) => (Number(wei) / 1e18).toFixed(4);
+
+  // Build route info showing the actual path with per-step amounts
   const routeInfo: RouteInfo = {
     steps: [
-      { tokenSymbol: sourceVaultSymbol, action: "Redeem", description: `${sourceVaultSymbol} for ${sourceUnderlyingSymbol}`, protocol: "yld" },
-      { tokenSymbol: sourceUnderlyingSymbol, action: "Swap", description: `${sourceUnderlyingSymbol} for CVX`, protocol: "Enso" },
-      { tokenSymbol: "CVX", action: "Swap", description: "CVX → CVX1 → cvgCVX", protocol: "LiquidBoost", bonus: swapBonus, bonusAmount: bonusAmountFormatted, bonusSymbol: "cvgCVX" },
-      { tokenSymbol: "cvgCVX", action: "Deposit", description: `cvgCVX into ${targetVaultSymbol} vault`, protocol: "yld" },
-      { tokenSymbol: targetVaultSymbol, action: "Receive", description: "vault shares", protocol: "yld" },
+      { tokenSymbol: sourceVaultSymbol, action: "Redeem", description: `${sourceVaultSymbol} for ${sourceUnderlyingSymbol}`, protocol: "yld", amount: formatWei(params.amountIn) },
+      { tokenSymbol: sourceUnderlyingSymbol, action: "Swap", description: `${sourceUnderlyingSymbol} for CVX`, protocol: "Enso", amount: formatWei(estimatedUnderlying) },
+      { tokenSymbol: "CVX", action: "Swap", description: "CVX → CVX1 → cvgCVX", protocol: "LiquidBoost", amount: formatWei(estimatedCvx), bonus: swapBonus, bonusAmount: bonusAmountFormatted, bonusSymbol: "cvgCVX" },
+      { tokenSymbol: "cvgCVX", action: "Deposit", description: `cvgCVX into ${targetVaultSymbol} vault`, protocol: "yld", amount: formatWei(expectedCvgCvx) },
+      { tokenSymbol: targetVaultSymbol, action: "Receive", description: "vault shares", protocol: "yld", amount: formatWei(expectedShares) },
     ],
     tokens: [sourceVaultSymbol, sourceUnderlyingSymbol, "CVX", "cvgCVX", targetVaultSymbol],
     protocols: ["yld", "Enso", "Curve", "yld"],
@@ -1534,7 +1635,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
   // Uses off-chain StableSwap math for getDy calculation
   // Apply slippage buffer dynamically based on user's slippage setting
   const bufferMultiplier = 1 - slippageBps / 10000;
-  const { redeemAmount: _cvgCvxAmount, swapOutput: estimatedCvx1 } = await batchRedeemAndEstimateSwap(
+  const { redeemAmount: _cvgCvxAmount, swapOutput: estimatedCvx1, rawSwapOutput: rawEstimatedCvx1 } = await batchRedeemAndEstimateSwap(
     params.sourceVault,
     params.amountIn,
     TANGENT.CVX1_CVGCVX_POOL,
@@ -1730,6 +1831,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
   let expectedCvxCrvOutput: bigint | null = null;
 
   if (targetIsCvxCrv) {
+    // Estimate chain for min_dy safety values (conservative, with slippage buffers)
     const expectedWeth = await estimateCryptoSwapOffchain(
       CURVE_CVX_ETH_POOL,
       1, // CVX index
@@ -1769,8 +1871,14 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
       throw new Error("Failed to estimate CRV→cvxCRV output from Curve cvxCRV pool");
     }
 
-    // Save for amountsOut after fetchBundle
-    expectedCvxCrvOutput = expectedCvxCrv;
+    // Separate un-buffered estimate chain for display (accurate price impact)
+    // Uses rawEstimatedCvx1 — no conservative buffer applied at any step
+    const displayWeth = await estimateCryptoSwapOffchain(CURVE_CVX_ETH_POOL, 1, 0, rawEstimatedCvx1);
+    const displayCrv = displayWeth > 0n ? await getCurveGetDyFactory(CURVE_TRICRV_POOL, 1, 2, displayWeth.toString()) : null;
+    const displayCvxCrv = displayCrv ? await getCurveGetDy(CURVE_CRV_CVXCRV_POOL, 0, 1, displayCrv.toString()) : null;
+
+    // Use un-buffered estimate for display, fall back to conservative if unavailable
+    expectedCvxCrvOutput = displayCvxCrv ?? expectedCvxCrv;
 
     const minDyCvxCrv = calculateMinDy(expectedCvxCrv, slippageBps);
 
@@ -3871,7 +3979,7 @@ export async function fetchCvgCvxZapOutRoute(params: {
 }): Promise<EnsoBundleResponse> {
   const { TANGENT } = await import("@/config/vaults");
   const slippageBps = parseInt(params.slippage ?? "100", 10);
-  const amountIn = await clampVaultAmountIn(params.vaultAddress, params.amountIn);
+  const amountIn = await clampAmountIn(params.vaultAddress, params.amountIn);
 
   // Check if output is already CVX - skip final route step
   const outputIsCvx = params.outputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
@@ -4244,7 +4352,7 @@ export async function fetchCvgCvxZapOutRoute(params: {
         args: [{ useOutputOfCallAt: 2 }, ENSO_ROUTER_EXECUTOR],
       },
     },
-    // Action 5: Swap CVX to output token (ETH, USDC, etc.)
+    // Action 5: Swap CVX to output token
     // useOutputOfCallAt tells Enso CVX comes from the unwrap action, not from the user
     {
       protocol: "enso",
@@ -4257,6 +4365,9 @@ export async function fetchCvgCvxZapOutRoute(params: {
       },
     },
   ];
+
+  // For ETH output: route to WETH + unwrap (avoids weiroll slippage check failure)
+  appendETHUnwrapIfNeeded(actions, params.outputToken);
 
   const bundleResult = await fetchBundle({
     fromAddress: params.fromAddress,
@@ -4336,7 +4447,7 @@ export async function fetchPxCvxZapOutRoute(params: {
   // Validate slippage parameter
   const slippageBps = validateSlippage(params.slippage);
 
-  const amountIn = await clampVaultAmountIn(params.vaultAddress, params.amountIn);
+  const amountIn = await clampAmountIn(params.vaultAddress, params.amountIn);
 
   // Check if output is already CVX - skip final route step
   const outputIsCvx = params.outputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
@@ -4437,6 +4548,9 @@ export async function fetchPxCvxZapOutRoute(params: {
         slippage: params.slippage ?? "100",
       },
     });
+
+    // For ETH output: route to WETH + unwrap (avoids weiroll slippage check failure)
+    appendETHUnwrapIfNeeded(actions, params.outputToken);
   }
 
   return fetchBundle({

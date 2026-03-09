@@ -1,35 +1,33 @@
 "use client";
 
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAccount, usePublicClient, useWaitForTransactionReceipt } from "wagmi";
-import { useVNetSendTransaction as useSendTransaction } from "@/hooks/useVNetSendTransaction";
-import { useVNetWriteContract as useWriteContract } from "@/hooks/useVNetWriteContract";
+import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
 import { maxUint256 } from "viem";
 import {
-  fetchAddCollateralWithSwapBundle,
-  fetchCreateLoanWithSwapBundle,
-  fetchCreateLoanWithOutputSwapBundle,
   fetchRepayBundle,
   fetchRepayWithSwapBundle,
-  getVaultInfo,
   CURVE_CONTROLLERS,
 } from "@/lib/curve-lending";
 import { TOKENS, getVaultByAddress } from "@/config/vaults";
 import { ERC20_APPROVAL_ABI, CONTROLLER_APPROVE_ABI } from "@/lib/abis";
 import { ETH_ADDRESS, ENSO_ROUTER_EXECUTOR } from "@/lib/enso";
-import { CRVUSD_ADDRESS, ZAPPER_V3_ADDRESS, ZAPPER_ABI, fetchZapperSwapData, buildExoticOutputSwapData, getDeadline } from "@/lib/zapper";
+import { ZAPPER_ADDRESS, ZAPPER_ABI, fetchZapperSwapData, buildExoticOutputSwapData, getDeadline } from "@/lib/zapper";
+import { CRVUSD_ADDRESS, WETH_ADDRESS } from "@/config/addresses";
 import type { EnsoBundleResponse, SimulationResult } from "@/types/enso";
-import { useTenderly } from "@/contexts/TenderlyContext";
-import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
+import { useTestNetwork } from "@/contexts/TestNetworkContext";
+import { useSendTx } from "@/hooks/useSendTx";
 import { runVNetSimulation } from "@/lib/vnet-simulation";
 import { snapshotTx, logTxDiff } from "@/lib/dev-logging";
+import { parseEnsoError, parseSwapFailedError, parseErrorMessage, runTenderlySimulation, checkAllowance, anvilCall } from "@/lib/tx-utils";
 
 async function devEthCall(
   publicClient: ReturnType<typeof usePublicClient>,
   params: { account: `0x${string}`; to: `0x${string}`; data: `0x${string}`; value?: bigint },
 ): Promise<{ ok: true } | { ok: false; errorMessage: string }> {
   try {
-    await publicClient!.call(params);
+    await anvilCall(publicClient!, params);
     if (process.env.NODE_ENV === "development") console.log("[eth_call]", { ok: true, to: params.to });
     return { ok: true };
   } catch (err: unknown) {
@@ -44,8 +42,15 @@ async function devEthCall(
         if (process.env.NODE_ENV === "development") console.log("[eth_call] Enso error", { step: enso.step, target: enso.target, message: enso.message });
         msg = `enso:${enso.message}`; // prefix so parseErrorMessage can match
       } else {
-        // Append raw hex so parseErrorMessage regex can find it
-        msg = msg + " custom error " + revertData;
+        // Try unwrapping SwapFailed(bytes) → inner Enso ExecutionFailed
+        const swapFailed = parseSwapFailedError(revertData.replace(/^0x/, ""));
+        if (swapFailed) {
+          if (process.env.NODE_ENV === "development") console.log("[eth_call] SwapFailed → Enso error", { step: swapFailed.step, target: swapFailed.target, message: swapFailed.message });
+          msg = `enso:${swapFailed.message}`; // prefix so parseErrorMessage can match
+        } else {
+          // Append raw hex so parseErrorMessage regex can find it
+          msg = msg + " custom error " + revertData;
+        }
       }
     }
     if (process.env.NODE_ENV === "development") console.log("[eth_call]", { ok: false, to: params.to, error: msg.slice(0, 300), revertData: revertData?.slice(0, 100) });
@@ -84,7 +89,7 @@ export interface UseCurveLendingActionsResult {
     debtAmount: string,
     bands: number,
     slippage?: number,
-    options?: { previewOnly?: boolean; tokenSymbol?: string }
+    options?: { previewOnly?: boolean; tokenSymbol?: string; decimals?: number }
   ) => Promise<SimulationResult | null>;
   createLoanWithOutputSwap: (
     vaultAddress: `0x${string}`,
@@ -94,7 +99,7 @@ export interface UseCurveLendingActionsResult {
     bands: number,
     tokenOut: string,
     slippage?: number,
-    options?: { previewOnly?: boolean; tokenSymbol?: string }
+    options?: { previewOnly?: boolean; tokenSymbol?: string; decimals?: number }
   ) => Promise<SimulationResult | null>;
   addCollateral: (
     vaultAddress: `0x${string}`,
@@ -111,7 +116,7 @@ export interface UseCurveLendingActionsResult {
     tokenIn: string,
     amountIn: string,
     slippage?: number,
-    options?: { previewOnly?: boolean; tokenSymbol?: string }
+    options?: { previewOnly?: boolean; tokenSymbol?: string; decimals?: number }
   ) => Promise<SimulationResult | null>;
   removeCollateralAndSwap: (
     vaultAddress: `0x${string}`,
@@ -197,245 +202,20 @@ export interface UseCurveLendingActionsResult {
   executeAfterPreview: () => Promise<void>;
 }
 
-// Decode Enso Shortcuts error: error(uint256 step, address target, string message)
-// Selector: 0xef3dcb2f
-function parseEnsoError(hexData: string): { step: number; target: string; message: string } | null {
-  const data = hexData.replace(/^0x/, "").replace(/\.\s*$/, "");
-  // Must start with ef3dcb2f selector
-  if (!data.toLowerCase().startsWith("ef3dcb2f")) return null;
-  const body = data.slice(8); // remove selector
-  if (body.length < 192) return null; // need at least 3 words + string length + data
-  const step = parseInt(body.slice(0, 64), 16);
-  const target = "0x" + body.slice(88, 128); // address is right-padded in 32 bytes
-  const strOffset = parseInt(body.slice(128, 192), 16) * 2; // byte offset → hex offset
-  const strLenHex = body.slice(192, 256);
-  const strLen = parseInt(strLenHex, 16);
-  if (strLen > 0 && strLen <= 256 && 256 + strLen * 2 <= body.length) {
-    const strHex = body.slice(256, 256 + strLen * 2);
-    try {
-      const message = strHex.match(/.{2}/g)!.map(b => String.fromCharCode(parseInt(b, 16))).join("");
-      if (/^[\x20-\x7e]+$/.test(message)) {
-        return { step, target, message };
-      }
-    } catch { /* invalid */ }
-  }
-  return null;
-}
-
-// Fallback: scan ABI-encoded hex for any embedded string
-function extractStringFromHex(hex: string): string | null {
-  const data = hex.replace(/^0x/, "").replace(/^[0-9a-f]{8}/i, "");
-  for (let i = 0; i < data.length - 64; i += 64) {
-    const possibleLen = parseInt(data.slice(i, i + 64), 16);
-    if (possibleLen > 0 && possibleLen <= 256 && i + 64 + possibleLen * 2 <= data.length) {
-      const strHex = data.slice(i + 64, i + 64 + possibleLen * 2);
-      try {
-        const decoded = strHex.match(/.{2}/g)!.map(b => String.fromCharCode(parseInt(b, 16))).join("");
-        if (decoded.length > 2 && /^[\x20-\x7e]+$/.test(decoded)) return decoded;
-      } catch { /* not valid utf8 */ }
-    }
-  }
-  return null;
-}
-
-function parseErrorMessage(error: unknown): string {
-  if (!error) return "Unknown error";
-
-  const errorStr = String(error);
-  const lower = errorStr.toLowerCase();
-
-  // User rejection
-  if (lower.includes("user rejected") || lower.includes("user denied")) {
-    return "Transaction cancelled";
-  }
-
-  // Insufficient balance
-  if (lower.includes("insufficient") || lower.includes("exceeds balance")) {
-    return "Insufficient balance";
-  }
-
-  // Slippage
-  if (lower.includes("slippage") || lower.includes("insufficient_output")) {
-    return "Price moved too much. Try increasing slippage.";
-  }
-
-  // Health check
-  if (lower.includes("health")) {
-    return "Position would be unhealthy";
-  }
-
-  // Pre-parsed Enso error from devEthCall (enso:Message format)
-  const ensoPrefixMatch = errorStr.match(/enso:(.+)/);
-  if (ensoPrefixMatch) {
-    const ensoMsg = ensoPrefixMatch[1].toLowerCase();
-    if (ensoMsg.includes("condition not met") || ensoMsg.includes("return amount is not enough")) {
-      return "Swap output below minimum. Try increasing slippage.";
-    }
-    if (ensoMsg.includes("call failed")) return "Swap route failed. Try increasing slippage or use a different token.";
-    return `Transaction failed: ${ensoPrefixMatch[1]}`;
-  }
-
-  // Parse Enso Shortcuts custom error from hex: error(uint256 step, address target, string message)
-  const ensoHexMatch = errorStr.match(/custom error 0xef3dcb2f[:\s]*([0-9a-f.]+)/i);
-  if (ensoHexMatch) {
-    const parsed = parseEnsoError("ef3dcb2f" + ensoHexMatch[1].replace(/\.\s*$/, ""));
-    if (parsed) {
-      if (process.env.NODE_ENV === "development") console.log("[Enso error]", { step: parsed.step, target: parsed.target, message: parsed.message });
-      const msg = parsed.message.toLowerCase();
-      if (msg.includes("condition not met") || msg.includes("return amount is not enough")) {
-        return "Swap output below minimum. Try increasing slippage.";
-      }
-      if (msg.includes("call failed")) {
-        return "Swap route failed. Try increasing slippage or use a different token.";
-      }
-      return `Transaction failed: ${parsed.message}`;
-    }
-  }
-
-  // Generic Enso/DEX assertion failures (when hex parsing fails)
-  if (lower.includes("condition not met") || lower.includes("return amount is not enough")) {
-    return "Swap output below minimum. Try increasing slippage.";
-  }
-  if (lower.includes("call failed")) {
-    return "Swap route failed. Try increasing slippage or use a different token.";
-  }
-
-  // Other custom errors with hex data — try to extract embedded string
-  const customErrorMatch = errorStr.match(/custom error (0x[0-9a-f]+):\s*([0-9a-f]+)/i);
-  if (customErrorMatch) {
-    const extracted = extractStringFromHex(customErrorMatch[1] + customErrorMatch[2]);
-    if (extracted) return `Transaction failed: ${extracted}`;
-  }
-
-  // Generic revert — try to extract the reason string
-  if (lower.includes("revert")) {
-    // viem format: reason="..." or reverted with reason string '...'
-    const match = errorStr.match(/reason="([^"]+)"/) || errorStr.match(/reason string '([^']+)'/) || errorStr.match(/reverted[^:]*:\s*(.+?)(?:\n|$)/i);
-    if (match) return `Transaction failed: ${match[1].trim()}`;
-  }
-
-  return "Transaction failed. Please try again.";
-}
-
-// Run Tenderly simulation
-async function runTenderlySimulation(
-  userAddress: string,
-  txTo: string,
-  txData: string,
-  txValue: string,
-  inputToken: string
-): Promise<{ ok: boolean; result: SimulationResult | null; errorMessage?: string }> {
-  try {
-    // Get nonce first
-    const nonceResponse = await fetch("/api/simulate/nonce", {
-      method: "GET",
-      headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(5_000), // 5s timeout
-    });
-    const nonceResult = (await nonceResponse.json()) as {
-      success: boolean;
-      nonce?: string;
-      expires?: number;
-      sig?: string;
-    };
-
-    if (!nonceResult.success || !nonceResult.nonce || !nonceResult.expires || !nonceResult.sig) {
-      return { ok: false, result: null, errorMessage: "Failed to obtain simulation nonce" };
-    }
-
-    // Run simulation
-    const response = await fetch("/api/simulate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: userAddress,
-        to: txTo,
-        data: txData,
-        value: txValue,
-        inputToken,
-        nonce: nonceResult.nonce,
-        expires: nonceResult.expires,
-        sig: nonceResult.sig,
-      }),
-      signal: AbortSignal.timeout(20_000), // 20s timeout (> backend's 15s to prefer its error handling)
-    });
-
-    const result = (await response.json()) as SimulationResult & { retryable?: boolean };
-
-    if (process.env.NODE_ENV === "development") {
-      console.log("[Tenderly Simulation - Lending]", {
-        success: result.success,
-        simulationId: result.simulationId,
-        tenderlyUrl: result.tenderlyUrl,
-        gasUsed: result.gasUsed,
-        errorMessage: result.errorMessage,
-        assetChanges: result.assetChanges?.length ?? 0,
-      });
-    }
-
-    if (result.success) {
-      return { ok: true, result };
-    }
-    const msg = result.errorMessage;
-    const errorStr = typeof msg === "string" ? msg : msg?.message ?? "Simulation failed";
-    return { ok: false, result, errorMessage: errorStr };
-  } catch (error) {
-    return {
-      ok: false,
-      result: null,
-      errorMessage: error instanceof Error ? error.message : "Simulation failed",
-    };
-  }
-}
-
-// Check allowance for a token against a spender
-async function checkAllowance(
-  publicClient: ReturnType<typeof usePublicClient>,
-  owner: `0x${string}`,
-  token: `0x${string}`,
-  spender: `0x${string}`
-): Promise<bigint> {
-  if (!publicClient) return 0n;
-  try {
-    const allowance = await publicClient.readContract({
-      address: token,
-      abi: ERC20_APPROVAL_ABI,
-      functionName: "allowance",
-      args: [owner, spender],
-    });
-    return allowance as bigint;
-  } catch {
-    return 0n;
-  }
-}
 
 export function useCurveLendingActions(): UseCurveLendingActionsResult {
   const { address, chainId } = useAccount();
   const publicClient = usePublicClient();
-  const { sendTransactionAsync } = useSendTransaction();
-  const { testNetworkType } = useTenderly();
-  const { isFlashbotsEnabled, sendViaFlashbots } = useFlashbotsProtect();
+  const queryClient = useQueryClient();
+  const { testNetworkType } = useTestNetwork();
+  const { sendTx } = useSendTx();
 
-  // Flashbots-aware transaction sender: routes through private mempool on mainnet
-  const sendTx = useCallback(async (
-    txParams: { to: `0x${string}`; data: `0x${string}`; value?: bigint }
-  ): Promise<`0x${string}`> => {
-    if (isFlashbotsEnabled && testNetworkType === null && chainId === 1) {
-      try {
-        return await sendViaFlashbots(txParams);
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        // Wallet doesn't support eth_signTransaction — fall back to regular send
-        const isUnsupportedMethod = errorMsg.includes("eth_signTransaction") &&
-          (errorMsg.includes("not supported") || errorMsg.includes("does not exist"));
-        if (isUnsupportedMethod) {
-          return sendTransactionAsync(txParams);
-        }
-        throw err;
-      }
-    }
-    return sendTransactionAsync(txParams);
-  }, [isFlashbotsEnabled, sendViaFlashbots, sendTransactionAsync, testNetworkType, chainId]);
+  // Invalidate balance queries after a successful tx so UI updates immediately
+  const invalidateBalances = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["onchain-balances"] });
+    queryClient.invalidateQueries({ queryKey: ["enso-wallet-balances"] });
+    queryClient.invalidateQueries({ queryKey: ["curveLendingPosition"] });
+  }, [queryClient]);
 
   const [status, setStatus] = useState<LendingStatus>("idle");
   const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
@@ -443,6 +223,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
   const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
   const [pendingBundle, setPendingBundle] = useState<EnsoBundleResponse | null>(null);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+  const [approvalQueue, setApprovalQueue] = useState<PendingApproval[]>([]);
   const [approvalProgress, setApprovalProgress] = useState<{
     step: number;
     total: number;
@@ -450,6 +231,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
   } | null>(null);
   const [pendingInputToken, setPendingInputToken] = useState<string | null>(null);
   const [pendingController, setPendingController] = useState<`0x${string}` | null>(null);
+  // Stored action to execute after all approvals in the queue complete
+  const pendingActionRef = useRef<(() => Promise<SimulationResult | null>) | null>(null);
 
   // Approve contract
   const {
@@ -493,9 +276,11 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     setSimulationResult(null);
     setPendingBundle(null);
     setPendingApproval(null);
+    setApprovalQueue(q => q.length === 0 ? q : []);
     setApprovalProgress(null);
     setPendingInputToken(null);
     setPendingController(null);
+    pendingActionRef.current = null;
     resetApprove();
   }, [resetApprove]);
 
@@ -504,6 +289,30 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     setStatus("idle");
     setError(null);
   }, []);
+
+  // Queue approvals or run action immediately if all approvals are satisfied.
+  // Returns null if approvals are queued (caller should return null too).
+  const queueApprovalsOrRun = (
+    allApprovals: { approval: PendingApproval; needed: boolean; label: string; description: string; spender: string }[],
+    action: () => Promise<SimulationResult | null>
+  ): Promise<SimulationResult | null> | null => {
+    const total = allApprovals.length;
+    const steps = allApprovals.map((a) => ({ label: a.label, description: a.description, done: !a.needed, spender: a.spender }));
+    const missing = allApprovals.filter((a) => a.needed);
+
+    if (missing.length > 0) {
+      const firstNeededIdx = allApprovals.findIndex((a) => a.needed);
+      setApprovalProgress({ step: firstNeededIdx + 1, total, steps });
+      setPendingApproval(missing[0].approval);
+      setApprovalQueue(missing.slice(1).map((a) => a.approval));
+      pendingActionRef.current = action;
+      setStatus("needsApproval");
+      return null;
+    }
+
+    setApprovalProgress(null);
+    return action();
+  };
 
   // Approve using the pending approval info — supports both ERC20 and controller approval
   // When exactApproval is true and amount is available, approve only the needed amount
@@ -535,6 +344,38 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
   // Execute the pending bundle after approval
   const executeAfterApproval = useCallback(async () => {
+    // If more approvals in queue, show the next one
+    if (approvalQueue.length > 0) {
+      const [next, ...rest] = approvalQueue;
+      setPendingApproval(next);
+      setApprovalQueue(rest);
+      if (approvalProgress) {
+        const updatedSteps = approvalProgress.steps.map((s, i) =>
+          i < approvalProgress.step ? { ...s, done: true } : s
+        );
+        setApprovalProgress({ ...approvalProgress, step: approvalProgress.step + 1, steps: updatedSteps });
+      }
+      setStatus("needsApproval");
+      resetApprove();
+      return;
+    }
+
+    // All approvals done — if we have a stored action (swap paths), run it
+    if (pendingActionRef.current) {
+      setPendingApproval(null);
+      setApprovalProgress(null);
+      const action = pendingActionRef.current;
+      pendingActionRef.current = null;
+      try {
+        await action();
+      } catch (err) {
+        setError(parseErrorMessage(err));
+        setStatus("error");
+      }
+      return;
+    }
+
+    // Fallback: direct bundle execution (non-swap paths like direct create_loan)
     if (!pendingBundle || !publicClient || !address || !pendingInputToken) {
       setError("No pending transaction");
       setStatus("error");
@@ -544,6 +385,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     try {
       // Clear approval state
       setPendingApproval(null);
+      setApprovalProgress(null);
 
       // Simulate: mainnet → REST API, tenderly VNet → RPC sim, anvil → eth_call only
       const bundleTxParams = {
@@ -639,6 +481,15 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         pollingInterval: 1_000,
       });
 
+      // Set status BEFORE dev snapshot — snapshot is async and yields control,
+      // allowing position queries to refetch and unmount the tab component
+      if (receipt.status === "success") {
+        setStatus("success");
+        invalidateBalances();
+      } else {
+        setStatus("reverted");
+        setError("Transaction reverted");
+      }
       if (process.env.NODE_ENV === "development") {
         console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
         if (snapBefore && address) {
@@ -646,17 +497,11 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           logTxDiff("Lending TX", snapBefore, snapAfter);
         }
       }
-      if (receipt.status === "success") {
-        setStatus("success");
-      } else {
-        setStatus("reverted");
-        setError("Transaction reverted");
-      }
     } catch (err) {
       setError(parseErrorMessage(err));
       setStatus("error");
     }
-  }, [pendingBundle, publicClient, address, pendingInputToken, sendTx, testNetworkType, chainId, pendingController]);
+  }, [pendingBundle, publicClient, address, pendingInputToken, sendTx, testNetworkType, chainId, pendingController, approvalQueue, approvalProgress, resetApprove]);
 
   // Execute a pending bundle after preview confirmation
   const executeAfterPreview = useCallback(async () => {
@@ -691,18 +536,19 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         pollingInterval: 1_000,
       });
 
+      if (receipt.status === "success") {
+        setStatus("success");
+        invalidateBalances();
+      } else {
+        setStatus("reverted");
+        setError("Transaction reverted");
+      }
       if (process.env.NODE_ENV === "development") {
         console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
         if (snapBefore && address) {
           const snapAfter = await snapshotTx(publicClient, address, pendingController, [pendingInputToken ?? ""]);
           logTxDiff("Lending TX", snapBefore, snapAfter);
         }
-      }
-      if (receipt.status === "success") {
-        setStatus("success");
-      } else {
-        setStatus("reverted");
-        setError("Transaction reverted");
       }
     } catch (err) {
       setError(parseErrorMessage(err));
@@ -790,16 +636,18 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
         if (tenderlyResult.result) setSimulationResult(tenderlyResult.result);
 
-        if (options?.previewOnly) {
-          setStatus("idle");
-          return tenderlyResult.result;
-        }
-
         if (!ethCallResult.ok) {
           const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return tenderlyResult.result;
+        }
+
+        if (options?.previewOnly) {
+          setStatus("idle");
+          // Return Tenderly result if available, otherwise a minimal marker
+          // so the caller knows eth_call passed and doesn't rebuild the bundle
+          return tenderlyResult.result ?? { success: true, status: true, gasUsed: 0, errorMessage: null, assetChanges: [], simulationId: null, tenderlyUrl: null } as unknown as SimulationResult;
         }
         if (!tenderlyResult.ok) {
           if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
@@ -841,8 +689,11 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           setStatus("error");
           return null;
         }
+        if (options?.previewOnly) {
+          setStatus("idle");
+          return null; // No Tenderly simulation data on test networks
+        }
       }
-      // On test networks, no simulation to preview — execute directly
 
       // Snapshot position + balances before TX
       let snapBefore: Awaited<ReturnType<typeof snapshotTx>> | undefined;
@@ -870,18 +721,19 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         pollingInterval: 1_000,
       });
 
+      if (receipt.status === "success") {
+        setStatus("success");
+        invalidateBalances();
+      } else {
+        setStatus("reverted");
+        setError("Transaction reverted");
+      }
       if (process.env.NODE_ENV === "development") {
         console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
         if (snapBefore && address) {
           const snapAfter = await snapshotTx(publicClient, address, pendingController, [inputToken]);
           logTxDiff("Lending TX", snapBefore, snapAfter);
         }
-      }
-      if (receipt.status === "success") {
-        setStatus("success");
-      } else {
-        setStatus("reverted");
-        setError("Transaction reverted");
       }
 
       return simulationResult;
@@ -977,16 +829,18 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
         if (tenderlyResult.result) setSimulationResult(tenderlyResult.result);
 
-        if (options?.previewOnly) {
-          setStatus("idle");
-          return tenderlyResult.result;
-        }
-
         if (!ethCallResult.ok) {
           const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return tenderlyResult.result;
+        }
+
+        if (options?.previewOnly) {
+          setStatus("idle");
+          // Return Tenderly result if available, otherwise a minimal marker
+          // so the caller knows eth_call passed and doesn't rebuild the bundle
+          return tenderlyResult.result ?? { success: true, status: true, gasUsed: 0, errorMessage: null, assetChanges: [], simulationId: null, tenderlyUrl: null } as unknown as SimulationResult;
         }
         if (!tenderlyResult.ok) {
           if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
@@ -1051,18 +905,19 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("waitingTx");
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000, pollingInterval: 1_000 });
+      if (receipt.status === "success") {
+        setStatus("success");
+        invalidateBalances();
+      } else {
+        setStatus("reverted");
+        setError("Transaction reverted");
+      }
       if (process.env.NODE_ENV === "development") {
         console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
         if (snapBefore && address) {
           const snapAfter = await snapshotTx(publicClient, address, controllerAddress as `0x${string}`, [vaultAddress]);
           logTxDiff("createLoan", snapBefore, snapAfter);
         }
-      }
-      if (receipt.status === "success") {
-        setStatus("success");
-      } else {
-        setStatus("reverted");
-        setError("Transaction reverted");
       }
 
       return simulationResult;
@@ -1073,7 +928,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     }
   }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult]);
 
-  // Create loan with swap: tokenIn → vaultToken → create_loan (Enso bundle)
+  // Create loan with swap: tokenIn → collateral → create_loan via Zapper (createLoanFromToken)
   const createLoanWithSwap = useCallback(async (
     vaultAddress: `0x${string}`,
     tokenIn: string,
@@ -1081,32 +936,146 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     debtAmount: string,
     bands: number,
     slippage: number = 100,
-    options?: { previewOnly?: boolean; tokenSymbol?: string }
+    options?: { previewOnly?: boolean; tokenSymbol?: string; decimals?: number }
   ): Promise<SimulationResult | null> => {
-    if (!address || !publicClient) return null;
-    const { parseUnits } = await import("viem");
-    const amountWei = parseUnits(amountIn, 18);
-    const ctrl = CURVE_CONTROLLERS[vaultAddress as keyof typeof CURVE_CONTROLLERS];
-    if (ctrl) setPendingController(ctrl as `0x${string}`);
+    if (!address || !publicClient) {
+      setError("Wallet not connected");
+      setStatus("error");
+      return null;
+    }
 
-    return executeBundle(
-      () => fetchCreateLoanWithSwapBundle({
-        fromAddress: address,
-        vaultAddress,
-        tokenIn,
-        amountIn: amountWei.toString(),
-        debtAmount,
-        bands,
-        slippage,
-      }),
-      tokenIn,
-      amountWei,
+    const controllerAddress = CURVE_CONTROLLERS[vaultAddress as keyof typeof CURVE_CONTROLLERS];
+    if (!controllerAddress) {
+      setError("Controller not found for this vault");
+      setStatus("error");
+      return null;
+    }
+
+    const decimals = options?.decimals ?? 18;
+    const { parseUnits: pu, encodeFunctionData } = await import("viem");
+    const amountWei = pu(amountIn, decimals);
+    setPendingController(controllerAddress as `0x${string}`);
+
+    setStatus("building");
+    setError(null);
+
+    // Check approvals against ZAPPER_ADDRESS
+    // For ETH: Zapper wraps ETH→WETH atomically, so pass WETH as tokenIn and ETH as msg.value
+    const isEth = tokenIn.toLowerCase() === ETH_ADDRESS.toLowerCase();
+    const zapperTokenIn = isEth ? WETH_ADDRESS : tokenIn;
+    const isVaultTokenInput = tokenIn.toLowerCase() === vaultAddress.toLowerCase();
+    const [controllerApproved, tokenAllowance, vaultTokenAllowance] = await Promise.all([
+      publicClient.readContract({
+        address: controllerAddress as `0x${string}`,
+        abi: CONTROLLER_APPROVE_ABI,
+        functionName: "approval",
+        args: [address, ZAPPER_ADDRESS],
+      }).catch(() => true) as Promise<boolean>,
+      isEth ? Promise.resolve(amountWei) : checkAllowance(publicClient, address, tokenIn as `0x${string}`, ZAPPER_ADDRESS),
+      // Pre-approve vault token for Zapper (needed for future removeCollateralAndConvert)
+      isVaultTokenInput ? Promise.resolve(maxUint256) : checkAllowance(publicClient, address, vaultAddress as `0x${string}`, ZAPPER_ADDRESS),
+    ]);
+
+    const tokenSymbol = options?.tokenSymbol ?? "token";
+    const vaultConfig = getVaultByAddress(vaultAddress);
+    const vaultSymbol = vaultConfig?.symbol ?? "Vault Token";
+    const allApprovals: { approval: PendingApproval; needed: boolean; label: string; description: string; spender: string }[] = [
+      {
+        approval: {
+          type: "controller",
+          token: controllerAddress as `0x${string}`,
+          tokenSymbol: "Controller",
+          spender: ZAPPER_ADDRESS,
+        },
+        needed: !controllerApproved,
+        label: "Lending Access",
+        description: "Approve yld Zapper to create loan on your behalf",
+        spender: ZAPPER_ADDRESS,
+      },
+      ...(!isEth ? [{
+        approval: {
+          token: tokenIn as `0x${string}`,
+          tokenSymbol,
+          spender: ZAPPER_ADDRESS,
+          spenderName: "yld Zapper",
+          amount: amountWei,
+          decimals,
+        },
+        needed: tokenAllowance < amountWei,
+        label: tokenSymbol,
+        description: `Approve ${tokenSymbol} for yld Zapper`,
+        spender: ZAPPER_ADDRESS,
+      }] : []),
+      // Pre-approve vault token for future removeCollateralAndConvert (skip if input IS the vault token — already covered above)
+      ...(!isVaultTokenInput && vaultTokenAllowance < maxUint256 / 2n ? [{
+        approval: {
+          token: vaultAddress as `0x${string}`,
+          tokenSymbol: vaultSymbol,
+          spender: ZAPPER_ADDRESS,
+          spenderName: "yld Zapper",
+        },
+        needed: true,
+        label: vaultSymbol,
+        description: `Approve ${vaultSymbol} for yld Zapper`,
+        spender: ZAPPER_ADDRESS,
+      }] : []),
+    ];
+
+    // Build-and-execute function for the swap bundle
+    const runBundle = () => executeBundle(
+      async () => {
+        const { swapData, expectedOut } = await fetchZapperSwapData({
+          tokenIn: zapperTokenIn,
+          tokenOut: vaultAddress,
+          amountIn: amountWei.toString(),
+          slippage: slippage.toString(),
+        });
+
+        const expectedOutBn = BigInt(expectedOut);
+        const minCollateral = expectedOutBn * BigInt(10000 - slippage) / 10000n;
+
+        // Cap debt to max_borrowable for worst-case collateral (minCollateral)
+        const requestedDebt = BigInt(debtAmount);
+        const maxDebtForMin = await publicClient!.readContract({
+          address: controllerAddress as `0x${string}`,
+          abi: [{ name: "max_borrowable", type: "function", stateMutability: "view", inputs: [{ name: "collateral", type: "uint256" }, { name: "N", type: "uint256" }], outputs: [{ name: "", type: "uint256" }] }] as const,
+          functionName: "max_borrowable",
+          args: [minCollateral, BigInt(bands)],
+        });
+        const debtWei = requestedDebt > maxDebtForMin ? maxDebtForMin : requestedDebt;
+
+        const data = encodeFunctionData({
+          abi: ZAPPER_ABI,
+          functionName: "createLoanFromToken",
+          args: [
+            controllerAddress as `0x${string}`,
+            zapperTokenIn as `0x${string}`,
+            amountWei,
+            minCollateral,
+            debtWei,
+            BigInt(bands),
+            swapData as `0x${string}`,
+            getDeadline(),
+          ],
+        });
+
+        return {
+          tx: { to: ZAPPER_ADDRESS, data, value: isEth ? amountWei.toString() : "0", from: address },
+          gas: "0",
+          amountsOut: { [CRVUSD_ADDRESS]: debtWei.toString() },
+        };
+      },
+      zapperTokenIn,
+      0n, // skip executeBundle's built-in approval check
       options
     );
+
+    return queueApprovalsOrRun(allApprovals, runBundle);
   }, [address, publicClient, executeBundle]);
 
-  // Create loan with output swap: create_loan → crvUSD → swap to tokenOut
-  // Optionally swaps input token to vault token first (double swap)
+  // Create loan with output swap via Zapper.
+  // Vault token → createLoanAndConvert (create_loan + swap crvUSD → tokenOut)
+  // Non-vault token → createLoanFromTokenAndConvert (swap to collateral + create_loan + swap crvUSD → tokenOut)
   const createLoanWithOutputSwap = useCallback(async (
     vaultAddress: `0x${string}`,
     tokenIn: string | undefined, // undefined = vault token directly
@@ -1115,30 +1084,203 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     bands: number,
     tokenOut: string,
     slippage: number = 100,
-    options?: { previewOnly?: boolean; tokenSymbol?: string }
+    options?: { previewOnly?: boolean; tokenSymbol?: string; decimals?: number }
   ): Promise<SimulationResult | null> => {
-    if (!address || !publicClient) return null;
-    const { parseUnits } = await import("viem");
-    const decimals = tokenIn ? 18 : 18; // vault tokens are always 18 decimals
-    const amountWei = parseUnits(amountIn, decimals);
-    const ctrl = CURVE_CONTROLLERS[vaultAddress as keyof typeof CURVE_CONTROLLERS];
-    if (ctrl) setPendingController(ctrl as `0x${string}`);
+    if (!address || !publicClient) {
+      setError("Wallet not connected");
+      setStatus("error");
+      return null;
+    }
 
-    return executeBundle(
-      () => fetchCreateLoanWithOutputSwapBundle({
-        fromAddress: address,
-        vaultAddress,
-        tokenIn,
-        amountIn: amountWei.toString(),
-        debtAmount,
-        bands,
-        tokenOut,
-        slippage,
-      }),
-      tokenIn ?? vaultAddress,
-      amountWei,
-      options
-    );
+    const controllerAddress = CURVE_CONTROLLERS[vaultAddress as keyof typeof CURVE_CONTROLLERS];
+    if (!controllerAddress) {
+      setError("Controller not found for this vault");
+      setStatus("error");
+      return null;
+    }
+
+    const isVaultToken = !tokenIn;
+    const actualTokenIn = tokenIn ?? vaultAddress;
+    const decimals = options?.decimals ?? 18;
+    const { parseUnits: pu, encodeFunctionData } = await import("viem");
+    const amountWei = pu(amountIn, decimals);
+    setPendingController(controllerAddress as `0x${string}`);
+
+    setStatus("building");
+    setError(null);
+
+    // Check approvals against ZAPPER_ADDRESS
+    // For ETH: Zapper wraps ETH→WETH atomically, so pass WETH as tokenIn and ETH as msg.value
+    const isEthInput = !isVaultToken && actualTokenIn.toLowerCase() === ETH_ADDRESS.toLowerCase();
+    const zapperTokenIn = isEthInput ? WETH_ADDRESS : actualTokenIn;
+    const isVaultTokenInput = actualTokenIn.toLowerCase() === vaultAddress.toLowerCase();
+    const [controllerApproved, tokenAllowance, vaultTokenAllowance] = await Promise.all([
+      publicClient.readContract({
+        address: controllerAddress as `0x${string}`,
+        abi: CONTROLLER_APPROVE_ABI,
+        functionName: "approval",
+        args: [address, ZAPPER_ADDRESS],
+      }).catch(() => true) as Promise<boolean>,
+      isEthInput ? Promise.resolve(amountWei) : checkAllowance(publicClient, address, actualTokenIn as `0x${string}`, ZAPPER_ADDRESS),
+      // Pre-approve vault token for future removeCollateralAndConvert
+      isVaultTokenInput ? Promise.resolve(maxUint256) : checkAllowance(publicClient, address, vaultAddress as `0x${string}`, ZAPPER_ADDRESS),
+    ]);
+
+    const tokenSymbol = options?.tokenSymbol ?? "token";
+    const vaultConfig2 = getVaultByAddress(vaultAddress);
+    const vaultSymbol2 = vaultConfig2?.symbol ?? "Vault Token";
+    const allApprovals: { approval: PendingApproval; needed: boolean; label: string; description: string; spender: string }[] = [
+      {
+        approval: {
+          type: "controller",
+          token: controllerAddress as `0x${string}`,
+          tokenSymbol: "Controller",
+          spender: ZAPPER_ADDRESS,
+        },
+        needed: !controllerApproved,
+        label: "Lending Access",
+        description: "Approve yld Zapper to create loan on your behalf",
+        spender: ZAPPER_ADDRESS,
+      },
+      ...(!isEthInput ? [{
+        approval: {
+          token: actualTokenIn as `0x${string}`,
+          tokenSymbol,
+          spender: ZAPPER_ADDRESS,
+          spenderName: "yld Zapper",
+          amount: amountWei,
+          decimals,
+        },
+        needed: tokenAllowance < amountWei,
+        label: tokenSymbol,
+        description: `Approve ${tokenSymbol} for yld Zapper`,
+        spender: ZAPPER_ADDRESS,
+      }] : []),
+      // Pre-approve vault token for future removeCollateralAndConvert
+      ...(!isVaultTokenInput && vaultTokenAllowance < maxUint256 / 2n ? [{
+        approval: {
+          token: vaultAddress as `0x${string}`,
+          tokenSymbol: vaultSymbol2,
+          spender: ZAPPER_ADDRESS,
+          spenderName: "yld Zapper",
+        },
+        needed: true,
+        label: vaultSymbol2,
+        description: `Approve ${vaultSymbol2} for yld Zapper`,
+        spender: ZAPPER_ADDRESS,
+      }] : []),
+    ];
+
+    const runBundle = isVaultToken
+      ? () => executeBundle(
+          async () => {
+            // For native ETH output: route via WETH, contract unwraps to ETH
+            const isETHOut = tokenOut.toLowerCase() === ETH_ADDRESS.toLowerCase();
+            const routeTokenOut = isETHOut ? WETH_ADDRESS : tokenOut;
+            const { swapData, expectedOut } = await fetchZapperSwapData({
+              tokenIn: CRVUSD_ADDRESS,
+              tokenOut: routeTokenOut,
+              amountIn: debtAmount,
+              slippage: slippage.toString(),
+            });
+
+            const expectedOutBn = BigInt(expectedOut);
+            const minTargetOut = expectedOutBn * BigInt(10000 - slippage) / 10000n;
+
+            const data = encodeFunctionData({
+              abi: ZAPPER_ABI,
+              functionName: "createLoanAndConvert",
+              args: [
+                controllerAddress as `0x${string}`,
+                amountWei,
+                BigInt(debtAmount),
+                BigInt(bands),
+                tokenOut as `0x${string}`, // Pass original token (ETH_ADDRESS for native ETH → Zapper unwraps WETH)
+                minTargetOut,
+                swapData as `0x${string}`,
+                getDeadline(),
+              ],
+            });
+
+            return {
+              tx: { to: ZAPPER_ADDRESS, data, value: "0", from: address },
+              gas: "0",
+              amountsOut: { [tokenOut]: expectedOut },
+            };
+          },
+          actualTokenIn,
+          0n,
+          options
+        )
+      : () => executeBundle(
+          async () => {
+            // For native ETH output: route via WETH, contract unwraps to ETH
+            const isETHOut = tokenOut.toLowerCase() === ETH_ADDRESS.toLowerCase();
+            const routeTokenOut = isETHOut ? WETH_ADDRESS : tokenOut;
+            // Fetch both swap routes in parallel:
+            //   inputSwap: tokenIn → collateral (vault token)
+            //   outputSwap: crvUSD → tokenOut (the user's desired output)
+            const [inputRoute, outputRoute] = await Promise.all([
+              fetchZapperSwapData({
+                tokenIn: zapperTokenIn,
+                tokenOut: vaultAddress,
+                amountIn: amountWei.toString(),
+                slippage: slippage.toString(),
+              }),
+              fetchZapperSwapData({
+                tokenIn: CRVUSD_ADDRESS,
+                tokenOut: routeTokenOut,
+                amountIn: debtAmount,
+                slippage: slippage.toString(),
+              }),
+            ]);
+
+            const expectedCollateral = BigInt(inputRoute.expectedOut);
+            const minCollateral = expectedCollateral * BigInt(10000 - slippage) / 10000n;
+
+            // Cap debt to max_borrowable for worst-case collateral
+            const requestedDebt = BigInt(debtAmount);
+            const maxDebtForMin = await publicClient!.readContract({
+              address: controllerAddress as `0x${string}`,
+              abi: [{ name: "max_borrowable", type: "function", stateMutability: "view", inputs: [{ name: "collateral", type: "uint256" }, { name: "N", type: "uint256" }], outputs: [{ name: "", type: "uint256" }] }] as const,
+              functionName: "max_borrowable",
+              args: [minCollateral, BigInt(bands)],
+            });
+            const debtWei = requestedDebt > maxDebtForMin ? maxDebtForMin : requestedDebt;
+
+            const expectedOutputBn = BigInt(outputRoute.expectedOut);
+            const minTargetOut = expectedOutputBn * BigInt(10000 - slippage) / 10000n;
+
+            const data = encodeFunctionData({
+              abi: ZAPPER_ABI,
+              functionName: "createLoanFromTokenAndConvert",
+              args: [
+                controllerAddress as `0x${string}`,
+                zapperTokenIn as `0x${string}`,
+                amountWei,
+                minCollateral,
+                debtWei,
+                BigInt(bands),
+                tokenOut as `0x${string}`, // Pass original token (ETH_ADDRESS for native ETH → Zapper unwraps WETH)
+                minTargetOut,
+                inputRoute.swapData as `0x${string}`,
+                outputRoute.swapData as `0x${string}`,
+                getDeadline(),
+              ],
+            });
+
+            return {
+              tx: { to: ZAPPER_ADDRESS, data, value: isEthInput ? amountWei.toString() : "0", from: address },
+              gas: "0",
+              amountsOut: { [tokenOut]: outputRoute.expectedOut },
+            };
+          },
+          zapperTokenIn,
+          0n,
+          options
+        );
+
+    return queueApprovalsOrRun(allApprovals, runBundle);
   }, [address, publicClient, executeBundle]);
 
   // Direct controller call for add_collateral (no Enso bundle needed)
@@ -1223,16 +1365,18 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
         if (tenderlyResult.result) setSimulationResult(tenderlyResult.result);
 
-        if (options?.previewOnly) {
-          setStatus("idle");
-          return tenderlyResult.result;
-        }
-
         if (!ethCallResult.ok) {
           const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return tenderlyResult.result;
+        }
+
+        if (options?.previewOnly) {
+          setStatus("idle");
+          // Return Tenderly result if available, otherwise a minimal marker
+          // so the caller knows eth_call passed and doesn't rebuild the bundle
+          return tenderlyResult.result ?? { success: true, status: true, gasUsed: 0, errorMessage: null, assetChanges: [], simulationId: null, tenderlyUrl: null } as unknown as SimulationResult;
         }
         if (!tenderlyResult.ok) {
           if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
@@ -1297,18 +1441,19 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("waitingTx");
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000, pollingInterval: 1_000 });
+      if (receipt.status === "success") {
+        setStatus("success");
+        invalidateBalances();
+      } else {
+        setStatus("reverted");
+        setError("Transaction reverted");
+      }
       if (process.env.NODE_ENV === "development") {
         console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
         if (snapBefore && address) {
           const snapAfter = await snapshotTx(publicClient, address, controllerAddress as `0x${string}`, [vaultAddress]);
           logTxDiff("addCollateral", snapBefore, snapAfter);
         }
-      }
-      if (receipt.status === "success") {
-        setStatus("success");
-      } else {
-        setStatus("reverted");
-        setError("Transaction reverted");
       }
 
       return simulationResult;
@@ -1385,16 +1530,18 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
         if (tenderlyResult.result) setSimulationResult(tenderlyResult.result);
 
-        if (options?.previewOnly) {
-          setStatus("idle");
-          return tenderlyResult.result;
-        }
-
         if (!ethCallResult.ok) {
           const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return tenderlyResult.result;
+        }
+
+        if (options?.previewOnly) {
+          setStatus("idle");
+          // Return Tenderly result if available, otherwise a minimal marker
+          // so the caller knows eth_call passed and doesn't rebuild the bundle
+          return tenderlyResult.result ?? { success: true, status: true, gasUsed: 0, errorMessage: null, assetChanges: [], simulationId: null, tenderlyUrl: null } as unknown as SimulationResult;
         }
         if (!tenderlyResult.ok) {
           if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
@@ -1459,18 +1606,19 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("waitingTx");
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000, pollingInterval: 1_000 });
+      if (receipt.status === "success") {
+        setStatus("success");
+        invalidateBalances();
+      } else {
+        setStatus("reverted");
+        setError("Transaction reverted");
+      }
       if (process.env.NODE_ENV === "development") {
         console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
         if (snapBefore && address) {
           const snapAfter = await snapshotTx(publicClient, address, controllerAddress as `0x${string}`, [vaultAddress]);
           logTxDiff("removeCollateral", snapBefore, snapAfter);
         }
-      }
-      if (receipt.status === "success") {
-        setStatus("success");
-      } else {
-        setStatus("reverted");
-        setError("Transaction reverted");
       }
 
       return simulationResult;
@@ -1481,34 +1629,138 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     }
   }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult]);
 
+  // Add collateral with swap: tokenIn → collateral via Zapper (addCollateralFromToken)
   const addCollateralWithSwap = useCallback(async (
     vaultAddress: `0x${string}`,
     tokenIn: string,
     amountIn: string,
     slippage: number = 100,
-    options?: { previewOnly?: boolean; tokenSymbol?: string }
+    options?: { previewOnly?: boolean; tokenSymbol?: string; decimals?: number }
   ): Promise<SimulationResult | null> => {
-    if (!address) return null;
-    const { parseUnits } = await import("viem");
-    const amountWei = parseUnits(amountIn, 18);
-    const ctrl = CURVE_CONTROLLERS[vaultAddress as keyof typeof CURVE_CONTROLLERS];
-    if (ctrl) setPendingController(ctrl as `0x${string}`);
-    return executeBundle(
-      () => fetchAddCollateralWithSwapBundle({
-        fromAddress: address,
-        vaultAddress,
-        tokenIn,
-        amountIn: amountWei.toString(),
-        slippage,
-      }),
-      tokenIn,
-      amountWei,
+    if (!address || !publicClient) {
+      setError("Wallet not connected");
+      setStatus("error");
+      return null;
+    }
+
+    const controllerAddress = CURVE_CONTROLLERS[vaultAddress as keyof typeof CURVE_CONTROLLERS];
+    if (!controllerAddress) {
+      setError("Controller not found for this vault");
+      setStatus("error");
+      return null;
+    }
+
+    const decimals = options?.decimals ?? 18;
+    const { parseUnits: pu, encodeFunctionData } = await import("viem");
+    const amountWei = pu(amountIn, decimals);
+    setPendingController(controllerAddress as `0x${string}`);
+
+    setStatus("building");
+    setError(null);
+
+    // Check approvals against ZAPPER_ADDRESS
+    // For ETH: Zapper wraps ETH→WETH atomically, so pass WETH as tokenIn and ETH as msg.value
+    const isEth = tokenIn.toLowerCase() === ETH_ADDRESS.toLowerCase();
+    const zapperTokenIn = isEth ? WETH_ADDRESS : tokenIn;
+    const isVaultTokenInput = tokenIn.toLowerCase() === vaultAddress.toLowerCase();
+    const [controllerApproved, tokenAllowance, vaultTokenAllowance] = await Promise.all([
+      publicClient.readContract({
+        address: controllerAddress as `0x${string}`,
+        abi: CONTROLLER_APPROVE_ABI,
+        functionName: "approval",
+        args: [address, ZAPPER_ADDRESS],
+      }).catch(() => true) as Promise<boolean>,
+      isEth ? Promise.resolve(amountWei) : checkAllowance(publicClient, address, tokenIn as `0x${string}`, ZAPPER_ADDRESS),
+      // Pre-approve vault token for future removeCollateralAndConvert
+      isVaultTokenInput ? Promise.resolve(maxUint256) : checkAllowance(publicClient, address, vaultAddress as `0x${string}`, ZAPPER_ADDRESS),
+    ]);
+
+    const tokenSymbol = options?.tokenSymbol ?? "token";
+    const vaultConfig3 = getVaultByAddress(vaultAddress);
+    const vaultSymbol3 = vaultConfig3?.symbol ?? "Vault Token";
+    const allApprovals: { approval: PendingApproval; needed: boolean; label: string; description: string; spender: string }[] = [
+      {
+        approval: {
+          type: "controller",
+          token: controllerAddress as `0x${string}`,
+          tokenSymbol: "Controller",
+          spender: ZAPPER_ADDRESS,
+        },
+        needed: !controllerApproved,
+        label: "Lending Access",
+        description: "Approve yld Zapper to manage collateral on your behalf",
+        spender: ZAPPER_ADDRESS,
+      },
+      ...(!isEth ? [{
+        approval: {
+          token: tokenIn as `0x${string}`,
+          tokenSymbol,
+          spender: ZAPPER_ADDRESS,
+          spenderName: "yld Zapper",
+          amount: amountWei,
+          decimals,
+        },
+        needed: tokenAllowance < amountWei,
+        label: tokenSymbol,
+        description: `Approve ${tokenSymbol} for yld Zapper`,
+        spender: ZAPPER_ADDRESS,
+      }] : []),
+      // Pre-approve vault token for future removeCollateralAndConvert
+      ...(!isVaultTokenInput && vaultTokenAllowance < maxUint256 / 2n ? [{
+        approval: {
+          token: vaultAddress as `0x${string}`,
+          tokenSymbol: vaultSymbol3,
+          spender: ZAPPER_ADDRESS,
+          spenderName: "yld Zapper",
+        },
+        needed: true,
+        label: vaultSymbol3,
+        description: `Approve ${vaultSymbol3} for yld Zapper`,
+        spender: ZAPPER_ADDRESS,
+      }] : []),
+    ];
+
+    const runBundle = () => executeBundle(
+      async () => {
+        const { swapData, expectedOut } = await fetchZapperSwapData({
+          tokenIn: zapperTokenIn,
+          tokenOut: vaultAddress,
+          amountIn: amountWei.toString(),
+          slippage: slippage.toString(),
+        });
+
+        const expectedOutBn = BigInt(expectedOut);
+        const minCollateral = expectedOutBn * BigInt(10000 - slippage) / 10000n;
+
+        const data = encodeFunctionData({
+          abi: ZAPPER_ABI,
+          functionName: "addCollateralFromToken",
+          args: [
+            controllerAddress as `0x${string}`,
+            zapperTokenIn as `0x${string}`,
+            amountWei,
+            minCollateral,
+            swapData as `0x${string}`,
+            getDeadline(),
+          ],
+        });
+
+        return {
+          tx: { to: ZAPPER_ADDRESS, data, value: isEth ? amountWei.toString() : "0", from: address },
+          gas: "0",
+          amountsOut: {},
+        };
+      },
+      zapperTokenIn,
+      0n,
       options
     );
-  }, [address, executeBundle]);
+
+    return queueApprovalsOrRun(allApprovals, runBundle);
+  }, [address, publicClient, executeBundle]);
 
   // Remove collateral + swap to any token via V3 Zapper's removeCollateralAndConvert.
-  // Approvals are checked against ZAPPER_V3_ADDRESS (not ENSO_SHORTCUTS).
+  // Approvals are checked against ZAPPER_ADDRESS (not ENSO_SHORTCUTS).
   const removeCollateralAndSwap = useCallback(async (
     vaultAddress: `0x${string}`,
     collateralAmount: string,
@@ -1533,7 +1785,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     const amountWei = parseUnits(collateralAmount, 18);
     setPendingController(controllerAddress as `0x${string}`);
 
-    // Check approvals against ZAPPER_V3_ADDRESS (controller + collateral token)
+    // Check approvals against ZAPPER_ADDRESS (controller + collateral token)
     setStatus("building");
     setError(null);
 
@@ -1542,9 +1794,9 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         address: controllerAddress as `0x${string}`,
         abi: CONTROLLER_APPROVE_ABI,
         functionName: "approval",
-        args: [address, ZAPPER_V3_ADDRESS],
+        args: [address, ZAPPER_ADDRESS],
       }).catch(() => true) as Promise<boolean>,
-      checkAllowance(publicClient, address, vaultAddress, ZAPPER_V3_ADDRESS),
+      checkAllowance(publicClient, address, vaultAddress, ZAPPER_ADDRESS),
     ]);
 
     const tokenSymbol = options?.tokenSymbol ?? "token";
@@ -1554,53 +1806,41 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           type: "controller",
           token: controllerAddress as `0x${string}`,
           tokenSymbol: "Controller",
-          spender: ZAPPER_V3_ADDRESS,
+          spender: ZAPPER_ADDRESS,
         },
         needed: !controllerApproved,
         label: "Lending Access",
-        description: "Approve Zapper to manage collateral on your behalf",
-        spender: ZAPPER_V3_ADDRESS,
+        description: "Approve yld Zapper to manage collateral on your behalf",
+        spender: ZAPPER_ADDRESS,
       },
       {
         approval: {
           token: vaultAddress,
           tokenSymbol: tokenSymbol,
-          spender: ZAPPER_V3_ADDRESS,
-          spenderName: "Zapper",
+          spender: ZAPPER_ADDRESS,
+          spenderName: "yld Zapper",
           amount: amountWei,
           decimals: 18,
         },
         needed: vaultTokenAllowance < amountWei,
         label: tokenSymbol,
-        description: `Approve ${tokenSymbol} spending for Zapper`,
-        spender: ZAPPER_V3_ADDRESS,
+        description: `Approve ${tokenSymbol} for yld Zapper`,
+        spender: ZAPPER_ADDRESS,
       },
     ];
 
-    const total = allApprovals.length;
-    const steps = allApprovals.map((a) => ({ label: a.label, description: a.description, done: !a.needed, spender: a.spender }));
-    const firstNeededIdx = allApprovals.findIndex((a) => a.needed);
-
-    if (firstNeededIdx >= 0) {
-      const step = firstNeededIdx + 1;
-      setApprovalProgress({ step, total, steps });
-      setPendingApproval(allApprovals[firstNeededIdx].approval);
-      setStatus("needsApproval");
-      return null;
-    }
-
-    // All approvals satisfied — clear progress
-    setApprovalProgress(null);
-
-    // Build zapper calldata inside executeBundle's bundleFn
-    return executeBundle(
+    const runBundle = () => executeBundle(
       async () => {
         const { encodeFunctionData } = await import("viem");
+
+        // For native ETH output: route via WETH, contract unwraps to ETH
+        const isETHOutput = tokenOut.toLowerCase() === ETH_ADDRESS.toLowerCase();
+        const routeTokenOut = isETHOutput ? WETH_ADDRESS : tokenOut;
 
         // Fetch swap route: collateral token → target token
         const { swapData, expectedOut } = await fetchZapperSwapData({
           tokenIn: vaultAddress,
-          tokenOut: tokenOut,
+          tokenOut: routeTokenOut,
           amountIn: amountWei.toString(),
           slippage: slippage.toString(),
         });
@@ -1614,7 +1854,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           args: [
             controllerAddress as `0x${string}`,
             amountWei,
-            tokenOut as `0x${string}`,
+            tokenOut as `0x${string}`, // Pass original token (ETH_ADDRESS for native ETH → Zapper unwraps WETH)
             minTargetOut,
             swapData as `0x${string}`,
             getDeadline(),
@@ -1622,15 +1862,17 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         });
 
         return {
-          tx: { to: ZAPPER_V3_ADDRESS, data, value: "0", from: address },
+          tx: { to: ZAPPER_ADDRESS, data, value: "0", from: address },
           gas: "0",
           amountsOut: { [tokenOut]: expectedOut },
         };
       },
       vaultAddress,
-      0n, // skip executeBundle's built-in approval check
+      0n,
       options
     );
+
+    return queueApprovalsOrRun(allApprovals, runBundle);
   }, [address, publicClient, executeBundle]);
 
   // Direct contract call to controller.borrow_more(collateral, debt)
@@ -1720,16 +1962,18 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
         if (tenderlyResult.result) setSimulationResult(tenderlyResult.result);
 
-        if (options?.previewOnly) {
-          setStatus("idle");
-          return tenderlyResult.result;
-        }
-
         if (!ethCallResult.ok) {
           const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return tenderlyResult.result;
+        }
+
+        if (options?.previewOnly) {
+          setStatus("idle");
+          // Return Tenderly result if available, otherwise a minimal marker
+          // so the caller knows eth_call passed and doesn't rebuild the bundle
+          return tenderlyResult.result ?? { success: true, status: true, gasUsed: 0, errorMessage: null, assetChanges: [], simulationId: null, tenderlyUrl: null } as unknown as SimulationResult;
         }
         if (!tenderlyResult.ok) {
           if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
@@ -1794,18 +2038,19 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("waitingTx");
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000, pollingInterval: 1_000 });
+      if (receipt.status === "success") {
+        setStatus("success");
+        invalidateBalances();
+      } else {
+        setStatus("reverted");
+        setError("Transaction reverted");
+      }
       if (process.env.NODE_ENV === "development") {
         console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
         if (snapBefore && address) {
           const snapAfter = await snapshotTx(publicClient, address, controllerAddress as `0x${string}`, [vaultAddress]);
           logTxDiff("borrowMore", snapBefore, snapAfter);
         }
-      }
-      if (receipt.status === "success") {
-        setStatus("success");
-      } else {
-        setStatus("reverted");
-        setError("Transaction reverted");
       }
 
       return simulationResult;
@@ -1848,15 +2093,18 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     setStatus("building");
     setError(null);
 
-    // Check approvals against ZAPPER_V3_ADDRESS
+    // Check approvals against ZAPPER_ADDRESS
+    // For ETH: Zapper wraps ETH→WETH atomically, so pass WETH as tokenIn and ETH as msg.value
+    const isEth = tokenIn.toLowerCase() === ETH_ADDRESS.toLowerCase();
+    const zapperTokenIn = isEth ? WETH_ADDRESS : tokenIn;
     const [controllerApproved, tokenAllowance] = await Promise.all([
       publicClient.readContract({
         address: controllerAddress as `0x${string}`,
         abi: CONTROLLER_APPROVE_ABI,
         functionName: "approval",
-        args: [address, ZAPPER_V3_ADDRESS],
+        args: [address, ZAPPER_ADDRESS],
       }).catch(() => true) as Promise<boolean>,
-      checkAllowance(publicClient, address, tokenIn as `0x${string}`, ZAPPER_V3_ADDRESS),
+      isEth ? Promise.resolve(amountWei) : checkAllowance(publicClient, address, tokenIn as `0x${string}`, ZAPPER_ADDRESS),
     ]);
 
     const tokenSymbol = options?.tokenSymbol ?? "token";
@@ -1866,48 +2114,34 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           type: "controller",
           token: controllerAddress as `0x${string}`,
           tokenSymbol: "Controller",
-          spender: ZAPPER_V3_ADDRESS,
+          spender: ZAPPER_ADDRESS,
         },
         needed: !controllerApproved,
         label: "Lending Access",
-        description: "Approve Zapper to borrow on your behalf",
-        spender: ZAPPER_V3_ADDRESS,
+        description: "Approve yld Zapper to borrow on your behalf",
+        spender: ZAPPER_ADDRESS,
       },
-      {
+      ...(!isEth ? [{
         approval: {
           token: tokenIn as `0x${string}`,
           tokenSymbol,
-          spender: ZAPPER_V3_ADDRESS,
-          spenderName: "Zapper",
+          spender: ZAPPER_ADDRESS,
+          spenderName: "yld Zapper",
           amount: amountWei,
           decimals,
         },
         needed: tokenAllowance < amountWei,
         label: tokenSymbol,
-        description: `Approve ${tokenSymbol} spending for Zapper`,
-        spender: ZAPPER_V3_ADDRESS,
-      },
+        description: `Approve ${tokenSymbol} for yld Zapper`,
+        spender: ZAPPER_ADDRESS,
+      }] : []),
     ];
 
-    const total = allApprovals.length;
-    const steps = allApprovals.map((a) => ({ label: a.label, description: a.description, done: !a.needed, spender: a.spender }));
-    const firstNeededIdx = allApprovals.findIndex((a) => a.needed);
-
-    if (firstNeededIdx >= 0) {
-      const step = firstNeededIdx + 1;
-      setApprovalProgress({ step, total, steps });
-      setPendingApproval(allApprovals[firstNeededIdx].approval);
-      setStatus("needsApproval");
-      return null;
-    }
-
-    setApprovalProgress(null);
-
-    return executeBundle(
+    const runBundle = () => executeBundle(
       async () => {
         // Fetch swap route: tokenIn → collateral (vault token)
         const { swapData, expectedOut } = await fetchZapperSwapData({
-          tokenIn,
+          tokenIn: zapperTokenIn,
           tokenOut: vaultAddress,
           amountIn: amountWei.toString(),
           slippage: slippage.toString(),
@@ -1916,30 +2150,52 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         const expectedOutBn = BigInt(expectedOut);
         const minCollateral = expectedOutBn * BigInt(10000 - slippage) / 10000n;
 
+        // Cap debt: read current position, compute max_borrowable for (existing + minCollateral)
+        const requestedDebt = BigInt(additionalDebt);
+        const userState = await publicClient!.readContract({
+          address: controllerAddress as `0x${string}`,
+          abi: [{ name: "user_state", type: "function", stateMutability: "view", inputs: [{ name: "user", type: "address" }], outputs: [{ name: "collateral", type: "uint256" }, { name: "stablecoin", type: "uint256" }, { name: "debt", type: "uint256" }, { name: "N", type: "uint256" }] }] as const,
+          functionName: "user_state",
+          args: [address],
+        });
+        const existingCollateral = (userState as [bigint, bigint, bigint, bigint])[0];
+        const existingDebt = (userState as [bigint, bigint, bigint, bigint])[2];
+        const existingN = (userState as [bigint, bigint, bigint, bigint])[3];
+        const maxForTotal = await publicClient!.readContract({
+          address: controllerAddress as `0x${string}`,
+          abi: [{ name: "max_borrowable", type: "function", stateMutability: "view", inputs: [{ name: "collateral", type: "uint256" }, { name: "N", type: "uint256" }], outputs: [{ name: "", type: "uint256" }] }] as const,
+          functionName: "max_borrowable",
+          args: [existingCollateral + minCollateral, existingN],
+        });
+        const maxAdditionalDebt = maxForTotal > existingDebt ? maxForTotal - existingDebt : 0n;
+        const debtWei = requestedDebt > maxAdditionalDebt ? maxAdditionalDebt : requestedDebt;
+
         const data = encodeFunctionData({
           abi: ZAPPER_ABI,
           functionName: "borrowMoreFromToken",
           args: [
             controllerAddress as `0x${string}`,
-            tokenIn as `0x${string}`,
+            zapperTokenIn as `0x${string}`,
             amountWei,
             minCollateral,
-            BigInt(additionalDebt),
+            debtWei,
             swapData as `0x${string}`,
             getDeadline(),
           ],
         });
 
         return {
-          tx: { to: ZAPPER_V3_ADDRESS, data, value: "0", from: address },
+          tx: { to: ZAPPER_ADDRESS, data, value: isEth ? amountWei.toString() : "0", from: address },
           gas: "0",
-          amountsOut: { [CRVUSD_ADDRESS]: additionalDebt },
+          amountsOut: { [CRVUSD_ADDRESS]: debtWei.toString() },
         };
       },
-      tokenIn,
-      0n, // skip executeBundle's built-in approval check
+      zapperTokenIn,
+      0n,
       options
     );
+
+    return queueApprovalsOrRun(allApprovals, runBundle);
   }, [address, publicClient, executeBundle]);
 
   const repay = useCallback(async (
@@ -2010,16 +2266,20 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         args: [contractRepayAmount, address, 2n ** 255n - 1n],
       });
 
-      // Check crvUSD allowance to controller
-      // Use actual repayAmount (not maxUint256) since controller only transfers min(debt, _d_debt)
+      // Check crvUSD allowance to controller.
+      // When closing, add 0.1% buffer to account for interest accrual between
+      // approval and execution — the controller transfers actual debt which keeps growing.
       const currentAllowance = await checkAllowance(
         publicClient,
         address,
         CRVUSD,
         controllerAddress
       );
+      const requiredAllowance = isClosing
+        ? repayAmount + (repayAmount / 1000n) // +0.1% buffer for interest
+        : repayAmount;
 
-      if (currentAllowance < repayAmount) {
+      if (currentAllowance < requiredAllowance) {
         // Store as a pseudo-bundle so executeAfterApproval can work
         setPendingBundle({
           tx: { to: controllerAddress, data: callData, value: "0" },
@@ -2032,7 +2292,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           tokenSymbol: "crvUSD",
           spender: controllerAddress,
           spenderName: "Curve Controller",
-          amount: repayAmount,
+          amount: requiredAllowance,
           decimals: 18,
         });
         setStatus("needsApproval");
@@ -2050,16 +2310,18 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
         if (tenderlyResult.result) setSimulationResult(tenderlyResult.result);
 
-        if (options?.previewOnly) {
-          setStatus("idle");
-          return tenderlyResult.result;
-        }
-
         if (!ethCallResult.ok) {
           const errorMsg = ethCallResult.errorMessage || "Simulation failed";
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return tenderlyResult.result;
+        }
+
+        if (options?.previewOnly) {
+          setStatus("idle");
+          // Return Tenderly result if available, otherwise a minimal marker
+          // so the caller knows eth_call passed and doesn't rebuild the bundle
+          return tenderlyResult.result ?? { success: true, status: true, gasUsed: 0, errorMessage: null, assetChanges: [], simulationId: null, tenderlyUrl: null } as unknown as SimulationResult;
         }
         if (!tenderlyResult.ok) {
           if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
@@ -2130,18 +2392,19 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         pollingInterval: 1_000,
       });
 
+      if (receipt.status === "success") {
+        setStatus("success");
+        invalidateBalances();
+      } else {
+        setStatus("reverted");
+        setError("Transaction reverted");
+      }
       if (process.env.NODE_ENV === "development") {
         console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
         if (snapBefore && address) {
           const snapAfter = await snapshotTx(publicClient, address, controllerAddress, [CRVUSD]);
           logTxDiff("repayDirect", snapBefore, snapAfter);
         }
-      }
-      if (receipt.status === "success") {
-        setStatus("success");
-      } else {
-        setStatus("reverted");
-        setError("Transaction reverted");
       }
 
       return simulationResult;
@@ -2154,7 +2417,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
   // Repay crvUSD debt + withdraw collateral via RepayZapper.
   // If withdrawTokenOut is set, swaps collateral to target token via repayAndConvert.
-  // Approvals are checked against ZAPPER_V3_ADDRESS (not ENSO_SHORTCUTS).
+  // Approvals are checked against ZAPPER_ADDRESS (not ENSO_SHORTCUTS).
   const repayAndWithdraw = useCallback(async (
     controllerAddress: `0x${string}`,
     repayAmount: bigint,
@@ -2175,7 +2438,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     const isWithdrawSwap = options?.withdrawTokenOut &&
       options.withdrawTokenOut.toLowerCase() !== vaultAddress.toLowerCase();
 
-    // Check approvals against ZAPPER_V3_ADDRESS:
+    // Check approvals against ZAPPER_ADDRESS:
     // 1. Controller approval (always needed)
     // 2. crvUSD allowance (if repaying)
     // 3. Collateral token allowance (only for repayAndConvert — pull-back after withdraw)
@@ -2184,13 +2447,13 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         address: controllerAddress,
         abi: CONTROLLER_APPROVE_ABI,
         functionName: "approval",
-        args: [address, ZAPPER_V3_ADDRESS],
+        args: [address, ZAPPER_ADDRESS],
       }).catch(() => true) as Promise<boolean>,
       repayAmount > 0n
-        ? checkAllowance(publicClient, address, CRVUSD_ADDRESS as `0x${string}`, ZAPPER_V3_ADDRESS)
+        ? checkAllowance(publicClient, address, CRVUSD_ADDRESS as `0x${string}`, ZAPPER_ADDRESS)
         : Promise.resolve(maxUint256),
       isWithdrawSwap && withdrawAmount > 0n
-        ? checkAllowance(publicClient, address, vaultAddress, ZAPPER_V3_ADDRESS)
+        ? checkAllowance(publicClient, address, vaultAddress, ZAPPER_ADDRESS)
         : Promise.resolve(maxUint256),
     ] as const;
 
@@ -2205,12 +2468,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           type: "controller",
           token: controllerAddress,
           tokenSymbol: "Controller",
-          spender: ZAPPER_V3_ADDRESS,
+          spender: ZAPPER_ADDRESS,
         },
         needed: !controllerApproved,
         label: "Lending Access",
-        description: "Approve Repay Zapper to manage your position",
-        spender: ZAPPER_V3_ADDRESS,
+        description: "Approve yld Zapper to manage your position",
+        spender: ZAPPER_ADDRESS,
       },
     ];
     if (repayAmount > 0n) {
@@ -2218,15 +2481,15 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         approval: {
           token: CRVUSD_ADDRESS as `0x${string}`,
           tokenSymbol: "crvUSD",
-          spender: ZAPPER_V3_ADDRESS,
-          spenderName: "Repay Zapper",
+          spender: ZAPPER_ADDRESS,
+          spenderName: "yld Zapper",
           amount: repayAmount,
           decimals: 18,
         },
         needed: crvusdAllowance < repayAmount,
         label: "crvUSD",
-        description: "Approve crvUSD spending for Repay Zapper",
-        spender: ZAPPER_V3_ADDRESS,
+        description: "Approve crvUSD for yld Zapper",
+        spender: ZAPPER_ADDRESS,
       });
     }
     if (isWithdrawSwap && withdrawAmount > 0n) {
@@ -2234,42 +2497,31 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         approval: {
           token: vaultAddress,
           tokenSymbol: vaultSymbol,
-          spender: ZAPPER_V3_ADDRESS,
-          spenderName: "Repay Zapper",
+          spender: ZAPPER_ADDRESS,
+          spenderName: "yld Zapper",
           amount: withdrawAmount,
           decimals: 18,
         },
         needed: collateralAllowance < withdrawAmount,
         label: vaultSymbol,
-        description: `Approve ${vaultSymbol} spending for Repay Zapper`,
-        spender: ZAPPER_V3_ADDRESS,
+        description: `Approve ${vaultSymbol} for yld Zapper`,
+        spender: ZAPPER_ADDRESS,
       });
     }
 
-    const total = allApprovals.length;
-    const steps = allApprovals.map((a) => ({ label: a.label, description: a.description, done: !a.needed, spender: a.spender }));
-    const firstNeededIdx = allApprovals.findIndex((a) => a.needed);
-
-    if (firstNeededIdx >= 0) {
-      const step = firstNeededIdx + 1;
-      setApprovalProgress({ step, total, steps });
-      setPendingApproval(allApprovals[firstNeededIdx].approval);
-      setStatus("needsApproval");
-      return null;
-    }
-
-    setApprovalProgress(null);
-
-    return executeBundle(
+    const runBundle = () => executeBundle(
       async () => {
         const { encodeFunctionData } = await import("viem");
 
         if (isWithdrawSwap) {
           // repayAndConvert: repay crvUSD + withdraw collateral + swap to target
           const targetToken = options!.withdrawTokenOut!;
+          // For native ETH output: route via WETH, contract unwraps to ETH
+          const isETHTarget = targetToken.toLowerCase() === ETH_ADDRESS.toLowerCase();
+          const routeTarget = isETHTarget ? WETH_ADDRESS : targetToken;
           const { swapData, expectedOut } = await fetchZapperSwapData({
             tokenIn: vaultAddress,
-            tokenOut: targetToken,
+            tokenOut: routeTarget,
             amountIn: withdrawAmount.toString(),
             slippage: "100",
           });
@@ -2284,7 +2536,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
               controllerAddress,
               repayAmount,
               withdrawAmount,
-              targetToken as `0x${string}`,
+              targetToken as `0x${string}`, // Pass original token (ETH_ADDRESS for native ETH → Zapper unwraps WETH)
               minTargetOut,
               swapData as `0x${string}`,
               getDeadline(),
@@ -2292,7 +2544,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           });
 
           return {
-            tx: { to: ZAPPER_V3_ADDRESS, data, value: "0", from: address },
+            tx: { to: ZAPPER_ADDRESS, data, value: "0", from: address },
             gas: "0",
             amountsOut: { [targetToken]: expectedOut },
           };
@@ -2310,16 +2562,18 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           });
 
           return {
-            tx: { to: ZAPPER_V3_ADDRESS, data, value: "0", from: address },
+            tx: { to: ZAPPER_ADDRESS, data, value: "0", from: address },
             gas: "0",
             amountsOut: {},
           };
         }
       },
       CRVUSD_ADDRESS,
-      0n, // skip executeBundle's built-in approval check (we handle approvals above)
+      0n,
       { ...options, tokenSymbol: "crvUSD" }
     );
+
+    return queueApprovalsOrRun(allApprovals, runBundle);
   }, [address, publicClient, executeBundle]);
 
   const repayWithSwap = useCallback(async (
@@ -2351,20 +2605,23 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("building");
       setError(null);
 
-      // Check approvals against ZAPPER_V3_ADDRESS:
+      // Check approvals against ZAPPER_ADDRESS:
       // 1. Controller approval (always)
-      // 2. tokenIn allowance (zapper pulls tokenIn for swap)
+      // 2. tokenIn allowance (zapper pulls tokenIn for swap) — skip for ETH
       // 3. Collateral allowance (only for repayFromTokenAndConvert — pull-back after withdraw)
+      // For ETH: Zapper wraps ETH→WETH atomically, so pass WETH as tokenIn and ETH as msg.value
+      const isEth = tokenIn.toLowerCase() === ETH_ADDRESS.toLowerCase();
+      const zapperTokenIn = isEth ? WETH_ADDRESS : tokenIn;
       const approvalChecks = [
         publicClient.readContract({
           address: controllerAddress as `0x${string}`,
           abi: CONTROLLER_APPROVE_ABI,
           functionName: "approval",
-          args: [address, ZAPPER_V3_ADDRESS],
+          args: [address, ZAPPER_ADDRESS],
         }).catch(() => true) as Promise<boolean>,
-        checkAllowance(publicClient, address, tokenIn as `0x${string}`, ZAPPER_V3_ADDRESS),
+        isEth ? Promise.resolve(amountWei) : checkAllowance(publicClient, address, tokenIn as `0x${string}`, ZAPPER_ADDRESS),
         isWithdrawSwap
-          ? checkAllowance(publicClient, address, vaultAddress, ZAPPER_V3_ADDRESS)
+          ? checkAllowance(publicClient, address, vaultAddress, ZAPPER_ADDRESS)
           : Promise.resolve(maxUint256),
       ] as const;
 
@@ -2380,66 +2637,52 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
             type: "controller",
             token: controllerAddress as `0x${string}`,
             tokenSymbol: "Controller",
-            spender: ZAPPER_V3_ADDRESS,
+            spender: ZAPPER_ADDRESS,
           },
           needed: !controllerApproved,
           label: "Lending Access",
-          description: "Approve Repay Zapper to manage your position",
-          spender: ZAPPER_V3_ADDRESS,
+          description: "Approve yld Zapper to manage your position",
+          spender: ZAPPER_ADDRESS,
         },
-        {
+        ...(!isEth ? [{
           approval: {
             token: tokenIn as `0x${string}`,
             tokenSymbol: tokenSymbol,
-            spender: ZAPPER_V3_ADDRESS,
-            spenderName: "Repay Zapper",
+            spender: ZAPPER_ADDRESS,
+            spenderName: "yld Zapper",
             amount: amountWei,
             decimals,
           },
           needed: tokenInAllowance < amountWei,
           label: tokenSymbol,
-          description: `Approve ${tokenSymbol} spending for Repay Zapper`,
-          spender: ZAPPER_V3_ADDRESS,
-        },
+          description: `Approve ${tokenSymbol} for yld Zapper`,
+          spender: ZAPPER_ADDRESS,
+        }] : []),
       ];
       if (isWithdrawSwap) {
         allApprovals.push({
           approval: {
             token: vaultAddress,
             tokenSymbol: vaultSymbol,
-            spender: ZAPPER_V3_ADDRESS,
-            spenderName: "Repay Zapper",
+            spender: ZAPPER_ADDRESS,
+            spenderName: "yld Zapper",
             amount: withdrawAmountWei,
             decimals: 18,
           },
           needed: collateralAllowance < withdrawAmountWei,
           label: vaultSymbol,
-          description: `Approve ${vaultSymbol} spending for Repay Zapper`,
-          spender: ZAPPER_V3_ADDRESS,
+          description: `Approve ${vaultSymbol} for yld Zapper`,
+          spender: ZAPPER_ADDRESS,
         });
       }
 
-      const total = allApprovals.length;
-      const steps = allApprovals.map((a) => ({ label: a.label, description: a.description, done: !a.needed, spender: a.spender }));
-      const firstNeededIdx = allApprovals.findIndex((a) => a.needed);
-
-      if (firstNeededIdx >= 0) {
-        const step = firstNeededIdx + 1;
-        setApprovalProgress({ step, total, steps });
-        setPendingApproval(allApprovals[firstNeededIdx].approval);
-        setStatus("needsApproval");
-        return null;
-      }
-
-      setApprovalProgress(null);
-
-      return executeBundle(
+      const runBundle = () => executeBundle(
         async () => {
           const { encodeFunctionData } = await import("viem");
 
           // Fetch input swap: tokenIn → crvUSD
           const inputRoute = await fetchZapperSwapData({
-            tokenIn,
+            tokenIn: zapperTokenIn,
             tokenOut: CRVUSD_ADDRESS,
             amountIn: amountWei.toString(),
             slippage: slippage.toString(),
@@ -2449,9 +2692,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           if (isWithdrawSwap) {
             // repayFromTokenAndConvert: swap tokenIn→crvUSD, repay, withdraw, swap collateral→target
             const targetToken = options!.withdrawTokenOut!;
+            // For native ETH output: route via WETH, contract unwraps to ETH
+            const isETHTarget = targetToken.toLowerCase() === ETH_ADDRESS.toLowerCase();
+            const routeTarget = isETHTarget ? WETH_ADDRESS : targetToken;
             const outputRoute = await fetchZapperSwapData({
               tokenIn: vaultAddress,
-              tokenOut: targetToken,
+              tokenOut: routeTarget,
               amountIn: withdrawAmountWei.toString(),
               slippage: slippage.toString(),
             });
@@ -2463,11 +2709,11 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
               args: [
                 {
                   controller: controllerAddress as `0x${string}`,
-                  tokenIn: tokenIn as `0x${string}`,
+                  tokenIn: zapperTokenIn as `0x${string}`,
                   amountIn: amountWei,
                   minCrvusd,
                   withdrawAmount: withdrawAmountWei,
-                  targetToken: targetToken as `0x${string}`,
+                  targetToken: targetToken as `0x${string}`, // Pass original token (ETH_ADDRESS for native ETH → Zapper unwraps WETH)
                   minTargetOut,
                   deadline: getDeadline(),
                 },
@@ -2477,7 +2723,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
             });
 
             return {
-              tx: { to: ZAPPER_V3_ADDRESS, data, value: "0", from: address },
+              tx: { to: ZAPPER_ADDRESS, data, value: isEth ? amountWei.toString() : "0", from: address },
               gas: "0",
               amountsOut: { [targetToken]: outputRoute.expectedOut },
             };
@@ -2488,7 +2734,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
               functionName: "repayFromTokenAndWithdraw",
               args: [
                 controllerAddress as `0x${string}`,
-                tokenIn as `0x${string}`,
+                zapperTokenIn as `0x${string}`,
                 amountWei,
                 minCrvusd,
                 withdrawAmountWei,
@@ -2498,16 +2744,18 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
             });
 
             return {
-              tx: { to: ZAPPER_V3_ADDRESS, data, value: "0", from: address },
+              tx: { to: ZAPPER_ADDRESS, data, value: isEth ? amountWei.toString() : "0", from: address },
               gas: "0",
               amountsOut: {},
             };
           }
         },
-        tokenIn,
-        0n, // skip executeBundle's built-in approval check
+        zapperTokenIn,
+        0n,
         { ...options, tokenDecimals: decimals }
       );
+
+      return queueApprovalsOrRun(allApprovals, runBundle);
     }
 
     // Repay-only path (no withdrawal) — safe via ENSO_ROUTER_EXECUTOR
@@ -2528,7 +2776,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
   // Borrow crvUSD + swap to any token via V3 Zapper (borrowAndConvert/borrowAndDeposit).
   // Falls back to Enso bundle for exotic vaults (cvgCVX, pxCVX, non-ERC4626).
-  // Approvals are checked against ZAPPER_V3_ADDRESS (not ENSO_SHORTCUTS).
+  // Approvals are checked against ZAPPER_ADDRESS (not ENSO_SHORTCUTS).
   const borrowAndSwap = useCallback(async (
     vaultAddress: `0x${string}`,
     tokenOut: string,
@@ -2558,30 +2806,20 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       ? BigInt(options.collateralAmount)
       : 0n;
 
-    // Determine output type for zapper routing
-    const vaultInfo = getVaultInfo(tokenOut);
-
-    // Non-ERC4626 vaults (uCRV, beefy) have different deposit APIs — unsupported for borrowAndDeposit
-    if (vaultInfo && vaultInfo.interface !== "erc4626") {
-      setError("Borrow + swap to this vault is not yet supported. Use borrow to receive crvUSD, then deposit separately.");
-      setStatus("error");
-      return null;
-    }
-
-    // --- V3 Zapper path (plain ERC20 or standard ERC4626 vault) ---
+    // --- V4 Zapper path: all outputs use borrowAndConvert (Enso handles vault deposits) ---
     setStatus("building");
     setError(null);
 
-    // Check approvals against ZAPPER_V3_ADDRESS (controller + collateral if adding)
+    // Check approvals against ZAPPER_ADDRESS (controller + collateral if adding)
     const approvalChecks = [
       publicClient.readContract({
         address: controllerAddress as `0x${string}`,
         abi: CONTROLLER_APPROVE_ABI,
         functionName: "approval",
-        args: [address, ZAPPER_V3_ADDRESS],
+        args: [address, ZAPPER_ADDRESS],
       }).catch(() => true) as Promise<boolean>,
       collateralWei > 0n
-        ? checkAllowance(publicClient, address, vaultAddress, ZAPPER_V3_ADDRESS)
+        ? checkAllowance(publicClient, address, vaultAddress, ZAPPER_ADDRESS)
         : Promise.resolve(maxUint256),
     ] as const;
 
@@ -2594,12 +2832,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           type: "controller",
           token: controllerAddress as `0x${string}`,
           tokenSymbol: "Controller",
-          spender: ZAPPER_V3_ADDRESS,
+          spender: ZAPPER_ADDRESS,
         },
         needed: !controllerApproved,
         label: "Lending Access",
-        description: "Approve Zapper to borrow on your behalf",
-        spender: ZAPPER_V3_ADDRESS,
+        description: "Approve yld Zapper to borrow on your behalf",
+        spender: ZAPPER_ADDRESS,
       },
     ];
     if (collateralWei > 0n) {
@@ -2609,134 +2847,81 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         approval: {
           token: vaultAddress,
           tokenSymbol: vaultSymbol,
-          spender: ZAPPER_V3_ADDRESS,
-          spenderName: "Zapper",
+          spender: ZAPPER_ADDRESS,
+          spenderName: "yld Zapper",
           amount: collateralWei,
           decimals: 18,
         },
         needed: vaultTokenAllowance < collateralWei,
         label: vaultSymbol,
-        description: `Approve ${vaultSymbol} spending for Zapper`,
-        spender: ZAPPER_V3_ADDRESS,
+        description: `Approve ${vaultSymbol} for yld Zapper`,
+        spender: ZAPPER_ADDRESS,
       });
     }
 
-    const total = allApprovals.length;
-    const steps = allApprovals.map((a) => ({ label: a.label, description: a.description, done: !a.needed, spender: a.spender }));
-    const firstNeededIdx = allApprovals.findIndex((a) => a.needed);
-
-    if (firstNeededIdx >= 0) {
-      const step = firstNeededIdx + 1;
-      setApprovalProgress({ step, total, steps });
-      setPendingApproval(allApprovals[firstNeededIdx].approval);
-      setStatus("needsApproval");
-      return null;
-    }
-
-    setApprovalProgress(null);
-
-    // Build zapper calldata inside executeBundle's bundleFn
-    return executeBundle(
+    const runBundle = () => executeBundle(
       async () => {
         const { encodeFunctionData } = await import("viem");
 
-        // Determine zapper function based on output type
-        if (vaultInfo) {
-          // ERC4626 vault output → borrowAndDeposit
-          const underlyingIsCrvusd = vaultInfo.underlying.toLowerCase() === CRVUSD_ADDRESS.toLowerCase();
+        // All outputs use borrowAndConvert — Enso handles vault deposits natively
+        // Exotic tokens (cvgCVX, pxCVX) need custom HybridZapper bundles since Enso can't route directly
+        const isETHOut = tokenOut.toLowerCase() === ETH_ADDRESS.toLowerCase();
+        const isExoticToken = tokenOut.toLowerCase() === TOKENS.CVGCVX.toLowerCase()
+          || tokenOut.toLowerCase() === TOKENS.PXCVX.toLowerCase();
 
-          let swapData: string;
-          let expectedOut: string;
+        let swapData: string;
+        let expectedOut: string;
 
-          const isExoticUnderlying = vaultInfo.underlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase()
-            || vaultInfo.underlying.toLowerCase() === TOKENS.PXCVX.toLowerCase();
-
-          if (underlyingIsCrvusd) {
-            // scrvUSD: no swap needed, deposit crvUSD directly
-            swapData = "0x";
-            expectedOut = debtWei.toString(); // 1:1 crvUSD → underlying
-          } else if (isExoticUnderlying) {
-            // Exotic underlying (cvgCVX/pxCVX): route crvUSD → CVX → HybridZapper → underlying
-            const exoticType = vaultInfo.underlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase() ? "cvgCvx" as const : "pxCvx" as const;
-            const route = await buildExoticOutputSwapData({
-              amountIn: debtWei.toString(),
-              type: exoticType,
-              slippage,
-            });
-            swapData = route.swapData;
-            expectedOut = route.expectedOut;
-          } else {
-            // Routable underlying: swap crvUSD → underlying, then deposit
-            const route = await fetchZapperSwapData({
-              tokenIn: CRVUSD_ADDRESS,
-              tokenOut: vaultInfo.underlying,
-              amountIn: debtWei.toString(),
-              slippage: slippage.toString(),
-            });
-            swapData = route.swapData;
-            expectedOut = route.expectedOut;
-          }
-
-          // minVaultShares: apply slippage to expected output as conservative estimate
-          const expectedOutBn = BigInt(expectedOut);
-          const minVaultShares = expectedOutBn * BigInt(10000 - slippage) / 10000n;
-
-          const data = encodeFunctionData({
-            abi: ZAPPER_ABI,
-            functionName: "borrowAndDeposit",
-            args: [
-              controllerAddress as `0x${string}`,
-              collateralWei,
-              debtWei,
-              tokenOut as `0x${string}`, // vault address
-              minVaultShares,
-              swapData as `0x${string}`,
-              getDeadline(),
-            ],
+        if (isExoticToken) {
+          const exoticType = tokenOut.toLowerCase() === TOKENS.CVGCVX.toLowerCase() ? "cvgCvx" as const : "pxCvx" as const;
+          const route = await buildExoticOutputSwapData({
+            amountIn: debtWei.toString(),
+            type: exoticType,
+            slippage,
           });
-
-          return {
-            tx: { to: ZAPPER_V3_ADDRESS, data, value: "0", from: address },
-            gas: "0",
-            amountsOut: { [tokenOut]: expectedOut },
-          };
+          swapData = route.swapData;
+          expectedOut = route.expectedOut;
         } else {
-          // Plain ERC20 output → borrowAndConvert
-          const { swapData, expectedOut } = await fetchZapperSwapData({
+          const routeTokenOut = isETHOut ? WETH_ADDRESS : tokenOut;
+          const route = await fetchZapperSwapData({
             tokenIn: CRVUSD_ADDRESS,
-            tokenOut: tokenOut,
+            tokenOut: routeTokenOut,
             amountIn: debtWei.toString(),
             slippage: slippage.toString(),
           });
-
-          const expectedOutBn = BigInt(expectedOut);
-          const minTargetOut = expectedOutBn * BigInt(10000 - slippage) / 10000n;
-
-          const data = encodeFunctionData({
-            abi: ZAPPER_ABI,
-            functionName: "borrowAndConvert",
-            args: [
-              controllerAddress as `0x${string}`,
-              collateralWei,
-              debtWei,
-              tokenOut as `0x${string}`,
-              minTargetOut,
-              swapData as `0x${string}`,
-              getDeadline(),
-            ],
-          });
-
-          return {
-            tx: { to: ZAPPER_V3_ADDRESS, data, value: "0", from: address },
-            gas: "0",
-            amountsOut: { [tokenOut]: expectedOut },
-          };
+          swapData = route.swapData;
+          expectedOut = route.expectedOut;
         }
+
+        const expectedOutBn = BigInt(expectedOut);
+        const minTargetOut = expectedOutBn * BigInt(10000 - slippage) / 10000n;
+
+        const data = encodeFunctionData({
+          abi: ZAPPER_ABI,
+          functionName: "borrowAndConvert",
+          args: [
+            controllerAddress as `0x${string}`,
+            collateralWei,
+            debtWei,
+            tokenOut as `0x${string}`, // vault share token or plain ERC20 (ETH_ADDRESS for native ETH)
+            minTargetOut,
+            swapData as `0x${string}`,
+            getDeadline(),
+          ],
+        });
+
+        return {
+          tx: { to: ZAPPER_ADDRESS, data, value: "0", from: address },
+          gas: "0",
+          amountsOut: { [tokenOut]: expectedOut },
+        };
       },
       CRVUSD_ADDRESS,
-      0n, // skip executeBundle's built-in approval check
+      0n,
       { ...options, tokenSymbol: options?.tokenSymbol ?? "crvUSD" }
     );
+
+    return queueApprovalsOrRun(allApprovals, runBundle);
   }, [address, publicClient, executeBundle]);
 
   const selfLiquidate = useCallback(async (
@@ -2888,18 +3073,19 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         pollingInterval: 1_000,
       });
 
+      if (receipt.status === "success") {
+        setStatus("success");
+        invalidateBalances();
+      } else {
+        setStatus("reverted");
+        setError("Transaction reverted");
+      }
       if (process.env.NODE_ENV === "development") {
         console.log("[TX Receipt]", { hash, status: receipt.status, gasUsed: receipt.gasUsed.toString(), blockNumber: receipt.blockNumber.toString() });
         if (snapBefore && address) {
           const snapAfter = await snapshotTx(publicClient, address, controllerAddress as `0x${string}`, [vaultAddress]);
           logTxDiff("selfLiquidate", snapBefore, snapAfter);
         }
-      }
-      if (receipt.status === "success") {
-        setStatus("success");
-      } else {
-        setStatus("reverted");
-        setError("Transaction reverted");
       }
 
       return simulationResult;

@@ -27,6 +27,7 @@ import { RouteDisplay } from "@/components/RouteDisplay";
 import { cn } from "@/lib/utils";
 import { LoadingDots } from "@/components/LoadingDots";
 import { sanitizeAmount } from "@/lib/sanitize";
+import { useSettings } from "@/hooks/useSettings";
 import { fetchRoute, fetchTokenPrices, ETH_ADDRESS } from "@/lib/enso";
 import { getMaxEthAmount } from "@/lib/eth-gas";
 import { CRVUSD_ADDRESS, WETH_ADDRESS } from "@/config/addresses";
@@ -98,6 +99,18 @@ export function RepayTab({
   );
   const debouncedWithdrawAmount = useDebouncedValue(withdrawAmount, 500);
 
+  // Clear stale repay input when loan changes (e.g. closed and reopened)
+  const prevDebt = useRef(position?.debt ?? 0n);
+  useEffect(() => {
+    const currentDebt = position?.debt ?? 0n;
+    if (currentDebt !== prevDebt.current) {
+      setRepayAmountState("");
+      setIsClosingLoan(false);
+      try { sessionStorage.removeItem(repayStorageKey); } catch { /* */ }
+    }
+    prevDebt.current = currentDebt;
+  }, [position?.debt, repayStorageKey]);
+
   // Withdrawal output token (default: vault's collateral token; can swap to other tokens)
   const defaultWithdrawToken: EnsoToken = useMemo(() => ({
     address: vault.address,
@@ -111,37 +124,17 @@ export function RepayTab({
   const [withdrawToken, setWithdrawToken] = useState<EnsoToken>(defaultWithdrawToken);
   const isWithdrawSwap = withdrawToken.address.toLowerCase() !== vault.address.toLowerCase();
 
-  // Slippage (basis points) - persisted to localStorage
-  const [rateInverted, setRateInverted] = useState(false);
-  const [slippage, setSlippage] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("yldfi-slippage") || "50";
-    }
-    return "50";
-  });
-  const [showSlippageModal, setShowSlippageModal] = useState(false);
+  const {
+    slippage, updateSlippage, showSlippageModal, setShowSlippageModal,
+    showSimulationPreview, setShowSimulationPreview, refreshSimulationPreview,
+    showSimulationModal, setShowSimulationModal,
+    showRoute, toggleRoute,
+  } = useSettings();
 
-  // Route display toggle - persisted to localStorage
-  const [showRoute, setShowRoute] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("yldfi-lending-show-route") !== "false";
-    }
-    return true;
-  });
+  const [rateInverted, setRateInverted] = useState(false);
 
   // Health estimation
   const [estimatedHealth, setEstimatedHealth] = useState<number | null>(null);
-
-  // Simulation toggle from settings
-  const [showSimulationPreview, setShowSimulationPreview] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("yldfi-show-simulation") === "true";
-    }
-    return false;
-  });
-
-  // Simulation preview
-  const [showSimulationModal, setShowSimulationModal] = useState(false);
   const simulationBlock = useRef<bigint>(0n);
   const hasAutoCapped = useRef(false);
   // Suppress rate box display while auto-cap is adjusting the amount and re-quoting
@@ -152,22 +145,6 @@ export function RepayTab({
   const { data: currentBlock } = useBlockNumber({ watch: true });
   const { data: gasPrice } = useGasPrice({ query: { refetchInterval: 12_000 } });
 
-  const updateSlippage = useCallback((value: string) => {
-    setSlippage(value);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("yldfi-slippage", value);
-    }
-  }, []);
-
-  const toggleRoute = useCallback(() => {
-    setShowRoute((prev) => {
-      const next = !prev;
-      if (typeof window !== "undefined") {
-        localStorage.setItem("yldfi-lending-show-route", String(next));
-      }
-      return next;
-    });
-  }, []);
 
   // Lending actions
   const {
@@ -241,6 +218,7 @@ export function RepayTab({
   const {
     data: redeemPreview,
     isLoading: redeemPreviewLoading,
+    isFetching: redeemPreviewFetching,
   } = useQuery({
     queryKey: ["repay-redeem-preview", repayToken.address, debouncedAmount],
     queryFn: async () => {
@@ -258,10 +236,12 @@ export function RepayTab({
       isVaultWithCrvUsdUnderlying &&
       !!publicClient &&
       !!debouncedAmount &&
-      Number(debouncedAmount) > 0,
+      Number(debouncedAmount) > 0 &&
+      status === "idle",
     refetchInterval: 30_000,
     staleTime: 10_000,
     retry: 1,
+    placeholderData: (prev: string | undefined) => prev,
   });
 
   // Fetch swap quote for non-crvUSD tokens that need a swap
@@ -270,6 +250,7 @@ export function RepayTab({
   const {
     data: swapQuote,
     isLoading: swapQuoteLoading,
+    isFetching: swapQuoteFetching,
   } = useQuery({
     queryKey: [
       "repay-swap-quote",
@@ -322,14 +303,22 @@ export function RepayTab({
       !isVaultWithCrvUsdUnderlying &&
       !!address &&
       !!debouncedAmount &&
-      Number(debouncedAmount) > 0,
+      Number(debouncedAmount) > 0 &&
+      status === "idle",
     refetchInterval: 30_000,
     staleTime: 10_000,
     retry: 1,
+    placeholderData: (prev: EnsoRouteResponse | undefined) => prev,
   });
 
   // Unified quote loading state
   const quoteLoading = isVaultWithCrvUsdUnderlying ? redeemPreviewLoading : swapQuoteLoading;
+
+  // Fetching includes re-fetches with placeholderData + debounce gap
+  const repayDebouncePending = repayAmount !== debouncedAmount;
+  const quoteFetching = isVaultWithCrvUsdUnderlying
+    ? (redeemPreviewFetching || repayDebouncePending)
+    : (!isCrvUsd && (swapQuoteFetching || repayDebouncePending));
 
   // Computed values from swap quote or redeem preview
   const estimatedCrvUsdOut = useMemo(() => {
@@ -410,7 +399,7 @@ export function RepayTab({
       const out = Number(formatUnits(BigInt(quote.amountOut), repayToken.decimals));
       return (out * 0.995).toFixed(Math.min(repayToken.decimals, 8));
     },
-    enabled: !isCrvUsd && !!address && !!publicClient && !!position?.debt && position.debt > 0n,
+    enabled: !isCrvUsd && !!address && !!publicClient && !!position?.debt && position.debt > 0n && status === "idle",
     refetchInterval: 60_000,
     staleTime: 30_000,
     retry: 1,
@@ -438,6 +427,19 @@ export function RepayTab({
 
     return balanceFormatted;
   }, [balanceFormatted, position?.hasLoan, position?.debt, isCrvUsd, maxRepayTokenEquivalent]);
+
+  // Amount needed to close the loan with a non-crvUSD token
+  // maxRepayTokenEquivalent has a 0.5% haircut for partial repay — add ~1.5% buffer for close
+  // (0.5% to undo haircut + 1% for swap spread/slippage), capped at user's balance
+  const closeTokenAmount = useMemo(() => {
+    if (!maxRepayTokenEquivalent || !position?.debt || position.debt === 0n) return null;
+    const base = parseFloat(maxRepayTokenEquivalent);
+    if (base <= 0) return null;
+    const withBuffer = base * 1.015;
+    const balance = parseFloat(balanceFormatted) || 0;
+    const capped = Math.min(withBuffer, balance);
+    return capped.toFixed(Math.min(repayToken.decimals, 8));
+  }, [maxRepayTokenEquivalent, position?.debt, balanceFormatted, repayToken.decimals]);
 
   // Price impact: manual calculation using USD token prices
   // Same pattern as BorrowTab: ((inputUsd - outputUsd) / inputUsd) × 100
@@ -500,7 +502,7 @@ export function RepayTab({
 
   // Compute max withdrawable collateral via binary search on health_calculator.
   // Pre-computed so MAX button is instant; recalculates when repay amount changes.
-  const { data: maxWithdrawable } = useQuery({
+  const { data: maxWithdrawable, isLoading: maxWithdrawableLoading } = useQuery({
     queryKey: [
       "max-withdrawable",
       controllerAddress,
@@ -574,7 +576,7 @@ export function RepayTab({
 
   // For non-collateral withdrawal tokens: convert maxWithdrawable to withdrawal token units
   // Used for MAX button display and input → collateral conversion rate
-  const { data: maxWithdrawInTokenUnits } = useQuery({
+  const { data: maxWithdrawInTokenUnits, isLoading: maxWithdrawInTokenLoading } = useQuery({
     queryKey: [
       "max-withdraw-token",
       vault.address,
@@ -597,7 +599,7 @@ export function RepayTab({
       // Apply small haircut for quote spread (0.5%)
       return (out * 0.995).toFixed(Math.min(withdrawToken.decimals, 8));
     },
-    enabled: isWithdrawSwap && !!address && !!maxWithdrawable && Number(maxWithdrawable) > 0,
+    enabled: isWithdrawSwap && !!address && !!maxWithdrawable && Number(maxWithdrawable) > 0 && status === "idle",
     refetchInterval: 60_000,
     staleTime: 30_000,
     retry: 1,
@@ -608,6 +610,7 @@ export function RepayTab({
   const {
     data: withdrawReverseQuote,
     isLoading: withdrawSwapLoading,
+    isFetching: withdrawSwapFetching,
   } = useQuery({
     queryKey: [
       "withdraw-reverse-quote",
@@ -632,10 +635,12 @@ export function RepayTab({
       isWithdrawSwap &&
       !!address &&
       !!debouncedWithdrawAmount &&
-      Number(debouncedWithdrawAmount) > 0,
+      Number(debouncedWithdrawAmount) > 0 &&
+      status === "idle",
     refetchInterval: 30_000,
     staleTime: 10_000,
     retry: 1,
+    placeholderData: (prev: EnsoRouteResponse | undefined) => prev,
   });
 
   // Collateral amount in wei — for non-collateral tokens, derived from reverse quote
@@ -804,9 +809,23 @@ export function RepayTab({
     onEstimatedHealthChange?.(estimatedHealth);
   }, [estimatedHealth, onEstimatedHealthChange]);
 
+  // Check balance sufficiency — needed before debt delta reporting
+  const hasInsufficientBalance = useMemo(() => {
+    if (!repayAmount || Number(repayAmount) === 0) return false;
+    try {
+      const amountWei = parseUnits(repayAmount, repayToken.decimals);
+      return amountWei > currentBalance;
+    } catch {
+      return false;
+    }
+  }, [repayAmount, repayToken.decimals, currentBalance]);
+
   // Report debt delta to parent (negative = repaying)
+  // Skip when balance is insufficient — showing estimated 0 debt is misleading
   useEffect(() => {
-    if (isCrvUsd && repayAmount && Number(repayAmount) > 0) {
+    if (hasInsufficientBalance) {
+      onDebtDeltaChange?.(null);
+    } else if (isCrvUsd && repayAmount && Number(repayAmount) > 0) {
       try {
         onDebtDeltaChange?.(-parseUnits(repayAmount, 18));
       } catch {
@@ -817,7 +836,7 @@ export function RepayTab({
     } else {
       onDebtDeltaChange?.(null);
     }
-  }, [isCrvUsd, repayAmount, estimatedCrvUsdOut, onDebtDeltaChange]);
+  }, [isCrvUsd, repayAmount, estimatedCrvUsdOut, onDebtDeltaChange, hasInsufficientBalance]);
 
   // Report collateral delta to parent (negative = withdrawing collateral)
   useEffect(() => {
@@ -862,11 +881,12 @@ export function RepayTab({
     }
   }, [status, txHash, isClosingLoan, onTxStateChange, repayAmount, repayToken, isCrvUsd, isVaultWithCrvUsdUnderlying, estimatedCrvUsdOut, withdrawAmountWei, debouncedWithdrawAmount, vault.symbol]);
 
-  // Handle transaction success — clear inputs and reset to idle
+  // Handle transaction success — clear all inputs and reset to idle
   useEffect(() => {
     if (status === "success") {
       setRepayAmountState("");
       setWithdrawAmountState("");
+      setIsClosingLoan(false);
       try { sessionStorage.removeItem(repayStorageKey); } catch { /* */ }
       onTransactionSuccess();
       refetchBalance();
@@ -1048,20 +1068,12 @@ export function RepayTab({
     status !== "needsApproval";
 
   // Withdrawal reverse quote is loading (collateral amount not yet known)
+  const withdrawDebouncePending = withdrawAmount !== debouncedWithdrawAmount;
+  const withdrawQuoteFetching = withdrawSwapFetching || withdrawDebouncePending;
   const withdrawRateLoading = isWithdrawSwap &&
-    !!debouncedWithdrawAmount &&
-    Number(debouncedWithdrawAmount) > 0 &&
-    !withdrawReverseQuote;
-
-  const hasInsufficientBalance = useMemo(() => {
-    if (!repayAmount || Number(repayAmount) === 0) return false;
-    try {
-      const amountWei = parseUnits(repayAmount, repayToken.decimals);
-      return amountWei > currentBalance;
-    } catch {
-      return false;
-    }
-  }, [repayAmount, repayToken.decimals, currentBalance]);
+    !!withdrawAmount &&
+    Number(withdrawAmount) > 0 &&
+    (withdrawSwapLoading || withdrawQuoteFetching);
 
   const isFormValid =
     !!repayAmount &&
@@ -1160,7 +1172,7 @@ export function RepayTab({
               onSelect={setRepayAmount}
               showClose={!!position?.hasLoan}
               onClose={() => {
-                setRepayAmountState(balanceFormatted);
+                setRepayAmountState(closeTokenAmount ?? balanceFormatted);
                 setIsClosingLoan(true);
               }}
             />
@@ -1170,10 +1182,28 @@ export function RepayTab({
         </div>
       </div>
 
-      {/* Quote details (non-crvUSD, when amount entered and quote loaded) */}
+      {/* Quote details (non-crvUSD, when amount entered and quote loaded or loading with previous data) */}
       {!isCrvUsd && !suppressQuoteDisplay && repayAmount && Number(repayAmount) > 0 && (
-        (isVaultWithCrvUsdUnderlying ? estimatedCrvUsdOut !== null && !quoteLoading : swapQuote && !quoteLoading) && (
-          <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
+        (isVaultWithCrvUsdUnderlying ? estimatedCrvUsdOut !== null : swapQuote) && (
+          <div className="relative p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
+            {quoteFetching && (
+              <div className="absolute inset-0 flex items-center justify-center z-10">
+                <span className="inline-flex items-center gap-1 text-[var(--muted-foreground)] text-2xl">
+                  <span className="animate-bounce" style={{ animationDelay: "0ms", animationDuration: "600ms" }}>.</span>
+                  <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
+                  <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
+                </span>
+              </div>
+            )}
+            <div className={cn("space-y-2 transition-opacity duration-200", quoteFetching && "opacity-0")}>
+            {/* Sending amount */}
+            <div className="flex justify-between">
+              <span className="text-[var(--muted-foreground)]">Sending</span>
+              <span className="mono">
+                {Number(repayAmount).toLocaleString(undefined, { maximumFractionDigits: 4 })} {repayToken.symbol}
+              </span>
+            </div>
+
             {/* Exchange rate */}
             {exchangeRate !== null && (
               <div className="flex justify-between items-center">
@@ -1227,6 +1257,7 @@ export function RepayTab({
                 </span>
               </div>
             )}
+            </div>
           </div>
         )
       )}
@@ -1259,7 +1290,15 @@ export function RepayTab({
                     Withdraw Collateral
                   </label>
                   <span className="text-xs text-[var(--muted-foreground)]">
-                    Deposited: {formattedCollateral}
+                    {isWithdrawSwap ? (
+                      maxWithdrawInTokenLoading || !maxWithdrawInTokenUnits
+                        ? <>Max: <LoadingDots /></>
+                        : <>Max: {Number(maxWithdrawInTokenUnits).toLocaleString(undefined, { maximumFractionDigits: 4 })} {withdrawToken.symbol}</>
+                    ) : (
+                      maxWithdrawableLoading || !maxWithdrawable
+                        ? <>Max: <LoadingDots /></>
+                        : <>Max: {Number(maxWithdrawable).toLocaleString(undefined, { maximumFractionDigits: 4 })} {withdrawToken.symbol}</>
+                    )}
                   </span>
                 </div>
                 <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--muted)] border border-[var(--border)] focus-within:ring-2 focus-within:ring-inset focus-within:ring-[var(--accent)] transition-shadow">
@@ -1293,8 +1332,18 @@ export function RepayTab({
                 </div>
 
                 {/* Withdrawal swap quote details */}
-                {isWithdrawSwap && debouncedWithdrawAmount && Number(debouncedWithdrawAmount) > 0 && !withdrawSwapLoading && withdrawReverseQuote && withdrawSwapRate !== null && (
-                  <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
+                {isWithdrawSwap && withdrawAmount && Number(withdrawAmount) > 0 && withdrawReverseQuote && withdrawSwapRate !== null && (
+                  <div className="relative p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
+                    {withdrawQuoteFetching && (
+                      <div className="absolute inset-0 flex items-center justify-center z-10">
+                        <span className="inline-flex items-center gap-1 text-[var(--muted-foreground)] text-2xl">
+                          <span className="animate-bounce" style={{ animationDelay: "0ms", animationDuration: "600ms" }}>.</span>
+                          <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
+                          <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
+                        </span>
+                      </div>
+                    )}
+                    <div className={cn("space-y-2 transition-opacity duration-200", withdrawQuoteFetching && "opacity-0")}>
                     <div className="flex justify-between items-center">
                       <span className="text-[var(--muted-foreground)]">Rate</span>
                       <span className="mono">
@@ -1320,10 +1369,19 @@ export function RepayTab({
                       <div className="flex justify-between">
                         <span className="text-[var(--muted-foreground)]">Withdrawing</span>
                         <span className="mono">
-                          ~{withdrawCollateralEstimate.toLocaleString(undefined, { maximumFractionDigits: 4 })} {vault.symbol}
+                          {withdrawCollateralEstimate.toLocaleString(undefined, { maximumFractionDigits: 4 })} {vault.symbol}
                         </span>
                       </div>
                     )}
+                    {debouncedWithdrawAmount && Number(debouncedWithdrawAmount) > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-[var(--muted-foreground)]">Receiving</span>
+                        <span className="mono">
+                          ~{Number(debouncedWithdrawAmount).toLocaleString(undefined, { maximumFractionDigits: 4 })} {withdrawToken.symbol}
+                        </span>
+                      </div>
+                    )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1361,10 +1419,18 @@ export function RepayTab({
       )}
 
       {/* Close loan warning */}
-      {isClosingLoan && (
+      {isClosingLoan && !hasInsufficientBalance && (
         <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-500 text-xs flex items-center gap-2">
           <AlertTriangle size={14} className="shrink-0" />
           Repays all debt and closes loan, collateral returned to wallet
+        </div>
+      )}
+
+      {/* Insufficient balance hint for close loan */}
+      {isClosingLoan && hasInsufficientBalance && isCrvUsd && (
+        <div className="p-2 rounded-lg bg-blue-500/10 border border-blue-500/30 text-blue-500 text-xs flex items-center gap-2">
+          <ArrowRightLeft size={14} className="shrink-0" />
+          Not enough crvUSD to close. Switch to another token (e.g. ETH, USDC) to swap and close in one transaction.
         </div>
       )}
 
@@ -1389,19 +1455,19 @@ export function RepayTab({
               } else if (simulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
                 // Re-open cached simulation modal if same block
                 setShowSimulationModal(true);
-              } else if (!quoteLoading && !suppressQuoteDisplay && !withdrawSwapLoading && !withdrawRateLoading) {
+              } else if (!quoteFetching && !suppressQuoteDisplay && !withdrawRateLoading) {
                 handleSubmit();
               }
             }}
-            disabled={showApprovalCard || isProcessing || quoteLoading || suppressQuoteDisplay || withdrawSwapLoading || withdrawRateLoading || (!isFormValid && status === "idle")}
+            disabled={showApprovalCard || isProcessing || quoteFetching || suppressQuoteDisplay || withdrawRateLoading || (!isFormValid && status === "idle")}
             className={cn(
               "w-full py-3 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
-              isProcessing || quoteLoading || suppressQuoteDisplay || withdrawSwapLoading || withdrawRateLoading || (!isFormValid && status === "idle")
+              isProcessing || quoteFetching || suppressQuoteDisplay || withdrawRateLoading || (!isFormValid && status === "idle")
                 ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
                 : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
             )}
           >
-            {((!isCrvUsd && (quoteLoading || suppressQuoteDisplay)) || withdrawSwapLoading || withdrawRateLoading) && status === "idle" ? (
+            {((!isCrvUsd && (quoteFetching || suppressQuoteDisplay)) || withdrawRateLoading) && status === "idle" ? (
               <>Getting quote<LoadingDots /></>
             ) : (
               getButtonText()
@@ -1565,7 +1631,7 @@ export function RepayTab({
                               ...(isWithdrawSwap ? [{
                                 tokenSymbol: withdrawToken.symbol,
                                 amount: debouncedWithdrawAmount
-                                  ? `~${Number(debouncedWithdrawAmount).toLocaleString(undefined, { maximumFractionDigits: 4 })}`
+                                  ? Number(debouncedWithdrawAmount).toLocaleString(undefined, { maximumFractionDigits: 4 })
                                   : undefined,
                                 action: "Receive",
                                 description: `from ${vault.symbol} swap`,
@@ -1609,9 +1675,7 @@ export function RepayTab({
         open={showSlippageModal}
         onClose={() => {
           setShowSlippageModal(false);
-          try {
-            setShowSimulationPreview(localStorage.getItem("yldfi-show-simulation") === "true");
-          } catch { /* ignore */ }
+          refreshSimulationPreview();
         }}
         slippage={slippage}
         onSlippageChange={updateSlippage}
