@@ -104,7 +104,7 @@ export const ENSO_ROUTER_EXECUTOR = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf"
 // the Router that execute in ENSO_SHORTCUTS' context. If a user approves
 // ENSO_SHORTCUTS, their tokens can be drained via crafted routeMulti commands.
 // For user approvals, use ENSO_ROUTER_EXECUTOR (the Router) instead.
-// For complex flows needing mid-bundle token pulls, use the V3 Zapper contract.
+// For complex flows needing mid-bundle token pulls, use the LlamaLendZapper contract.
 export const ENSO_SHORTCUTS = "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003";
 export const CVX_HYBRID_ZAPPER =
   process.env.NEXT_PUBLIC_CVX_HYBRID_ZAPPER || process.env.CVX_HYBRID_ZAPPER || "0x95AC5F9947F8d68185D1B2503c765e774386f0a6";
@@ -434,10 +434,10 @@ export function buildHybridZapperActions(params: {
   if (!CVX_HYBRID_ZAPPER) throw new Error("CVX_HYBRID_ZAPPER not configured");
 
   const underlyingToken = params.type === "cvgCvx" ? TOKENS.CVGCVX : TOKENS.PXCVX;
-  const method = params.type === "cvgCvx" ? "zapCvxToCvgCvxWithParams" : "zapCvxToPxCvxWithParams";
+  const method = params.type === "cvgCvx" ? "zapCvxToCvgCvx" : "zapCvxToPxCvx";
   const abi = params.type === "cvgCvx"
-    ? "function zapCvxToCvgCvxWithParams(uint256 amountIn, uint256 swapAmount, uint256 minDy, uint256 minTotalOut, address receiver, uint256 deadline) returns (uint256)"
-    : "function zapCvxToPxCvxWithParams(uint256 amountIn, uint256 swapAmount, uint256 minDy, uint256 minTotalOut, address receiver, uint256 deadline) returns (uint256)";
+    ? "function zapCvxToCvgCvx(uint256 amountIn, uint256 swapAmount, uint256 minDy, uint256 minTotalOut, address receiver, uint256 deadline) returns (uint256)"
+    : "function zapCvxToPxCvx(uint256 amountIn, uint256 swapAmount, uint256 minDy, uint256 minTotalOut, address receiver, uint256 deadline) returns (uint256)";
 
   // Balance action is at offset + 2 (after approve + zap call)
   const balIdx = params.actionsOffset + 2;
