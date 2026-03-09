@@ -48,6 +48,7 @@ import { ContractExplorer, useContractExplorer, type ExplorerContract } from "@/
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { sanitizeAmount } from "@/lib/sanitize";
+import { useSettings } from "@/hooks/useSettings";
 import { Logo } from "@/components/Logo";
 import { useCurveLendingVault, formatCurveVaultData } from "@/hooks/useCurveLendingData";
 import { useCurveLendingPosition, formatHealth } from "@/hooks/useCurveLendingPosition";
@@ -444,20 +445,15 @@ export function VaultPageContent({ id }: { id: string }) {
 
   // Debounce zap amount to prevent rate limiting from Enso API (1 req/sec)
   const debouncedZapAmount = useDebouncedValue(zapAmount, 500);
-  // Load slippage from localStorage with lazy initialization
-  const [zapSlippage, setZapSlippage] = useState(() => {
-    if (typeof window === "undefined") return "10";
-    try {
-      return localStorage.getItem("yldfi-slippage") ?? "50";
-    } catch {
-      return "10";
-    }
-  });
-  const [showSlippageModal, setShowSlippageModal] = useState(false);
+  const {
+    slippage: zapSlippage, updateSlippage, showSlippageModal, setShowSlippageModal,
+    showSimulationPreview, setShowSimulationPreview, refreshSimulationPreview,
+    showSimulationModal, setShowSimulationModal,
+  } = useSettings();
   const [showPriceImpactModal, setShowPriceImpactModal] = useState(false);
   const [zapInProgress, setZapInProgress] = useState(false);
   const [priceImpactConfirmText, setPriceImpactConfirmText] = useState("");
-  // Route display toggle with localStorage persistence
+  // Route display toggle with localStorage persistence (vault uses different key: yldfi-show-route)
   const [showRoute, setShowRoute] = useState(() => {
     if (typeof window === "undefined") return false;
     try {
@@ -475,27 +471,6 @@ export function VaultPageContent({ id }: { id: string }) {
       // localStorage unavailable
     }
   };
-
-  // Simulation preview toggle with localStorage persistence
-  const [showSimulationPreview, setShowSimulationPreviewState] = useState(() => {
-    if (typeof window === "undefined") return false;
-    try {
-      return localStorage.getItem("yldfi-show-simulation") === "true";
-    } catch {
-      return false;
-    }
-  });
-  const setShowSimulationPreview = (value: boolean) => {
-    setShowSimulationPreviewState(value);
-    try {
-      localStorage.setItem("yldfi-show-simulation", String(value));
-    } catch {
-      // localStorage unavailable
-    }
-  };
-
-  // Simulation modal state
-  const [showSimulationModal, setShowSimulationModal] = useState(false);
   const [isSimulatingPreview, setIsSimulatingPreview] = useState(false);
   const [ethPrice, setEthPrice] = useState<number | null>(null);
   // Track if we should skip simulation (already ran from preview mode)
@@ -510,7 +485,7 @@ export function VaultPageContent({ id }: { id: string }) {
   // Handle "Use as Collateral" button click - navigate to lending page
   const handleCollateralClick = () => {
     if (vault) {
-      router.push(`/vaults/${vault.name}/lending`);
+      router.push(`/vaults/${vault.id}/lending`);
     }
   };
 
@@ -599,15 +574,7 @@ export function VaultPageContent({ id }: { id: string }) {
   // Price impact threshold for confirmation (5%)
   const PRICE_IMPACT_CONFIRM_THRESHOLD = 5;
 
-  // Save slippage to localStorage when changed
-  const updateSlippage = (value: string) => {
-    setZapSlippage(value);
-    try {
-      localStorage.setItem("yldfi-slippage", value);
-    } catch {
-      // localStorage unavailable
-    }
-  };
+
 
   // Fetch Yearn Kong API data
   const { data: yearnData, isLoading: yearnLoading } = useYearnVault(vault?.address ?? "");
@@ -791,6 +758,7 @@ export function VaultPageContent({ id }: { id: string }) {
           }).catch(() => { });
         }
       }
+      return result;
     } finally {
       setIsSimulatingPreview(false);
     }
@@ -832,7 +800,7 @@ export function VaultPageContent({ id }: { id: string }) {
 
   // Run Tenderly simulation preview for vault deposit/withdraw
   const runVaultSimulationPreview = useCallback(async () => {
-    if (!vault || !amount) return;
+    if (!vault || !amount) return null;
     setIsSimulatingPreview(true);
     try {
       const result = activeTab === "deposit"
@@ -865,6 +833,7 @@ export function VaultPageContent({ id }: { id: string }) {
           }).catch(() => { });
         }
       }
+      return result;
     } finally {
       setIsSimulatingPreview(false);
     }
@@ -949,8 +918,20 @@ export function VaultPageContent({ id }: { id: string }) {
         });
         approve(exactApprovalAmount);
       } else if (showSimulationPreview) {
-        // Simulation preview mode: run Tenderly simulation first
-        runVaultSimulationPreview();
+        const result = await runVaultSimulationPreview();
+        if (result) return; // Modal opened — bail
+        // No simulation data (e.g. Anvil) — fall through to execute
+        trackDepositInitiated(id, amount, vault.assetSymbol);
+        const outputAmt = pricePerShare ? (inputAmount / pricePerShare).toFixed(4) : inputAmount.toFixed(4);
+        setPendingTxDetails({
+          fromAmount: inputAmount.toFixed(4),
+          fromSymbol: vault.assetSymbol,
+          fromLogo: `/tokens/${vault.assetSymbol.toLowerCase()}.png`,
+          toAmount: outputAmt,
+          toSymbol: vault.symbol,
+          toLogo: vault.logo,
+        });
+        deposit(amount);
       } else {
         trackDepositInitiated(id, amount, vault.assetSymbol);
         // Set pending tx details for display
@@ -967,22 +948,22 @@ export function VaultPageContent({ id }: { id: string }) {
       }
     } else {
       if (showSimulationPreview) {
-        // Simulation preview mode: run Tenderly simulation first
-        runVaultSimulationPreview();
-      } else {
-        trackWithdrawInitiated(id, amount, vault.assetSymbol);
-        // Set pending tx details for display
-        const outputAmt = pricePerShare ? (inputAmount * pricePerShare).toFixed(4) : inputAmount.toFixed(4);
-        setPendingTxDetails({
-          fromAmount: inputAmount.toFixed(4),
-          fromSymbol: vault.symbol,
-          fromLogo: vault.logo,
-          toAmount: outputAmt,
-          toSymbol: vault.assetSymbol,
-          toLogo: `/tokens/${vault.assetSymbol.toLowerCase()}.png`,
-        });
-        withdraw(amount);
+        const result = await runVaultSimulationPreview();
+        if (result) return; // Modal opened — bail
+        // No simulation data (e.g. Anvil) — fall through to execute
       }
+      trackWithdrawInitiated(id, amount, vault.assetSymbol);
+      // Set pending tx details for display
+      const outputAmt = pricePerShare ? (inputAmount * pricePerShare).toFixed(4) : inputAmount.toFixed(4);
+      setPendingTxDetails({
+        fromAmount: inputAmount.toFixed(4),
+        fromSymbol: vault.symbol,
+        fromLogo: vault.logo,
+        toAmount: outputAmt,
+        toSymbol: vault.assetSymbol,
+        toLogo: `/tokens/${vault.assetSymbol.toLowerCase()}.png`,
+      });
+      withdraw(amount);
     }
   };
 
@@ -1011,6 +992,7 @@ export function VaultPageContent({ id }: { id: string }) {
       setTimeout(() => {
         setLastTxResult(txResult);
         setAmount("");
+        setZapAmount("");
 
         // Show toast notification
         if (isSuccess) {
@@ -1109,6 +1091,7 @@ export function VaultPageContent({ id }: { id: string }) {
       };
       setTimeout(() => {
         setLastTxResult(txResult);
+        setAmount("");
         setZapAmount("");
 
         // Show toast notification
@@ -1278,7 +1261,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               onClick={() => {
                                 setVaultSelectorOpen(false);
                                 if (!isSelected) {
-                                  router.push(`/vaults/${v.name}`);
+                                  router.push(`/vaults/${v.id}`);
                                 }
                               }}
                               className={cn(
@@ -1330,7 +1313,7 @@ export function VaultPageContent({ id }: { id: string }) {
                   );
                   return (
                     <Link
-                      href={`/vaults/${vault.name}/lending`}
+                      href={`/vaults/${vault.id}/lending`}
                       className="lending-card block group"
                     >
                       <div className="px-4 py-3">
@@ -1379,7 +1362,7 @@ export function VaultPageContent({ id }: { id: string }) {
                 }
                 return (
                   <Link
-                    href={`/vaults/${vault.name}/lending`}
+                    href={`/vaults/${vault.id}/lending`}
                     className="collateral-link block"
                   >
                     <span>
@@ -1544,8 +1527,8 @@ export function VaultPageContent({ id }: { id: string }) {
             {/* Right column - Action Card */}
             <div className="lg:col-span-2 min-w-0">
               <div className="sticky border border-[var(--border)] rounded-xl overflow-x-hidden w-full" style={{ top: "calc(6rem + var(--test-banner-height))" }}>
-                {/* Your Wallet - Always visible when connected with balance */}
-                {isConnected && vaultBalance > 0 && (
+                {/* Your Wallet - visible when connected with balance, hidden during pending/success/reverted states */}
+                {isConnected && vaultBalance > 0 && debugTxState === "none" && !pendingMultiStep && txStatus !== "waitingTx" && zapStatus !== "waitingTx" && !showTxSuccess?.show && !showTxReverted?.show && (
                   <div className="bg-[var(--muted)]/30 p-5 border-b border-[var(--border)]">
                     <div className="flex flex-wrap items-center justify-center gap-4">
                       <div className="text-center basis-full sm:basis-auto">
@@ -1924,7 +1907,7 @@ export function VaultPageContent({ id }: { id: string }) {
                           /* Approval choice: Exact or Unlimited */
                           <div className="space-y-2">
                             <div className="text-sm text-[var(--muted-foreground)]">
-                              Approve {vault.assetSymbol}{" "}<span className="whitespace-nowrap">spending <a href={`https://etherscan.io/address/${vault.address}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={12} className="!inline -mt-0.5" /></a></span>
+                              Approve {vault.assetSymbol} for{" "}<span className="whitespace-nowrap">{vault.symbol} vault <a href={`https://etherscan.io/address/${vault.address}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={12} className="!inline -mt-0.5" /></a></span>
                             </div>
                             <div className="flex gap-2">
                               <button
@@ -2319,13 +2302,17 @@ export function VaultPageContent({ id }: { id: string }) {
                       {/* Zap Action Button */}
                       {isConnected ? (
                         <button
-                          onClick={() => {
+                          onClick={async () => {
                             if (showSimulationPreview && effectiveSimulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
                               // Re-open cached simulation modal if same block
                               setShowSimulationModal(true);
                             } else if (showSimulationPreview) {
                               // Preview mode - run simulation first
-                              runSimulationPreview();
+                              const result = await runSimulationPreview();
+                              if (result) return; // Modal opened — bail
+                              // No simulation data (e.g. Anvil) — fall through to execute
+                              setZapPendingDetails();
+                              executeZap();
                             } else if ((zapQuote?.priceImpact ?? 0) >= PRICE_IMPACT_CONFIRM_THRESHOLD) {
                               // High price impact - show confirmation modal
                               setPriceImpactConfirmText("");
@@ -2439,10 +2426,7 @@ export function VaultPageContent({ id }: { id: string }) {
         open={showSlippageModal}
         onClose={() => {
           setShowSlippageModal(false);
-          // Re-read simulation toggle from localStorage (SlippageModal manages it directly)
-          try {
-            setShowSimulationPreview(localStorage.getItem("yldfi-show-simulation") === "true");
-          } catch { /* ignore */ }
+          refreshSimulationPreview();
         }}
         slippage={zapSlippage}
         onSlippageChange={updateSlippage}
