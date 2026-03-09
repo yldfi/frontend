@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPublicClient, encodeAbiParameters, http, keccak256, pad, parseAbiParameters, toHex } from "viem";
 import { mainnet } from "viem/chains";
-import { TOKENS, VAULT_ADDRESSES, CURVE_CONTROLLERS, getVaultByAddress } from "@/config/vaults";
-import { fetchTokenPrices, ENSO_ROUTER, ENSO_ROUTER_EXECUTOR } from "@/lib/enso";
-import { CRVUSD_ADDRESS } from "@/config/addresses";
-import { ZAPPER_ADDRESS, ZAPPER_V3_ADDRESS } from "@/lib/zapper";
+import { TOKENS, VAULT_ADDRESSES, CURVE_CONTROLLERS, getVaultByAddress, LLAMA_AIRFORCE, CONCENTRATOR, CURVE_SAVINGS, ASYMMETRY } from "@/config/vaults";
+import { fetchTokenPricesDirect, ENSO_ROUTER, ENSO_ROUTER_EXECUTOR } from "@/lib/enso";
+import { CRVUSD_ADDRESS, USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
+import { ZAPPER_ADDRESS } from "@/lib/zapper";
 import { ERC4626_ABI } from "@/lib/abis";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 const ALLOWED_ORIGINS = [
   "https://yldfi.co",
   "https://www.yldfi.co",
-  "http://localhost:3000",
+  ...(process.env.NODE_ENV === "development" ? ["http://localhost:3000"] : []),
 ];
 
 function getCorsHeaders(request: NextRequest): Record<string, string> {
@@ -53,6 +53,27 @@ function consumeNonce(nonce: string, expires: number): boolean {
   if (consumedNonces.has(nonce)) return false; // already used
   consumedNonces.set(nonce, expires);
   return true;
+}
+
+function base64UrlEncode(bytes: Uint8Array): string {
+  return Buffer.from(bytes)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+async function signPayload(secret: string, payload: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(payload));
+  return base64UrlEncode(new Uint8Array(signature));
 }
 
 function base64UrlDecode(value: string): Uint8Array {
@@ -267,105 +288,155 @@ function processAssetChanges(
  * Enriches vault token prices by calculating USD value using pricePerShare × underlying price.
  * Handles both yld vaults (known config) and unknown ERC4626 vaults (e.g. yvUSDC-1) via on-chain discovery.
  */
+// Known ERC4626 vault tokens → { underlying, underlyingDecimals }
+// Avoids slow on-chain discovery calls. Module-level for persistence across requests.
+const KNOWN_VAULT_REGISTRY = new Map<string, { underlying: string; underlyingDecimals: number }>([
+  // Yearn V3
+  [YVUSDC1_ADDRESS.toLowerCase(), { underlying: USDC_ADDRESS.toLowerCase(), underlyingDecimals: 6 }],
+  // Curve Savings
+  [CURVE_SAVINGS.SCRVUSD.toLowerCase(), { underlying: CRVUSD_ADDRESS.toLowerCase(), underlyingDecimals: 18 }],
+  // Llama Airforce
+  [LLAMA_AIRFORCE.UCVX.toLowerCase(), { underlying: TOKENS.PXCVX.toLowerCase(), underlyingDecimals: 18 }],
+  // Concentrator
+  [CONCENTRATOR.ACVX.toLowerCase(), { underlying: TOKENS.CVX.toLowerCase(), underlyingDecimals: 18 }],
+  [CONCENTRATOR.ACRV.toLowerCase(), { underlying: TOKENS.CVXCRV.toLowerCase(), underlyingDecimals: 18 }],
+  // Asymmetry
+  [ASYMMETRY.AFCVX.toLowerCase(), { underlying: TOKENS.CVX.toLowerCase(), underlyingDecimals: 18 }],
+]);
+
+// Cache for on-chain discovered vaults — persists across requests, never expires
+// (vault underlying doesn't change)
+const discoveredVaultCache = new Map<string, { underlying: string; underlyingDecimals: number }>();
+// Addresses we already tried and know are NOT vaults — skip forever
+const notVaultCache = new Set<string>();
+
+function lookupVault(address: string): { underlying: string; underlyingDecimals: number } | null {
+  const addr = address.toLowerCase();
+  // 1. yld vault config
+  const yldVault = getVaultByAddress(address);
+  if (yldVault) return { underlying: yldVault.assetAddress.toLowerCase(), underlyingDecimals: yldVault.assetDecimals };
+  // 2. Known external vaults
+  const known = KNOWN_VAULT_REGISTRY.get(addr);
+  if (known) return known;
+  // 3. Previously discovered on-chain
+  return discoveredVaultCache.get(addr) ?? null;
+}
+
 async function enrichVaultTokenPrices(assetChanges: AssetChange[]): Promise<AssetChange[]> {
   try {
-    // Collect underlying addresses for ALL vault tokens (not just unpriced ones),
-    // since Tenderly often returns stale/inaccurate prices for vault tokens.
-    // We always override with convertToAssets × underlyingPrice for accuracy.
-    const underlyingAddresses = new Set<string>();
-    const knownVaultAddresses = new Set<string>();
-    // Map unknown vault address → { underlying, underlyingDecimals } discovered via RPC
-    const discoveredVaults = new Map<string, { underlying: string; underlyingDecimals: number }>();
+    // Only enrich tokens that are missing a dollar value
+    const needsEnrichment = assetChanges.filter(c =>
+      !c.dollarValue || c.dollarValue === "0" || parseFloat(c.dollarValue) === 0
+    );
+    if (needsEnrichment.length === 0) return assetChanges;
 
-    for (const change of assetChanges) {
-      const vault = getVaultByAddress(change.address);
-      if (vault) {
-        underlyingAddresses.add(vault.assetAddress.toLowerCase());
-        knownVaultAddresses.add(change.address.toLowerCase());
+    // Resolve vault info for unpriced tokens
+    const vaultInfoMap = new Map<string, { underlying: string; underlyingDecimals: number }>();
+    const needsDiscovery: AssetChange[] = [];
+
+    for (const change of needsEnrichment) {
+      const info = lookupVault(change.address);
+      if (info) {
+        vaultInfoMap.set(change.address.toLowerCase(), info);
+      } else if (!notVaultCache.has(change.address.toLowerCase())) {
+        needsDiscovery.push(change);
       }
     }
 
-    // For tokens not in yld vaults, try ERC4626 asset() discovery on ALL tokens
-    // (not just unpriced — Tenderly often returns stale prices for vault tokens)
-    const unknownTokens = assetChanges.filter(c =>
-      !knownVaultAddresses.has(c.address.toLowerCase())
-    );
-    // Deduplicate by address to avoid redundant RPC calls
-    const seenAddresses = new Set<string>();
-    const uniqueUnknown = unknownTokens.filter(c => {
-      const addr = c.address.toLowerCase();
-      if (seenAddresses.has(addr)) return false;
-      seenAddresses.add(addr);
-      return true;
-    });
-    await Promise.all(uniqueUnknown.map(async (change) => {
-      try {
-        const [underlying, underlyingDecimals] = await Promise.all([
-          publicClient.readContract({
-            address: change.address as `0x${string}`,
-            abi: ERC4626_ABI,
-            functionName: "asset",
-          }),
-          publicClient.readContract({
-            address: change.address as `0x${string}`,
-            abi: ERC4626_ABI,
-            functionName: "decimals",
-          }),
-        ]);
-        const underlyingAddr = (underlying as string).toLowerCase();
-        discoveredVaults.set(change.address.toLowerCase(), {
-          underlying: underlyingAddr,
-          underlyingDecimals: Number(underlyingDecimals),
-        });
-        underlyingAddresses.add(underlyingAddr);
-      } catch {
-        // Not an ERC4626 vault, skip
-      }
-    }));
-
-    if (underlyingAddresses.size === 0) return assetChanges;
-
-    // Fetch underlying token prices from Enso
-    const priceData = await fetchTokenPrices([...underlyingAddresses]);
-    const priceMap = new Map(priceData.map((p) => [p.address.toLowerCase(), p.price]));
-
-    // Calculate vault token values — always override for known vaults, enrich for discovered
-    const enrichedChanges = await Promise.all(
-      assetChanges.map(async (change): Promise<AssetChange> => {
-        const isKnownVault = knownVaultAddresses.has(change.address.toLowerCase());
-        const discovered = discoveredVaults.get(change.address.toLowerCase());
-
-        // Skip non-vault tokens entirely
-        if (!isKnownVault && !discovered) return change;
-
-        const vault = isKnownVault ? getVaultByAddress(change.address) : null;
-        const underlyingAddr = vault ? vault.assetAddress.toLowerCase() : discovered!.underlying;
-
+    // Discover unknown tokens via single RPC call each (deduplicated, 2s timeout)
+    if (needsDiscovery.length > 0) {
+      const seen = new Set<string>();
+      const unique = needsDiscovery.filter(c => {
+        const a = c.address.toLowerCase();
+        if (seen.has(a)) return false;
+        seen.add(a);
+        return true;
+      });
+      await Promise.all(unique.map(async (change) => {
+        const addr = change.address.toLowerCase();
         try {
-          const underlyingAmount = await publicClient.readContract({
-            address: change.address as `0x${string}`,
+          const [underlying, decimals] = await Promise.all([
+            Promise.race([
+              publicClient.readContract({ address: addr as `0x${string}`, abi: ERC4626_ABI, functionName: "asset" }),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2_000)),
+            ]),
+            Promise.race([
+              publicClient.readContract({ address: addr as `0x${string}`, abi: ERC4626_ABI, functionName: "decimals" }),
+              new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2_000)),
+            ]),
+          ]);
+          const info = { underlying: (underlying as string).toLowerCase(), underlyingDecimals: Number(decimals) };
+          discoveredVaultCache.set(addr, info);
+          vaultInfoMap.set(addr, info);
+        } catch {
+          notVaultCache.add(addr); // Remember this isn't a vault
+        }
+      }));
+    }
+
+    if (vaultInfoMap.size === 0) return assetChanges;
+
+    // Collect unique underlying addresses we need prices for
+    const underlyingAddresses = [...new Set([...vaultInfoMap.values()].map(v => v.underlying))];
+
+    // Fetch prices + convertToAssets in parallel
+    const [priceData, ...convertResults] = await Promise.all([
+      fetchTokenPricesDirect(underlyingAddresses),
+      ...assetChanges
+        .filter(c => vaultInfoMap.has(c.address.toLowerCase()))
+        .map(c =>
+          publicClient.readContract({
+            address: c.address as `0x${string}`,
             abi: ERC4626_ABI,
             functionName: "convertToAssets",
-            args: [BigInt(change.rawAmount)],
-          });
+            args: [BigInt(c.rawAmount)],
+          }).then(r => ({ address: c.address.toLowerCase(), underlyingAmount: r as bigint }))
+            .catch(() => null)
+        ),
+    ]);
 
-          const underlyingPrice = priceMap.get(underlyingAddr);
-          if (underlyingPrice === undefined) return change;
+    const priceMap = new Map(priceData.map(p => [p.address.toLowerCase(), p.price]));
+    const convertMap = new Map(convertResults.filter(Boolean).map(r => [r!.address, r!.underlyingAmount]));
 
-          // Use known vault decimals or previously-discovered decimals (no extra RPC)
-          const decimals = vault ? vault.assetDecimals : discovered!.underlyingDecimals;
+    const enriched = assetChanges.map(change => {
+      const info = vaultInfoMap.get(change.address.toLowerCase());
+      if (!info) return change;
 
-          const underlyingValue = Number(underlyingAmount) / 10 ** decimals;
-          const dollarValue = (underlyingValue * underlyingPrice).toString();
+      const underlyingAmount = convertMap.get(change.address.toLowerCase());
+      const underlyingPrice = priceMap.get(info.underlying);
+      if (underlyingAmount === undefined || underlyingPrice === undefined) return change;
 
-          return { ...change, dollarValue };
-        } catch {
-          return change;
-        }
-      })
+      const underlyingValue = Number(underlyingAmount) / 10 ** info.underlyingDecimals;
+      return { ...change, dollarValue: (underlyingValue * underlyingPrice).toString() };
+    });
+
+    // Fallback: fetch Enso prices directly for any still-unpriced tokens
+    return enrichTokenPricesFallback(enriched);
+  } catch {
+    return enrichTokenPricesFallback(assetChanges);
+  }
+}
+
+/** Fetch Enso prices for any asset changes still missing a dollar value */
+async function enrichTokenPricesFallback(assetChanges: AssetChange[]): Promise<AssetChange[]> {
+  try {
+    const unpriced = assetChanges.filter(c =>
+      !c.dollarValue || c.dollarValue === "0" || parseFloat(c.dollarValue) === 0
     );
+    if (unpriced.length === 0) return assetChanges;
 
-    return enrichedChanges;
+    // Deduplicate addresses
+    const addresses = [...new Set(unpriced.map(c => c.address.toLowerCase()))];
+    const priceData = await fetchTokenPricesDirect(addresses);
+    const priceMap = new Map(priceData.map(p => [p.address.toLowerCase(), p.price]));
+
+    return assetChanges.map(change => {
+      if (change.dollarValue && change.dollarValue !== "0" && parseFloat(change.dollarValue) !== 0) return change;
+      const price = priceMap.get(change.address.toLowerCase());
+      if (price === undefined || price === 0) return change;
+      const amount = Number(change.rawAmount) / 10 ** change.decimals;
+      return { ...change, dollarValue: (amount * price).toString() };
+    });
   } catch {
     return assetChanges;
   }
@@ -473,7 +544,6 @@ export async function POST(request: NextRequest) {
   const allowedTargets = new Set<string>([
     ENSO_ROUTER_EXECUTOR.toLowerCase(),
     ZAPPER_ADDRESS.toLowerCase(),
-    ZAPPER_V3_ADDRESS.toLowerCase(),
     ...Object.values(VAULT_ADDRESSES).map((a) => a.toLowerCase()),
     ...Object.values(CURVE_CONTROLLERS).map((a) => a.toLowerCase()),
   ]);
@@ -538,6 +608,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  const t0 = Date.now();
   let response: Response;
   try {
     response = await fetch(
@@ -623,6 +694,9 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const t1 = Date.now();
+  if (isDev) console.log(`[Tenderly] API call took ${t1 - t0}ms`);
+
   const simulation = (payload?.simulation ?? payload?.transaction ?? payload ?? {}) as Record<string, unknown>;
   const status = simulation?.status !== false;
   const transaction = payload?.transaction as Record<string, unknown> | undefined;
@@ -630,9 +704,10 @@ export async function POST(request: NextRequest) {
   const payloadSimulation = payload?.simulation as Record<string, unknown> | undefined;
   const simulationId = simulation?.id ?? payloadSimulation?.id ?? null;
 
-  // Return a link to our share endpoint which will share and redirect to Tenderly
-  const tenderlyUrl = simulationId
-    ? `/api/simulate/share/${simulationId}`
+  // Return a signed link to our share endpoint which will verify before sharing via Tenderly
+  const secret = process.env.SIMULATION_NONCE_SECRET;
+  const tenderlyUrl = simulationId && secret
+    ? `/api/simulate/share/${simulationId}?sig=${await signPayload(secret, String(simulationId))}`
     : null;
   const errorMessage =
     simulation?.error_message ??
@@ -648,7 +723,9 @@ export async function POST(request: NextRequest) {
   const processedChanges = processAssetChanges(rawAssetChanges, body.from);
 
   // Enrich vault token prices (Tenderly doesn't have prices for our vault tokens)
+  const t2 = Date.now();
   const assetChanges = await enrichVaultTokenPrices(processedChanges);
+  if (isDev) console.log(`[Tenderly] enrichVaultTokenPrices took ${Date.now() - t2}ms, total ${Date.now() - t0}ms`);
 
   // Log for debugging (dev only)
   if (isDev) {
