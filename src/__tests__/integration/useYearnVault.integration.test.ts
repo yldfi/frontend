@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import {
   useYearnVault,
   formatYearnVaultData,
-  calculateStrategyNetApy,
 } from "@/hooks/useYearnVault";
 
 // Get mocked function
@@ -279,36 +278,6 @@ describe("useYearnVault integration", () => {
 
       const result = formatYearnVaultData(wbtcVault);
       expect(result?.pricePerShare).toBeCloseTo(1.05, 2);
-    });
-  });
-
-  describe("calculateStrategyNetApy", () => {
-    it("calculates strategy APY from vault APY", () => {
-      // Vault takes 15% fee, so strategy net = vault net / 0.85
-      const vaultNetApy = 12.5;
-      const strategyApy = calculateStrategyNetApy(vaultNetApy);
-
-      expect(strategyApy).toBeCloseTo(14.71, 2);
-    });
-
-    it("handles zero APY", () => {
-      const strategyApy = calculateStrategyNetApy(0);
-      expect(strategyApy).toBe(0);
-    });
-
-    it("handles negative APY (vault losing money)", () => {
-      const strategyApy = calculateStrategyNetApy(-5);
-      expect(strategyApy).toBeCloseTo(-5.88, 2);
-    });
-
-    it("handles high APY", () => {
-      const strategyApy = calculateStrategyNetApy(50);
-      expect(strategyApy).toBeCloseTo(58.82, 2);
-    });
-
-    it("handles small APY", () => {
-      const strategyApy = calculateStrategyNetApy(0.5);
-      expect(strategyApy).toBeCloseTo(0.59, 2);
     });
   });
 

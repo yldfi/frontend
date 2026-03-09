@@ -52,7 +52,7 @@ import { Logo } from "@/components/Logo";
 import { useCurveLendingVault, formatCurveVaultData } from "@/hooks/useCurveLendingData";
 import { useCurveLendingPosition, formatHealth } from "@/hooks/useCurveLendingPosition";
 import { buildLendingPositionDisplay } from "@/lib/lending";
-import { useYearnVault, formatYearnVaultData, calculateStrategyNetApy } from "@/hooks/useYearnVault";
+import { useYearnVault, formatYearnVaultData } from "@/hooks/useYearnVault";
 import { useVaultBalance } from "@/hooks/useVaultBalance";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { useCvxCrvPrice } from "@/hooks/useCvxCrvPrice";
@@ -68,7 +68,7 @@ import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS } from "@/lib/enso";
 import { getMaxEthAmount } from "@/lib/eth-gas";
 import { CHAINLINK_ETH_USD } from "@/config/addresses";
-import { getVault, getParentVault, getVaultByAddress, TOKENS, VAULT_UNDERLYING_TOKENS, VAULTS, EXTERNAL_VAULT_TOKENS, CURVE_CONTROLLERS, CURVE_SAVINGS } from "@/config/vaults";
+import { getVault, getVaultByAddress, TOKENS, VAULT_UNDERLYING_TOKENS, VAULTS, EXTERNAL_VAULT_TOKENS, CURVE_CONTROLLERS, CURVE_SAVINGS } from "@/config/vaults";
 import { CollateralModal, LendingInterface } from "@/components/lending";
 import type { EnsoToken, ZapDirection, SimulationAssetChange } from "@/types/enso";
 import {
@@ -613,18 +613,8 @@ export function VaultPageContent({ id }: { id: string }) {
   const { data: yearnData, isLoading: yearnLoading } = useYearnVault(vault?.address ?? "");
   const yearnVault = formatYearnVaultData(yearnData?.vault, yearnData?.vaultStrategies);
 
-  // For strategy, also fetch parent vault data to get gross APR for calculating net APY
-  const parentVaultAddress = vault?.type === "strategy" ? getParentVault(vault.address)?.address ?? null : null;
-  const { data: parentVaultData, isLoading: parentLoading } = useYearnVault(parentVaultAddress ?? "", 1);
-  const parentVault = formatYearnVaultData(parentVaultData?.vault, parentVaultData?.vaultStrategies);
-
-  // Calculate APY based on type:
-  const vaultNetApy = parentVault?.apy ?? yearnVault?.apy ?? 0;
-  const strategyNetApy = calculateStrategyNetApy(vaultNetApy);
-
-  const displayApyFormatted = vault?.type === "strategy"
-    ? `${strategyNetApy.toFixed(2)}%`
-    : (yearnVault?.apyFormatted ?? "—");
+  // Kong returns net APY (after fees) for both vaults and strategies
+  const displayApyFormatted = yearnVault?.weeklyApyFormatted ?? "—";
 
   // Fetch Curve lending market data (only for vault type)
   const { vault: curveVault } = useCurveLendingVault(
@@ -654,7 +644,7 @@ export function VaultPageContent({ id }: { id: string }) {
       case "cvgCVX":
         return vaultCache?.cvgCvxPrice ?? 0;
       case "pxCVX":
-        return vaultCache?.pxCvxPrice ?? 0;
+        return 0; // TODO: uncomment when yspxcvx is live — vaultCache?.pxCvxPrice ?? 0
       case "cvxCRV":
       default:
         return cvxCrvPrice;
@@ -1329,7 +1319,7 @@ export function VaultPageContent({ id }: { id: string }) {
               {/* Lending Position / Borrow CTA */}
               {vault.type === "vault" && controllerAddress && (() => {
                 if (lendingPosition?.hasLoan && curveVault) {
-                  const collateralApr = yearnVault?.apy ?? 0;
+                  const collateralApr = yearnVault?.weeklyApy ?? 0;
                   const borrowApr = curveVault.rates.borrowApr * 100;
                   const display = buildLendingPositionDisplay(
                     lendingPosition.collateral,
@@ -1409,7 +1399,7 @@ export function VaultPageContent({ id }: { id: string }) {
                     <span className="text-xs font-medium uppercase tracking-wider">APY</span>
                   </div>
                   <p className="mono xl:text-2xl text-xl font-medium text-[var(--success)]">
-                    {yearnLoading || parentLoading ? "..." : displayApyFormatted}
+                    {yearnLoading ? "..." : displayApyFormatted}
                   </p>
                 </div>
 

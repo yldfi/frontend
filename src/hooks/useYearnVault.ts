@@ -126,12 +126,23 @@ async function fetchYearnVault(chainId: number, address: string): Promise<YearnV
   return result.data;
 }
 
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+// Strategies with no Yearn vault — not in Kong API, skip to avoid wasted requests
+const KONG_EXCLUDED_VAULTS = new Set([
+  "0xB246DB2A73EEE3ee026153660c74657C123f8E42".toLowerCase(), // yspxcvx — standalone strategy, no Yearn vault
+]);
+
 export function useYearnVault(address: string, chainId: number = 1) {
+  const isQueryable = !!address
+    && address !== ZERO_ADDRESS
+    && !KONG_EXCLUDED_VAULTS.has(address.toLowerCase());
+
   return useQuery({
     queryKey: ["yearn-vault", chainId, address],
     queryFn: () => fetchYearnVault(chainId, address),
     ...QUERY_CONFIG.vaultData,
-    enabled: !!address,
+    enabled: isQueryable,
   });
 }
 
@@ -152,6 +163,8 @@ export interface YearnVaultDisplayData {
   grossAprFormatted: string;
   weeklyApy: number;
   weeklyApyFormatted: string;
+  weeklyApr: number;
+  weeklyAprFormatted: string;
   monthlyApy: number;
   monthlyApyFormatted: string;
   inceptionApy: number;
@@ -164,18 +177,6 @@ export interface YearnVaultDisplayData {
   performanceFeeFormatted: string;
   totalAssets: string;
   strategies: YearnVaultStrategy[];
-}
-
-// Calculate estimated strategy net APY from vault's net APY
-// Vault net APY is after 15% vault fee + 5% strategy fee = 20% total
-// Strategy net APY is after only 5% fee
-export function calculateStrategyNetApy(vaultNetApy: number): number {
-  // Vault takes 15% fee, strategy takes 5% fee
-  // vaultNetApy = grossYield * (1 - 0.15) * (1 - 0.05) = grossYield * 0.85 * 0.95 = grossYield * 0.8075
-  // Actually, vault fee is on top, so: vaultNet = strategyNet * (1 - 0.15)
-  // Therefore: strategyNet = vaultNet / (1 - 0.15) = vaultNet / 0.85
-  const strategyNetApy = vaultNetApy / 0.85;
-  return strategyNetApy;
 }
 
 export function formatYearnVaultData(
@@ -204,6 +205,19 @@ export function formatYearnVaultData(
     grossAprFormatted: `${((vault.apy?.grossApr ?? 0) * 100).toFixed(2)}%`,
     weeklyApy: (vault.apy?.weeklyNet ?? 0) * 100,
     weeklyApyFormatted: `${((vault.apy?.weeklyNet ?? 0) * 100).toFixed(2)}%`,
+    weeklyApr: (() => {
+      const perfFeeRate = (vault.fees?.performanceFee ?? 0) / 10000;
+      return perfFeeRate < 1
+        ? ((vault.apy?.weeklyNet ?? 0) / (1 - perfFeeRate)) * 100
+        : 0;
+    })(),
+    weeklyAprFormatted: (() => {
+      const perfFeeRate = (vault.fees?.performanceFee ?? 0) / 10000;
+      const apr = perfFeeRate < 1
+        ? ((vault.apy?.weeklyNet ?? 0) / (1 - perfFeeRate)) * 100
+        : 0;
+      return `${apr.toFixed(2)}%`;
+    })(),
     monthlyApy: (vault.apy?.monthlyNet ?? 0) * 100,
     monthlyApyFormatted: `${((vault.apy?.monthlyNet ?? 0) * 100).toFixed(2)}%`,
     inceptionApy: (vault.apy?.inceptionNet ?? 0) * 100,
