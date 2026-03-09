@@ -49,7 +49,7 @@ vi.mock("@/lib/curve/rpc", () => ({
 // Mock @/lib/zapper — re-exports CRVUSD_ADDRESS and ZAPPER_ADDRESS
 vi.mock("@/lib/zapper", () => ({
   CRVUSD_ADDRESS: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E",
-  ZAPPER_ADDRESS: "0x7097aF57f5A1C14a8f28F7d624e8A464A006e08e",
+  ZAPPER_ADDRESS: "0xED653FF2410A4686a0B69Fc4C0D1c0cccDFddb83",
 }));
 
 import { fetchRepayWithSwapBundle } from "@/lib/curve-lending";

@@ -158,7 +158,7 @@ export interface UseZapperActionsResult {
     crvUsdGap?: bigint
   ) => Promise<SimulationResult | null>;
 
-  // ZapperV2 FromToken operations
+  // Zapper FromToken operations
   createLeveragedLoanFromToken: (
     controller: `0x${string}`,
     inputToken: `0x${string}`,
@@ -1014,7 +1014,7 @@ export function useZapperActions(): UseZapperActionsResult {
     }
   }, [address, publicClient, simulateAndExecute]);
 
-  // Check approvals for FromToken operations (inputToken → ZapperV2, optionally controller → ZapperV2)
+  // Check approvals for FromToken operations (inputToken → Zapper, optionally controller → Zapper)
   const checkFromTokenApprovals = useCallback(async (
     inputToken: `0x${string}`,
     inputAmount: bigint,
@@ -1086,7 +1086,7 @@ export function useZapperActions(): UseZapperActionsResult {
     return missing;
   }, [publicClient, address]);
 
-  // ZapperV2: Deleverage + withdraw collateral in one tx
+  // Zapper: Deleverage + withdraw collateral in one tx
   const deleverageAndWithdraw = useCallback(async (
     controller: `0x${string}`,
     collateralToSell: bigint,
@@ -1142,7 +1142,7 @@ export function useZapperActions(): UseZapperActionsResult {
       };
       setPendingTx(tx);
 
-      // Need controller approval for ZapperV2 (no ERC20 approval — collateral is in the controller)
+      // Need controller approval for Zapper (no ERC20 approval — collateral is in the controller)
       const missingApprovals = await checkFromTokenApprovals(
         collateralToken, 0n, "", controller
       );
@@ -1161,7 +1161,7 @@ export function useZapperActions(): UseZapperActionsResult {
     }
   }, [address, publicClient, checkFromTokenApprovals, simulateAndExecute]);
 
-  // ZapperV2: Deleverage + withdraw collateral as a different token
+  // Zapper: Deleverage + withdraw collateral as a different token
   const deleverageAndWithdrawToToken = useCallback(async (
     controller: `0x${string}`,
     collateralToSell: bigint,
@@ -1217,15 +1217,17 @@ export function useZapperActions(): UseZapperActionsResult {
         abi: ZAPPER_ABI,
         functionName: "deleverageAndWithdrawToToken",
         args: [
-          controller,
-          collateralToSell,
-          minCrvusdFromSwap,
-          withdrawAmount,
-          routeOutputToken,
-          minOutputFromSwap,
+          {
+            controller,
+            collateralToSell,
+            minCrvUsdOut: minCrvusdFromSwap,
+            withdrawAmount,
+            outputToken: routeOutputToken,
+            minOutputFromSwap,
+            deadline: getDeadline(),
+          },
           deleverageRoute.swapData as `0x${string}`,
           outputRoute.swapData as `0x${string}`,
-          getDeadline(),
         ],
       });
 
@@ -1237,7 +1239,7 @@ export function useZapperActions(): UseZapperActionsResult {
       };
       setPendingTx(tx);
 
-      // Need controller approval + collateral ERC20 approval for ZapperV2
+      // Need controller approval + collateral ERC20 approval for Zapper
       // (Zapper calls remove_collateral → user, then transferFrom user → Zapper for the output swap)
       const missingApprovals = await checkFromTokenApprovals(
         collateralToken, withdrawAmount, collateralSymbol, controller
@@ -1257,7 +1259,7 @@ export function useZapperActions(): UseZapperActionsResult {
     }
   }, [address, publicClient, checkFromTokenApprovals, simulateAndExecute]);
 
-  // ZapperV2: Create leveraged loan from any input token (pre-swap + loop leverage)
+  // Zapper: Create leveraged loan from any input token (pre-swap + loop leverage)
   const createLeveragedLoanFromToken = useCallback(async (
     controller: `0x${string}`,
     inputToken: `0x${string}`,
@@ -1405,7 +1407,7 @@ export function useZapperActions(): UseZapperActionsResult {
     }
   }, [address, publicClient, checkFromTokenApprovals, simulateAndExecute]);
 
-  // ZapperV2: Leverage up existing position from any input token
+  // Zapper: Leverage up existing position from any input token
   const leverageUpFromToken = useCallback(async (
     controller: `0x${string}`,
     inputToken: `0x${string}`,
@@ -1532,7 +1534,7 @@ export function useZapperActions(): UseZapperActionsResult {
       };
       setPendingTx(tx);
 
-      // Need controller → ZapperV2 (existing position), skip ERC20 for native ETH
+      // Need controller → Zapper (existing position), skip ERC20 for native ETH
       const missingApprovals = await checkFromTokenApprovals(
         isETH ? inputToken : inputToken, // keep original for display
         isETH ? 0n : inputAmount, // 0n skips ERC20 check for ETH

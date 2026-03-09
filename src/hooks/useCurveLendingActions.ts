@@ -1759,7 +1759,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     return queueApprovalsOrRun(allApprovals, runBundle);
   }, [address, publicClient, executeBundle]);
 
-  // Remove collateral + swap to any token via V3 Zapper's removeCollateralAndConvert.
+  // Remove collateral + swap to any token via Zapper's removeCollateralAndConvert.
   // Approvals are checked against ZAPPER_ADDRESS (not ENSO_SHORTCUTS).
   const removeCollateralAndSwap = useCallback(async (
     vaultAddress: `0x${string}`,
@@ -2061,7 +2061,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     }
   }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult]);
 
-  // Swap any token to vault collateral + borrow_more via V4 Zapper (borrowMoreFromToken).
+  // Swap any token to vault collateral + borrow_more via Zapper (borrowMoreFromToken).
   // User provides tokenIn (e.g., ETH, USDC) which gets swapped to collateral, then
   // borrow_more_extended adds collateral and borrows crvUSD to user atomically.
   const borrowMoreWithSwap = useCallback(async (
@@ -2774,7 +2774,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     );
   }, [address, publicClient, executeBundle]);
 
-  // Borrow crvUSD + swap to any token via V3 Zapper (borrowAndConvert/borrowAndDeposit).
+  // Borrow crvUSD + swap to any token via Zapper (borrowAndConvert).
   // Falls back to Enso bundle for exotic vaults (cvgCVX, pxCVX, non-ERC4626).
   // Approvals are checked against ZAPPER_ADDRESS (not ENSO_SHORTCUTS).
   const borrowAndSwap = useCallback(async (
@@ -2806,7 +2806,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       ? BigInt(options.collateralAmount)
       : 0n;
 
-    // --- V4 Zapper path: all outputs use borrowAndConvert (Enso handles vault deposits) ---
+    // --- Zapper path: all outputs use borrowAndConvert (Enso handles vault deposits) ---
     setStatus("building");
     setError(null);
 

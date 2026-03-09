@@ -78,7 +78,7 @@ describe("buildExoticOutputSwapData", () => {
     mockComputeHybridZapParams.mockResolvedValue(MOCK_ZAP_PARAMS);
   });
 
-  it("cvgCvx path: routes crvUSD→CVX then calls zapCvxToCvgCvxWithParams", async () => {
+  it("cvgCvx path: routes crvUSD→CVX then calls zapCvxToCvgCvx", async () => {
     const result = await buildExoticOutputSwapData({
       amountIn: "1000000000000000000",
       type: "cvgCvx",
@@ -106,8 +106,8 @@ describe("buildExoticOutputSwapData", () => {
     const bundleCall = mockFetchBundle.mock.calls[0][0];
     expect(bundleCall.actions).toHaveLength(4);
 
-    // Action 3 should use zapCvxToCvgCvxWithParams
-    expect(bundleCall.actions[3].args.method).toBe("zapCvxToCvgCvxWithParams");
+    // Action 3 should use zapCvxToCvgCvx
+    expect(bundleCall.actions[3].args.method).toBe("zapCvxToCvgCvx");
     expect(bundleCall.skipQuote).toBe(true);
 
     expect(result).toEqual({
@@ -116,7 +116,7 @@ describe("buildExoticOutputSwapData", () => {
     });
   });
 
-  it("pxCvx path: routes crvUSD→CVX then calls zapCvxToPxCvxWithParams", async () => {
+  it("pxCvx path: routes crvUSD→CVX then calls zapCvxToPxCvx", async () => {
     const result = await buildExoticOutputSwapData({
       amountIn: "1000000000000000000",
       type: "pxCvx",
@@ -124,7 +124,7 @@ describe("buildExoticOutputSwapData", () => {
     });
 
     const bundleCall = mockFetchBundle.mock.calls[0][0];
-    expect(bundleCall.actions[3].args.method).toBe("zapCvxToPxCvxWithParams");
+    expect(bundleCall.actions[3].args.method).toBe("zapCvxToPxCvx");
     expect(result.expectedOut).toBe(MOCK_ZAP_PARAMS.minTotalOut);
   });
 

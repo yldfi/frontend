@@ -1,4 +1,4 @@
-// LlamaLendZapperV4 contract integration
+// LlamaLendZapper contract integration
 // Enables leveraged Curve LlamaLend operations via Enso Router swaps
 
 import { fetchRoute, fetchBundle, ENSO_SHORTCUTS, ENSO_ROUTER_EXECUTOR, CVX_HYBRID_ZAPPER, getLpxCvxToCvxSwapRate, computeHybridZapParams } from "@/lib/enso";
@@ -44,7 +44,8 @@ function extractInnerSwapData(routeTxData: string): `0x${string}` {
 // Current LlamaLendZapper address (overridable via env for fork testing)
 export const ZAPPER_ADDRESS = (process.env.NEXT_PUBLIC_ZAPPER_ADDRESS ?? "0xED653FF2410A4686a0B69Fc4C0D1c0cccDFddb83") as `0x${string}`;
 
-// LlamaLendZapperV4 ABI — all write functions (views via DeFi Saver's CurveUsdView/CurveUsdWithdraw)
+// LlamaLendZapper ABI (0xED653FF2410A4686a0B69Fc4C0D1c0cccDFddb83)
+// Fetched from verified Etherscan source — functions only (no events/errors)
 export const ZAPPER_ABI = [
   {
     name: "createLeveragedLoan",
@@ -62,6 +63,75 @@ export const ZAPPER_ABI = [
     outputs: [],
   },
   {
+    name: "createLeveragedLoanFromToken",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [
+      { name: "controller", type: "address" },
+      { name: "inputToken", type: "address" },
+      { name: "inputAmount", type: "uint256" },
+      { name: "debt", type: "uint256" },
+      { name: "N", type: "uint256" },
+      { name: "minCollateralFromInput", type: "uint256" },
+      { name: "minCollateralFromDebt", type: "uint256" },
+      { name: "inputSwapData", type: "bytes" },
+      { name: "leverageSwapData", type: "bytes" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "createLoanFromToken",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [
+      { name: "controller", type: "address" },
+      { name: "tokenIn", type: "address" },
+      { name: "amountIn", type: "uint256" },
+      { name: "minCollateral", type: "uint256" },
+      { name: "debt", type: "uint256" },
+      { name: "N", type: "uint256" },
+      { name: "swapData", type: "bytes" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "createLoanAndConvert",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "controller", type: "address" },
+      { name: "collateral", type: "uint256" },
+      { name: "debt", type: "uint256" },
+      { name: "N", type: "uint256" },
+      { name: "targetToken", type: "address" },
+      { name: "minTargetOut", type: "uint256" },
+      { name: "swapData", type: "bytes" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "createLoanFromTokenAndConvert",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [
+      { name: "controller", type: "address" },
+      { name: "tokenIn", type: "address" },
+      { name: "amountIn", type: "uint256" },
+      { name: "minCollateral", type: "uint256" },
+      { name: "debt", type: "uint256" },
+      { name: "N", type: "uint256" },
+      { name: "targetToken", type: "address" },
+      { name: "minTargetOut", type: "uint256" },
+      { name: "inputSwapData", type: "bytes" },
+      { name: "outputSwapData", type: "bytes" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
     name: "leverageUp",
     type: "function",
     stateMutability: "nonpayable",
@@ -70,6 +140,81 @@ export const ZAPPER_ABI = [
       { name: "additionalCollateral", type: "uint256" },
       { name: "additionalDebt", type: "uint256" },
       { name: "minCollateralFromSwap", type: "uint256" },
+      { name: "swapData", type: "bytes" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "leverageUpFromToken",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [
+      { name: "controller", type: "address" },
+      { name: "inputToken", type: "address" },
+      { name: "inputAmount", type: "uint256" },
+      { name: "additionalDebt", type: "uint256" },
+      { name: "minCollateralFromInput", type: "uint256" },
+      { name: "minCollateralFromDebt", type: "uint256" },
+      { name: "inputSwapData", type: "bytes" },
+      { name: "leverageSwapData", type: "bytes" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "addCollateralFromToken",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [
+      { name: "controller", type: "address" },
+      { name: "tokenIn", type: "address" },
+      { name: "amountIn", type: "uint256" },
+      { name: "minCollateral", type: "uint256" },
+      { name: "swapData", type: "bytes" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "borrowMoreFromToken",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [
+      { name: "controller", type: "address" },
+      { name: "tokenIn", type: "address" },
+      { name: "amountIn", type: "uint256" },
+      { name: "minCollateral", type: "uint256" },
+      { name: "debt", type: "uint256" },
+      { name: "swapData", type: "bytes" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "borrowAndConvert",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "controller", type: "address" },
+      { name: "additionalCollateral", type: "uint256" },
+      { name: "debt", type: "uint256" },
+      { name: "targetToken", type: "address" },
+      { name: "minTargetOut", type: "uint256" },
+      { name: "swapData", type: "bytes" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "removeCollateralAndConvert",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "controller", type: "address" },
+      { name: "collateralAmount", type: "uint256" },
+      { name: "targetToken", type: "address" },
+      { name: "minTargetOut", type: "uint256" },
       { name: "swapData", type: "bytes" },
       { name: "deadline", type: "uint256" },
     ],
@@ -103,114 +248,28 @@ export const ZAPPER_ABI = [
     outputs: [],
   },
   {
-    name: "selfLiquidate",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "controller", type: "address" },
-      { name: "minFromAMM", type: "uint256" },
-      { name: "minFromSwap", type: "uint256" },
-      { name: "percentage", type: "uint256" },
-      { name: "sellAllCollateral", type: "bool" },
-      { name: "swapData", type: "bytes" },
-      { name: "deadline", type: "uint256" },
-    ],
-    outputs: [],
-  },
-  {
-    name: "approvedControllers",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "controller", type: "address" },
-    ],
-    outputs: [{ name: "", type: "bool" }],
-  },
-  // ZapperV2 — FromToken/ToToken operations
-  {
-    name: "createLeveragedLoanFromToken",
-    type: "function",
-    stateMutability: "payable",
-    inputs: [
-      { name: "controller", type: "address" },
-      { name: "inputToken", type: "address" },
-      { name: "inputAmount", type: "uint256" },
-      { name: "debt", type: "uint256" },
-      { name: "N", type: "uint256" },
-      { name: "minCollateralFromInput", type: "uint256" },
-      { name: "minCollateralFromDebt", type: "uint256" },
-      { name: "inputSwapData", type: "bytes" },
-      { name: "leverageSwapData", type: "bytes" },
-      { name: "deadline", type: "uint256" },
-    ],
-    outputs: [],
-  },
-  {
-    name: "leverageUpFromToken",
-    type: "function",
-    stateMutability: "payable",
-    inputs: [
-      { name: "controller", type: "address" },
-      { name: "inputToken", type: "address" },
-      { name: "inputAmount", type: "uint256" },
-      { name: "additionalDebt", type: "uint256" },
-      { name: "minCollateralFromInput", type: "uint256" },
-      { name: "minCollateralFromDebt", type: "uint256" },
-      { name: "inputSwapData", type: "bytes" },
-      { name: "leverageSwapData", type: "bytes" },
-      { name: "deadline", type: "uint256" },
-    ],
-    outputs: [],
-  },
-  {
     name: "deleverageAndWithdrawToToken",
     type: "function",
     stateMutability: "nonpayable",
     inputs: [
-      { name: "controller", type: "address" },
-      { name: "collateralToSell", type: "uint256" },
-      { name: "minCrvUsdOut", type: "uint256" },
-      { name: "withdrawAmount", type: "uint256" },
-      { name: "outputToken", type: "address" },
-      { name: "minOutputFromSwap", type: "uint256" },
+      {
+        name: "p",
+        type: "tuple",
+        components: [
+          { name: "controller", type: "address" },
+          { name: "collateralToSell", type: "uint256" },
+          { name: "minCrvUsdOut", type: "uint256" },
+          { name: "withdrawAmount", type: "uint256" },
+          { name: "outputToken", type: "address" },
+          { name: "minOutputFromSwap", type: "uint256" },
+          { name: "deadline", type: "uint256" },
+        ],
+      },
       { name: "deleverageSwapData", type: "bytes" },
       { name: "outputSwapData", type: "bytes" },
-      { name: "deadline", type: "uint256" },
     ],
     outputs: [],
   },
-  // ZapperV3 — Borrow + convert/deposit operations
-  {
-    name: "borrowAndConvert",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "controller", type: "address" },
-      { name: "additionalCollateral", type: "uint256" },
-      { name: "debt", type: "uint256" },
-      { name: "targetToken", type: "address" },
-      { name: "minTargetOut", type: "uint256" },
-      { name: "swapData", type: "bytes" },
-      { name: "deadline", type: "uint256" },
-    ],
-    outputs: [],
-  },
-  // ZapperV3 — Remove collateral + convert
-  {
-    name: "removeCollateralAndConvert",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "controller", type: "address" },
-      { name: "collateralAmount", type: "uint256" },
-      { name: "targetToken", type: "address" },
-      { name: "minTargetOut", type: "uint256" },
-      { name: "swapData", type: "bytes" },
-      { name: "deadline", type: "uint256" },
-    ],
-    outputs: [],
-  },
-  // ZapperV3 — Repay + withdraw flows
   {
     name: "repayAndWithdraw",
     type: "function",
@@ -277,90 +336,39 @@ export const ZAPPER_ABI = [
     ],
     outputs: [],
   },
-  // ZapperV4 — Borrow + swap collateral (payable for ETH→WETH wrapping)
   {
-    name: "borrowMoreFromToken",
-    type: "function",
-    stateMutability: "payable",
-    inputs: [
-      { name: "controller", type: "address" },
-      { name: "tokenIn", type: "address" },
-      { name: "amountIn", type: "uint256" },
-      { name: "minCollateral", type: "uint256" },
-      { name: "debt", type: "uint256" },
-      { name: "swapData", type: "bytes" },
-      { name: "deadline", type: "uint256" },
-    ],
-    outputs: [],
-  },
-  // ZapperV4 — Create loan from any token (payable for ETH→WETH wrapping)
-  {
-    name: "createLoanFromToken",
-    type: "function",
-    stateMutability: "payable",
-    inputs: [
-      { name: "controller", type: "address" },
-      { name: "tokenIn", type: "address" },
-      { name: "amountIn", type: "uint256" },
-      { name: "minCollateral", type: "uint256" },
-      { name: "debt", type: "uint256" },
-      { name: "N", type: "uint256" },
-      { name: "swapData", type: "bytes" },
-      { name: "deadline", type: "uint256" },
-    ],
-    outputs: [],
-  },
-  // ZapperV4 — Add collateral from any token (payable for ETH→WETH wrapping)
-  {
-    name: "addCollateralFromToken",
-    type: "function",
-    stateMutability: "payable",
-    inputs: [
-      { name: "controller", type: "address" },
-      { name: "tokenIn", type: "address" },
-      { name: "amountIn", type: "uint256" },
-      { name: "minCollateral", type: "uint256" },
-      { name: "swapData", type: "bytes" },
-      { name: "deadline", type: "uint256" },
-    ],
-    outputs: [],
-  },
-  // ZapperV3/V4 — Create loan with vault token, swap borrowed crvUSD to target
-  {
-    name: "createLoanAndConvert",
+    name: "selfLiquidate",
     type: "function",
     stateMutability: "nonpayable",
     inputs: [
       { name: "controller", type: "address" },
-      { name: "collateral", type: "uint256" },
-      { name: "debt", type: "uint256" },
-      { name: "N", type: "uint256" },
-      { name: "targetToken", type: "address" },
-      { name: "minTargetOut", type: "uint256" },
+      { name: "minFromAMM", type: "uint256" },
+      { name: "minFromSwap", type: "uint256" },
+      { name: "percentage", type: "uint256" },
+      { name: "sellAllCollateral", type: "bool" },
       { name: "swapData", type: "bytes" },
       { name: "deadline", type: "uint256" },
     ],
     outputs: [],
   },
-  // ZapperV4 — Swap input token to collateral, create loan, swap borrowed crvUSD to target
   {
-    name: "createLoanFromTokenAndConvert",
+    name: "approveController",
     type: "function",
-    stateMutability: "payable",
+    stateMutability: "nonpayable",
     inputs: [
       { name: "controller", type: "address" },
-      { name: "tokenIn", type: "address" },
-      { name: "amountIn", type: "uint256" },
-      { name: "minCollateral", type: "uint256" },
-      { name: "debt", type: "uint256" },
-      { name: "N", type: "uint256" },
-      { name: "targetToken", type: "address" },
-      { name: "minTargetOut", type: "uint256" },
-      { name: "inputSwapData", type: "bytes" },
-      { name: "outputSwapData", type: "bytes" },
-      { name: "deadline", type: "uint256" },
+      { name: "approved", type: "bool" },
     ],
     outputs: [],
+  },
+  {
+    name: "approvedControllers",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "", type: "address" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
   },
 ] as const;
 
@@ -524,7 +532,7 @@ export function getDeadline(minutes: number = 20): bigint {
  *   2. route(underlying -> targetToken)
  *
  * The bundle API returns calldata starting with 0xb94c3609 (routeSingle)
- * which is compatible with the ZapperV2 contract's selector validation.
+ * which is compatible with the LlamaLendZapper contract's selector validation.
  *
  * @param params.vaultAddress - The vault token address (input token)
  * @param params.underlying - The underlying token of the vault
@@ -741,10 +749,10 @@ export async function buildExoticOutputSwapData(params: {
   // 2. Get HybridZapper optimal swap/mint split params
   const zapParams = await computeHybridZapParams(cvxRoute.amountOut, params.type, params.slippage);
 
-  const method = params.type === "cvgCvx" ? "zapCvxToCvgCvxWithParams" : "zapCvxToPxCvxWithParams";
+  const method = params.type === "cvgCvx" ? "zapCvxToCvgCvx" : "zapCvxToPxCvx";
   const abi = params.type === "cvgCvx"
-    ? "function zapCvxToCvgCvxWithParams(uint256 amountIn, uint256 swapAmount, uint256 minDy, uint256 minTotalOut, address receiver, uint256 deadline) returns (uint256)"
-    : "function zapCvxToPxCvxWithParams(uint256 amountIn, uint256 swapAmount, uint256 minDy, uint256 minTotalOut, address receiver, uint256 deadline) returns (uint256)";
+    ? "function zapCvxToCvgCvx(uint256 amountIn, uint256 swapAmount, uint256 minDy, uint256 minTotalOut, address receiver, uint256 deadline) returns (uint256)"
+    : "function zapCvxToPxCvx(uint256 amountIn, uint256 swapAmount, uint256 minDy, uint256 minTotalOut, address receiver, uint256 deadline) returns (uint256)";
 
   // 3. Build bundle: routeMulti(crvUSD→CVX), balanceOf, approve, HybridZapper zap
   const actions: EnsoBundleAction[] = [

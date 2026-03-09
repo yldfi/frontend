@@ -102,7 +102,7 @@ describe("buildHybridZapperActions (REAL implementation)", () => {
       expect(a0.args.args).toEqual([ZAPPER_ADDR, ref]);
     });
 
-    it("action 1: calls zapCvxToCvgCvxWithParams on the hybrid zapper", () => {
+    it("action 1: calls zapCvxToCvgCvx on the hybrid zapper", () => {
       const params = baseParams();
       const actions = buildHybridZapperActions(params);
       const a1 = actions[1];
@@ -110,8 +110,8 @@ describe("buildHybridZapperActions (REAL implementation)", () => {
       expect(a1.protocol).toBe("enso");
       expect(a1.action).toBe("call");
       expect(a1.args.address).toBe(ZAPPER_ADDR);
-      expect(a1.args.method).toBe("zapCvxToCvgCvxWithParams");
-      expect(a1.args.abi).toContain("zapCvxToCvgCvxWithParams");
+      expect(a1.args.method).toBe("zapCvxToCvgCvx");
+      expect(a1.args.abi).toContain("zapCvxToCvgCvx");
       expect(a1.args.args).toEqual([
         params.cvxAmountRef,
         params.swapAmount.toString(),
@@ -147,14 +147,14 @@ describe("buildHybridZapperActions (REAL implementation)", () => {
   // pxCvx type
   // --------------------------------------------------------------------------
   describe("pxCvx type", () => {
-    it("action 1: calls zapCvxToPxCvxWithParams instead", () => {
+    it("action 1: calls zapCvxToPxCvx instead", () => {
       const actions = buildHybridZapperActions(
         baseParams({ type: "pxCvx", vaultAddress: VAULT_ADDRESSES.YSPXCVX })
       );
       const a1 = actions[1];
 
-      expect(a1.args.method).toBe("zapCvxToPxCvxWithParams");
-      expect(a1.args.abi).toContain("zapCvxToPxCvxWithParams");
+      expect(a1.args.method).toBe("zapCvxToPxCvx");
+      expect(a1.args.abi).toContain("zapCvxToPxCvx");
     });
 
     it("actions 2-4 use pxCVX token address instead of cvgCVX", () => {
