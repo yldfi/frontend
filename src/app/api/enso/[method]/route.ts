@@ -15,7 +15,7 @@ const ensoClient = new EnsoClient({
 const ALLOWED_ORIGINS = [
   "https://yldfi.co",
   "https://www.yldfi.co",
-  "http://localhost:3000",
+  ...(process.env.NODE_ENV === "development" ? ["http://localhost:3000"] : []),
 ];
 
 function getCorsHeaders(request: NextRequest): Record<string, string> {
@@ -29,6 +29,10 @@ function getCorsHeaders(request: NextRequest): Record<string, string> {
   };
 }
 
+import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
+
+const isRateLimited = createRateLimiter(30);
+
 export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, { status: 204, headers: getCorsHeaders(request) });
 }
@@ -39,6 +43,14 @@ export async function POST(
 ) {
   const { method } = await params;
   const cors = getCorsHeaders(request);
+
+  const clientIp = getClientIp(request);
+  if (isRateLimited(clientIp)) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded" },
+      { status: 429, headers: cors }
+    );
+  }
 
   if (!process.env.ENSO_API_KEY) {
     return NextResponse.json(

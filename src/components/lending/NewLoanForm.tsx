@@ -27,6 +27,7 @@ import { MaxButton, MaxButtonSkeleton } from "@/components/MaxButton";
 import { cn } from "@/lib/utils";
 import { LoadingDots } from "@/components/LoadingDots";
 import { sanitizeAmount } from "@/lib/sanitize";
+import { useSettings } from "@/hooks/useSettings";
 import { fetchRoute, fetchTokenPrices, ETH_ADDRESS } from "@/lib/enso";
 import { getMaxEthAmount } from "@/lib/eth-gas";
 import { CRVUSD_ADDRESS, WETH_ADDRESS, CHAINLINK_ETH_USD } from "@/config/addresses";
@@ -347,53 +348,19 @@ export function NewLoanForm({
   }, [cancelLeverageAnim]);
   useEffect(() => () => cancelLeverageAnim(), [cancelLeverageAnim]);
 
-  // Slippage
-  const [rateInverted, setRateInverted] = useState(false);
-  const [slippage, setSlippage] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("yldfi-slippage") || "50";
-    }
-    return "50";
-  });
-  const [showSlippageModal, setShowSlippageModal] = useState(false);
+  const {
+    slippage, updateSlippage, showSlippageModal, setShowSlippageModal,
+    showSimulationPreview, setShowSimulationPreview, refreshSimulationPreview,
+    showSimulationModal, setShowSimulationModal,
+    showRoute, toggleRoute,
+  } = useSettings();
 
-  // Simulation
-  const [showSimulationPreview, setShowSimulationPreview] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("yldfi-show-simulation") === "true";
-    }
-    return false;
-  });
-  const [showSimulationModal, setShowSimulationModal] = useState(false);
+  const [rateInverted, setRateInverted] = useState(false);
   const [ethPrice, setEthPrice] = useState<number | null>(null);
   const { data: gasPrice } = useGasPrice();
   const { data: currentBlock } = useBlockNumber({ watch: true });
   const simulationBlock = useRef<bigint>(0n);
 
-  // Route display toggle
-  const [showRoute, setShowRoute] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("yldfi-lending-show-route") !== "false";
-    }
-    return true;
-  });
-
-  const updateSlippage = useCallback((value: string) => {
-    setSlippage(value);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("yldfi-slippage", value);
-    }
-  }, []);
-
-  const toggleRoute = useCallback(() => {
-    setShowRoute((prev) => {
-      const next = !prev;
-      if (typeof window !== "undefined") {
-        localStorage.setItem("yldfi-lending-show-route", String(next));
-      }
-      return next;
-    });
-  }, []);
 
   // Health estimation
   const [estimatedHealth, setEstimatedHealth] = useState<number | null>(null);
@@ -405,6 +372,7 @@ export function NewLoanForm({
     createLoanWithSwap,
     createLoanWithOutputSwap,
     pendingApproval: lendingPendingApproval,
+    approvalProgress: lendingApprovalProgress,
     approve: lendingApprove,
     isApproving: lendingIsApproving,
     isApprovalSuccess: lendingIsApprovalSuccess,
@@ -424,7 +392,7 @@ export function NewLoanForm({
     createLeveragedLoan,
     createLeveragedLoanFromToken,
     pendingApproval: zapperPendingApproval,
-    approvalProgress,
+    approvalProgress: zapperApprovalProgress,
     approve: zapperApprove,
     isApproving: zapperIsApproving,
     isApprovalSuccess: zapperIsApprovalSuccess,
@@ -447,6 +415,7 @@ export function NewLoanForm({
   const error = isLeveraged ? zapperError : lendingError;
   const simulationResult = isLeveraged ? zapperSimulationResult : lendingSimulationResult;
   const pendingApproval = isLeveraged ? zapperPendingApproval : lendingPendingApproval;
+  const approvalProgress = isLeveraged ? zapperApprovalProgress : lendingApprovalProgress;
   const isApproving = isLeveraged ? zapperIsApproving : lendingIsApproving;
   const reset = isLeveraged ? zapperReset : lendingReset;
 
@@ -604,7 +573,7 @@ export function NewLoanForm({
       !!publicClient &&
       !!debouncedAmount &&
       Number(debouncedAmount) > 0,
-    refetchInterval: 30_000,
+    refetchInterval: status === "needsApproval" || status === "approving" ? false : 30_000,
     staleTime: 10_000,
     retry: 1,
     placeholderData: (prev) => prev,
@@ -857,7 +826,8 @@ export function NewLoanForm({
       setMaxBorrowable(max);
       setMaxBorrowableFetching(false);
       maxBorrowableBandsRef.current = debouncedBands;
-      if (max > 0n && debtRatio.current !== null && loanTab === "loan" && !hasOutputSwap) {
+      const isApprovalInProgress = status === "needsApproval" || status === "approving";
+      if (max > 0n && debtRatio.current !== null && loanTab === "loan" && !hasOutputSwap && !isApprovalInProgress) {
         const ratio = Math.min(debtRatio.current, 1.0);
         // Scale using bigint math then truncate string to 2dp — avoids floating point rounding past max
         const scaled = max * BigInt(Math.floor(ratio * 10000)) / 10000n;
@@ -1474,12 +1444,15 @@ export function NewLoanForm({
     }
   }, [status, txHash, onTxStateChange, amount, selectedToken, debtAmount, hasOutputSwap, outputToken, outputSwapQuote]);
 
-  // Handle transaction success — clear inputs and reset to idle
+  // Handle transaction success — clear all inputs and reset to idle
   useEffect(() => {
     if (status === "success" && txHash) {
       setAmountState("");
       setDebtInputState("");
       debtRatio.current = null;
+      leverageFollowsBase.current = true;
+      setLeverage(1.0);
+      setLeverageInput("1.00");
       try { sessionStorage.removeItem(amountStorageKey); } catch { /* */ }
       try { sessionStorage.removeItem(debtStorageKey); } catch { /* */ }
       try { sessionStorage.removeItem(tokenStorageKey); } catch { /* */ }
@@ -1513,7 +1486,6 @@ export function NewLoanForm({
   }, [status, error, reset, isLeveraged, zapperReset, lendingClearError]);
 
   // Handle approval success
-  const handleSubmitRef = useRef<(() => Promise<void>) | undefined>(undefined);
   useEffect(() => {
     if (isLeveraged) {
       if (zapperIsApprovalSuccess && zapperStatus === "approving") {
@@ -1521,11 +1493,7 @@ export function NewLoanForm({
       }
     } else {
       if (lendingIsApprovalSuccess && lendingStatus === "approving") {
-        if (isVaultToken) {
-          lendingExecuteAfterApproval();
-        } else {
-          handleSubmitRef.current?.();
-        }
+        lendingExecuteAfterApproval();
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1635,10 +1603,10 @@ export function NewLoanForm({
         // Loan tab + output swap → create_loan + swap crvUSD to output token
         if (process.env.NODE_ENV === "development") console.log("[NewLoan] Submit: borrow & swap", { token: selectedToken.symbol, amount, debt: debtAmount.toString(), outputToken: outputToken.symbol, bands });
         if (preview) {
-          const result = await createLoanWithOutputSwap(vault.address as `0x${string}`, isVaultToken ? undefined : selectedToken.address, amount, debtAmount.toString(), bands, outputToken.address, Number(slippage), { previewOnly: true, tokenSymbol: isVaultToken ? vault.symbol : selectedToken.symbol });
+          const result = await createLoanWithOutputSwap(vault.address as `0x${string}`, isVaultToken ? undefined : selectedToken.address, amount, debtAmount.toString(), bands, outputToken.address, Number(slippage), { previewOnly: true, tokenSymbol: isVaultToken ? vault.symbol : selectedToken.symbol, decimals: selectedToken.decimals });
           if (openModalIfPreview(result)) return;
         }
-        await createLoanWithOutputSwap(vault.address as `0x${string}`, isVaultToken ? undefined : selectedToken.address, amount, debtAmount.toString(), bands, outputToken.address, Number(slippage), { tokenSymbol: isVaultToken ? vault.symbol : selectedToken.symbol });
+        await createLoanWithOutputSwap(vault.address as `0x${string}`, isVaultToken ? undefined : selectedToken.address, amount, debtAmount.toString(), bands, outputToken.address, Number(slippage), { tokenSymbol: isVaultToken ? vault.symbol : selectedToken.symbol, decimals: selectedToken.decimals });
       } else if (isVaultToken) {
         // Loan tab + collateral token → direct controller create_loan
         if (process.env.NODE_ENV === "development") console.log("[NewLoan] Submit: create_loan (direct)", { collateral: amount, debt: debtAmount.toString(), bands });
@@ -1651,16 +1619,15 @@ export function NewLoanForm({
         // Loan tab + non-collateral → Enso swap + create_loan
         if (process.env.NODE_ENV === "development") console.log("[NewLoan] Submit: swap & create_loan", { token: selectedToken.symbol, amount, debt: debtAmount.toString(), bands });
         if (preview) {
-          const result = await createLoanWithSwap(vault.address as `0x${string}`, selectedToken.address, amount, debtAmount.toString(), bands, Number(slippage), { previewOnly: true, tokenSymbol: selectedToken.symbol });
+          const result = await createLoanWithSwap(vault.address as `0x${string}`, selectedToken.address, amount, debtAmount.toString(), bands, Number(slippage), { previewOnly: true, tokenSymbol: selectedToken.symbol, decimals: selectedToken.decimals });
           if (openModalIfPreview(result)) return;
         }
-        await createLoanWithSwap(vault.address as `0x${string}`, selectedToken.address, amount, debtAmount.toString(), bands, Number(slippage), { tokenSymbol: selectedToken.symbol });
+        await createLoanWithSwap(vault.address as `0x${string}`, selectedToken.address, amount, debtAmount.toString(), bands, Number(slippage), { tokenSymbol: selectedToken.symbol, decimals: selectedToken.decimals });
       }
     } catch (err) {
       console.error("Create loan failed:", err);
     }
   };
-  handleSubmitRef.current = handleSubmit;
 
   const handleExecute = async () => {
     try {
@@ -1796,6 +1763,12 @@ export function NewLoanForm({
                     </div>
                   )}
                   <div className={cn("space-y-2 transition-opacity duration-200", swapQuoteStale && "opacity-0")}>
+                    <div className="flex justify-between">
+                      <span className="text-[var(--muted-foreground)]">Sending</span>
+                      <span className="mono">
+                        {Number(debouncedAmount).toLocaleString(undefined, { maximumFractionDigits: 4 })} {selectedToken.symbol}
+                      </span>
+                    </div>
                     <div className="flex justify-between">
                       <span className="text-[var(--muted-foreground)]">Collateral after swap</span>
                       <span className="mono">
@@ -2252,9 +2225,7 @@ export function NewLoanForm({
         open={showSlippageModal}
         onClose={() => {
           setShowSlippageModal(false);
-          try {
-            setShowSimulationPreview(localStorage.getItem("yldfi-show-simulation") === "true");
-          } catch { /* ignore */ }
+          refreshSimulationPreview();
         }}
         slippage={slippage}
         onSlippageChange={updateSlippage}

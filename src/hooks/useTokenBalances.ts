@@ -5,7 +5,7 @@ import { useBalance, usePublicClient } from "wagmi";
 import { useAccount } from "wagmi";
 import { useMemo } from "react";
 import { fetchWalletBalances, fetchTokenPrices, ETH_ADDRESS } from "@/lib/enso";
-import { useTenderly } from "@/contexts/TenderlyContext";
+import { useTestNetwork } from "@/contexts/TestNetworkContext";
 import type { EnsoToken } from "@/types/enso";
 import { erc20Abi } from "viem";
 
@@ -16,7 +16,7 @@ import { erc20Abi } from "viem";
  */
 export function useTokenBalances(tokens: EnsoToken[]) {
   const { address: userAddress, isConnected } = useAccount();
-  const { isTestNetwork } = useTenderly();
+  const { isTestNetwork } = useTestNetwork();
   const publicClient = usePublicClient();
 
   // Get ETH balance separately (Enso may not include native ETH)

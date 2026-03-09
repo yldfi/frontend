@@ -7,7 +7,7 @@ import { useEnsName } from "wagmi";
 import { config } from "@/config/wagmi";
 import { useState } from "react";
 import { AnalyticsProvider } from "@/components/AnalyticsProvider";
-import { TenderlyProvider } from "@/contexts/TenderlyContext";
+import { TestNetworkProvider } from "@/contexts/TestNetworkContext";
 import { Toaster } from "sonner";
 
 import "@rainbow-me/rainbowkit/styles.css";
@@ -86,9 +86,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
               },
             }}
           />
-          <TenderlyProvider>
+          <TestNetworkProvider>
             <AnalyticsProvider>{children}</AnalyticsProvider>
-          </TenderlyProvider>
+          </TestNetworkProvider>
         </RainbowKitProvider>
       </QueryClientProvider>
     </WagmiProvider>

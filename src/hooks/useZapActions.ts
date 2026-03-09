@@ -7,17 +7,18 @@ import {
   useReadContract,
   usePublicClient,
 } from "wagmi";
-import { useVNetSendTransaction as useSendTransaction } from "@/hooks/useVNetSendTransaction";
-import { useVNetWriteContract as useWriteContract } from "@/hooks/useVNetWriteContract";
+import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
 import { parseUnits, maxUint256 } from "viem";
 import type { Hash } from "viem";
 import { ETH_ADDRESS } from "@/lib/enso";
 import { ERC20_APPROVAL_ABI } from "@/lib/abis";
-import { useTenderly } from "@/contexts/TenderlyContext";
+import { useTestNetwork } from "@/contexts/TestNetworkContext";
 import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
+import { useSendTx } from "@/hooks/useSendTx";
 import type { ZapQuote, SimulationResult } from "@/types/enso";
 import type { PendingApproval, ApprovalProgress } from "@/types/approval";
 import { runVNetSimulation } from "@/lib/vnet-simulation";
+import { parseErrorMessage, anvilCall } from "@/lib/tx-utils";
 
 export type ZapStatus =
   | "idle"
@@ -30,106 +31,17 @@ export type ZapStatus =
   | "reverted"
   | "error";
 
-// Known custom error selectors from Enso router and common DeFi contracts
-const CUSTOM_ERROR_SELECTORS: Record<string, string> = {
-  "0x97a6f3b9": "Slippage too high - price moved, try increasing slippage tolerance",
-  "0x8baa579f": "Insufficient output amount",
-  "0x39d35496": "Excessive input amount",
-  "0x13be252b": "Insufficient balance",
-  "0x756688fe": "Deadline expired - transaction took too long",
-  "0x675cae38": "Invalid path",
-  "0x7939f424": "Transfer failed",
-};
-
-// Helper to parse error messages into user-friendly format
-function parseErrorMessage(error: Error | null, defaultMsg: string): string | null {
-  if (!error) return null;
-  const msg = error.message || defaultMsg;
-
-  // User rejection
-  if (msg.includes("User rejected") || msg.includes("user rejected")) {
-    return "Transaction cancelled";
-  }
-
-  // Check for custom error selectors (0x + 8 hex chars)
-  const customErrorMatch = msg.match(/custom error (0x[a-fA-F0-9]{8})/i)
-    || msg.match(/reverted with (0x[a-fA-F0-9]{8})/i)
-    || msg.match(/error (0x[a-fA-F0-9]{8})/i);
-  if (customErrorMatch) {
-    const selector = customErrorMatch[1].toLowerCase();
-    const friendlyMessage = CUSTOM_ERROR_SELECTORS[selector];
-    if (friendlyMessage) {
-      return friendlyMessage;
-    }
-    // Unknown custom error - still show the selector
-    return `Transaction failed: custom error ${selector}`;
-  }
-
-  // Extract revert reason from viem errors
-  // Format: 'reverted with the following reason:\n<reason>'
-  const revertMatch = msg.match(/reverted with the following reason:\s*\n?\s*(.+?)(?:\n|$)/i);
-  if (revertMatch) {
-    const reason = revertMatch[1].trim();
-    // If reason is just "execution reverted" with no details, make it friendlier
-    if (reason.toLowerCase() === "execution reverted") {
-      return "Transaction failed: execution reverted";
-    }
-    return `Transaction failed: ${reason}`;
-  }
-
-  // Check for simulation/estimation errors
-  if (msg.includes("EstimateGasExecutionError") || msg.includes("simulateContract")) {
-    // Try to extract a short reason
-    const shortReason = msg.match(/reason:\s*(.+?)(?:\n|Contract Call:|$)/i);
-    if (shortReason) {
-      return `Simulation failed: ${shortReason[1].trim()}`;
-    }
-    return "Transaction simulation failed";
-  }
-
-  // Insufficient ETH for gas
-  if (msg.includes("insufficient funds")) {
-    return "Insufficient funds for gas";
-  }
-
-  // ERC20 transfer failures (slippage, stale quote, or swap conditions changed)
-  if (msg.includes("transfer amount exceeds balance") || msg.includes("ERC20: transfer amount exceeds")) {
-    return "Transaction would fail: swap conditions changed, try refreshing the quote";
-  }
-
-  // Gas estimation failed
-  if (msg.includes("gas required exceeds") || msg.includes("out of gas")) {
-    return "Transaction would fail: out of gas";
-  }
-
-  // Slippage/price errors (text-based)
-  if (msg.includes("slippage") || msg.includes("INSUFFICIENT_OUTPUT")) {
-    return "Transaction failed: slippage too high";
-  }
-
-  // Fallback: truncate very long messages
-  if (msg.length > 100) {
-    // Try to get just the first line or meaningful part
-    const firstLine = msg.split('\n')[0];
-    if (firstLine.length <= 100) {
-      return firstLine;
-    }
-    return msg.slice(0, 97) + "...";
-  }
-
-  return msg;
-}
-
 export function useZapActions(quote: ZapQuote | null | undefined) {
   const { address: userAddress, chainId } = useAccount();
   const publicClient = usePublicClient();
-  const { isTenderlyVNet, testNetworkType } = useTenderly();
-  const { isFlashbotsEnabled, isFlashbotsSupported, toggleFlashbots, sendViaFlashbots } = useFlashbotsProtect();
+  const { testNetworkType } = useTestNetwork();
+  const { isFlashbotsEnabled, isFlashbotsSupported, toggleFlashbots } = useFlashbotsProtect();
+  const { sendTx } = useSendTx();
   const [actionState, setActionState] = useState<"idle" | "needsApproval" | "approving" | "simulating" | "zapping">("idle");
   const [simulationError, setSimulationError] = useState<string | null>(null);
   const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
-  const [flashbotsHash, setFlashbotsHash] = useState<Hash | undefined>(undefined);
-  const [flashbotsError, setFlashbotsError] = useState<Error | null>(null);
+  const [zapHash, setZapHash] = useState<Hash | undefined>(undefined);
+  const [txError, setTxError] = useState<Error | null>(null);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const autoExecuteRef = useRef(false);
   const pendingOptionsRef = useRef<{ skipSimulation?: boolean; previewOnly?: boolean } | undefined>(undefined);
@@ -161,14 +73,6 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     error: approveError,
   } = useWriteContract();
 
-  // Send zap transaction (using sendTransaction for raw tx)
-  const {
-    sendTransaction,
-    data: zapHash,
-    reset: resetZap,
-    error: zapError,
-  } = useSendTransaction();
-
   // Wait for approval - poll every 1 second until confirmed
   const { isLoading: isApprovalPending, isSuccess: isApprovalSuccess, data: approvalReceipt } =
     useWaitForTransactionReceipt({
@@ -177,11 +81,9 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     });
 
   // Wait for zap - poll every 1 second until confirmed
-  // Use either wagmi's zapHash or our flashbotsHash depending on which was used
-  const activeZapHash = zapHash || flashbotsHash;
   const { isLoading: isZapPending, isSuccess: isZapSuccess, data: zapReceipt } =
     useWaitForTransactionReceipt({
-      hash: activeZapHash,
+      hash: zapHash,
       pollingInterval: 1_000,
     });
 
@@ -220,7 +122,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     if (isZapReverted || isApprovalReverted) return "reverted";
     if (isZapSuccess) return "success";
     // Error states for pre-send failures (wallet rejection, simulation failure, RPC errors)
-    if (approveError || zapError || flashbotsError || simulationError) return "error";
+    if (approveError || txError || simulationError) return "error";
     // Active on-chain pending states
     if (isZapPending) return "waitingTx";
     if (isApprovalPending) return "waitingApproval";
@@ -232,17 +134,17 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     if (actionState === "simulating") return "zapping";
     if (actionState === "zapping") return "zapping";
     return "idle";
-  }, [approveError, zapError, flashbotsError, simulationError, isZapReverted, isApprovalReverted, isZapSuccess, isApprovalSuccess, isApprovalPending, isZapPending, actionState]);
+  }, [approveError, txError, simulationError, isZapReverted, isApprovalReverted, isZapSuccess, isApprovalSuccess, isApprovalPending, isZapPending, actionState]);
 
   // Derive error message from errors or reverts
   const error = useMemo(() => {
     if (simulationError) return simulationError;
     if (approveError) return parseErrorMessage(approveError, "Approval failed");
-    if (zapError) return parseErrorMessage(zapError, "Zap transaction failed");
+    if (txError) return parseErrorMessage(txError, "Zap transaction failed");
     if (isApprovalReverted) return "Approval transaction reverted";
     if (isZapReverted) return "Zap transaction reverted";
     return null;
-  }, [simulationError, approveError, zapError, isApprovalReverted, isZapReverted]);
+  }, [simulationError, approveError, txError, isApprovalReverted, isZapReverted]);
 
   // Check if approval needed
   const needsApproval = useCallback((): boolean => {
@@ -273,7 +175,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       total: 1,
       steps: [{
         label: pendingApproval.tokenSymbol,
-        description: "Approve for swap routing",
+        description: `Approve ${pendingApproval.tokenSymbol} for Enso Router`,
         done: false,
         spender: routerAddress,
       }],
@@ -378,23 +280,12 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     // If skipSimulation is true, go straight to sending (used after preview mode confirmation)
     if (options?.skipSimulation && simulationResult?.success) {
       setActionState("zapping");
-      if (isFlashbotsEnabled && !isTenderlyVNet && chainId === 1) {
-        try {
-          const hash = await sendViaFlashbots(txParams);
-          setFlashbotsHash(hash);
-        } catch (err) {
-          const errorMsg = err instanceof Error ? err.message : String(err);
-          const isUnsupportedMethod = errorMsg.includes("eth_signTransaction") &&
-            (errorMsg.includes("not supported") || errorMsg.includes("does not exist"));
-          if (isUnsupportedMethod) {
-            sendTransaction(txParams);
-          } else {
-            setFlashbotsError(err instanceof Error ? err : new Error(errorMsg));
-            setActionState("idle");
-          }
-        }
-      } else {
-        sendTransaction(txParams);
+      try {
+        const hash = await sendTx(txParams);
+        setZapHash(hash);
+      } catch (err) {
+        setTxError(err instanceof Error ? err : new Error(String(err)));
+        setActionState("idle");
       }
       return null;
     }
@@ -481,7 +372,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
     const ethCallPromise = (async () => {
       try {
-        await publicClient.call({
+        await anvilCall(publicClient, {
           account: userAddress,
           ...txParams,
         });
@@ -525,41 +416,17 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       return simResult.result ?? null;
     }
 
-    // Simulation passed - send the actual transaction
+    // Simulation passed - send the actual transaction (gas + Flashbots handled by useSendTx)
     setActionState("zapping");
-    console.log("[Zap] Simulation passed, sending tx", { isFlashbotsEnabled, isTenderlyVNet, chainId });
-
-    // Use Flashbots Protect for MEV protection (unless disabled or on VNet)
-    if (isFlashbotsEnabled && !isTenderlyVNet && chainId === 1) {
-      console.log("[Zap] Using Flashbots Protect");
-      try {
-        const hash = await sendViaFlashbots(txParams);
-        setFlashbotsHash(hash);
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        console.warn("[Zap] Flashbots error:", errorMsg);
-
-        // If wallet doesn't support eth_signTransaction, fall back to regular tx
-        // Frame, some hardware wallets, and older wallets don't support signing without broadcasting
-        const isUnsupportedMethod = errorMsg.includes("eth_signTransaction") &&
-          (errorMsg.includes("not supported") || errorMsg.includes("does not exist"));
-
-        if (isUnsupportedMethod) {
-          console.log("[Zap] Wallet doesn't support eth_signTransaction, falling back to regular tx");
-          sendTransaction(txParams);
-        } else {
-          // Other errors - don't fall back, show error to user
-          setFlashbotsError(err instanceof Error ? err : new Error(errorMsg));
-          setActionState("idle");
-        }
-      }
-    } else {
-      // Use wallet's default RPC (user preference or VNet/testnet)
-      console.log("[Zap] Using wallet sendTransaction");
-      sendTransaction(txParams);
+    try {
+      const hash = await sendTx(txParams);
+      setZapHash(hash);
+    } catch (err) {
+      setTxError(err instanceof Error ? err : new Error(String(err)));
+      setActionState("idle");
     }
     return null;
-  }, [quote, userAddress, publicClient, sendTransaction, sendViaFlashbots, isFlashbotsEnabled, chainId, isTenderlyVNet, testNetworkType, simulationResult]);
+  }, [quote, userAddress, publicClient, sendTx, chainId, testNetworkType, simulationResult]);
 
   // Keep ref in sync with latest executeZapInternal
   executeZapInternalRef.current = executeZapInternal;
@@ -595,9 +462,10 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   const executeZap = useCallback(async (options?: { skipSimulation?: boolean; previewOnly?: boolean }): Promise<SimulationResult | null> => {
     if (!quote || !userAddress) return null;
 
-    // Clear stale wagmi error state from previous attempts (e.g., wallet rejection)
+    // Clear stale state from previous attempts (e.g., wallet rejection)
     resetApprove();
-    resetZap();
+    setZapHash(undefined);
+    setTxError(null);
 
     // Check if approval is needed
     if (needsApproval()) {
@@ -625,21 +493,20 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
     // No approval needed — execute directly
     return executeZapInternal(options);
-  }, [quote, userAddress, needsApproval, tokenAddress, routerAddress, executeZapInternal, resetApprove, resetZap]);
+  }, [quote, userAddress, needsApproval, tokenAddress, routerAddress, executeZapInternal, resetApprove]);
 
   // Reset state
   const reset = useCallback(() => {
     setActionState("idle");
     setSimulationError(null);
     setSimulationResult(null);
-    setFlashbotsHash(undefined);
-    setFlashbotsError(null);
+    setZapHash(undefined);
+    setTxError(null);
     setPendingApproval(null);
     autoExecuteRef.current = false;
     pendingOptionsRef.current = undefined;
     resetApprove();
-    resetZap();
-  }, [resetApprove, resetZap]);
+  }, [resetApprove]);
 
   return {
     needsApproval,
@@ -651,7 +518,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     isLoading: status !== "idle" && status !== "needsApproval" && status !== "success" && status !== "error" && status !== "reverted",
     isSuccess: status === "success",
     isReverted: status === "reverted",
-    zapHash: activeZapHash,
+    zapHash,
     refetchAllowance,
     // Approval state for ApprovalCard
     pendingApproval,

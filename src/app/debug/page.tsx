@@ -2,14 +2,14 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useAccount, useChainId, usePublicClient } from "wagmi";
-import { useTenderly } from "@/contexts/TenderlyContext";
+import { useTestNetwork } from "@/contexts/TestNetworkContext";
 import { useConnect, useDisconnect } from "wagmi";
 
 export default function DebugPage() {
   const { address, connector, isConnected, chain } = useAccount();
   const chainId = useChainId();
   const publicClient = usePublicClient();
-  const { isTestNetwork, testNetworkType, isDetecting } = useTenderly();
+  const { isTestNetwork, testNetworkType, isDetecting } = useTestNetwork();
   const { connectors, connect } = useConnect();
   const { disconnect } = useDisconnect();
   const [rpcProbeResult, setRpcProbeResult] = useState<string>("");

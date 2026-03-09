@@ -1,5 +1,4 @@
-// LlamaLendZapperV3 contract integration
-// Contract: https://etherscan.io/address/0x7097aF57f5A1C14a8f28F7d624e8A464A006e08e
+// LlamaLendZapperV4 contract integration
 // Enables leveraged Curve LlamaLend operations via Enso Router swaps
 
 import { fetchRoute, fetchBundle, ENSO_SHORTCUTS, ENSO_ROUTER_EXECUTOR, CVX_HYBRID_ZAPPER, getLpxCvxToCvxSwapRate, computeHybridZapParams } from "@/lib/enso";
@@ -42,16 +41,10 @@ function extractInnerSwapData(routeTxData: string): `0x${string}` {
   return decoded.args[1] as `0x${string}`;
 }
 
-// Re-export for backwards compatibility (prefer importing from @/config/addresses directly)
-export { CRVUSD_ADDRESS };
+// Current LlamaLendZapper address (overridable via env for fork testing)
+export const ZAPPER_ADDRESS = (process.env.NEXT_PUBLIC_ZAPPER_ADDRESS ?? "0xED653FF2410A4686a0B69Fc4C0D1c0cccDFddb83") as `0x${string}`;
 
-// LlamaLendZapper V1 contract address (mainnet, deprecated)
-export const ZAPPER_ADDRESS = "0x18Fb52A4D65E03ebD25FbD2Fae60452c286eC5F1" as const;
-
-// LlamaLendZapperV3 contract address (mainnet, overridable via env for fork testing)
-export const ZAPPER_V3_ADDRESS = (process.env.NEXT_PUBLIC_ZAPPER_V3_ADDRESS ?? "0x7097aF57f5A1C14a8f28F7d624e8A464A006e08e") as `0x${string}`;
-
-// LlamaLendZapperV2 ABI - write functions only (views via DeFi Saver's CurveUsdView/CurveUsdWithdraw)
+// LlamaLendZapperV4 ABI — all write functions (views via DeFi Saver's CurveUsdView/CurveUsdWithdraw)
 export const ZAPPER_ABI = [
   {
     name: "createLeveragedLoan",
@@ -89,7 +82,7 @@ export const ZAPPER_ABI = [
     inputs: [
       { name: "controller", type: "address" },
       { name: "collateralToSell", type: "uint256" },
-      { name: "minCrvusdFromSwap", type: "uint256" },
+      { name: "minCrvUsdOut", type: "uint256" },
       { name: "swapData", type: "bytes" },
       { name: "deadline", type: "uint256" },
     ],
@@ -137,7 +130,7 @@ export const ZAPPER_ABI = [
   {
     name: "createLeveragedLoanFromToken",
     type: "function",
-    stateMutability: "nonpayable",
+    stateMutability: "payable",
     inputs: [
       { name: "controller", type: "address" },
       { name: "inputToken", type: "address" },
@@ -155,7 +148,7 @@ export const ZAPPER_ABI = [
   {
     name: "leverageUpFromToken",
     type: "function",
-    stateMutability: "nonpayable",
+    stateMutability: "payable",
     inputs: [
       { name: "controller", type: "address" },
       { name: "inputToken", type: "address" },
@@ -197,21 +190,6 @@ export const ZAPPER_ABI = [
       { name: "debt", type: "uint256" },
       { name: "targetToken", type: "address" },
       { name: "minTargetOut", type: "uint256" },
-      { name: "swapData", type: "bytes" },
-      { name: "deadline", type: "uint256" },
-    ],
-    outputs: [],
-  },
-  {
-    name: "borrowAndDeposit",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "controller", type: "address" },
-      { name: "additionalCollateral", type: "uint256" },
-      { name: "debt", type: "uint256" },
-      { name: "vault", type: "address" },
-      { name: "minVaultShares", type: "uint256" },
       { name: "swapData", type: "bytes" },
       { name: "deadline", type: "uint256" },
     ],
@@ -263,7 +241,7 @@ export const ZAPPER_ABI = [
   {
     name: "repayFromTokenAndWithdraw",
     type: "function",
-    stateMutability: "nonpayable",
+    stateMutability: "payable",
     inputs: [
       { name: "controller", type: "address" },
       { name: "tokenIn", type: "address" },
@@ -278,7 +256,7 @@ export const ZAPPER_ABI = [
   {
     name: "repayFromTokenAndConvert",
     type: "function",
-    stateMutability: "nonpayable",
+    stateMutability: "payable",
     inputs: [
       {
         name: "p",
@@ -299,11 +277,11 @@ export const ZAPPER_ABI = [
     ],
     outputs: [],
   },
-  // ZapperV4 — Borrow + swap collateral
+  // ZapperV4 — Borrow + swap collateral (payable for ETH→WETH wrapping)
   {
     name: "borrowMoreFromToken",
     type: "function",
-    stateMutability: "nonpayable",
+    stateMutability: "payable",
     inputs: [
       { name: "controller", type: "address" },
       { name: "tokenIn", type: "address" },
@@ -311,6 +289,75 @@ export const ZAPPER_ABI = [
       { name: "minCollateral", type: "uint256" },
       { name: "debt", type: "uint256" },
       { name: "swapData", type: "bytes" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  // ZapperV4 — Create loan from any token (payable for ETH→WETH wrapping)
+  {
+    name: "createLoanFromToken",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [
+      { name: "controller", type: "address" },
+      { name: "tokenIn", type: "address" },
+      { name: "amountIn", type: "uint256" },
+      { name: "minCollateral", type: "uint256" },
+      { name: "debt", type: "uint256" },
+      { name: "N", type: "uint256" },
+      { name: "swapData", type: "bytes" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  // ZapperV4 — Add collateral from any token (payable for ETH→WETH wrapping)
+  {
+    name: "addCollateralFromToken",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [
+      { name: "controller", type: "address" },
+      { name: "tokenIn", type: "address" },
+      { name: "amountIn", type: "uint256" },
+      { name: "minCollateral", type: "uint256" },
+      { name: "swapData", type: "bytes" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  // ZapperV3/V4 — Create loan with vault token, swap borrowed crvUSD to target
+  {
+    name: "createLoanAndConvert",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "controller", type: "address" },
+      { name: "collateral", type: "uint256" },
+      { name: "debt", type: "uint256" },
+      { name: "N", type: "uint256" },
+      { name: "targetToken", type: "address" },
+      { name: "minTargetOut", type: "uint256" },
+      { name: "swapData", type: "bytes" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  // ZapperV4 — Swap input token to collateral, create loan, swap borrowed crvUSD to target
+  {
+    name: "createLoanFromTokenAndConvert",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [
+      { name: "controller", type: "address" },
+      { name: "tokenIn", type: "address" },
+      { name: "amountIn", type: "uint256" },
+      { name: "minCollateral", type: "uint256" },
+      { name: "debt", type: "uint256" },
+      { name: "N", type: "uint256" },
+      { name: "targetToken", type: "address" },
+      { name: "minTargetOut", type: "uint256" },
+      { name: "inputSwapData", type: "bytes" },
+      { name: "outputSwapData", type: "bytes" },
       { name: "deadline", type: "uint256" },
     ],
     outputs: [],
@@ -381,33 +428,9 @@ export const CURVE_HELPER_ABI = [
   },
 ] as const;
 
-// Controller approve ABI - approve(address, bool) NOT ERC20 approve(address, uint256)
-export const CONTROLLER_APPROVE_ABI = [
-  {
-    name: "approve",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "spender", type: "address" },
-      { name: "approved", type: "bool" },
-    ],
-    outputs: [],
-  },
-  {
-    name: "approval",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "owner", type: "address" },
-      { name: "spender", type: "address" },
-    ],
-    outputs: [{ name: "", type: "bool" }],
-  },
-] as const;
-
 /**
  * Fetch swap data from Enso route for zapper operations.
- * The zapper holds tokens during callbacks, so fromAddress = ZAPPER_V3_ADDRESS.
+ * The zapper holds tokens during callbacks, so fromAddress = ZAPPER_ADDRESS.
  */
 export async function fetchZapperSwapData(params: {
   tokenIn: string;
@@ -416,8 +439,8 @@ export async function fetchZapperSwapData(params: {
   slippage?: string;
 }): Promise<{ swapData: string; expectedOut: string }> {
   const route = await fetchRoute({
-    fromAddress: ZAPPER_V3_ADDRESS,
-    receiver: ZAPPER_V3_ADDRESS,
+    fromAddress: ZAPPER_ADDRESS,
+    receiver: ZAPPER_ADDRESS,
     tokenIn: params.tokenIn,
     tokenOut: params.tokenOut,
     amountIn: params.amountIn,
@@ -435,7 +458,7 @@ export async function fetchZapperSwapData(params: {
  *  1. inputSwapData: inputToken → collateral (pre-swap)
  *  2. leverageSwapData: crvUSD → collateral (callback loop)
  *
- * The zapper holds tokens during callbacks, so fromAddress = ZAPPER_V3_ADDRESS for both.
+ * The zapper holds tokens during callbacks, so fromAddress = ZAPPER_ADDRESS for both.
  */
 export async function fetchFromTokenSwapData(params: {
   inputToken: string;
@@ -546,9 +569,9 @@ export async function buildVaultInputSwapBundle(params: {
     const minDy = calculateMinDy(BigInt(params.estimatedCvx1), slippageBps);
 
     // Pre-fetch CVX -> targetToken route for inner swap data
-    // fromAddress=ZAPPER_V3_ADDRESS so Enso builds the route for the zapper context
+    // fromAddress=ZAPPER_ADDRESS so Enso builds the route for the zapper context
     const cvxRoute = await fetchRoute({
-      fromAddress: ZAPPER_V3_ADDRESS,
+      fromAddress: ZAPPER_ADDRESS,
       tokenIn: TOKENS.CVX,
       tokenOut: params.targetToken,
       amountIn: params.estimatedCvx1, // CVX1->CVX is 1:1
@@ -616,9 +639,9 @@ export async function buildVaultInputSwapBundle(params: {
     });
 
     const bundle = await fetchBundle({
-      fromAddress: ZAPPER_V3_ADDRESS,
+      fromAddress: ZAPPER_ADDRESS,
       actions,
-      receiver: ZAPPER_V3_ADDRESS,
+      receiver: ZAPPER_ADDRESS,
       skipQuote: true, // HybridZapper calls can't be simulated by Enso
     });
 
@@ -635,7 +658,7 @@ export async function buildVaultInputSwapBundle(params: {
 
     // Pre-fetch CVX → target route for innerSwapData
     const cvxRoute = await fetchRoute({
-      fromAddress: ZAPPER_V3_ADDRESS,
+      fromAddress: ZAPPER_ADDRESS,
       tokenIn: TOKENS.CVX,
       tokenOut: params.targetToken,
       amountIn: expectedCvx.toString(),
@@ -655,9 +678,9 @@ export async function buildVaultInputSwapBundle(params: {
     actions.push({ protocol: "enso", action: "call", args: { address: ENSO_ROUTER_EXECUTOR.toLowerCase(), method: "routeMulti", abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)", args: [[], innerSwapData] } });
 
     const bundle = await fetchBundle({
-      fromAddress: ZAPPER_V3_ADDRESS,
+      fromAddress: ZAPPER_ADDRESS,
       actions,
-      receiver: ZAPPER_V3_ADDRESS,
+      receiver: ZAPPER_ADDRESS,
       skipQuote: true,
     });
 
@@ -679,9 +702,9 @@ export async function buildVaultInputSwapBundle(params: {
     });
 
     const bundle = await fetchBundle({
-      fromAddress: ZAPPER_V3_ADDRESS,
+      fromAddress: ZAPPER_ADDRESS,
       actions,
-      receiver: ZAPPER_V3_ADDRESS,
+      receiver: ZAPPER_ADDRESS,
     });
 
     return {
@@ -692,14 +715,13 @@ export async function buildVaultInputSwapBundle(params: {
 }
 
 /**
- * Build Enso bundle swapData for exotic vault output direction (crvUSD → exotic underlying).
+ * Build Enso bundle swapData for exotic token output direction (crvUSD → exotic token).
  *
- * Used by V3/V4 Zapper's borrowAndDeposit: the Zapper calls routeSingle(swapData) to convert
- * crvUSD → underlying, then deposits into the vault. For exotic tokens (cvgCVX, pxCVX),
- * the path is: crvUSD → CVX (via Enso route) → HybridZapper → underlying.
+ * For exotic tokens (cvgCVX, pxCVX), the path is:
+ * crvUSD → CVX (via Enso route) → HybridZapper → exotic token.
  *
  * The swapData is a complete routeSingle-compatible calldata that the Zapper can call directly.
- * HybridZapper sends the underlying to ZAPPER_V3_ADDRESS so the Zapper can deposit it.
+ * HybridZapper sends the output token to ZAPPER_ADDRESS so the Zapper can forward it to the user.
  */
 export async function buildExoticOutputSwapData(params: {
   amountIn: string; // crvUSD amount in wei
@@ -708,7 +730,7 @@ export async function buildExoticOutputSwapData(params: {
 }): Promise<{ swapData: string; expectedOut: string }> {
   // 1. Fetch route crvUSD → CVX to get estimate + innerSwapData
   const cvxRoute = await fetchRoute({
-    fromAddress: ZAPPER_V3_ADDRESS,
+    fromAddress: ZAPPER_ADDRESS,
     tokenIn: CRVUSD_ADDRESS,
     tokenOut: TOKENS.CVX,
     amountIn: params.amountIn,
@@ -748,16 +770,16 @@ export async function buildExoticOutputSwapData(params: {
         address: CVX_HYBRID_ZAPPER!,
         method,
         abi,
-        args: [{ useOutputOfCallAt: 1 }, zapParams.swapAmount.toString(), zapParams.minSwapDy, zapParams.minTotalOut, ZAPPER_V3_ADDRESS, "0"],
+        args: [{ useOutputOfCallAt: 1 }, zapParams.swapAmount.toString(), zapParams.minSwapDy, zapParams.minTotalOut, ZAPPER_ADDRESS, "0"],
       },
     },
   ];
 
   // 4. Build and return bundle
   const bundle = await fetchBundle({
-    fromAddress: ZAPPER_V3_ADDRESS,
+    fromAddress: ZAPPER_ADDRESS,
     actions,
-    receiver: ZAPPER_V3_ADDRESS,
+    receiver: ZAPPER_ADDRESS,
     skipQuote: true, // HybridZapper calls can't be simulated by Enso
   });
 

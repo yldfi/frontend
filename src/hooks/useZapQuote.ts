@@ -6,7 +6,7 @@ import { useAccount, usePublicClient } from "wagmi";
 import { parseUnits, formatUnits } from "viem";
 import { fetchZapInRoute, fetchZapOutRoute, fetchVaultToVaultRoute, fetchCvgCvxZapInRoute, fetchCvgCvxZapOutRoute, fetchPxCvxZapInRoute, fetchPxCvxZapOutRoute, fetchExternalVaultZapInRoute, fetchLpxCvxZapInRoute, fetchPxCvxTokenZapInRoute, isPxCvxToken, isLpxCvxToken, fetchTokenPrices, CVXCRV_ADDRESS, isYldfiVault, getTokenSymbol } from "@/lib/enso";
 import { TOKENS, getVaultByAddress, isExternalVaultToken, getExternalVaultConfig } from "@/config/vaults";
-import { useTenderly } from "@/contexts/TenderlyContext";
+import { useTestNetwork } from "@/contexts/TestNetworkContext";
 import type { EnsoToken, ZapQuote, ZapDirection, RouteInfo, RouteStep } from "@/types/enso";
 import { ERC4626_ABI } from "@/lib/abis";
 
@@ -291,7 +291,7 @@ export function useZapQuote({
 }: UseZapQuoteParams) {
   const { address: userAddress } = useAccount();
   const publicClient = usePublicClient();
-  const { isTenderlyVNet } = useTenderly();
+  const { isTestNetwork } = useTestNetwork();
 
   // Check if vault uses cvgCVX or pxCVX as underlying (requires custom routing)
   const isCvgCvxVault = underlyingToken?.toLowerCase() === TOKENS.CVGCVX.toLowerCase();
@@ -348,7 +348,7 @@ export function useZapQuote({
           sourceVault: vaultAddress,
           targetVault: outputToken.address,
           amountIn: amountInWei,
-          slippage,
+          slippage: slippage,
         });
 
         // Get output amount from amountsOut (keyed by token address)
@@ -436,7 +436,7 @@ export function useZapQuote({
           sourceVault: inputToken.address,
           targetVault: vaultAddress,
           amountIn: amountInWei,
-          slippage,
+          slippage: slippage,
         });
 
         const outputAmountRaw = bundle.amountsOut[vaultAddress.toLowerCase()]
@@ -531,7 +531,7 @@ export function useZapQuote({
           vaultAddress,
           externalVaultAddress: inputToken.address,
           amountIn: amountInWei,
-          slippage,
+          slippage: slippage,
         });
 
         const outputAmountRaw = bundle.amountsOut[vaultAddress.toLowerCase()]
@@ -594,7 +594,7 @@ export function useZapQuote({
           fromAddress: userAddress,
           vaultAddress,
           amountIn: amountInWei,
-          slippage,
+          slippage: slippage,
         });
 
         const outputAmountRaw = bundle.amountsOut[vaultAddress.toLowerCase()]
@@ -648,7 +648,7 @@ export function useZapQuote({
           fromAddress: userAddress,
           vaultAddress,
           amountIn: amountInWei,
-          slippage,
+          slippage: slippage,
         });
 
         const outputAmountRaw = bundle.amountsOut[vaultAddress.toLowerCase()]
@@ -703,7 +703,7 @@ export function useZapQuote({
             vaultAddress,
             inputToken: inputToken.address,
             amountIn: amountInWei,
-            slippage,
+            slippage: slippage,
           });
 
           const outputAmountRaw = bundle.amountsOut[vaultAddress.toLowerCase()]
@@ -754,7 +754,7 @@ export function useZapQuote({
             vaultAddress,
             outputToken: outputToken.address,
             amountIn: amountInWei,
-            slippage,
+            slippage: slippage,
           });
 
           const outputAmountRaw = bundle.amountsOut[outputToken.address.toLowerCase()]
@@ -824,7 +824,7 @@ export function useZapQuote({
             vaultAddress,
             inputToken: inputToken.address,
             amountIn: amountInWei,
-            slippage,
+            slippage: slippage,
           });
 
           const outputAmountRaw = bundle.amountsOut[vaultAddress.toLowerCase()]
@@ -875,7 +875,7 @@ export function useZapQuote({
             vaultAddress,
             outputToken: outputToken.address,
             amountIn: amountInWei,
-            slippage,
+            slippage: slippage,
           });
 
           const outputAmountRaw = bundle.amountsOut[outputToken.address.toLowerCase()]
@@ -944,7 +944,7 @@ export function useZapQuote({
           vaultAddress,
           outputToken: outputToken.address,
           amountIn: amountInWei,
-          slippage,
+          slippage: slippage,
         });
 
         // Get output amount from amountsOut (keyed by token address)
@@ -1019,7 +1019,7 @@ export function useZapQuote({
           vaultAddress,
           inputToken: inputToken.address,
           amountIn: amountInWei,
-          slippage,
+          slippage: slippage,
         });
 
         // Get output amount from amountsOut (keyed by token address)
@@ -1094,8 +1094,8 @@ export function useZapQuote({
     if (prevTxDataRef.current === txKey) return;
     prevTxDataRef.current = txKey;
 
-    if (isTenderlyVNet) {
-      // VNet: use publicClient.call() directly (goes to VNet RPC)
+    if (isTestNetwork) {
+      // Test network: use publicClient.call() directly (goes to test RPC)
       publicClient
         .call({
           account: userAddress,
@@ -1104,14 +1104,14 @@ export function useZapQuote({
           value: data.tx.value ? BigInt(data.tx.value) : 0n,
         })
         .then((result) => {
-          console.log("[VNet] eth_call SUCCESS", { data: result.data });
+          console.log("[TestNet] eth_call SUCCESS", { data: result.data });
         })
         .catch((error: Error) => {
-          console.log("[VNet] eth_call FAILED:", error.message);
+          console.log("[TestNet] eth_call FAILED:", error.message);
           console.warn(
-            "[VNet] Note: VNets fork from mainnet but don't stay in sync. " +
-            "Enso quotes are based on current mainnet state, which may differ from your VNet's forked state. " +
-            "If this failure seems unexpected, try creating a fresher VNet fork."
+            "[TestNet] Note: Test forks don't stay in sync with mainnet. " +
+            "Enso quotes are based on current mainnet state, which may differ from your fork's state. " +
+            "If this failure seems unexpected, try creating a fresher fork."
           );
         });
     } else {
@@ -1162,7 +1162,7 @@ export function useZapQuote({
           // Silently ignore - debug trace is optional
         });
     }
-  }, [data?.tx, userAddress, isTenderlyVNet, publicClient]);
+  }, [data?.tx, userAddress, isTestNetwork, publicClient]);
 
   return {
     quote: data,

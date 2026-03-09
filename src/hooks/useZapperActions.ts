@@ -1,23 +1,26 @@
 "use client";
 
 import { useState, useCallback, useMemo, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAccount, usePublicClient, useWaitForTransactionReceipt } from "wagmi";
-import { useVNetSendTransaction as useSendTransaction } from "@/hooks/useVNetSendTransaction";
-import { useVNetWriteContract as useWriteContract } from "@/hooks/useVNetWriteContract";
+import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
 import { encodeFunctionData, formatUnits, maxUint256, toFunctionSelector } from "viem";
 import {
-  ZAPPER_V3_ADDRESS,
+  ZAPPER_ADDRESS,
   ZAPPER_ABI,
-  CONTROLLER_APPROVE_ABI,
-  CRVUSD_ADDRESS,
   fetchZapperSwapData,
   fetchFromTokenSwapData,
   buildVaultInputSwapBundle,
   getDeadline,
 } from "@/lib/zapper";
+import { CRVUSD_ADDRESS, WETH_ADDRESS } from "@/config/addresses";
+import { ETH_ADDRESS } from "@/lib/enso";
+import { CONTROLLER_APPROVE_ABI } from "@/lib/abis";
 import { getVaultInfo } from "@/lib/curve-lending";
 import { TOKENS, TANGENT } from "@/config/vaults";
-import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
+import { useSendTx } from "@/hooks/useSendTx";
+
+const isNativeETH = (addr: string) => addr.toLowerCase() === ETH_ADDRESS.toLowerCase();
 
 // ABI for direct controller.liquidate (no Zapper needed)
 const CONTROLLER_LIQUIDATE_ABI = [
@@ -48,9 +51,10 @@ const CONTROLLER_LIQUIDATE_ABI = [
 
 import { ERC20_APPROVAL_ABI, ERC4626_ABI, CURVE_GET_DY_ABI } from "@/lib/abis";
 import type { SimulationResult } from "@/types/enso";
-import { useTenderly } from "@/contexts/TenderlyContext";
+import { useTestNetwork } from "@/contexts/TestNetworkContext";
 import { runVNetSimulation } from "@/lib/vnet-simulation";
 import { snapshotTx, logTxDiff } from "@/lib/dev-logging";
+import { parseEnsoError, parseErrorMessage, runTenderlySimulation, checkAllowance, anvilCall } from "@/lib/tx-utils";
 
 export type ZapperStatus =
   | "idle"
@@ -73,190 +77,6 @@ interface PendingTx {
   value: bigint;
   inputToken: string;
   controller?: `0x${string}`; // For dev-mode position logging
-}
-
-function parseEnsoError(hexData: string): { step: number; target: string; message: string } | null {
-  const data = hexData.replace(/^0x/, "").replace(/\.\s*$/, "");
-  if (!data.toLowerCase().startsWith("ef3dcb2f")) return null;
-  const body = data.slice(8);
-  if (body.length < 192) return null;
-  const step = parseInt(body.slice(0, 64), 16);
-  const target = "0x" + body.slice(88, 128);
-  const strLen = parseInt(body.slice(192, 256), 16);
-  if (strLen > 0 && strLen <= 256 && 256 + strLen * 2 <= body.length) {
-    const strHex = body.slice(256, 256 + strLen * 2);
-    try {
-      const message = strHex.match(/.{2}/g)!.map(b => String.fromCharCode(parseInt(b, 16))).join("");
-      if (/^[\x20-\x7e]+$/.test(message)) return { step, target, message };
-    } catch { /* invalid */ }
-  }
-  return null;
-}
-
-function extractStringFromHex(hex: string): string | null {
-  const data = hex.replace(/^0x/, "").replace(/^[0-9a-f]{8}/i, "");
-  for (let i = 0; i < data.length - 64; i += 64) {
-    const possibleLen = parseInt(data.slice(i, i + 64), 16);
-    if (possibleLen > 0 && possibleLen <= 256 && i + 64 + possibleLen * 2 <= data.length) {
-      const strHex = data.slice(i + 64, i + 64 + possibleLen * 2);
-      try {
-        const decoded = strHex.match(/.{2}/g)!.map(b => String.fromCharCode(parseInt(b, 16))).join("");
-        if (decoded.length > 2 && /^[\x20-\x7e]+$/.test(decoded)) return decoded;
-      } catch { /* not valid utf8 */ }
-    }
-  }
-  return null;
-}
-
-function parseErrorMessage(error: unknown): string {
-  if (!error) return "Unknown error";
-  const errorStr = String(error);
-  const lower = errorStr.toLowerCase();
-
-  if (lower.includes("user rejected") || lower.includes("user denied")) {
-    return "Transaction cancelled";
-  }
-  if (lower.includes("insufficient") || lower.includes("exceeds balance")) {
-    return "Insufficient balance";
-  }
-  if (lower.includes("slippage") || lower.includes("insufficient_output")) {
-    return "Price moved too much. Try increasing slippage.";
-  }
-  if (lower.includes("health")) {
-    return "Position would be unhealthy";
-  }
-  // Pre-parsed Enso error from devEthCall (enso:Message format)
-  const ensoPrefixMatch = errorStr.match(/enso:(.+)/);
-  if (ensoPrefixMatch) {
-    const ensoMsg = ensoPrefixMatch[1].toLowerCase();
-    if (ensoMsg.includes("condition not met") || ensoMsg.includes("return amount is not enough")) {
-      return "Swap output below minimum. Try increasing slippage.";
-    }
-    if (ensoMsg.includes("call failed")) return "Swap route failed. Try increasing slippage or use a different token.";
-    return `Transaction failed: ${ensoPrefixMatch[1]}`;
-  }
-
-  // Parse Enso Shortcuts custom error from hex: error(uint256 step, address target, string message)
-  const ensoHexMatch = errorStr.match(/custom error 0xef3dcb2f[:\s]*([0-9a-f.]+)/i);
-  if (ensoHexMatch) {
-    const parsed = parseEnsoError("ef3dcb2f" + ensoHexMatch[1].replace(/\.\s*$/, ""));
-    if (parsed) {
-      if (process.env.NODE_ENV === "development") console.log("[Enso error]", { step: parsed.step, target: parsed.target, message: parsed.message });
-      const msg = parsed.message.toLowerCase();
-      if (msg.includes("condition not met") || msg.includes("return amount is not enough")) {
-        return "Swap output below minimum. Try increasing slippage.";
-      }
-      if (msg.includes("call failed")) {
-        return "Swap route failed. Try increasing slippage or use a different token.";
-      }
-      return `Transaction failed: ${parsed.message}`;
-    }
-  }
-  if (lower.includes("condition not met") || lower.includes("return amount is not enough")) {
-    return "Swap output below minimum. Try increasing slippage.";
-  }
-  if (lower.includes("call failed")) {
-    return "Swap route failed. Try increasing slippage or use a different token.";
-  }
-  const customErrorMatch = errorStr.match(/custom error (0x[0-9a-f]+):\s*([0-9a-f]+)/i);
-  if (customErrorMatch) {
-    const extracted = extractStringFromHex(customErrorMatch[1] + customErrorMatch[2]);
-    if (extracted) return `Transaction failed: ${extracted}`;
-  }
-  if (lower.includes("revert")) {
-    const match = errorStr.match(/reason="([^"]+)"/) || errorStr.match(/reason string '([^']+)'/) || errorStr.match(/reverted[^:]*:\s*(.+?)(?:\n|$)/i);
-    if (match) return `Transaction failed: ${match[1].trim()}`;
-  }
-  return "Transaction failed. Please try again.";
-}
-
-async function runTenderlySimulation(
-  userAddress: string,
-  txTo: string,
-  txData: string,
-  txValue: string,
-  inputToken: string
-): Promise<{ ok: boolean; result: SimulationResult | null; errorMessage?: string }> {
-  try {
-    const nonceResponse = await fetch("/api/simulate/nonce", {
-      method: "GET",
-      headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(5_000), // 5s timeout
-    });
-    const nonceResult = (await nonceResponse.json()) as {
-      success: boolean;
-      nonce?: string;
-      expires?: number;
-      sig?: string;
-    };
-
-    if (!nonceResult.success || !nonceResult.nonce || !nonceResult.expires || !nonceResult.sig) {
-      return { ok: false, result: null, errorMessage: "Failed to obtain simulation nonce" };
-    }
-
-    const response = await fetch("/api/simulate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: userAddress,
-        to: txTo,
-        data: txData,
-        value: txValue,
-        inputToken,
-        nonce: nonceResult.nonce,
-        expires: nonceResult.expires,
-        sig: nonceResult.sig,
-      }),
-      signal: AbortSignal.timeout(20_000), // 20s timeout
-    });
-
-    const result = (await response.json()) as SimulationResult & { retryable?: boolean };
-
-    if (process.env.NODE_ENV === "development") {
-      console.log("[Tenderly Simulation - Zapper]", {
-        success: result.success,
-        simulationId: result.simulationId,
-        tenderlyUrl: result.tenderlyUrl,
-        gasUsed: result.gasUsed,
-        errorMessage: result.errorMessage,
-        assetChanges: result.assetChanges?.length ?? 0,
-      });
-    }
-
-    if (result.success) {
-      return { ok: true, result };
-    }
-    const errMsg = typeof result.errorMessage === "string"
-      ? result.errorMessage
-      : result.errorMessage?.message ?? "Simulation failed";
-    return { ok: false, result, errorMessage: errMsg };
-  } catch (error) {
-    return {
-      ok: false,
-      result: null,
-      errorMessage: error instanceof Error ? error.message : "Simulation failed",
-    };
-  }
-}
-
-async function checkAllowance(
-  publicClient: ReturnType<typeof usePublicClient>,
-  owner: `0x${string}`,
-  token: `0x${string}`,
-  spender: `0x${string}`
-): Promise<bigint> {
-  if (!publicClient) return 0n;
-  try {
-    const allowance = await publicClient.readContract({
-      address: token,
-      abi: ERC20_APPROVAL_ABI,
-      functionName: "allowance",
-      args: [owner, spender],
-    });
-    return allowance as bigint;
-  } catch {
-    return 0n;
-  }
 }
 
 async function checkControllerApproval(
@@ -320,6 +140,7 @@ export interface UseZapperActionsResult {
     collateralToken: `0x${string}`,
     outputToken: `0x${string}`,
     outputTokenSymbol: string,
+    collateralSymbol: string,
     slippage?: number,
     previewOnly?: boolean
   ) => Promise<SimulationResult | null>;
@@ -387,29 +208,15 @@ export interface UseZapperActionsResult {
 export function useZapperActions(): UseZapperActionsResult {
   const { address, chainId } = useAccount();
   const publicClient = usePublicClient();
-  const { sendTransactionAsync } = useSendTransaction();
-  const { isTenderlyVNet, testNetworkType } = useTenderly();
-  const { isFlashbotsEnabled, sendViaFlashbots } = useFlashbotsProtect();
+  const queryClient = useQueryClient();
+  const { testNetworkType } = useTestNetwork();
+  const { sendTx } = useSendTx();
 
-  // Flashbots-aware transaction sender: routes through private mempool on mainnet
-  const sendTx = useCallback(async (
-    txParams: { to: `0x${string}`; data: `0x${string}`; value?: bigint; gas?: bigint }
-  ): Promise<`0x${string}`> => {
-    if (isFlashbotsEnabled && testNetworkType === null && chainId === 1) {
-      try {
-        return await sendViaFlashbots(txParams);
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        const isUnsupportedMethod = errorMsg.includes("eth_signTransaction") &&
-          (errorMsg.includes("not supported") || errorMsg.includes("does not exist"));
-        if (isUnsupportedMethod) {
-          return sendTransactionAsync(txParams);
-        }
-        throw err;
-      }
-    }
-    return sendTransactionAsync(txParams);
-  }, [isFlashbotsEnabled, sendViaFlashbots, sendTransactionAsync, testNetworkType, chainId]);
+  const invalidateBalances = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["onchain-balances"] });
+    queryClient.invalidateQueries({ queryKey: ["enso-wallet-balances"] });
+    queryClient.invalidateQueries({ queryKey: ["curveLendingPosition"] });
+  }, [queryClient]);
 
   const [status, setStatus] = useState<ZapperStatus>("idle");
   const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
@@ -463,7 +270,7 @@ export function useZapperActions(): UseZapperActionsResult {
     setPendingTx(null);
     setPendingController(null);
     setPendingApproval(null);
-    setApprovalQueue([]);
+    setApprovalQueue(q => q.length === 0 ? q : []);
     setApprovalProgress(null);
     resetApprove();
   }, [resetApprove]);
@@ -543,7 +350,7 @@ export function useZapperActions(): UseZapperActionsResult {
         ),
         (async () => {
           try {
-            await publicClient.call({
+            await anvilCall(publicClient, {
               account: address,
               to: txData.to,
               data: txData.data,
@@ -631,7 +438,7 @@ export function useZapperActions(): UseZapperActionsResult {
         ),
         (async () => {
           try {
-            await publicClient.call({ account: address, to: txData.to, data: txData.data, value: txData.value });
+            await anvilCall(publicClient, { account: address, to: txData.to, data: txData.data, value: txData.value });
             if (process.env.NODE_ENV === "development") console.log(`[eth_call] OK | to: ${txData.to} | selector: ${txData.data.slice(0, 10)}`);
             return { ok: true as const };
           } catch (err: unknown) {
@@ -676,7 +483,7 @@ export function useZapperActions(): UseZapperActionsResult {
       // --- Anvil / local: eth_call preflight only ---
       setStatus("simulating");
       try {
-        await publicClient.call({ account: address, to: txData.to, data: txData.data, value: txData.value });
+        await anvilCall(publicClient, { account: address, to: txData.to, data: txData.data, value: txData.value });
         if (process.env.NODE_ENV === "development") console.log(`[eth_call] OK | to: ${txData.to} | selector: ${txData.data.slice(0, 10)}`);
       } catch (err: unknown) {
         const viemErr = err as { shortMessage?: string; message?: string; data?: string; cause?: { reason?: string; data?: string } };
@@ -696,21 +503,10 @@ export function useZapperActions(): UseZapperActionsResult {
         setStatus("error");
         return null;
       }
-    }
-
-    // Estimate gas explicitly (wallets like Rabby can underestimate on Anvil forks)
-    let gasLimit: bigint | undefined;
-    try {
-      const gasEstimate = await publicClient.estimateGas({
-        account: address,
-        to: txData.to,
-        data: txData.data,
-        value: txData.value,
-      });
-      gasLimit = gasEstimate * 130n / 100n; // 30% buffer
-      if (process.env.NODE_ENV === "development") console.log(`[Gas] estimate: ${gasEstimate} | limit: ${gasLimit} (130%)`);
-    } catch {
-      if (process.env.NODE_ENV === "development") console.log("[Gas] estimateGas failed, relying on wallet estimate");
+      if (previewOnly) {
+        setStatus("idle");
+        return null; // No Tenderly simulation data on test networks
+      }
     }
 
     // Snapshot position + balances before TX
@@ -719,13 +515,12 @@ export function useZapperActions(): UseZapperActionsResult {
       snapBefore = await snapshotTx(publicClient, address, pendingController, [txData.inputToken]);
     }
 
-    // Execute (Flashbots-protected on mainnet when enabled)
+    // Execute (gas estimation + Flashbots handled by useSendTx)
     setStatus("executing");
     const hash = await sendTx({
       to: txData.to,
       data: txData.data,
       value: txData.value,
-      ...(gasLimit ? { gas: gasLimit } : {}),
     });
 
     setTxHash(hash);
@@ -737,18 +532,19 @@ export function useZapperActions(): UseZapperActionsResult {
       pollingInterval: 1_000,
     });
 
+    if (receipt.status === "success") {
+      setStatus("success");
+      invalidateBalances();
+    } else {
+      setStatus("reverted");
+      setError("Transaction reverted");
+    }
     if (process.env.NODE_ENV === "development") {
       console.log(`[TX Receipt] hash: ${hash} | status: ${receipt.status} | gasUsed: ${receipt.gasUsed.toString()} | blockNumber: ${receipt.blockNumber.toString()}`);
       if (snapBefore && address) {
         const snapAfter = await snapshotTx(publicClient, address, pendingController, [txData.inputToken]);
         logTxDiff("Zapper TX", snapBefore, snapAfter);
       }
-    }
-    if (receipt.status === "success") {
-      setStatus("success");
-    } else {
-      setStatus("reverted");
-      setError("Transaction reverted");
     }
 
     return simulationResult;
@@ -796,33 +592,18 @@ export function useZapperActions(): UseZapperActionsResult {
     }
 
     try {
-      // Estimate gas explicitly (wallets like Rabby can underestimate on Anvil forks)
-      let gasLimit: bigint | undefined;
-      try {
-        const gasEstimate = await publicClient.estimateGas({
-          account: address,
-          to: pendingTx.to,
-          data: pendingTx.data,
-          value: pendingTx.value,
-        });
-        gasLimit = gasEstimate * 130n / 100n;
-        if (process.env.NODE_ENV === "development") console.log(`[Gas] estimate: ${gasEstimate} | limit: ${gasLimit} (130%)`);
-      } catch {
-        if (process.env.NODE_ENV === "development") console.log("[Gas] estimateGas failed, relying on wallet estimate");
-      }
-
       // Snapshot position + balances before TX
       let snapBefore: Awaited<ReturnType<typeof snapshotTx>> | undefined;
       if (process.env.NODE_ENV === "development" && address) {
         snapBefore = await snapshotTx(publicClient, address, pendingController, [pendingTx.inputToken]);
       }
 
+      // Execute (gas estimation + Flashbots handled by useSendTx)
       setStatus("executing");
       const hash = await sendTx({
         to: pendingTx.to,
         data: pendingTx.data,
         value: pendingTx.value,
-        ...(gasLimit ? { gas: gasLimit } : {}),
       });
 
       setTxHash(hash);
@@ -834,18 +615,18 @@ export function useZapperActions(): UseZapperActionsResult {
         pollingInterval: 1_000,
       });
 
+      if (receipt.status === "success") {
+        setStatus("success");
+      } else {
+        setStatus("reverted");
+        setError("Transaction reverted");
+      }
       if (process.env.NODE_ENV === "development") {
         console.log(`[TX Receipt] hash: ${hash} | status: ${receipt.status} | gasUsed: ${receipt.gasUsed.toString()} | blockNumber: ${receipt.blockNumber.toString()}`);
         if (snapBefore && address) {
           const snapAfter = await snapshotTx(publicClient, address, pendingController, [pendingTx.inputToken]);
           logTxDiff("Zapper TX", snapBefore, snapAfter);
         }
-      }
-      if (receipt.status === "success") {
-        setStatus("success");
-      } else {
-        setStatus("reverted");
-        setError("Transaction reverted");
       }
     } catch (err) {
       setError(parseErrorMessage(err));
@@ -862,50 +643,49 @@ export function useZapperActions(): UseZapperActionsResult {
   ): Promise<PendingApproval[]> => {
     if (!publicClient || !address) return [];
 
-    // Check both approvals in parallel
+    // Check all approvals in parallel:
+    // - ERC20 allowance for input amount (if > 0)
+    // - Controller approval for Zapper
+    // - Collateral token maxUint256 allowance for Zapper (pre-approve for future
+    //   removeCollateralAndConvert — the Zapper pulls vault tokens back after
+    //   controller.remove_collateral sends them to the user)
     const [erc20Allowance, controllerApproved] = await Promise.all([
-      inputAmount > 0n
-        ? checkAllowance(publicClient, address, collateralToken, ZAPPER_V3_ADDRESS as `0x${string}`)
-        : Promise.resolve(inputAmount), // no check needed if 0
-      checkControllerApproval(publicClient, controller, address, ZAPPER_V3_ADDRESS as `0x${string}`),
+      checkAllowance(publicClient, address, collateralToken, ZAPPER_ADDRESS as `0x${string}`),
+      checkControllerApproval(publicClient, controller, address, ZAPPER_ADDRESS as `0x${string}`),
     ]);
 
-    const erc20Needed = inputAmount > 0n && erc20Allowance < inputAmount;
+    const erc20Needed = erc20Allowance < maxUint256 / 2n;
     const controllerNeeded = !controllerApproved;
 
     // Build progress steps for all possible approvals
     const allSteps: { approval: PendingApproval; needed: boolean; label: string; description: string; spender: string }[] = [];
 
-    if (inputAmount > 0n) {
-      allSteps.push({
-        approval: {
-          type: "erc20",
-          token: collateralToken,
-          tokenSymbol,
-          spender: ZAPPER_V3_ADDRESS as `0x${string}`,
-          spenderName: "yld Zapper",
-          amount: inputAmount,
-          decimals: 18,
-        },
-        needed: erc20Needed,
-        label: tokenSymbol,
-        description: `Allow yld Zapper to spend ${tokenSymbol}`,
-        spender: ZAPPER_V3_ADDRESS,
-      });
-    }
+    allSteps.push({
+      approval: {
+        type: "erc20",
+        token: collateralToken,
+        tokenSymbol,
+        spender: ZAPPER_ADDRESS as `0x${string}`,
+        spenderName: "yld Zapper",
+      },
+      needed: erc20Needed,
+      label: tokenSymbol,
+      description: `Approve ${tokenSymbol} for yld Zapper`,
+      spender: ZAPPER_ADDRESS,
+    });
 
     allSteps.push({
       approval: {
         type: "controller",
         token: controller,
         tokenSymbol: "Controller",
-        spender: ZAPPER_V3_ADDRESS as `0x${string}`,
+        spender: ZAPPER_ADDRESS as `0x${string}`,
         spenderName: "yld Zapper",
       },
       needed: controllerNeeded,
       label: "yld Zapper",
       description: "Allow yld Zapper to manage position on LlamaLend controller",
-      spender: ZAPPER_V3_ADDRESS,
+      spender: ZAPPER_ADDRESS,
     });
 
     const missing = allSteps.filter((s) => s.needed).map((s) => s.approval);
@@ -974,7 +754,7 @@ export function useZapperActions(): UseZapperActionsResult {
       });
 
       const tx: PendingTx = {
-        to: ZAPPER_V3_ADDRESS as `0x${string}`,
+        to: ZAPPER_ADDRESS as `0x${string}`,
         data: data as `0x${string}`,
         value: 0n,
         inputToken: collateralToken,
@@ -1045,7 +825,7 @@ export function useZapperActions(): UseZapperActionsResult {
       });
 
       const tx: PendingTx = {
-        to: ZAPPER_V3_ADDRESS as `0x${string}`,
+        to: ZAPPER_ADDRESS as `0x${string}`,
         data: data as `0x${string}`,
         value: 0n,
         inputToken: collateralToken,
@@ -1114,7 +894,7 @@ export function useZapperActions(): UseZapperActionsResult {
       });
 
       const tx: PendingTx = {
-        to: ZAPPER_V3_ADDRESS as `0x${string}`,
+        to: ZAPPER_ADDRESS as `0x${string}`,
         data: data as `0x${string}`,
         value: 0n,
         inputToken: collateralToken,
@@ -1127,14 +907,14 @@ export function useZapperActions(): UseZapperActionsResult {
         publicClient,
         controller,
         address,
-        ZAPPER_V3_ADDRESS as `0x${string}`
+        ZAPPER_ADDRESS as `0x${string}`
       );
       if (!controllerApproved) {
         setPendingApproval({
           type: "controller",
           token: controller,
           tokenSymbol: "Controller",
-          spender: ZAPPER_V3_ADDRESS as `0x${string}`,
+          spender: ZAPPER_ADDRESS as `0x${string}`,
           spenderName: "yld Zapper",
         });
         setStatus("needsApproval");
@@ -1201,7 +981,7 @@ export function useZapperActions(): UseZapperActionsResult {
       });
 
       const tx: PendingTx = {
-        to: ZAPPER_V3_ADDRESS as `0x${string}`,
+        to: ZAPPER_ADDRESS as `0x${string}`,
         data: data as `0x${string}`,
         value: 0n,
         inputToken: collateralToken,
@@ -1212,14 +992,14 @@ export function useZapperActions(): UseZapperActionsResult {
         publicClient,
         controller,
         address,
-        ZAPPER_V3_ADDRESS as `0x${string}`
+        ZAPPER_ADDRESS as `0x${string}`
       );
       if (!controllerApproved) {
         setPendingApproval({
           type: "controller",
           token: controller,
           tokenSymbol: "Controller",
-          spender: ZAPPER_V3_ADDRESS as `0x${string}`,
+          spender: ZAPPER_ADDRESS as `0x${string}`,
           spenderName: "yld Zapper",
         });
         setStatus("needsApproval");
@@ -1246,10 +1026,10 @@ export function useZapperActions(): UseZapperActionsResult {
 
     const [erc20Allowance, controllerApproved] = await Promise.all([
       inputAmount > 0n
-        ? checkAllowance(publicClient, address, inputToken, ZAPPER_V3_ADDRESS)
+        ? checkAllowance(publicClient, address, inputToken, ZAPPER_ADDRESS)
         : Promise.resolve(inputAmount),
       controller
-        ? checkControllerApproval(publicClient, controller, address, ZAPPER_V3_ADDRESS)
+        ? checkControllerApproval(publicClient, controller, address, ZAPPER_ADDRESS)
         : Promise.resolve(true),
     ]);
 
@@ -1264,15 +1044,15 @@ export function useZapperActions(): UseZapperActionsResult {
           type: "erc20",
           token: inputToken,
           tokenSymbol,
-          spender: ZAPPER_V3_ADDRESS,
+          spender: ZAPPER_ADDRESS,
           spenderName: "yld Zapper",
           amount: inputAmount,
           decimals: tokenDecimals,
         },
         needed: erc20Needed,
         label: tokenSymbol,
-        description: `Allow yld Zapper to spend ${tokenSymbol}`,
-        spender: ZAPPER_V3_ADDRESS,
+        description: `Approve ${tokenSymbol} for yld Zapper`,
+        spender: ZAPPER_ADDRESS,
       });
     }
 
@@ -1282,13 +1062,13 @@ export function useZapperActions(): UseZapperActionsResult {
           type: "controller",
           token: controller,
           tokenSymbol: "Controller",
-          spender: ZAPPER_V3_ADDRESS,
+          spender: ZAPPER_ADDRESS,
           spenderName: "yld Zapper",
         },
         needed: controllerNeeded,
         label: "yld Zapper",
         description: "Allow yld Zapper to manage position on LlamaLend controller",
-        spender: ZAPPER_V3_ADDRESS,
+        spender: ZAPPER_ADDRESS,
       });
     }
 
@@ -1355,7 +1135,7 @@ export function useZapperActions(): UseZapperActionsResult {
       });
 
       const tx: PendingTx = {
-        to: ZAPPER_V3_ADDRESS,
+        to: ZAPPER_ADDRESS,
         data: data as `0x${string}`,
         value: 0n,
         inputToken: collateralToken,
@@ -1389,6 +1169,7 @@ export function useZapperActions(): UseZapperActionsResult {
     collateralToken: `0x${string}`,
     outputToken: `0x${string}`,
     outputTokenSymbol: string,
+    collateralSymbol: string,
     slippage: number = 100,
     previewOnly: boolean = false
   ): Promise<SimulationResult | null> => {
@@ -1407,9 +1188,13 @@ export function useZapperActions(): UseZapperActionsResult {
       setPendingApproval(null);
       setPendingController(controller);
 
+      // For native ETH output: route via WETH, contract unwraps to ETH
+      const isETHOutput = isNativeETH(outputToken);
+      const routeOutputToken = isETHOutput ? WETH_ADDRESS as `0x${string}` : outputToken;
+
       // Two swap routes in parallel:
       // 1. collateral → crvUSD (deleverage swap)
-      // 2. collateral → outputToken (withdrawal swap)
+      // 2. collateral → outputToken (withdrawal swap, WETH for ETH)
       const [deleverageRoute, outputRoute] = await Promise.all([
         fetchZapperSwapData({
           tokenIn: collateralToken,
@@ -1419,7 +1204,7 @@ export function useZapperActions(): UseZapperActionsResult {
         }),
         fetchZapperSwapData({
           tokenIn: collateralToken,
-          tokenOut: outputToken,
+          tokenOut: routeOutputToken,
           amountIn: withdrawAmount.toString(),
           slippage: String(slippage),
         }),
@@ -1436,7 +1221,7 @@ export function useZapperActions(): UseZapperActionsResult {
           collateralToSell,
           minCrvusdFromSwap,
           withdrawAmount,
-          outputToken,
+          routeOutputToken,
           minOutputFromSwap,
           deleverageRoute.swapData as `0x${string}`,
           outputRoute.swapData as `0x${string}`,
@@ -1445,16 +1230,17 @@ export function useZapperActions(): UseZapperActionsResult {
       });
 
       const tx: PendingTx = {
-        to: ZAPPER_V3_ADDRESS,
+        to: ZAPPER_ADDRESS,
         data: data as `0x${string}`,
         value: 0n,
         inputToken: collateralToken,
       };
       setPendingTx(tx);
 
-      // Need controller approval for ZapperV2
+      // Need controller approval + collateral ERC20 approval for ZapperV2
+      // (Zapper calls remove_collateral → user, then transferFrom user → Zapper for the output swap)
       const missingApprovals = await checkFromTokenApprovals(
-        collateralToken, 0n, "", controller
+        collateralToken, withdrawAmount, collateralSymbol, controller
       );
       if (missingApprovals.length > 0) {
         setPendingApproval(missingApprovals[0]);
@@ -1553,9 +1339,10 @@ export function useZapperActions(): UseZapperActionsResult {
         leverageSwapData = leverageSwap.swapData;
         leverageExpectedOut = leverageSwap.expectedOut;
       } else {
-        // Standard token: use existing fetchFromTokenSwapData
+        // For native ETH: route with WETH (contract wraps ETH→WETH before swap)
+        const routeToken = isNativeETH(inputToken) ? WETH_ADDRESS : inputToken;
         const routes = await fetchFromTokenSwapData({
-          inputToken,
+          inputToken: routeToken,
           collateralToken,
           inputAmount: inputAmount.toString(),
           debtAmount: debt.toString(),
@@ -1570,12 +1357,16 @@ export function useZapperActions(): UseZapperActionsResult {
       const minCollateralFromInput = BigInt(inputExpectedOut) * BigInt(10000 - slippage) / 10000n;
       const minCollateralFromDebt = BigInt(leverageExpectedOut) * BigInt(10000 - slippage) / 10000n;
 
+      // For native ETH: pass WETH address to contract (it wraps atomically), send msg.value
+      const isETH = isNativeETH(inputToken);
+      const contractToken = isETH ? WETH_ADDRESS as `0x${string}` : inputToken;
+
       const data = encodeFunctionData({
         abi: ZAPPER_ABI,
         functionName: "createLeveragedLoanFromToken",
         args: [
           controller,
-          inputToken,
+          contractToken,
           inputAmount,
           debt,
           BigInt(N),
@@ -1588,20 +1379,22 @@ export function useZapperActions(): UseZapperActionsResult {
       });
 
       const tx: PendingTx = {
-        to: ZAPPER_V3_ADDRESS,
+        to: ZAPPER_ADDRESS,
         data: data as `0x${string}`,
-        value: 0n,
+        value: isETH ? inputAmount : 0n,
         inputToken,
       };
       setPendingTx(tx);
 
-      // Only need inputToken → ZapperV2 approval (no controller approval for new loans)
-      const missingApprovals = await checkFromTokenApprovals(inputToken, inputAmount, tokenSymbol, undefined, tokenDecimals);
-      if (missingApprovals.length > 0) {
-        setPendingApproval(missingApprovals[0]);
-        setApprovalQueue(missingApprovals.slice(1));
-        setStatus("needsApproval");
-        return null;
+      // Native ETH doesn't need ERC20 approval (sent as msg.value)
+      if (!isETH) {
+        const missingApprovals = await checkFromTokenApprovals(inputToken, inputAmount, tokenSymbol, undefined, tokenDecimals);
+        if (missingApprovals.length > 0) {
+          setPendingApproval(missingApprovals[0]);
+          setApprovalQueue(missingApprovals.slice(1));
+          setStatus("needsApproval");
+          return null;
+        }
       }
 
       return await simulateAndExecute(tx, previewOnly);
@@ -1693,9 +1486,10 @@ export function useZapperActions(): UseZapperActionsResult {
         leverageSwapData = leverageSwap.swapData;
         leverageExpectedOut = leverageSwap.expectedOut;
       } else {
-        // Standard token: use existing fetchFromTokenSwapData
+        // For native ETH: route with WETH (contract wraps ETH→WETH before swap)
+        const routeToken = isNativeETH(inputToken) ? WETH_ADDRESS : inputToken;
         const routes = await fetchFromTokenSwapData({
-          inputToken,
+          inputToken: routeToken,
           collateralToken,
           inputAmount: inputAmount.toString(),
           debtAmount: additionalDebt.toString(),
@@ -1710,12 +1504,16 @@ export function useZapperActions(): UseZapperActionsResult {
       const minCollateralFromInput = BigInt(inputExpectedOut) * BigInt(10000 - slippage) / 10000n;
       const minCollateralFromDebt = BigInt(leverageExpectedOut) * BigInt(10000 - slippage) / 10000n;
 
+      // For native ETH: pass WETH address to contract (it wraps atomically), send msg.value
+      const isETH = isNativeETH(inputToken);
+      const contractToken = isETH ? WETH_ADDRESS as `0x${string}` : inputToken;
+
       const data = encodeFunctionData({
         abi: ZAPPER_ABI,
         functionName: "leverageUpFromToken",
         args: [
           controller,
-          inputToken,
+          contractToken,
           inputAmount,
           additionalDebt,
           minCollateralFromInput,
@@ -1727,15 +1525,21 @@ export function useZapperActions(): UseZapperActionsResult {
       });
 
       const tx: PendingTx = {
-        to: ZAPPER_V3_ADDRESS,
+        to: ZAPPER_ADDRESS,
         data: data as `0x${string}`,
-        value: 0n,
+        value: isETH ? inputAmount : 0n,
         inputToken,
       };
       setPendingTx(tx);
 
-      // Need inputToken → ZapperV2 + controller → ZapperV2 (existing position)
-      const missingApprovals = await checkFromTokenApprovals(inputToken, inputAmount, tokenSymbol, controller, tokenDecimals);
+      // Need controller → ZapperV2 (existing position), skip ERC20 for native ETH
+      const missingApprovals = await checkFromTokenApprovals(
+        isETH ? inputToken : inputToken, // keep original for display
+        isETH ? 0n : inputAmount, // 0n skips ERC20 check for ETH
+        tokenSymbol,
+        controller,
+        tokenDecimals,
+      );
       if (missingApprovals.length > 0) {
         setPendingApproval(missingApprovals[0]);
         setApprovalQueue(missingApprovals.slice(1));
@@ -1822,7 +1626,7 @@ export function useZapperActions(): UseZapperActionsResult {
             total: 1,
             steps: [{
               label: "crvUSD",
-              description: "Allow controller to spend crvUSD for debt gap",
+              description: "Approve crvUSD for Curve controller (repay shortfall)",
               spender: controller,
               done: false,
             }],

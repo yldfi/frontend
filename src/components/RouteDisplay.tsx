@@ -99,9 +99,9 @@ const PROTOCOL_LINKS: Record<string, string> = {
   "sushiswap": "https://sushi.com",
   "sushi": "https://sushi.com",
   "balancer": "https://balancer.fi",
-  "curve": "https://curve.fi",
-  "curve llamalend": "https://lend.curve.fi",
-  "curve savings": "https://crvusd.curve.fi",
+  "curve": "https://www.curve.finance",
+  "curve llamalend": "https://www.curve.finance/lend",
+  "curve savings": "https://www.curve.finance/crvusd",
   "velodrome": "https://velodrome.finance",
   "aerodrome": "https://aerodrome.finance",
   "camelot": "https://camelot.exchange",
@@ -616,7 +616,7 @@ export function RouteDisplay({ routeInfo, inputSymbol, outputSymbol, inputAmount
       if (closingLoan.crvUsdReturned && Number(closingLoan.crvUsdReturned) > 0) {
         closingLoanSteps.push({
           tokenSymbol: "crvUSD",
-          amount: `~${Number(closingLoan.crvUsdReturned).toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+          amount: Number(closingLoan.crvUsdReturned).toLocaleString(undefined, { maximumFractionDigits: 2 }),
           action: "Excess returned",
           description: "to wallet",
           protocol: "Curve",
@@ -664,7 +664,7 @@ export function RouteDisplay({ routeInfo, inputSymbol, outputSymbol, inputAmount
               <div className="text-xs text-[var(--accent)] mt-0.5">
                 <span className="opacity-70">Loan created on </span>
                 <a
-                  href="https://lend.curve.fi"
+                  href="https://www.curve.finance/lend"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="font-medium hover:brightness-125 transition-all inline-flex items-center gap-0.5"

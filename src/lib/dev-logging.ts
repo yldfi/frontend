@@ -4,7 +4,8 @@
  * All functions are no-ops in production builds.
  */
 import { formatUnits } from "viem";
-import { DEFISAVER_CURVE_VIEW, CURVE_VIEW_ABI, CRVUSD_ADDRESS } from "@/lib/zapper";
+import { DEFISAVER_CURVE_VIEW, CURVE_VIEW_ABI } from "@/lib/zapper";
+import { CRVUSD_ADDRESS } from "@/config/addresses";
 
 // Minimal ABI for balance/symbol/decimals reads
 const BALANCE_ABI = [{

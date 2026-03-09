@@ -27,6 +27,7 @@ import { MaxButton } from "@/components/MaxButton";
 import { cn } from "@/lib/utils";
 import { LoadingDots } from "@/components/LoadingDots";
 import { sanitizeAmount } from "@/lib/sanitize";
+import { useSettings } from "@/hooks/useSettings";
 import { fetchRoute, fetchTokenPrices, ETH_ADDRESS } from "@/lib/enso";
 import { getMaxEthAmount } from "@/lib/eth-gas";
 import { WETH_ADDRESS, CHAINLINK_ETH_USD } from "@/config/addresses";
@@ -95,58 +96,22 @@ export function CollateralTab({
     } catch { /* */ }
   }, [storageKey]);
 
-  // Slippage (basis points) — persisted
-  const [rateInverted, setRateInverted] = useState(false);
-  const [slippage, setSlippage] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("yldfi-slippage") || "50";
-    }
-    return "50";
-  });
-  const [showSlippageModal, setShowSlippageModal] = useState(false);
+  const {
+    slippage, updateSlippage, showSlippageModal, setShowSlippageModal,
+    showSimulationPreview, setShowSimulationPreview, refreshSimulationPreview,
+    showSimulationModal, setShowSimulationModal,
+    showRoute, toggleRoute,
+  } = useSettings();
 
-  // Route display toggle — persisted
-  const [showRoute, setShowRoute] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("yldfi-lending-show-route") !== "false";
-    }
-    return true;
-  });
+  const [rateInverted, setRateInverted] = useState(false);
 
   // Health estimation
   const [estimatedHealth, setEstimatedHealth] = useState<number | null>(null);
-
-  // Simulation toggle from settings
-  const [showSimulationPreview, setShowSimulationPreview] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("yldfi-show-simulation") === "true";
-    }
-    return false;
-  });
-
-  // Simulation
-  const [showSimulationModal, setShowSimulationModal] = useState(false);
   const [ethPrice, setEthPrice] = useState<number | null>(null);
   const { data: gasPrice } = useGasPrice();
   const { data: currentBlock } = useBlockNumber({ watch: true });
   const simulationBlock = useRef<bigint>(0n);
 
-  const updateSlippage = useCallback((value: string) => {
-    setSlippage(value);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("yldfi-slippage", value);
-    }
-  }, []);
-
-  const toggleRoute = useCallback(() => {
-    setShowRoute((prev) => {
-      const next = !prev;
-      if (typeof window !== "undefined") {
-        localStorage.setItem("yldfi-lending-show-route", String(next));
-      }
-      return next;
-    });
-  }, []);
 
   // Lending actions
   const {
@@ -155,6 +120,7 @@ export function CollateralTab({
     addCollateralWithSwap,
     removeCollateralAndSwap,
     pendingApproval,
+    approvalProgress,
     approve,
     isApproving,
     isApprovalSuccess,
@@ -181,6 +147,51 @@ export function CollateralTab({
     query: { enabled: !!address },
   });
 
+  // Swap quote — only needed when token != vault token
+  const needsSwap = !isVaultToken;
+  const isRemoveWithSwap = mode === "remove" && !isVaultToken;
+
+  // Debounced amount for quote fetching
+  const debouncedAmount = useDebouncedValue(amount, 500);
+
+  // Rate probe for remove mode with non-vault token
+  // Used to convert between output token and vault token units
+  const { data: removeRate } = useQuery({
+    queryKey: ["collateral-remove-rate", vault.address, selectedToken.address, address],
+    queryFn: async () => {
+      if (!address) throw new Error("No address");
+      const probeAmount = parseUnits("1", vault.decimals).toString();
+      const route = await fetchRoute({
+        fromAddress: address,
+        tokenIn: vault.address,
+        tokenOut: selectedToken.address,
+        amountIn: probeAmount,
+        slippage: "100",
+      });
+      if (!route?.amountOut) throw new Error("No route");
+      return Number(formatUnits(BigInt(route.amountOut), selectedToken.decimals));
+    },
+    enabled: isRemoveWithSwap && !!address,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+
+  // In remove mode with non-vault token, input is in output token units
+  // Convert back to vault token amount for swap quote and health calculations
+  const debouncedVaultAmount = useMemo(() => {
+    if (!isRemoveWithSwap || !removeRate || removeRate <= 0) return debouncedAmount;
+    if (!debouncedAmount || Number(debouncedAmount) <= 0) return debouncedAmount;
+    const vt = Number(debouncedAmount) / removeRate;
+    return vt.toFixed(Math.min(vault.decimals, 8));
+  }, [isRemoveWithSwap, removeRate, debouncedAmount, vault.decimals]);
+
+  // Non-debounced vault token amount (for submit handler)
+  const amountAsVaultToken = useMemo(() => {
+    if (!isRemoveWithSwap || !removeRate || removeRate <= 0 || !amount || Number(amount) <= 0) return amount;
+    const vt = Number(amount) / removeRate;
+    return vt.toFixed(Math.min(vault.decimals, 8));
+  }, [isRemoveWithSwap, removeRate, amount, vault.decimals]);
+
   // Max balance for add mode
   const addMaxBalance = useMemo(() => {
     if (isVaultToken) {
@@ -193,10 +204,16 @@ export function CollateralTab({
   }, [isVaultToken, isEth, userBalance, vault.decimals, tokenBalance, gasPrice]);
 
   // Max balance for remove mode (max withdrawable without breaking health)
+  // When non-vault token selected, convert to output token units using removeRate
   const removeMaxBalance = useMemo(() => {
     if (!position?.hasLoan) return "0";
+    if (isRemoveWithSwap && removeRate && removeRate > 0) {
+      const maxVt = Number(formatUnits(position.maxWithdrawable, vault.decimals));
+      const converted = maxVt * removeRate;
+      return converted.toFixed(Math.min(selectedToken.decimals, 8));
+    }
     return formatUnits(position.maxWithdrawable, vault.decimals);
-  }, [position, vault.decimals]);
+  }, [position, vault.decimals, isRemoveWithSwap, removeRate, selectedToken.decimals]);
 
   const maxBalance = mode === "add" ? addMaxBalance : removeMaxBalance;
   const currentTokenBalance = isVaultToken
@@ -207,12 +224,6 @@ export function CollateralTab({
     const value = parseFloat(maxBalance) || 0;
     return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
   }, [maxBalance]);
-
-  // Debounced amount for quote fetching
-  const debouncedAmount = useDebouncedValue(amount, 500);
-
-  // Swap quote — only needed when token != vault token
-  const needsSwap = !isVaultToken;
 
   // Add mode: quote tokenIn → vaultToken
   // Remove mode: quote vaultToken → tokenOut
@@ -228,6 +239,7 @@ export function CollateralTab({
       debouncedAmount,
       slippage,
       address,
+      isRemoveWithSwap ? removeRate : null,
     ],
     queryFn: async (): Promise<EnsoRouteResponse> => {
       if (!address) throw new Error("No address");
@@ -243,8 +255,9 @@ export function CollateralTab({
           slippage,
         });
       } else {
-        // vaultToken → tokenOut
-        const amountWei = parseUnits(debouncedAmount, vault.decimals).toString();
+        // vaultToken → tokenOut (convert output-token input back to vault token)
+        const vtAmount = isRemoveWithSwap ? debouncedVaultAmount : debouncedAmount;
+        const amountWei = parseUnits(vtAmount, vault.decimals).toString();
         return fetchRoute({
           fromAddress: address,
           tokenIn: vault.address,
@@ -258,7 +271,8 @@ export function CollateralTab({
       needsSwap &&
       !!address &&
       !!debouncedAmount &&
-      Number(debouncedAmount) > 0,
+      Number(debouncedAmount) > 0 &&
+      (!isRemoveWithSwap || (removeRate != null && removeRate > 0)),
     refetchInterval: 30_000,
     staleTime: 10_000,
     retry: 1,
@@ -282,13 +296,17 @@ export function CollateralTab({
     if (mode === "remove") {
       if (!amount || Number(amount) <= 0) return null;
       try {
+        if (isRemoveWithSwap && removeRate && removeRate > 0) {
+          const vtStr = (Number(amount) / removeRate).toFixed(Math.min(vault.decimals, 8));
+          return parseUnits(vtStr, vault.decimals);
+        }
         return parseUnits(amount, vault.decimals);
       } catch {
         return null;
       }
     }
     return null;
-  }, [isVaultToken, amount, vault.decimals, mode, swapQuote]);
+  }, [isVaultToken, amount, vault.decimals, mode, swapQuote, isRemoveWithSwap, removeRate]);
 
   // Exchange rate
   const exchangeRate = useMemo(() => {
@@ -301,9 +319,11 @@ export function CollateralTab({
     } else {
       // vaultToken → tokenOut: 1 vaultToken = X tokenOut
       const outFormatted = Number(formatUnits(BigInt(swapQuote.amountOut), selectedToken.decimals));
-      return outFormatted / Number(debouncedAmount);
+      const vtAmount = isRemoveWithSwap ? Number(debouncedVaultAmount) : Number(debouncedAmount);
+      if (!vtAmount || vtAmount <= 0) return null;
+      return outFormatted / vtAmount;
     }
-  }, [swapQuote, debouncedAmount, mode, vault.decimals, selectedToken.decimals]);
+  }, [swapQuote, debouncedAmount, debouncedVaultAmount, isRemoveWithSwap, mode, vault.decimals, selectedToken.decimals]);
 
   // Price impact: manual calculation using USD token prices + convertToAssets
   // Same pattern as BorrowTab/useZapQuote: ((inputUsd - outputUsd) / inputUsd) × 100
@@ -323,10 +343,11 @@ export function CollateralTab({
   const vaultTokenAmountForPricing = useMemo(() => {
     if (!needsSwap || !swapQuote?.amountOut) return null;
     if (mode === "add") return BigInt(swapQuote.amountOut);
-    // remove: input is vault token amount
-    if (!debouncedAmount || Number(debouncedAmount) <= 0) return null;
-    try { return parseUnits(debouncedAmount, vault.decimals); } catch { return null; }
-  }, [needsSwap, swapQuote, mode, debouncedAmount, vault.decimals]);
+    // remove: use vault token amount (converted from output-token input)
+    const vtStr = isRemoveWithSwap ? debouncedVaultAmount : debouncedAmount;
+    if (!vtStr || Number(vtStr) <= 0) return null;
+    try { return parseUnits(vtStr, vault.decimals); } catch { return null; }
+  }, [needsSwap, swapQuote, mode, debouncedAmount, debouncedVaultAmount, isRemoveWithSwap, vault.decimals]);
 
   const { data: underlyingEquivalent } = useQuery({
     queryKey: ["collateral-underlying-eq", vault.address, vaultTokenAmountForPricing?.toString()],
@@ -443,17 +464,17 @@ export function CollateralTab({
         toSymbol: vault.symbol,
         toLogo: vault.logo,
       } : {
-        fromAmount: amount,
+        fromAmount: isRemoveWithSwap ? amountAsVaultToken : amount,
         fromSymbol: vault.symbol,
         fromLogo: vault.logo,
-        toAmount: isVaultToken ? amount : swapQuote?.amountOut ? Number(formatUnits(BigInt(swapQuote.amountOut), selectedToken.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 }) : "~",
+        toAmount: isVaultToken ? amount : swapQuote?.amountOut ? Number(formatUnits(BigInt(swapQuote.amountOut), selectedToken.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 }) : amount,
         toSymbol: selectedToken.symbol,
         toLogo: selectedToken.logoURI || "/tokens/unknown.png",
       }) : undefined;
       const mapped = status === "waitingTx" ? "pending" : status;
       onTxStateChange?.({ status: mapped as "pending" | "success" | "reverted", action, hash: txHash, details });
     }
-  }, [status, txHash, mode, onTxStateChange, amount, selectedToken, isVaultToken, estimatedVaultTokenAmount, vault, swapQuote]);
+  }, [status, txHash, mode, onTxStateChange, amount, selectedToken, isVaultToken, isRemoveWithSwap, amountAsVaultToken, estimatedVaultTokenAmount, vault, swapQuote]);
 
   // Collateral change summary from Tenderly simulation + position data
   const collateralSummary = useMemo(() => {
@@ -496,10 +517,11 @@ export function CollateralTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [amount, selectedToken.address, mode]);
 
-  // Handle transaction success — clear inputs and reset to idle
+  // Handle transaction success — clear all inputs and reset to idle
   useEffect(() => {
     if (status === "success" && txHash) {
       setAmountState("");
+      setSelectedToken(vaultToken);
       try { sessionStorage.removeItem(storageKey); } catch { /* */ }
       toast.success(mode === "add" ? "Collateral added!" : "Collateral removed!", {
         action: {
@@ -511,7 +533,7 @@ export function CollateralTab({
       refetchBalance();
       reset();
     }
-  }, [status, txHash, mode, onTransactionSuccess, reset, refetchBalance, storageKey]);
+  }, [status, txHash, mode, onTransactionSuccess, reset, refetchBalance, storageKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if ((status === "error" || status === "reverted") && error) {
@@ -526,14 +548,9 @@ export function CollateralTab({
   }, [status, error, reset, clearError]);
 
   // Handle approval success -> continue execution
-  const handleSubmitRef = useRef<(() => Promise<void>) | undefined>(undefined);
   useEffect(() => {
     if (isApprovalSuccess && status === "approving") {
-      if (isVaultToken) {
-        executeAfterApproval();
-      } else {
-        handleSubmitRef.current?.();
-      }
+      executeAfterApproval();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isApprovalSuccess, status]);
@@ -602,7 +619,7 @@ export function CollateralTab({
               selectedToken.address,
               amount,
               Number(slippage),
-              { previewOnly: true, tokenSymbol: selectedToken.symbol }
+              { previewOnly: true, tokenSymbol: selectedToken.symbol, decimals: selectedToken.decimals }
             );
             if (result) {
               simulationBlock.current = currentBlock ?? 0n;
@@ -617,7 +634,7 @@ export function CollateralTab({
             selectedToken.address,
             amount,
             Number(slippage),
-            { tokenSymbol: selectedToken.symbol }
+            { tokenSymbol: selectedToken.symbol, decimals: selectedToken.decimals }
           );
         }
       } else {
@@ -643,10 +660,11 @@ export function CollateralTab({
           );
         } else {
           // Swap: remove_collateral → vaultToken → tokenOut
+          // amountAsVaultToken converts output-token input back to ycvxCRV
           if (showSimulationPreview) {
             const result = await removeCollateralAndSwap(
               vault.address as `0x${string}`,
-              amount,
+              amountAsVaultToken,
               selectedToken.address,
               Number(slippage),
               { previewOnly: true, tokenSymbol: selectedToken.symbol }
@@ -661,7 +679,7 @@ export function CollateralTab({
           }
           await removeCollateralAndSwap(
             vault.address as `0x${string}`,
-            amount,
+            amountAsVaultToken,
             selectedToken.address,
             Number(slippage),
             { tokenSymbol: selectedToken.symbol }
@@ -672,7 +690,6 @@ export function CollateralTab({
       console.error("Collateral action failed:", err);
     }
   };
-  handleSubmitRef.current = handleSubmit;
 
   const handleExecute = async () => {
     try {
@@ -696,12 +713,18 @@ export function CollateralTab({
   const exceedsCollateral = useMemo(() => {
     if (mode !== "remove" || !amount || Number(amount) === 0 || !position?.hasLoan) return false;
     try {
-      const amountWei = parseUnits(amount, vault.decimals);
+      let amountWei: bigint;
+      if (isRemoveWithSwap && removeRate && removeRate > 0) {
+        const vtStr = (Number(amount) / removeRate).toFixed(Math.min(vault.decimals, 8));
+        amountWei = parseUnits(vtStr, vault.decimals);
+      } else {
+        amountWei = parseUnits(amount, vault.decimals);
+      }
       return amountWei > position.maxWithdrawable;
     } catch {
       return false;
     }
-  }, [mode, amount, vault.decimals, position]);
+  }, [mode, amount, vault.decimals, position, isRemoveWithSwap, removeRate]);
 
   const healthTooLow = estimatedHealth !== null && estimatedHealth <= 0 && mode === "remove";
 
@@ -816,18 +839,37 @@ export function CollateralTab({
         <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
           {/* Output estimate */}
           {swapQuote.amountOut && (
-            <div className="flex justify-between">
-              <span className="text-[var(--muted-foreground)]">
-                {mode === "add" ? "Adding" : "Receiving"}
-              </span>
-              <span className="mono">
-                ~{Number(formatUnits(
-                  BigInt(swapQuote.amountOut),
-                  mode === "add" ? vault.decimals : selectedToken.decimals
-                )).toLocaleString(undefined, { maximumFractionDigits: 4 })}{" "}
-                {mode === "add" ? vault.symbol : selectedToken.symbol}
-              </span>
-            </div>
+            mode === "add" ? (
+              <>
+                <div className="flex justify-between">
+                  <span className="text-[var(--muted-foreground)]">Sending</span>
+                  <span className="mono">
+                    {Number(debouncedAmount).toLocaleString(undefined, { maximumFractionDigits: 4 })} {selectedToken.symbol}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[var(--muted-foreground)]">Adding</span>
+                  <span className="mono">
+                    ~{Number(formatUnits(BigInt(swapQuote.amountOut), vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })} {vault.symbol}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex justify-between">
+                  <span className="text-[var(--muted-foreground)]">Removing</span>
+                  <span className="mono">
+                    {Number(debouncedVaultAmount).toLocaleString(undefined, { maximumFractionDigits: 4 })} {vault.symbol}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[var(--muted-foreground)]">Receiving</span>
+                  <span className="mono">
+                    ~{Number(formatUnits(BigInt(swapQuote.amountOut), selectedToken.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })} {selectedToken.symbol}
+                  </span>
+                </div>
+              </>
+            )
           )}
 
           {/* Exchange rate */}
@@ -874,7 +916,7 @@ export function CollateralTab({
       <ApprovalCard
         show={showApprovalCard}
         pendingApproval={lastApprovalRef.current}
-        approvalProgress={null}
+        approvalProgress={approvalProgress}
         isApproving={isApproving}
         onApprove={(exact) => approve(exact)}
       />
@@ -1064,7 +1106,9 @@ export function CollateralTab({
                   inputSymbol={mode === "add" ? selectedToken.symbol : vault.symbol}
                   outputSymbol={mode === "add" ? vault.symbol : selectedToken.symbol}
                   inputAmount={
-                    amount ? Number(amount).toFixed(4) : undefined
+                    amount
+                      ? Number(isRemoveWithSwap ? amountAsVaultToken : amount).toFixed(4)
+                      : undefined
                   }
                   outputAmount={
                     swapQuote?.amountOut
@@ -1091,9 +1135,7 @@ export function CollateralTab({
         open={showSlippageModal}
         onClose={() => {
           setShowSlippageModal(false);
-          try {
-            setShowSimulationPreview(localStorage.getItem("yldfi-show-simulation") === "true");
-          } catch { /* ignore */ }
+          refreshSimulationPreview();
         }}
         slippage={slippage}
         onSlippageChange={updateSlippage}

@@ -4,6 +4,7 @@ import type { NextRequest } from "next/server";
  * Simple in-memory rate limiter with automatic eviction.
  * Note: On Cloudflare Workers, each isolate has its own state.
  * This provides best-effort protection, not a distributed guarantee.
+ * TODO: Migrate to Cloudflare KV or Durable Objects for distributed rate limiting.
  */
 export function createRateLimiter(maxRequests: number, windowMs: number = 60_000) {
   const log = new Map<string, number[]>();
