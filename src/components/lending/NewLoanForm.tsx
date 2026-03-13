@@ -353,7 +353,17 @@ export function NewLoanForm({
     showSimulationPreview, setShowSimulationPreview, refreshSimulationPreview,
     showSimulationModal, setShowSimulationModal,
     showRoute, toggleRoute,
+    zappersEnabled,
   } = useSettings();
+
+  // Reset tokens and tab to defaults when zappers are disabled
+  useEffect(() => {
+    if (!zappersEnabled) {
+      setSelectedTokenState(vaultToken);
+      setOutputTokenState(crvUsdToken);
+      setLoanTab("loan");
+    }
+  }, [zappersEnabled, vaultToken, crvUsdToken]);
 
   const [rateInverted, setRateInverted] = useState(false);
   const [ethPrice, setEthPrice] = useState<number | null>(null);
@@ -1674,6 +1684,8 @@ export function NewLoanForm({
     status !== "reverted" &&
     status !== "needsApproval";
 
+  const needsZapperForLoan = loanTab === "leverage" || !isVaultToken || hasOutputSwap;
+
   const isFormValid =
     !!amount &&
     Number(amount) > 0 &&
@@ -1683,7 +1695,8 @@ export function NewLoanForm({
     !isQuoteSettling &&
     !leverageIsSettling &&
     (isVaultToken || swapQuote !== undefined) &&
-    (!hasOutputSwap || outputSwapQuote !== undefined);
+    (!hasOutputSwap || outputSwapQuote !== undefined) &&
+    (!needsZapperForLoan || zappersEnabled);
 
   const getButtonText = () => {
     if (status === "building") return <>Building transaction<LoadingDots /></>;
@@ -1732,6 +1745,7 @@ export function NewLoanForm({
             onSelect={setSelectedToken}
             priorityTokens={[vaultToken]}
             excludeDefiTokens
+            disabled={!zappersEnabled}
           />
           {!isVaultToken && tokenBalanceLoading ? (
             <MaxButtonSkeleton />
@@ -1817,33 +1831,35 @@ export function NewLoanForm({
         </div>
       </div>
 
-      {/* Loan / Leverage toggle */}
-      <div className="flex items-center gap-1 p-1 rounded-lg bg-[var(--muted)] border border-[var(--border)]">
-        <button
-          onClick={() => switchTab("loan")}
-          className={cn(
-            "flex-1 flex items-center justify-center gap-1.5 py-2 rounded-md text-sm font-medium transition-colors",
-            loanTab === "loan"
-              ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm"
-              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-          )}
-        >
-          <Landmark size={14} />
-          Loan
-        </button>
-        <button
-          onClick={() => switchTab("leverage")}
-          className={cn(
-            "flex-1 flex items-center justify-center gap-1.5 py-2 rounded-md text-sm font-medium transition-colors",
-            loanTab === "leverage"
-              ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm"
-              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-          )}
-        >
-          <TrendingUp size={14} />
-          Leverage
-        </button>
-      </div>
+      {/* Loan / Leverage toggle — hide leverage when zappers disabled */}
+      {zappersEnabled ? (
+        <div className="flex items-center gap-1 p-1 rounded-lg bg-[var(--muted)] border border-[var(--border)]">
+          <button
+            onClick={() => switchTab("loan")}
+            className={cn(
+              "flex-1 flex items-center justify-center gap-1.5 py-2 rounded-md text-sm font-medium transition-colors",
+              loanTab === "loan"
+                ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm"
+                : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            )}
+          >
+            <Landmark size={14} />
+            Loan
+          </button>
+          <button
+            onClick={() => switchTab("leverage")}
+            className={cn(
+              "flex-1 flex items-center justify-center gap-1.5 py-2 rounded-md text-sm font-medium transition-colors",
+              loanTab === "leverage"
+                ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm"
+                : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            )}
+          >
+            <TrendingUp size={14} />
+            Leverage
+          </button>
+        </div>
+      ) : null}
 
       {/* Leverage Slider (leverage tab, any token) */}
       {loanTab === "leverage" && (() => {
@@ -1958,6 +1974,7 @@ export function NewLoanForm({
               }}
               priorityTokens={[crvUsdToken, scrvUsdToken]}
               excludeDefiTokens
+              disabled={!zappersEnabled}
             />
             {hasOutputSwap ? (
               maxOutputTokenEquivalent ? (

@@ -2864,7 +2864,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         const { encodeFunctionData } = await import("viem");
 
         // All outputs use borrowAndConvert — Enso handles vault deposits natively
-        // Exotic tokens (cvgCVX, pxCVX) need custom HybridZapper bundles since Enso can't route directly
+        // Exotic tokens (cvgCVX, pxCVX) need custom Curve/Pirex bundles since Enso can't route directly
         const isETHOut = tokenOut.toLowerCase() === ETH_ADDRESS.toLowerCase();
         const isExoticToken = tokenOut.toLowerCase() === TOKENS.CVGCVX.toLowerCase()
           || tokenOut.toLowerCase() === TOKENS.PXCVX.toLowerCase();

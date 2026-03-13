@@ -1,7 +1,7 @@
 // LlamaLendZapper contract integration
 // Enables leveraged Curve LlamaLend operations via Enso Router swaps
 
-import { fetchRoute, fetchBundle, ENSO_SHORTCUTS, ENSO_ROUTER_EXECUTOR, CVX_HYBRID_ZAPPER, getLpxCvxToCvxSwapRate, computeHybridZapParams } from "@/lib/enso";
+import { fetchRoute, fetchBundle, ENSO_SHORTCUTS, ENSO_ROUTER_EXECUTOR, getLpxCvxToCvxSwapRate } from "@/lib/enso";
 import { calculateMinDy } from "@/lib/curve";
 import { TOKENS, TANGENT, PIREX } from "@/config/vaults";
 import { CRVUSD_ADDRESS } from "@/config/addresses";
@@ -30,7 +30,7 @@ const ROUTE_SINGLE_ABI = [{
  * routeSingle pulls tokenIn from the user BEFORE executing innerData.
  * We extract innerData to use with routeMulti([], innerData) which skips the pull.
  */
-function extractInnerSwapData(routeTxData: string): `0x${string}` {
+export function extractInnerSwapData(routeTxData: string): `0x${string}` {
   const decoded = decodeFunctionData({
     abi: ROUTE_SINGLE_ABI,
     data: routeTxData as `0x${string}`,
@@ -523,9 +523,8 @@ export function getDeadline(minutes: number = 20): bigint {
  *   1. erc4626/redeem(vaultToken -> cvgCVX)
  *   2. erc20/approve(cvgCVX -> CVX1_CVGCVX_POOL)
  *   3. call(exchange cvgCVX -> CVX1) with min_dy slippage
- *   4. erc20/transfer(CVX1 -> CVX_HYBRID_ZAPPER)
- *   5. call(unwrapCvx1ToCvx -> ENSO_SHORTCUTS)
- *   6. call(routeMulti([], innerSwapData)) using pre-fetched route
+ *   4. call(CVX1.withdraw -> CVX to ENSO_SHORTCUTS)
+ *   5. call(routeMulti([], innerSwapData)) using pre-fetched route
  *
  * For standard vault tokens:
  *   1. erc4626/redeem(vaultToken -> underlying)
@@ -611,30 +610,19 @@ export async function buildVaultInputSwapBundle(params: {
       },
     });
 
-    // Action 3: transfer CVX1 to HybridZapper
-    actions.push({
-      protocol: "erc20",
-      action: "transfer",
-      args: {
-        token: TOKENS.CVX1,
-        receiver: CVX_HYBRID_ZAPPER,
-        amount: { useOutputOfCallAt: exchangeIdx },
-      },
-    });
-
-    // Action 4: unwrap CVX1 -> CVX via HybridZapper, send to ENSO_SHORTCUTS
+    // Action 3: unwrap CVX1 -> CVX directly, sends CVX to ENSO_SHORTCUTS
     actions.push({
       protocol: "enso",
       action: "call",
       args: {
-        address: CVX_HYBRID_ZAPPER,
-        method: "unwrapCvx1ToCvx",
-        abi: "function unwrapCvx1ToCvx(uint256 amount, address receiver) returns (uint256)",
+        address: TOKENS.CVX1.toLowerCase(),
+        method: "withdraw",
+        abi: "function withdraw(uint256 amount, address receiver)",
         args: [{ useOutputOfCallAt: exchangeIdx }, ENSO_SHORTCUTS],
       },
     });
 
-    // Action 5: Recursive routeMulti — swap CVX (already in ENSO_SHORTCUTS) -> target token
+    // Action 4: Recursive routeMulti — swap CVX (already in ENSO_SHORTCUTS) -> target token
     actions.push({
       protocol: "enso",
       action: "call",
@@ -650,7 +638,7 @@ export async function buildVaultInputSwapBundle(params: {
       fromAddress: ZAPPER_ADDRESS,
       actions,
       receiver: ZAPPER_ADDRESS,
-      skipQuote: true, // HybridZapper calls can't be simulated by Enso
+      skipQuote: true, // CVX1.withdraw is void — Enso can't track output
     });
 
     return {
@@ -723,20 +711,20 @@ export async function buildVaultInputSwapBundle(params: {
 }
 
 /**
- * Build Enso bundle swapData for exotic token output direction (crvUSD → exotic token).
+ * Build Enso bundle swapData for exotic token output direction (crvUSD -> exotic token).
  *
- * For exotic tokens (cvgCVX, pxCVX), the path is:
- * crvUSD → CVX (via Enso route) → HybridZapper → exotic token.
+ * For cvgCVX: crvUSD -> CVX (Enso route) -> CVX1 (mint 1:1) -> cvgCVX (Curve pool) -> ZAPPER
+ * For pxCVX: crvUSD -> CVX (Enso route) -> lpxCVX (Curve pool) -> pxCVX (unwrap) -> ZAPPER
  *
  * The swapData is a complete routeSingle-compatible calldata that the Zapper can call directly.
- * HybridZapper sends the output token to ZAPPER_ADDRESS so the Zapper can forward it to the user.
+ * Output token is transferred to ZAPPER_ADDRESS so the Zapper can forward it to the user.
  */
 export async function buildExoticOutputSwapData(params: {
   amountIn: string; // crvUSD amount in wei
   type: "cvgCvx" | "pxCvx";
   slippage: number; // basis points
 }): Promise<{ swapData: string; expectedOut: string }> {
-  // 1. Fetch route crvUSD → CVX to get estimate + innerSwapData
+  // 1. Fetch route crvUSD -> CVX to get estimate + innerSwapData
   const cvxRoute = await fetchRoute({
     fromAddress: ZAPPER_ADDRESS,
     tokenIn: CRVUSD_ADDRESS,
@@ -746,53 +734,107 @@ export async function buildExoticOutputSwapData(params: {
   });
   const innerSwapData = extractInnerSwapData(cvxRoute.tx.data);
 
-  // 2. Get HybridZapper optimal swap/mint split params
-  const zapParams = await computeHybridZapParams(cvxRoute.amountOut, params.type, params.slippage);
+  let actions: EnsoBundleAction[];
+  let expectedOut: string;
 
-  const method = params.type === "cvgCvx" ? "zapCvxToCvgCvx" : "zapCvxToPxCvx";
-  const abi = params.type === "cvgCvx"
-    ? "function zapCvxToCvgCvx(uint256 amountIn, uint256 swapAmount, uint256 minDy, uint256 minTotalOut, address receiver, uint256 deadline) returns (uint256)"
-    : "function zapCvxToPxCvx(uint256 amountIn, uint256 swapAmount, uint256 minDy, uint256 minTotalOut, address receiver, uint256 deadline) returns (uint256)";
-
-  // 3. Build bundle: routeMulti(crvUSD→CVX), balanceOf, approve, HybridZapper zap
-  const actions: EnsoBundleAction[] = [
-    // 0: routeMulti — swap crvUSD (already in ENSO_SHORTCUTS from Zapper's routeSingle pull) → CVX
-    {
-      protocol: "enso", action: "call",
-      args: { address: ENSO_ROUTER_EXECUTOR.toLowerCase(), method: "routeMulti", abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)", args: [[], innerSwapData] },
-    },
-    // 1: Get CVX balance in ENSO_SHORTCUTS
-    {
-      protocol: "enso", action: "call",
-      args: { address: TOKENS.CVX.toLowerCase(), method: "balanceOf", abi: "function balanceOf(address account) returns (uint256)", args: [ENSO_SHORTCUTS] },
-    },
-    // 2: Approve CVX → HybridZapper
-    {
-      protocol: "enso", action: "call",
-      args: { address: TOKENS.CVX.toLowerCase(), method: "approve", abi: "function approve(address spender, uint256 amount) returns (bool)", args: [CVX_HYBRID_ZAPPER!, { useOutputOfCallAt: 1 }] },
-    },
-    // 3: HybridZapper zap — receiver = ZAPPER so it can deposit into vault
-    {
-      protocol: "enso", action: "call",
-      args: {
-        address: CVX_HYBRID_ZAPPER!,
-        method,
-        abi,
-        args: [{ useOutputOfCallAt: 1 }, zapParams.swapAmount.toString(), zapParams.minSwapDy, zapParams.minTotalOut, ZAPPER_ADDRESS, "0"],
+  if (params.type === "cvgCvx") {
+    // cvgCVX path: crvUSD -> CVX -> CVX1 (mint 1:1) -> cvgCVX (Curve exchange) -> ZAPPER
+    actions = [
+      // 0: routeMulti -- swap crvUSD (already in ENSO_SHORTCUTS from Zapper's routeSingle pull) -> CVX
+      {
+        protocol: "enso", action: "call",
+        args: { address: ENSO_ROUTER_EXECUTOR.toLowerCase(), method: "routeMulti", abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)", args: [[], innerSwapData] },
       },
-    },
-  ];
+      // 1: Get CVX balance at ENSO_SHORTCUTS
+      {
+        protocol: "enso", action: "call",
+        args: { address: TOKENS.CVX.toLowerCase(), method: "balanceOf", abi: "function balanceOf(address account) returns (uint256)", args: [ENSO_SHORTCUTS] },
+      },
+      // 2: Approve CVX -> CVX1 wrapper for minting
+      {
+        protocol: "enso", action: "call",
+        args: { address: TOKENS.CVX.toLowerCase(), method: "approve", abi: "function approve(address spender, uint256 amount) returns (bool)", args: [TOKENS.CVX1.toLowerCase(), { useOutputOfCallAt: 1 }] },
+      },
+      // 3: Mint CVX1 from CVX (1:1, void)
+      {
+        protocol: "enso", action: "call",
+        args: { address: TOKENS.CVX1.toLowerCase(), method: "mint", abi: "function mint(address to, uint256 amount)", args: [ENSO_SHORTCUTS, { useOutputOfCallAt: 1 }] },
+      },
+      // 4: Approve CVX1 -> Curve CVX1/cvgCVX pool
+      {
+        protocol: "enso", action: "call",
+        args: { address: TOKENS.CVX1.toLowerCase(), method: "approve", abi: "function approve(address spender, uint256 amount) returns (bool)", args: [TANGENT.CVX1_CVGCVX_POOL.toLowerCase(), { useOutputOfCallAt: 1 }] },
+      },
+      // 5: Curve exchange CVX1 -> cvgCVX (stableswap, int128 indices: 0=CVX1, 1=cvgCVX)
+      {
+        protocol: "enso", action: "call",
+        args: { address: TANGENT.CVX1_CVGCVX_POOL.toLowerCase(), method: "exchange", abi: "function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) returns (uint256)", args: ["0", "1", { useOutputOfCallAt: 1 }, "0"] },
+      },
+      // 6: Transfer cvgCVX to ZAPPER_ADDRESS
+      {
+        protocol: "erc20", action: "transfer",
+        args: { token: TOKENS.CVGCVX, receiver: ZAPPER_ADDRESS, amount: { useOutputOfCallAt: 5 } },
+      },
+    ];
 
-  // 4. Build and return bundle
+    // CVX -> CVX1 is 1:1, then CVX1 -> cvgCVX via Curve pool
+    // Conservative estimate: use CVX amount as approximation (pool is near 1:1)
+    expectedOut = cvxRoute.amountOut;
+  } else {
+    // pxCVX path: crvUSD -> CVX -> lpxCVX (Curve CryptoSwap) -> pxCVX (unwrap) -> ZAPPER
+    actions = [
+      // 0: routeMulti -- swap crvUSD -> CVX
+      {
+        protocol: "enso", action: "call",
+        args: { address: ENSO_ROUTER_EXECUTOR.toLowerCase(), method: "routeMulti", abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)", args: [[], innerSwapData] },
+      },
+      // 1: Get CVX balance at ENSO_SHORTCUTS
+      {
+        protocol: "enso", action: "call",
+        args: { address: TOKENS.CVX.toLowerCase(), method: "balanceOf", abi: "function balanceOf(address account) returns (uint256)", args: [ENSO_SHORTCUTS] },
+      },
+      // 2: Approve CVX -> Curve lpxCVX/CVX pool
+      {
+        protocol: "enso", action: "call",
+        args: { address: TOKENS.CVX.toLowerCase(), method: "approve", abi: "function approve(address spender, uint256 amount) returns (bool)", args: [PIREX.LPXCVX_CVX_POOL.toLowerCase(), { useOutputOfCallAt: 1 }] },
+      },
+      // 3: Curve exchange CVX -> lpxCVX (CryptoSwap, uint256 indices)
+      {
+        protocol: "enso", action: "call",
+        args: { address: PIREX.LPXCVX_CVX_POOL.toLowerCase(), method: "exchange", abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)", args: [String(PIREX.POOL_INDEX.CVX), String(PIREX.POOL_INDEX.LPXCVX), { useOutputOfCallAt: 1 }, "0"] },
+      },
+      // 4: Approve lpxCVX -> LPXCVX contract (for unwrap)
+      {
+        protocol: "enso", action: "call",
+        args: { address: PIREX.LPXCVX.toLowerCase(), method: "approve", abi: "function approve(address spender, uint256 amount) returns (bool)", args: [PIREX.LPXCVX.toLowerCase(), { useOutputOfCallAt: 3 }] },
+      },
+      // 5: Unwrap lpxCVX -> pxCVX (void, 1:1)
+      {
+        protocol: "enso", action: "call",
+        args: { address: PIREX.LPXCVX.toLowerCase(), method: "unwrap", abi: "function unwrap(uint256 amount)", args: [{ useOutputOfCallAt: 3 }] },
+      },
+      // 6: Transfer pxCVX to ZAPPER_ADDRESS
+      {
+        protocol: "erc20", action: "transfer",
+        args: { token: TOKENS.PXCVX, receiver: ZAPPER_ADDRESS, amount: { useOutputOfCallAt: 3 } },
+      },
+    ];
+
+    // CVX -> lpxCVX via Curve, then lpxCVX -> pxCVX 1:1 unwrap
+    // Conservative estimate: use CVX amount as approximation
+    expectedOut = cvxRoute.amountOut;
+  }
+
+  // Build and return bundle
   const bundle = await fetchBundle({
     fromAddress: ZAPPER_ADDRESS,
     actions,
     receiver: ZAPPER_ADDRESS,
-    skipQuote: true, // HybridZapper calls can't be simulated by Enso
+    skipQuote: true,
   });
 
   return {
     swapData: bundle.tx.data,
-    expectedOut: zapParams.minTotalOut, // conservative estimate (slippage already applied)
+    expectedOut,
   };
 }

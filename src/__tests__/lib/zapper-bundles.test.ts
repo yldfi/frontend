@@ -4,10 +4,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mock setup (vi.hoisted pattern)
 // ============================================================================
 
-const { mockFetchRoute, mockFetchBundle, mockComputeHybridZapParams, mockGetLpxCvxToCvxSwapRate } = vi.hoisted(() => ({
+const { mockFetchRoute, mockFetchBundle, mockGetLpxCvxToCvxSwapRate } = vi.hoisted(() => ({
   mockFetchRoute: vi.fn(),
   mockFetchBundle: vi.fn(),
-  mockComputeHybridZapParams: vi.fn(),
   mockGetLpxCvxToCvxSwapRate: vi.fn(),
 }));
 
@@ -15,11 +14,9 @@ const { mockFetchRoute, mockFetchBundle, mockComputeHybridZapParams, mockGetLpxC
 vi.mock("@/lib/enso", () => ({
   fetchRoute: mockFetchRoute,
   fetchBundle: mockFetchBundle,
-  computeHybridZapParams: mockComputeHybridZapParams,
   getLpxCvxToCvxSwapRate: mockGetLpxCvxToCvxSwapRate,
   ENSO_SHORTCUTS: "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003",
   ENSO_ROUTER_EXECUTOR: "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf",
-  CVX_HYBRID_ZAPPER: "0xEE3FF294c7156090F5b2A37acd131FD3DC652182",
 }));
 
 // Mock viem's decodeFunctionData — used by extractInnerSwapData
@@ -75,10 +72,9 @@ describe("buildExoticOutputSwapData", () => {
     vi.clearAllMocks();
     mockFetchRoute.mockResolvedValue(MOCK_ROUTE_RESPONSE);
     mockFetchBundle.mockResolvedValue(MOCK_BUNDLE_RESPONSE);
-    mockComputeHybridZapParams.mockResolvedValue(MOCK_ZAP_PARAMS);
   });
 
-  it("cvgCvx path: routes crvUSD→CVX then calls zapCvxToCvgCvx", async () => {
+  it("cvgCvx path: routes crvUSD→CVX then mints CVX1 and Curve exchanges to cvgCVX", async () => {
     const result = await buildExoticOutputSwapData({
       amountIn: "1000000000000000000",
       type: "cvgCvx",
@@ -94,29 +90,22 @@ describe("buildExoticOutputSwapData", () => {
       }),
     );
 
-    // Should compute HybridZapper params
-    expect(mockComputeHybridZapParams).toHaveBeenCalledWith(
-      MOCK_ROUTE_RESPONSE.amountOut,
-      "cvgCvx",
-      100,
-    );
-
-    // Should call fetchBundle with 4 actions
+    // Should call fetchBundle with 7 actions (routeMulti + balanceOf + approve + mint + approve + exchange + transfer)
     expect(mockFetchBundle).toHaveBeenCalledTimes(1);
     const bundleCall = mockFetchBundle.mock.calls[0][0];
-    expect(bundleCall.actions).toHaveLength(4);
+    expect(bundleCall.actions).toHaveLength(7);
 
-    // Action 3 should use zapCvxToCvgCvx
-    expect(bundleCall.actions[3].args.method).toBe("zapCvxToCvgCvx");
+    // Action 5 should be Curve exchange CVX1→cvgCVX
+    expect(bundleCall.actions[5].args.method).toBe("exchange");
+    // Action 6 should transfer cvgCVX to ZAPPER_ADDRESS
+    expect(bundleCall.actions[6].action).toBe("transfer");
     expect(bundleCall.skipQuote).toBe(true);
 
-    expect(result).toEqual({
-      swapData: "0xmockbundledata",
-      expectedOut: MOCK_ZAP_PARAMS.minTotalOut,
-    });
+    expect(result.swapData).toBe("0xmockbundledata");
+    expect(result.expectedOut).toBe(MOCK_ROUTE_RESPONSE.amountOut);
   });
 
-  it("pxCvx path: routes crvUSD→CVX then calls zapCvxToPxCvx", async () => {
+  it("pxCvx path: routes crvUSD→CVX then Curve swaps to lpxCVX and unwraps to pxCVX", async () => {
     const result = await buildExoticOutputSwapData({
       amountIn: "1000000000000000000",
       type: "pxCvx",
@@ -124,8 +113,13 @@ describe("buildExoticOutputSwapData", () => {
     });
 
     const bundleCall = mockFetchBundle.mock.calls[0][0];
-    expect(bundleCall.actions[3].args.method).toBe("zapCvxToPxCvx");
-    expect(result.expectedOut).toBe(MOCK_ZAP_PARAMS.minTotalOut);
+    // 7 actions: routeMulti + balanceOf + approve + exchange + approve + unwrap + transfer
+    expect(bundleCall.actions).toHaveLength(7);
+    // Action 3 should be Curve exchange CVX→lpxCVX
+    expect(bundleCall.actions[3].args.method).toBe("exchange");
+    // Action 5 should unwrap lpxCVX→pxCVX
+    expect(bundleCall.actions[5].args.method).toBe("unwrap");
+    expect(result.expectedOut).toBe(MOCK_ROUTE_RESPONSE.amountOut);
   });
 
   it("action structure: addresses lowercased, balanceOf ref at index 1", async () => {
@@ -148,13 +142,9 @@ describe("buildExoticOutputSwapData", () => {
     expect(actions[1].args.method).toBe("balanceOf");
     expect(actions[1].args.args).toContain(ENSO_SHORTCUTS);
 
-    // Action 2: approve CVX → HybridZapper
+    // Action 2: approve CVX → CVX1 wrapper
     expect(actions[2].args.method).toBe("approve");
     expect(actions[2].args.args[1]).toEqual({ useOutputOfCallAt: 1 });
-
-    // Action 3: HybridZapper zap — receiver = ZAPPER_ADDRESS
-    const zapArgs = actions[3].args.args;
-    expect(zapArgs).toContain(ZAPPER_ADDRESS);
   });
 
   it("receiver is set to ZAPPER_ADDRESS for all bundle calls", async () => {
@@ -175,17 +165,14 @@ describe("buildExoticOutputSwapData", () => {
       vi.clearAllMocks();
       mockFetchRoute.mockResolvedValue(MOCK_ROUTE_RESPONSE);
       mockFetchBundle.mockResolvedValue(MOCK_BUNDLE_RESPONSE);
-      mockComputeHybridZapParams.mockResolvedValue(MOCK_ZAP_PARAMS);
 
       await buildExoticOutputSwapData({ amountIn: "1000000000000000000", type, slippage: 100 });
 
       const actions = mockFetchBundle.mock.calls[0][0].actions;
       for (const action of actions) {
         if (action.args?.method === "transferFrom") {
-          // If transferFrom exists, ENSO_SHORTCUTS must NOT be the recipient (arg[1])
           expect(action.args.args[1]).not.toBe(ENSO_SHORTCUTS);
         }
-        // Also check no erc20 approve targeting ENSO_SHORTCUTS as spender
         if (action.protocol === "erc20" && action.action === "approve") {
           expect(action.args.spender).not.toBe(ENSO_SHORTCUTS);
         }

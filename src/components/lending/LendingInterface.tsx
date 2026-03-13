@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { CACHE_TIMES } from "@/config/query";
 import { useYearnVault, formatYearnVaultData } from "@/hooks/useYearnVault";
 import { LoadingDots } from "@/components/LoadingDots";
+import { useSettings } from "@/hooks/useSettings";
 
 export type LendingTxState = {
   status: "pending" | "success" | "reverted";
@@ -171,6 +172,7 @@ export function LendingInterface({
 }: LendingPanelProps) {
   const { address } = useAccount();
   const publicClient = usePublicClient();
+  const { zappersEnabled } = useSettings();
 
   // Oracle price for accurate leverage display
   const [oraclePrice, setOraclePrice] = useState<bigint>(0n);
@@ -745,6 +747,13 @@ export function LendingInterface({
     return { ...position, inSoftLiquidation: true };
   }, [position, debugSoftLiq]);
 
+  // Reset off leverage tab when zappers are disabled
+  useEffect(() => {
+    if (!zappersEnabled && activeTab === "leverage") {
+      setActiveTab("borrow");
+    }
+  }, [zappersEnabled, activeTab]);
+
   // Reset to "borrow" tab when a loan is first created
   // Tracks hasLoan transitions: false→true triggers tab switch to "borrow"
   const prevHasLoan = useRef(hasLoan);
@@ -1084,7 +1093,9 @@ export function LendingInterface({
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-sm">yld</div>
                 <div className="text-xs text-[var(--muted-foreground)]">
-                  Deposit and borrow any token using Enso swaps. Optional leverage.
+                  {zappersEnabled
+                    ? "Deposit and borrow any token using Enso swaps. Optional leverage"
+                    : "Deposit and borrow using the yld interface. Manage your collateral and debt positions"}
                 </div>
               </div>
               <ArrowRight size={16} className="text-[var(--muted-foreground)] group-hover:text-[var(--accent)] transition-colors shrink-0" />
@@ -1537,7 +1548,7 @@ export function LendingInterface({
       {!effectiveTxState && (
         <div className="p-4 pb-0">
           <div className="flex border-b border-[var(--border)]">
-            {(["borrow", "leverage", "repay", "collateral"] as const).map((tab) => (
+            {(["borrow", "leverage", "repay", "collateral"] as const).filter((t) => t !== "leverage" || zappersEnabled).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}

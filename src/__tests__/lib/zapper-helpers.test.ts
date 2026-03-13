@@ -11,11 +11,9 @@ const { mockFetchRoute } = vi.hoisted(() => ({
 vi.mock("@/lib/enso", () => ({
   fetchRoute: mockFetchRoute,
   fetchBundle: vi.fn(),
-  computeHybridZapParams: vi.fn(),
   getLpxCvxToCvxSwapRate: vi.fn(),
   ENSO_SHORTCUTS: "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003",
   ENSO_ROUTER_EXECUTOR: "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf",
-  CVX_HYBRID_ZAPPER: "0xEE3FF294c7156090F5b2A37acd131FD3DC652182",
 }));
 
 vi.mock("viem", () => ({
