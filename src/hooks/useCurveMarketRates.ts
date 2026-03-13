@@ -16,6 +16,7 @@ export interface MarketRates {
 
 export interface CurveMarketStats {
   borrowApr: number;
+  borrowApy: number;
   lendApy: number;
   utilization: number;
   totalSupplied: string;
@@ -79,10 +80,12 @@ export function useCurveMarketRates(controllerAddress?: `0x${string}`) {
   return useMemo((): CurveMarketStats | null => {
     if (!marketRates) return null;
     const borrowApr = semilogBorrowAPR(marketRates.utilization, marketRates.minRate, marketRates.maxRate);
+    const borrowApy = (Math.exp(borrowApr / 100) - 1) * 100;
     const lendApy = borrowApr * marketRates.utilization;
     const available = marketRates.totalAssets - marketRates.totalDebt;
     return {
       borrowApr,
+      borrowApy,
       lendApy,
       utilization: marketRates.utilization,
       totalSupplied: formatCrvUsd(marketRates.totalAssets),
