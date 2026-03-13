@@ -1305,13 +1305,13 @@ export function VaultPageContent({ id }: { id: string }) {
               {vault.type === "vault" && controllerAddress && (() => {
                 if (lendingPosition?.hasLoan && (onChainRates || curveVault)) {
                   const collateralApy = yearnVault?.weeklyApy ?? 0;
-                  const borrowApr = onChainRates?.borrowApr ?? (curveVault ? curveVault.rates.borrowApr * 100 : 0);
+                  const borrowApy = onChainRates?.borrowApy ?? (curveVault ? (Math.exp(curveVault.rates.borrowApr) - 1) * 100 : 0);
                   const display = buildLendingPositionDisplay(
                     lendingPosition.collateral,
                     lendingPosition.debt,
                     underlyingPrice * pricePerShare,
                     collateralApy,
-                    borrowApr,
+                    borrowApy,
                     18,
                     lendingPosition.stablecoin,
                   );
@@ -1342,13 +1342,13 @@ export function VaultPageContent({ id }: { id: string }) {
                               <Image src="/tokens/crvusd.png" alt="crvUSD" width={12} height={12} className="rounded-full" />
                               <span className="mono text-sm font-medium">{display.debtFormatted}</span>
                             </div>
-                            <p className="text-xs text-red-500 mono">{display.borrowAprFormatted} APR</p>
+                            <p className="text-xs text-red-500 mono">{display.borrowApyFormatted} APY</p>
                           </div>
                           <div>
                             <p className="text-xs text-[var(--muted-foreground)] mb-0.5">Leverage</p>
                             <p className="mono text-sm font-medium">{display.leverageFormatted}</p>
-                            <p className={cn("text-xs mono", display.netRate >= 0 ? "text-green-500" : "text-red-500")}>
-                              {display.netRateFormatted} NET
+                            <p className={cn("text-xs mono", display.netApy >= 0 ? "text-green-500" : "text-red-500")}>
+                              {display.netApyFormatted} NET
                             </p>
                           </div>
                           <div>

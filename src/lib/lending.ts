@@ -9,18 +9,18 @@ export interface LendingPositionDisplay {
   leverage: number;
   /** Formatted leverage (e.g., "1.43x") */
   leverageFormatted: string;
-  /** Collateral APY as percentage (e.g., 11.5 for 11.5%) */
+  /** Collateral APY as percentage (e.g., 8.62) */
   collateralApy: number;
-  /** Borrow APR as percentage (e.g., 7.43 for 7.43%) */
-  borrowApr: number;
-  /** Net rate after leverage */
-  netRate: number;
-  /** Formatted collateral APY (e.g., "+11.50%") */
+  /** Borrow APY as percentage (e.g., 17.55) */
+  borrowApy: number;
+  /** Net APY after leverage */
+  netApy: number;
+  /** Formatted collateral APY (e.g., "+8.62%") */
   collateralApyFormatted: string;
-  /** Formatted borrow APR (e.g., "-7.43%") */
-  borrowAprFormatted: string;
-  /** Formatted net rate (e.g., "+13.25%") */
-  netRateFormatted: string;
+  /** Formatted borrow APY (e.g., "-17.55%") */
+  borrowApyFormatted: string;
+  /** Formatted net APY (e.g., "+0.76%") */
+  netApyFormatted: string;
   /** Whether the user has an active loan */
   hasLoan: boolean;
 }
@@ -35,11 +35,11 @@ export function computeLeverage(collateralValueUsd: number, debtValueUsd: number
 }
 
 /**
- * Compute net rate for a leveraged lending position.
- * net = (collateralRate * leverage) - (borrowRate * (leverage - 1))
+ * Compute net APY for a leveraged lending position.
+ * netAPY = (collateralApy * leverage) - (borrowApy * (leverage - 1))
  */
-export function computeNetRate(collateralRate: number, borrowRate: number, leverage: number): number {
-  return (collateralRate * leverage) - (borrowRate * (leverage - 1));
+export function computeNetApy(collateralApy: number, borrowApy: number, leverage: number): number {
+  return (collateralApy * leverage) - (borrowApy * (leverage - 1));
 }
 
 /**
@@ -61,14 +61,13 @@ function formatRate(value: number): string {
 }
 
 /**
- * Build display data for a lending position.
- * Collateral rate is APY (auto-compounding vault), borrow rate is APR (Curve convention).
+ * Build display data for a lending position. All rates as APY.
  *
  * @param collateral - Raw collateral amount (bigint)
  * @param debt - Raw debt amount (bigint, 18 decimals for crvUSD)
  * @param collateralPriceUsd - USD price of one unit of collateral token
  * @param collateralApy - APY earned on collateral (percentage, e.g., 8.62)
- * @param borrowApr - APR paid on debt (percentage, e.g., 16.17)
+ * @param borrowApy - APY paid on debt (percentage, e.g., 17.55)
  * @param collateralDecimals - Decimals for collateral token (default 18)
  * @param stablecoin - crvUSD in AMM from soft-liquidation (bigint, 18 decimals, default 0)
  */
@@ -77,7 +76,7 @@ export function buildLendingPositionDisplay(
   debt: bigint,
   collateralPriceUsd: number,
   collateralApy: number,
-  borrowApr: number,
+  borrowApy: number,
   collateralDecimals: number = 18,
   stablecoin: bigint = 0n,
 ): LendingPositionDisplay {
@@ -90,7 +89,7 @@ export function buildLendingPositionDisplay(
   const debtValueUsd = debtNum;
 
   const leverage = computeLeverage(collateralValueUsd, debtValueUsd);
-  const netRate = computeNetRate(collateralApy, borrowApr, leverage);
+  const netApy = computeNetApy(collateralApy, borrowApy, leverage);
 
   return {
     collateralFormatted: formatNumber(collateralNum, collateralNum >= 1000 ? 2 : 4),
@@ -98,11 +97,11 @@ export function buildLendingPositionDisplay(
     leverage,
     leverageFormatted: `${leverage.toFixed(2)}x`,
     collateralApy,
-    borrowApr,
-    netRate,
+    borrowApy,
+    netApy,
     collateralApyFormatted: formatRate(collateralApy),
-    borrowAprFormatted: formatRate(-borrowApr),
-    netRateFormatted: formatRate(netRate),
+    borrowApyFormatted: formatRate(-borrowApy),
+    netApyFormatted: formatRate(netApy),
     hasLoan: true,
   };
 }
