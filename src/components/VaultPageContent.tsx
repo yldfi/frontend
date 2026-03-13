@@ -1304,13 +1304,13 @@ export function VaultPageContent({ id }: { id: string }) {
               {/* Lending Position / Borrow CTA */}
               {vault.type === "vault" && controllerAddress && (() => {
                 if (lendingPosition?.hasLoan && (onChainRates || curveVault)) {
-                  const collateralApr = yearnVault?.weeklyApy ?? 0;
+                  const collateralApy = yearnVault?.weeklyApy ?? 0;
                   const borrowApr = onChainRates?.borrowApr ?? (curveVault ? curveVault.rates.borrowApr * 100 : 0);
                   const display = buildLendingPositionDisplay(
                     lendingPosition.collateral,
                     lendingPosition.debt,
                     underlyingPrice * pricePerShare,
-                    collateralApr,
+                    collateralApy,
                     borrowApr,
                     18,
                     lendingPosition.stablecoin,
@@ -1334,7 +1334,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               {vault.logo && <Image src={vault.logo} alt={vault.symbol} width={12} height={12} className="rounded-full" />}
                               <span className="mono text-sm font-medium">{display.collateralFormatted}</span>
                             </div>
-                            <p className="text-xs text-green-500 mono">{display.collateralAprFormatted} APY</p>
+                            <p className="text-xs text-green-500 mono">{display.collateralApyFormatted} APY</p>
                           </div>
                           <div>
                             <p className="text-xs text-[var(--muted-foreground)] mb-0.5">Debt</p>
@@ -1347,8 +1347,8 @@ export function VaultPageContent({ id }: { id: string }) {
                           <div>
                             <p className="text-xs text-[var(--muted-foreground)] mb-0.5">Leverage</p>
                             <p className="mono text-sm font-medium">{display.leverageFormatted}</p>
-                            <p className={cn("text-xs mono", display.netApr >= 0 ? "text-green-500" : "text-red-500")}>
-                              {display.netAprFormatted} NET
+                            <p className={cn("text-xs mono", display.netRate >= 0 ? "text-green-500" : "text-red-500")}>
+                              {display.netRateFormatted} NET
                             </p>
                           </div>
                           <div>

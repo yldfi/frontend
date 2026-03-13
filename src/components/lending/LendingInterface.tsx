@@ -272,9 +272,9 @@ export function LendingInterface({
     return semilogBorrowAPR(marketRates.utilization, marketRates.minRate, marketRates.maxRate);
   }, [marketRates]);
 
-  // Collateral APR from Yearn vault data
+  // Collateral APY from Yearn vault data
   const { data: yearnRaw } = useYearnVault(vault.address);
-  const collateralAPR = useMemo(() => {
+  const collateralAPY = useMemo(() => {
     const formatted = formatYearnVaultData(yearnRaw?.vault);
     return formatted?.weeklyApy ?? null;
   }, [yearnRaw]);
@@ -534,7 +534,7 @@ export function LendingInterface({
     }
   }, [isDragging, handleDrag, handleDragEnd]);
 
-  // Projected borrow APR based on child tab's debt delta
+  // Projected borrow APR/APY based on child tab's debt delta
   const projectedBorrowAPR = useMemo(() => {
     if (!marketRates || childDebtDelta === null || childDebtDelta === 0n) return null;
     const newDebt = marketRates.totalDebt + childDebtDelta;
@@ -542,6 +542,7 @@ export function LendingInterface({
     const newUtil = marketRates.totalAssets > 0n ? Number(newDebt) / Number(marketRates.totalAssets) : 0;
     return semilogBorrowAPR(newUtil, marketRates.minRate, marketRates.maxRate);
   }, [marketRates, childDebtDelta]);
+
 
   // Compute preview liquidation prices from child tab deltas
   // Uses controller.calculate_debt_n1 to get band index, then AMM.p_oracle_up/down for price levels
@@ -708,23 +709,23 @@ export function LendingInterface({
     return Math.round(1 / (1 - effectiveFactor) * 100) / 100;
   }, [ammParams, position, childBands]);
 
-  // Net APR on equity: leverage * collateralAPR - (leverage - 1) * borrowAPR
-  const currentNetAPR = useMemo(() => {
-    if (collateralAPR == null || currentBorrowAPR == null || !effectiveLeverage) return null;
+  // Net rate on equity: leverage * collateralAPY - (leverage - 1) * borrowAPR
+  const currentNetRate = useMemo(() => {
+    if (collateralAPY == null || currentBorrowAPR == null || !effectiveLeverage) return null;
     const lev = parseFloat(effectiveLeverage);
-    return lev * collateralAPR - (lev - 1) * currentBorrowAPR;
-  }, [collateralAPR, currentBorrowAPR, effectiveLeverage]);
+    return lev * collateralAPY - (lev - 1) * currentBorrowAPR;
+  }, [collateralAPY, currentBorrowAPR, effectiveLeverage]);
 
-  const projectedNetAPR = useMemo(() => {
-    if (collateralAPR == null) return null;
+  const projectedNetRate = useMemo(() => {
+    if (collateralAPY == null) return null;
     const projBorrow = projectedBorrowAPR ?? currentBorrowAPR;
     if (projBorrow == null) return null;
     const projLev = childEstimatedLeverage ?? (effectiveLeverage ? parseFloat(effectiveLeverage) : null);
     if (projLev == null) return null;
     // Only show projected if something actually changed
     if (projectedBorrowAPR === null && childEstimatedLeverage === null) return null;
-    return projLev * collateralAPR - (projLev - 1) * projBorrow;
-  }, [collateralAPR, currentBorrowAPR, projectedBorrowAPR, effectiveLeverage, childEstimatedLeverage]);
+    return projLev * collateralAPY - (projLev - 1) * projBorrow;
+  }, [collateralAPY, currentBorrowAPR, projectedBorrowAPR, effectiveLeverage, childEstimatedLeverage]);
 
   const hasLoan = position?.hasLoan ?? false;
 
@@ -1126,9 +1127,9 @@ export function LendingInterface({
                   ${(Number(formatUnits(displayCollateralAmount * oraclePrice / (10n ** BigInt(vault.decimals)), 18))).toLocaleString(undefined, { maximumFractionDigits: 2 })}
                 </div>
               )}
-              {collateralAPR != null && collateralAPR > 0 && (
+              {collateralAPY != null && collateralAPY > 0 && (
                 <div className="text-[10px] text-green-500 mt-0.5">
-                  +{collateralAPR.toFixed(2)}% APY
+                  +{collateralAPY.toFixed(2)}% APY
                 </div>
               )}
             </div>
@@ -1163,10 +1164,10 @@ export function LendingInterface({
                 const ltv = collValue > 0 ? (debt / collValue) * 100 : 0;
                 return <LtvIndicator ltv={ltv} thresholds={ltvThresholds} />;
               })()}
-              {collateralAPR != null && (projectedBorrowAPR ?? currentBorrowAPR) != null && displayDebtDelta > 0n && (() => {
+              {collateralAPY != null && (projectedBorrowAPR ?? currentBorrowAPR) != null && displayDebtDelta > 0n && (() => {
                 const lev = displayLeverage;
                 const borrow = projectedBorrowAPR ?? currentBorrowAPR!;
-                const net = lev * collateralAPR - (lev - 1) * borrow;
+                const net = lev * collateralAPY - (lev - 1) * borrow;
                 return (
                   <div className={cn("text-[10px] mt-0.5", net >= 0 ? "text-green-500" : "text-red-500")}>
                     {net >= 0 ? "+" : ""}{net.toFixed(2)}% NET
@@ -1391,9 +1392,9 @@ export function LendingInterface({
                 </div>
               );
             })()}
-            {collateralAPR != null && (
+            {collateralAPY != null && (
               <div className="text-[10px] text-green-500 mt-0.5">
-                +{(position?.collateral === 0n ? 0 : collateralAPR).toFixed(2)}% APY
+                +{(position?.collateral === 0n ? 0 : collateralAPY).toFixed(2)}% APY
               </div>
             )}
           </div>
@@ -1455,7 +1456,7 @@ export function LendingInterface({
                 return <LtvIndicator ltv={ltv} thresholds={ltvThresholds} hideThresholds={position.inSoftLiquidation} />;
               })()}
               {(() => {
-                const net = projectedNetAPR ?? currentNetAPR ?? (currentBorrowAPR != null ? -currentBorrowAPR : null);
+                const net = projectedNetRate ?? currentNetRate ?? (currentBorrowAPR != null ? -currentBorrowAPR : null);
                 if (net == null) return null;
                 return (
                   <div className={cn("text-[10px] mt-0.5", net >= 0 ? "text-green-500" : "text-red-500")}>

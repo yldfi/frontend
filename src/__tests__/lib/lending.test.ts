@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   computeLeverage,
-  computeNetApr,
+  computeNetRate,
   buildLendingPositionDisplay,
 } from "@/lib/lending";
 import { parseUnits } from "viem";
@@ -52,35 +52,35 @@ describe("computeLeverage", () => {
 });
 
 // ---------------------------------------------------------------------------
-// computeNetApr
+// computeNetRate
 // ---------------------------------------------------------------------------
-describe("computeNetApr", () => {
-  it("equals collateralApr when leverage is 1 (no borrowing component)", () => {
-    expect(computeNetApr(10, 5, 1)).toBe(10);
+describe("computeNetRate", () => {
+  it("equals collateral rate when leverage is 1 (no borrowing component)", () => {
+    expect(computeNetRate(10, 5, 1)).toBe(10);
   });
 
   it("computes correctly at 2x leverage", () => {
     // 10*2 - 5*(2-1) = 20 - 5 = 15
-    expect(computeNetApr(10, 5, 2)).toBe(15);
+    expect(computeNetRate(10, 5, 2)).toBe(15);
   });
 
   it("computes correctly at high leverage (5x)", () => {
     // 10*5 - 8*(5-1) = 50 - 32 = 18
-    expect(computeNetApr(10, 8, 5)).toBe(18);
+    expect(computeNetRate(10, 8, 5)).toBe(18);
   });
 
   it("returns 0 when borrow cost offsets collateral yield", () => {
     // 5*2 - 10*(2-1) = 10 - 10 = 0
-    expect(computeNetApr(5, 10, 2)).toBe(0);
+    expect(computeNetRate(5, 10, 2)).toBe(0);
   });
 
-  it("returns 0 when both APRs are zero", () => {
-    expect(computeNetApr(0, 0, 3)).toBe(0);
+  it("returns 0 when both rates are zero", () => {
+    expect(computeNetRate(0, 0, 3)).toBe(0);
   });
 
   it("handles fractional leverage (1.5x)", () => {
     // 10*1.5 - 5*(1.5-1) = 15 - 2.5 = 12.5
-    expect(computeNetApr(10, 5, 1.5)).toBe(12.5);
+    expect(computeNetRate(10, 5, 1.5)).toBe(12.5);
   });
 });
 
@@ -88,21 +88,21 @@ describe("computeNetApr", () => {
 // buildLendingPositionDisplay
 // ---------------------------------------------------------------------------
 describe("buildLendingPositionDisplay", () => {
-  it("computes leverage, netApr, and formatted strings for a normal position", () => {
+  it("computes leverage, net rate, and formatted strings for a normal position", () => {
     // 10 tokens of collateral at $2000 each = $20,000 collateral value
     // 5000 crvUSD debt ≈ $5000
     // leverage = 20000 / (20000 - 5000) = 1.333...
     const collateral = parseUnits("10", 18);
     const debt = parseUnits("5000", 18);
     const collateralPriceUsd = 2000;
-    const collateralApr = 11.5;
+    const collateralApy = 11.5;
     const borrowApr = 7.43;
 
     const result = buildLendingPositionDisplay(
       collateral,
       debt,
       collateralPriceUsd,
-      collateralApr,
+      collateralApy,
       borrowApr,
     );
 
@@ -110,9 +110,9 @@ describe("buildLendingPositionDisplay", () => {
     expect(result.leverage).toBeCloseTo(1.3333, 3);
     expect(result.leverageFormatted).toBe("1.33x");
 
-    // netApr = 11.5 * 1.333 - 7.43 * 0.333 ≈ 12.86
-    const expectedNet = computeNetApr(collateralApr, borrowApr, result.leverage);
-    expect(result.netApr).toBeCloseTo(expectedNet, 4);
+    // netRate = 11.5 * 1.333 - 7.43 * 0.333 ≈ 12.86
+    const expectedNet = computeNetRate(collateralApy, borrowApr, result.leverage);
+    expect(result.netRate).toBeCloseTo(expectedNet, 4);
 
     // Collateral formatted: 10.0000 (< 1000 so 4 decimals)
     expect(result.collateralFormatted).toContain("10");
@@ -120,10 +120,10 @@ describe("buildLendingPositionDisplay", () => {
     // Debt formatted
     expect(result.debtFormatted).toContain("5");
 
-    // APR signs
-    expect(result.collateralAprFormatted).toBe("+11.50%");
+    // Rate signs
+    expect(result.collateralApyFormatted).toBe("+11.50%");
     expect(result.borrowAprFormatted).toBe("-7.43%");
-    expect(result.netAprFormatted).toMatch(/^\+/);
+    expect(result.netRateFormatted).toMatch(/^\+/);
 
     expect(result.hasLoan).toBe(true);
   });
@@ -142,19 +142,19 @@ describe("buildLendingPositionDisplay", () => {
 
     expect(result.leverage).toBe(1);
     expect(result.leverageFormatted).toBe("1.00x");
-    // netApr = collateralApr when leverage = 1
-    expect(result.netApr).toBe(10);
-    expect(result.netAprFormatted).toBe("+10.00%");
+    // netRate = collateralApy when leverage = 1
+    expect(result.netRate).toBe(10);
+    expect(result.netRateFormatted).toBe("+10.00%");
     // hasLoan is always true per implementation
     expect(result.hasLoan).toBe(true);
   });
 
-  it("formats APR strings with correct signs", () => {
-    // Create a position where netApr is negative:
+  it("formats rate strings with correct signs", () => {
+    // Create a position where net rate is negative:
     // collateral = 1 token at $1000 = $1000 value
     // debt = 500 crvUSD
     // leverage = 1000 / 500 = 2
-    // netApr = 2*2 - 10*1 = 4 - 10 = -6
+    // netRate = 2*2 - 10*1 = 4 - 10 = -6
     const collateral = parseUnits("1", 18);
     const debt = parseUnits("500", 18);
 
@@ -162,15 +162,15 @@ describe("buildLendingPositionDisplay", () => {
       collateral,
       debt,
       1000,
-      2,   // low collateral APR
+      2,   // low collateral APY
       10,  // high borrow APR
     );
 
     expect(result.leverage).toBe(2);
-    expect(result.collateralAprFormatted).toBe("+2.00%");
+    expect(result.collateralApyFormatted).toBe("+2.00%");
     expect(result.borrowAprFormatted).toBe("-10.00%");
-    // netApr = 2*2 - 10*1 = -6
-    expect(result.netApr).toBe(-6);
-    expect(result.netAprFormatted).toBe("-6.00%");
+    // netRate = 2*2 - 10*1 = -6
+    expect(result.netRate).toBe(-6);
+    expect(result.netRateFormatted).toBe("-6.00%");
   });
 });
