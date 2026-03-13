@@ -52,6 +52,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { Logo } from "@/components/Logo";
 import { useCurveLendingVault, formatCurveVaultData } from "@/hooks/useCurveLendingData";
 import { useCurveLendingPosition, formatHealth } from "@/hooks/useCurveLendingPosition";
+import { useCurveMarketRates } from "@/hooks/useCurveMarketRates";
 import { buildLendingPositionDisplay } from "@/lib/lending";
 import { useYearnVault, formatYearnVaultData } from "@/hooks/useYearnVault";
 import { useVaultBalance } from "@/hooks/useVaultBalance";
@@ -597,6 +598,7 @@ export function VaultPageContent({ id }: { id: string }) {
     controllerAddress ? (vault?.address as `0x${string}`) : undefined,
     userAddress
   );
+  const onChainRates = useCurveMarketRates(controllerAddress);
 
   // Fetch cvxCRV price from on-chain oracles
   const { price: cvxCrvPrice } = useCvxCrvPrice();
@@ -1301,15 +1303,17 @@ export function VaultPageContent({ id }: { id: string }) {
 
               {/* Lending Position / Borrow CTA */}
               {vault.type === "vault" && controllerAddress && (() => {
-                if (lendingPosition?.hasLoan && curveVault) {
+                if (lendingPosition?.hasLoan && (onChainRates || curveVault)) {
                   const collateralApr = yearnVault?.weeklyApy ?? 0;
-                  const borrowApr = curveVault.rates.borrowApr * 100;
+                  const borrowApr = onChainRates?.borrowApr ?? (curveVault ? curveVault.rates.borrowApr * 100 : 0);
                   const display = buildLendingPositionDisplay(
                     lendingPosition.collateral,
                     lendingPosition.debt,
                     underlyingPrice * pricePerShare,
                     collateralApr,
                     borrowApr,
+                    18,
+                    lendingPosition.stablecoin,
                   );
                   return (
                     <Link
