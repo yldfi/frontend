@@ -1334,7 +1334,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               {vault.logo && <Image src={vault.logo} alt={vault.symbol} width={12} height={12} className="rounded-full" />}
                               <span className="mono text-sm font-medium">{display.collateralFormatted}</span>
                             </div>
-                            <p className="text-xs text-green-500 mono">{display.collateralAprFormatted} APR</p>
+                            <p className="text-xs text-green-500 mono">{display.collateralAprFormatted} APY</p>
                           </div>
                           <div>
                             <p className="text-xs text-[var(--muted-foreground)] mb-0.5">Debt</p>
