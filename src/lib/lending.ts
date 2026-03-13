@@ -63,12 +63,13 @@ function formatApr(value: number): string {
 /**
  * Build display data for a lending position.
  *
- * @param collateral - Raw collateral amount (bigint, 18 decimals)
+ * @param collateral - Raw collateral amount (bigint)
  * @param debt - Raw debt amount (bigint, 18 decimals for crvUSD)
  * @param collateralPriceUsd - USD price of one unit of collateral token
  * @param collateralApr - APR earned on collateral (percentage, e.g., 11.5)
  * @param borrowApr - APR paid on debt (percentage, e.g., 7.43)
  * @param collateralDecimals - Decimals for collateral token (default 18)
+ * @param stablecoin - crvUSD in AMM from soft-liquidation (bigint, 18 decimals, default 0)
  */
 export function buildLendingPositionDisplay(
   collateral: bigint,
@@ -77,12 +78,14 @@ export function buildLendingPositionDisplay(
   collateralApr: number,
   borrowApr: number,
   collateralDecimals: number = 18,
+  stablecoin: bigint = 0n,
 ): LendingPositionDisplay {
   const collateralNum = Number(formatUnits(collateral, collateralDecimals));
   const debtNum = Number(formatUnits(debt, 18)); // crvUSD is always 18 decimals
+  const stablecoinNum = Number(formatUnits(stablecoin, 18));
 
-  // crvUSD ≈ $1
-  const collateralValueUsd = collateralNum * collateralPriceUsd;
+  // Total collateral value: vault token value + stablecoin in AMM (from soft-liquidation)
+  const collateralValueUsd = collateralNum * collateralPriceUsd + stablecoinNum;
   const debtValueUsd = debtNum;
 
   const leverage = computeLeverage(collateralValueUsd, debtValueUsd);
