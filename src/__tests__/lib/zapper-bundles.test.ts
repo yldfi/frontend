@@ -246,23 +246,20 @@ describe("buildVaultInputSwapBundle", () => {
     });
 
     const bundleCall = mockFetchBundle.mock.calls[0][0];
-    // 1 redeem + 5 actions (approve cvgCVX, exchange, transfer CVX1, unwrap, routeMulti)
-    expect(bundleCall.actions).toHaveLength(6);
+    // 1 redeem + 4 actions (approve cvgCVX, exchange, CVX1.withdraw, routeMulti)
+    expect(bundleCall.actions).toHaveLength(5);
     expect(bundleCall.skipQuote).toBe(true);
 
     // Action 2: exchange cvgCVX→CVX1
     expect(bundleCall.actions[2].args.method).toBe("exchange");
     expect(bundleCall.actions[2].args.address).toBe(TANGENT.CVX1_CVGCVX_POOL.toLowerCase());
 
-    // Action 3: transfer CVX1 to HybridZapper
-    expect(bundleCall.actions[3].protocol).toBe("erc20");
-    expect(bundleCall.actions[3].action).toBe("transfer");
+    // Action 3: CVX1.withdraw → CVX to ENSO_SHORTCUTS
+    expect(bundleCall.actions[3].args.method).toBe("withdraw");
+    expect(bundleCall.actions[3].args.address).toBe(TOKENS.CVX1.toLowerCase());
 
-    // Action 4: unwrapCvx1ToCvx
-    expect(bundleCall.actions[4].args.method).toBe("unwrapCvx1ToCvx");
-
-    // Action 5: routeMulti
-    expect(bundleCall.actions[5].args.method).toBe("routeMulti");
+    // Action 4: routeMulti
+    expect(bundleCall.actions[4].args.method).toBe("routeMulti");
   });
 
   it("standard underlying: 2 actions (redeem + route), no skipQuote", async () => {
