@@ -222,14 +222,15 @@ export function SlippageModal({
         {/* Zappers Toggle */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium">Zapper Contracts</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-500 font-medium">UNAUDITED</span>
+            <AlertTriangle size={14} className="text-red-500" />
+            <span className="text-sm font-medium">Zapper Contract</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-500 font-medium uppercase tracking-wider">UNAUDITED</span>
           </div>
           <button
             onClick={() => setZappersEnabled(!zappersEnabled)}
             className={cn(
               "relative w-11 h-6 rounded-full transition-colors",
-              zappersEnabled ? "bg-[var(--accent)]" : "bg-[var(--muted)]"
+              zappersEnabled ? "bg-red-500" : "bg-[var(--muted)]"
             )}
           >
             <span
@@ -240,8 +241,8 @@ export function SlippageModal({
             />
           </button>
         </div>
-        <p className="text-xs text-[var(--muted-foreground)]">
-          Enable leveraged loans, deleverage, and collateral swaps via yld zapper contracts. These contracts have not been audited.
+        <p className="text-xs text-red-400/80">
+          Enable leveraged loans, deleverage, and collateral swaps via yld zapper contract. This contract has not been audited. <span className="font-bold text-red-500">USE AT OWN RISK</span>
         </p>
       </div>
     </div>,
