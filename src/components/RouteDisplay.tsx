@@ -191,7 +191,7 @@ const PROTOCOL_LINKS: Record<string, string> = {
   "hop": "https://hop.exchange",
   // Other
   "pirex": "https://pirex.io",
-  "liquidboost": "https://app.tangent.finance/liquid-boost/cvx",
+  "liquidboost": "https://liquidboost.tangent.finance/stake/cvx",
   "weth": "https://weth.io",
 };
 

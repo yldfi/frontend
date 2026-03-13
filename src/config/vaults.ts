@@ -550,7 +550,7 @@ export const ILLIQUID_TOKENS: Record<string, {
       "Withdraw your position as cvgCVX tokens",
       "Return here and use the Deposit tab",
     ],
-    acquireUrl: "https://app.tangent.finance/liquid-boost/cvx",
+    acquireUrl: "https://liquidboost.tangent.finance/stake/cvx",
     acquireButtonText: "Go to Tangent LiquidBoost",
   },
 } as const;
