@@ -747,12 +747,12 @@ export function LendingInterface({
     return { ...position, inSoftLiquidation: true };
   }, [position, debugSoftLiq]);
 
-  // Reset off leverage tab when zappers are disabled
+  // Reset off leverage tab when zappers are disabled (unless in soft-liq, where it becomes "liquidate")
   useEffect(() => {
-    if (!zappersEnabled && activeTab === "leverage") {
+    if (!zappersEnabled && activeTab === "leverage" && !effectivePosition?.inSoftLiquidation) {
       setActiveTab("borrow");
     }
-  }, [zappersEnabled, activeTab]);
+  }, [zappersEnabled, activeTab, effectivePosition?.inSoftLiquidation]);
 
   // Reset to "borrow" tab when a loan is first created
   // Tracks hasLoan transitions: false→true triggers tab switch to "borrow"
@@ -1548,7 +1548,7 @@ export function LendingInterface({
       {!effectiveTxState && (
         <div className="p-4 pb-0">
           <div className="flex border-b border-[var(--border)]">
-            {(["borrow", "leverage", "repay", "collateral"] as const).filter((t) => t !== "leverage" || zappersEnabled).map((tab) => (
+            {(["borrow", "leverage", "repay", "collateral"] as const).filter((t) => t !== "leverage" || zappersEnabled || effectivePosition?.inSoftLiquidation).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}

@@ -2094,38 +2094,41 @@ export function LeverageTab({
         </div>
       </div>
 
-      {/* Powered by Enso + Route toggle + Settings — show when Enso is involved */}
-      {(activeMode !== "selfLiquidate" || selfLiqMethod === "swap") && (
+      {/* Powered by Enso + Route toggle + Settings */}
       <div className="flex items-center justify-between pt-2">
-        <a
-          href="https://www.enso.build"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-1.5 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
-        >
-          <span>Powered by</span>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/enso.png"
-            alt="Enso"
-            width={14}
-            height={14}
-            className="rounded-sm"
-          />
-          <span className="font-medium">Enso</span>
-        </a>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={toggleRoute}
-            className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
-            title={showRoute ? "Hide route" : "Show route"}
+        {(activeMode !== "selfLiquidate" || selfLiqMethod === "swap") ? (
+          <a
+            href="https://www.enso.build"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
           >
-            {showRoute ? <RouteOff size={16} /> : <RouteIcon size={16} />}
-          </button>
+            <span>Powered by</span>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/enso.png"
+              alt="Enso"
+              width={14}
+              height={14}
+              className="rounded-sm"
+            />
+            <span className="font-medium">Enso</span>
+          </a>
+        ) : <div />}
+        <div className="flex items-center gap-1">
+          {(activeMode !== "selfLiquidate" || selfLiqMethod === "swap") && (
+            <button
+              onClick={toggleRoute}
+              className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
+              title={showRoute ? "Hide route" : "Show route"}
+            >
+              {showRoute ? <RouteOff size={16} /> : <RouteIcon size={16} />}
+            </button>
+          )}
           <button
             onClick={() => setShowSlippageModal(true)}
             className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
-            title="Slippage settings"
+            title="Settings"
           >
             <svg
               width="16"
@@ -2145,7 +2148,6 @@ export function LeverageTab({
           </button>
         </div>
       </div>
-      )}
 
       {/* Route details panel */}
       {(() => {
