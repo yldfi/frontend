@@ -8,7 +8,7 @@ import { parseUnits, formatUnits } from "viem";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
 import { MaxButton } from "@/components/MaxButton";
-import { ArrowUpRight, ExternalLink, Search, Route, RouteOff, Copy, ChevronDown, ChevronRight, Check, X, Clock, ArrowRightLeft, HeartPulse, Shield, Wallet, Banknote, Percent, TrendingUp, Info, Coins } from "lucide-react";
+import { ArrowUpRight, ExternalLink, Search, Route, RouteOff, Copy, ChevronDown, ChevronRight, Check, X, Clock, ArrowRightLeft, HeartPulse, Shield, Wallet, Banknote, Percent, TrendingUp, Info, Coins, Gift } from "lucide-react";
 import { RouteDisplay } from "@/components/RouteDisplay";
 import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
@@ -46,10 +46,11 @@ function parseQuoteError(error: Error | null): string {
 
 import { ContractExplorer, useContractExplorer, type ExplorerContract } from "@/components/ContractExplorer";
 import Image from "next/image";
-import { cn } from "@/lib/utils";
+import { cn, formatUsd } from "@/lib/utils";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { useSettings } from "@/hooks/useSettings";
 import { Logo } from "@/components/Logo";
+import { useMerklRewards } from "@/hooks/useMerklRewards";
 import { useCurveLendingVault, formatCurveVaultData } from "@/hooks/useCurveLendingData";
 import { useCurveLendingPosition, formatHealth } from "@/hooks/useCurveLendingPosition";
 import { buildLendingPositionDisplay } from "@/lib/lending";
@@ -597,6 +598,13 @@ export function VaultPageContent({ id }: { id: string }) {
     controllerAddress ? (vault?.address as `0x${string}`) : undefined,
     userAddress
   );
+
+  // Fetch Merkl rewards for earnings display
+  const { data: merklData } = useMerklRewards(1);
+  const merklRewards = merklData?.flatMap((d) => d.rewards) ?? [];
+  const totalEarnedUsd = merklRewards.reduce((sum, r) => {
+    return sum + parseFloat(formatUnits(BigInt(r.amount), r.token.decimals)) * r.token.price;
+  }, 0);
 
   // Fetch cvxCRV price from on-chain oracles
   const { price: cvxCrvPrice } = useCvxCrvPrice();
@@ -1363,16 +1371,36 @@ export function VaultPageContent({ id }: { id: string }) {
                 return (
                   <Link
                     href={`/vaults/${vault.id}/lending`}
-                    className="collateral-link block"
+                    className="block border border-[var(--border)] rounded-lg px-4 py-3 group hover:border-[var(--border-hover)] transition-colors"
                   >
-                    <span>
-                      <Image src="/curve-logo.png" alt="Curve" width={14} height={14} className="rounded-full inline-block" />
-                      Borrow against {vault.symbol}
-                      <ArrowUpRight size={14} />
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <Image src="/curve-logo.png" alt="Curve" width={16} height={16} className="rounded-full" />
+                      <span className="text-sm font-medium">Borrow against {vault.symbol}</span>
+                      <span className="text-xs text-[var(--muted-foreground)]">
+                        Use {vault.symbol} as collateral to borrow crvUSD
+                      </span>
+                      <ArrowUpRight size={14} className="ml-auto text-[var(--muted-foreground)] group-hover:text-[var(--foreground)] transition-colors" />
+                    </div>
                   </Link>
                 );
               })()}
+
+              {/* Rewards Banner */}
+              {vault.id === "ycvxcrv" && (
+                <Link
+                  href="/rewards"
+                  className="block border border-green-400/20 bg-green-400/5 rounded-lg px-4 py-3 group hover:border-green-400/40 transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <Image src="/tokens/crvusd.png" alt="crvUSD" width={16} height={16} className="rounded-full" />
+                    <span className="text-sm font-medium text-green-400">crvUSD Rewards</span>
+                    <span className="text-xs text-[var(--muted-foreground)]">
+                      {totalEarnedUsd > 0 ? `Earning ${formatUsd(totalEarnedUsd)}` : `Earn crvUSD by borrowing against ${vault.symbol}`}
+                    </span>
+                    <ArrowUpRight size={14} className="ml-auto text-green-400/60 group-hover:text-green-400 transition-colors" />
+                  </div>
+                </Link>
+              )}
 
               {/* Stats */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

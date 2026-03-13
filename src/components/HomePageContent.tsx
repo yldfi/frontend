@@ -5,7 +5,7 @@ import { useAccount } from "wagmi";
 import { formatUnits } from "viem";
 import { useRouter } from "next/navigation";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
-import { ArrowUpRight, Github, BookOpen, Send, ChevronDown, ChevronUp, HeartPulse } from "lucide-react";
+import { ArrowUpRight, Github, BookOpen, Send, ChevronDown, ChevronUp, HeartPulse, Gift } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import { cn, formatUsd } from "@/lib/utils";
@@ -18,6 +18,7 @@ import { useVaultCache } from "@/hooks/useVaultCache";
 import { useCvxCrvPrice } from "@/hooks/useCvxCrvPrice";
 import { useCurveLendingPosition, formatHealth } from "@/hooks/useCurveLendingPosition";
 import { VAULTS, VAULT_ADDRESSES, CURVE_CONTROLLERS } from "@/config/vaults";
+import { useMerklRewards } from "@/hooks/useMerklRewards";
 
 // Build vault configs from centralized config
 // In development, show all vaults including hidden ones
@@ -37,6 +38,7 @@ const vaultConfigs = Object.values(VAULTS)
     feeBreakdown: vault.feeBreakdown,
     logo: vault.logoSmall,
     hasLending: vault.type === "vault" && vault.address in CURVE_CONTROLLERS,
+    hasRewards: vault.id === "ycvxcrv", // Active Merkl campaign
   }));
 
 type SortOption = "holdings" | "apy" | "tvl";
@@ -138,6 +140,13 @@ export function HomePageContent() {
     VAULT_ADDRESSES.YCVXCRV as `0x${string}`,
     address
   );
+
+  // Fetch Merkl rewards for earnings display
+  const { data: merklData } = useMerklRewards(1);
+  const merklRewards = merklData?.flatMap((d) => d.rewards) ?? [];
+  const totalEarnedUsd = merklRewards.reduce((sum, r) => {
+    return sum + parseFloat(formatUnits(BigInt(r.amount), r.token.decimals)) * r.token.price;
+  }, 0);
 
   // Fetch price per share from on-chain
   const { prices: pricePerShareData } = useMultiplePricePerShare([
@@ -286,8 +295,12 @@ export function HomePageContent() {
             </span>
           </Link>
 
-          
-          <CustomConnectButton />
+          <div className="flex items-center gap-4">
+            <Link href="/rewards" className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors">
+              Rewards
+            </Link>
+            <CustomConnectButton />
+          </div>
         </div>
       </header>
 
@@ -503,6 +516,16 @@ export function HomePageContent() {
                           </span>
                         )
                       ))}
+                      {vault.hasRewards && (
+                        <button
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); router.push("/rewards"); }}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium bg-green-400/10 text-green-400 border border-green-400/20 rounded whitespace-nowrap hover:bg-green-400/20 transition-colors"
+                        >
+                          <Gift size={10} />
+                          <span>{totalEarnedUsd > 0 ? `Earning ${formatUsd(totalEarnedUsd)}` : "Rewards"}</span>
+                          <ArrowUpRight size={10} />
+                        </button>
+                      )}
                     </div>
                     <div className="grid grid-cols-3 gap-2 pt-3 border-t border-[var(--border)]">
                       <div className="text-center">
@@ -574,6 +597,16 @@ export function HomePageContent() {
                               </span>
                             )
                           ))}
+                          {vault.hasRewards && (
+                            <button
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); router.push("/rewards"); }}
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium bg-green-400/10 text-green-400 border border-green-400/20 rounded whitespace-nowrap hover:bg-green-400/20 transition-colors"
+                            >
+                              <Gift size={10} />
+                              <span>{totalEarnedUsd > 0 ? `Earning ${formatUsd(totalEarnedUsd)}` : "Rewards"}</span>
+                              <ArrowUpRight size={10} />
+                            </button>
+                          )}
                         </div>
                         <p className="text-sm text-[var(--muted-foreground)] max-w-md mt-1.5">
                           {vault.description}

@@ -1,0 +1,365 @@
+"use client";
+
+import { useAccount } from "wagmi";
+import { formatUnits } from "viem";
+import Link from "next/link";
+import Image from "next/image";
+import { Gift, ExternalLink, Clock, CheckCircle2, ArrowRight, ArrowUpRight, Check, ChevronRight } from "lucide-react";
+import { CustomConnectButton } from "@/components/CustomConnectButton";
+import { Logo } from "@/components/Logo";
+import { LoadingDots } from "@/components/LoadingDots";
+import { useMerklRewards, type MerklReward } from "@/hooks/useMerklRewards";
+import { useVaultBalance } from "@/hooks/useVaultBalance";
+import { useCurveLendingPosition } from "@/hooks/useCurveLendingPosition";
+import { VAULT_ADDRESSES } from "@/config/vaults";
+import { formatUsd } from "@/lib/utils";
+
+function RewardRow({ reward }: { reward: MerklReward }) {
+  const amount = BigInt(reward.amount);
+  const claimed = BigInt(reward.claimed);
+  const claimable = amount - claimed;
+  const hasClaimable = claimable > 0n;
+
+  const formattedAmount = parseFloat(formatUnits(amount, reward.token.decimals));
+  const formattedClaimed = parseFloat(formatUnits(claimed, reward.token.decimals));
+  const formattedClaimable = parseFloat(formatUnits(claimable, reward.token.decimals));
+
+  const claimableUsd = formattedClaimable * reward.token.price;
+
+  return (
+    <div className="border border-[var(--border)] rounded-lg p-5 hover:border-[var(--border-hover)] transition-colors">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          {reward.token.symbol === "crvUSD" ? (
+            <Image src="/tokens/crvusd.png" alt="crvUSD" width={36} height={36} className="rounded-full" />
+          ) : (
+            <div className="w-9 h-9 rounded-full bg-[var(--muted)] flex items-center justify-center text-sm font-medium">
+              {reward.token.symbol.slice(0, 2)}
+            </div>
+          )}
+          <div>
+            <div className="font-medium">{reward.token.symbol}</div>
+            <div className="text-xs text-[var(--muted-foreground)]">
+              {reward.breakdowns.length} campaign{reward.breakdowns.length !== 1 ? "s" : ""}
+            </div>
+          </div>
+        </div>
+        {hasClaimable && (
+          <button
+            className="px-4 py-1.5 text-sm font-medium rounded-md bg-white text-black hover:bg-white/90 transition-colors"
+            onClick={() => {
+              // TODO: implement claim transaction using reward.proofs
+            }}
+          >
+            Claim
+          </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-3 gap-4 text-sm">
+        <div>
+          <div className="text-[var(--muted-foreground)] mb-1">Earned</div>
+          <div className="font-medium mono">
+            {formattedAmount.toLocaleString("en-US", { maximumFractionDigits: 4 })}
+          </div>
+          <div className="text-xs text-[var(--muted-foreground)]">
+            {formatUsd(formattedAmount * reward.token.price)}
+          </div>
+        </div>
+        <div>
+          <div className="text-[var(--muted-foreground)] mb-1 flex items-center gap-1">
+            <CheckCircle2 className="w-3 h-3" /> Claimed
+          </div>
+          <div className="font-medium mono">
+            {formattedClaimed.toLocaleString("en-US", { maximumFractionDigits: 4 })}
+          </div>
+        </div>
+        <div>
+          <div className="text-[var(--muted-foreground)] mb-1">Claimable</div>
+          <div className="font-medium mono text-green-400">
+            {formattedClaimable.toLocaleString("en-US", { maximumFractionDigits: 4 })}
+          </div>
+          {claimableUsd > 0 && (
+            <div className="text-xs text-green-400/70">{formatUsd(claimableUsd)}</div>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-3 pt-3 border-t border-[var(--border)] flex justify-end">
+        <a
+          href="https://app.merkl.xyz"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+        >
+          <span>Powered by</span>
+          <Image src="/merkl-symbol.svg" alt="Merkl" width={14} height={14} className="rounded-sm" />
+          <span className="font-medium">Merkl</span>
+        </a>
+      </div>
+    </div>
+  );
+}
+
+export function RewardsPageContent() {
+  const { isConnected, address } = useAccount();
+  const { data, isLoading, error } = useMerklRewards(1);
+
+  // Check eligibility: user holds ycvxCRV
+  const { balance: ycvxcrvBalance } = useVaultBalance(VAULT_ADDRESSES.YCVXCRV as `0x${string}`);
+  // Check eligibility: user has a borrow position
+  const { position } = useCurveLendingPosition(
+    VAULT_ADDRESSES.YCVXCRV as `0x${string}`,
+    address
+  );
+  const hasBorrowPosition = position?.hasLoan ?? false;
+
+  // Step 1 complete if user holds ycvxCRV OR has a lending position (collateral is in Curve's custody)
+  const hasYcvxcrv = ycvxcrvBalance > 0n || hasBorrowPosition;
+
+  // Is the user actively earning rewards?
+  const isEarning = hasBorrowPosition;
+
+  // Flatten all rewards across chains
+  const rewards: MerklReward[] = data?.flatMap((d) => d.rewards) ?? [];
+
+  // Total earned for campaign card display
+  const totalEarnedUsd = rewards.reduce((sum, r) => {
+    return sum + parseFloat(formatUnits(BigInt(r.amount), r.token.decimals)) * r.token.price;
+  }, 0);
+
+  // Calculate totals
+  const totalClaimableUsd = rewards.reduce((sum, r) => {
+    const claimable = BigInt(r.amount) - BigInt(r.claimed);
+    return sum + parseFloat(formatUnits(claimable, r.token.decimals)) * r.token.price;
+  }, 0);
+
+  const totalPendingUsd = rewards.reduce((sum, r) => {
+    return sum + parseFloat(formatUnits(BigInt(r.pending), r.token.decimals)) * r.token.price;
+  }, 0);
+
+  return (
+    <div className="min-h-screen bg-[var(--background)]">
+      {/* Header */}
+      <header
+        className="fixed left-0 right-0 z-50 border-b border-[var(--border)] backdrop-blur-lg bg-[var(--background)]/80"
+        style={{ top: "var(--test-banner-height)" }}
+      >
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+          <Link href="/" className="flex items-center gap-2">
+            <Logo size={28} />
+            <span className="mono text-lg font-medium tracking-tight leading-none">
+              yld
+            </span>
+          </Link>
+          <CustomConnectButton />
+        </div>
+      </header>
+
+      <main style={{ paddingTop: "calc(4rem + var(--test-banner-height))" }}>
+        {/* Breadcrumb navigation */}
+        <div className="border-b border-[var(--border)]">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4">
+            <nav className="flex items-center gap-2 text-sm">
+              <Link
+                href="/"
+                className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+              >
+                yld Vaults
+              </Link>
+              <ChevronRight size={14} className="text-[var(--muted-foreground)]" />
+              <span className="text-[var(--foreground)]">Rewards</span>
+            </nav>
+          </div>
+        </div>
+
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
+        {/* Page header */}
+        <div className="mb-8">
+          <div className="flex items-center gap-3 mb-2">
+            <Gift className="w-6 h-6" />
+            <h1 className="text-2xl font-semibold tracking-tight">Rewards</h1>
+          </div>
+          <p className="text-sm text-[var(--muted-foreground)]">
+            Claim your earned rewards from yld campaigns.
+          </p>
+        </div>
+
+        {/* Active Campaigns */}
+        <div className="mb-10">
+          <h2 className="text-sm font-medium text-[var(--muted-foreground)] uppercase tracking-wider mb-4">
+            Active Campaigns
+          </h2>
+          <div className="border border-[var(--border)] rounded-lg overflow-hidden">
+            <div className="p-5">
+              {/* Campaign header */}
+              <div className="flex items-center gap-3 mb-4">
+                <Image src="/ycvxcrv-64.png" alt="ycvxCRV" width={40} height={40} className="rounded-full" />
+                <div className="flex-1">
+                  <h3 className="font-medium leading-normal">
+                    Borrow against ycvxCRV on{" "}
+                    <Link href="/vaults/ycvxcrv/lending" className="hover:text-[var(--accent)] transition-colors">
+                      <Image src="/curve-logo.png" alt="Curve" width={14} height={14} className="rounded-full inline align-middle" />
+                      {" "}Curve LlamaLend{" "}
+                      <ArrowUpRight className="w-3 h-3 inline align-middle" />
+                    </Link>
+                  </h3>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-green-400/10 text-green-400">
+                      <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                      Live
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-xs text-[var(--muted-foreground)]">
+                      <Image src="/tokens/crvusd.png" alt="crvUSD" width={14} height={14} className="rounded-full" />
+                      crvUSD rewards
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-sm text-[var(--muted-foreground)] mb-5">
+                Earn crvUSD by borrowing against ycvxCRV. The more you borrow, the more you earn.
+              </p>
+
+              {/* Steps */}
+              <div className="mb-5">
+                <div className="text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wider mb-3">
+                  How to become eligible
+                </div>
+                <div className="space-y-3">
+                  <Link href="/vaults/ycvxcrv" className="flex items-start gap-3 group">
+                    {hasYcvxcrv ? (
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full bg-green-400/20 flex items-center justify-center">
+                        <Check className="w-3.5 h-3.5 text-green-400" />
+                      </span>
+                    ) : (
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full bg-[var(--muted)] flex items-center justify-center text-xs font-medium">
+                        1
+                      </span>
+                    )}
+                    <div className="flex-1">
+                      <div className="text-sm font-medium group-hover:text-[var(--accent)] transition-colors flex items-center gap-1.5">
+                        Deposit cvxCRV into the ycvxCRV vault
+                        <ArrowUpRight className="w-3 h-3" />
+                      </div>
+                      <div className="text-xs text-[var(--muted-foreground)]">
+                        Deposit cvxCRV to receive ycvxCRV yield-bearing vault tokens.
+                      </div>
+                    </div>
+                  </Link>
+                  <Link href="/vaults/ycvxcrv/lending" className="flex items-start gap-3 group">
+                    {hasBorrowPosition ? (
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full bg-green-400/20 flex items-center justify-center">
+                        <Check className="w-3.5 h-3.5 text-green-400" />
+                      </span>
+                    ) : (
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full bg-[var(--muted)] flex items-center justify-center text-xs font-medium">
+                        2
+                      </span>
+                    )}
+                    <div className="flex-1">
+                      <div className="text-sm font-medium group-hover:text-[var(--accent)] transition-colors flex items-center gap-1.5">
+                        Open a LlamaLend loan and borrow crvUSD
+                        <ArrowUpRight className="w-3 h-3" />
+                      </div>
+                      <div className="text-xs text-[var(--muted-foreground)]">
+                        Use your ycvxCRV as collateral to borrow crvUSD. The more you borrow, the more you earn.
+                      </div>
+                    </div>
+                  </Link>
+                </div>
+              </div>
+            </div>
+            {isConnected && isEarning && (
+              <div className="border-t border-green-400/20 bg-green-400/5 px-5 py-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                    <span className="text-xs font-medium text-green-400 uppercase tracking-wider">Active Rewards</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-sm">
+                    <span className="text-[var(--muted-foreground)]">Your earnings</span>
+                    <span className="font-medium mono text-green-400">
+                      {totalEarnedUsd > 0 ? formatUsd(totalEarnedUsd) : "$0.00"}
+                    </span>
+                    {totalClaimableUsd > 0 && (
+                      <span className="text-xs text-[var(--muted-foreground)]">
+                        ({formatUsd(totalClaimableUsd)} claimable)
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div className="mb-8">
+          <h2 className="text-sm font-medium text-[var(--muted-foreground)] uppercase tracking-wider">
+            Your Rewards
+          </h2>
+        </div>
+
+        {!isConnected ? (
+          <div className="border border-[var(--border)] rounded-lg p-12 text-center">
+            <Gift className="w-10 h-10 mx-auto mb-4 text-[var(--muted-foreground)]" />
+            <p className="text-[var(--muted-foreground)] mb-4">
+              Connect your wallet to view rewards
+            </p>
+            <CustomConnectButton />
+          </div>
+        ) : isLoading ? (
+          <div className="border border-[var(--border)] rounded-lg p-12 text-center">
+            <LoadingDots />
+            <p className="text-sm text-[var(--muted-foreground)] mt-2">
+              Fetching rewards...
+            </p>
+          </div>
+        ) : error ? (
+          <div className="border border-[var(--border)] rounded-lg p-12 text-center">
+            <p className="text-[var(--destructive)]">
+              Failed to load rewards. Please try again later.
+            </p>
+          </div>
+        ) : rewards.length === 0 ? (
+          <div className="border border-[var(--border)] rounded-lg p-12 text-center">
+            <Gift className="w-10 h-10 mx-auto mb-4 text-[var(--muted-foreground)]" />
+            <p className="text-[var(--muted-foreground)]">
+              No rewards found for this wallet.
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* Summary cards */}
+            <div className="grid grid-cols-2 gap-4 mb-8">
+              <div className="border border-[var(--border)] rounded-lg p-5">
+                <div className="text-sm text-[var(--muted-foreground)] mb-1">Claimable</div>
+                <div className="text-2xl font-semibold mono text-green-400">
+                  {formatUsd(totalClaimableUsd)}
+                </div>
+              </div>
+              <div className="border border-[var(--border)] rounded-lg p-5">
+                <div className="text-sm text-[var(--muted-foreground)] mb-1 flex items-center gap-1">
+                  <Clock className="w-3 h-3" /> Pending
+                </div>
+                <div className="text-2xl font-semibold mono">
+                  {formatUsd(totalPendingUsd)}
+                </div>
+              </div>
+            </div>
+
+            {/* Reward rows */}
+            <div className="space-y-3">
+              {rewards.map((reward) => (
+                <RewardRow key={`${reward.token.address}-${reward.distributionChainId}`} reward={reward} />
+              ))}
+            </div>
+
+          </>
+        )}
+        </div>
+      </main>
+    </div>
+  );
+}

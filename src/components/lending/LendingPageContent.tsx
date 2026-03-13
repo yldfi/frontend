@@ -4,12 +4,14 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { ChevronRight, AlertTriangle, ExternalLink, Info, Activity, Coins, TrendingUp } from "lucide-react";
+import { ChevronRight, AlertTriangle, ExternalLink, Info, Activity, Coins, TrendingUp, ArrowUpRight } from "lucide-react";
 import { useAccount } from "wagmi";
 import { formatUnits } from "viem";
 import { getVault, CURVE_CONTROLLERS, CURVE_SAVINGS } from "@/config/vaults";
 import { useVaultBalance } from "@/hooks/useVaultBalance";
 import { useCurveLendingPosition } from "@/hooks/useCurveLendingPosition";
+import { useMerklRewards } from "@/hooks/useMerklRewards";
+import { formatUsd } from "@/lib/utils";
 import { useOraclePriceHistory, useMarketBands } from "@/hooks/useOraclePriceHistory";
 import { useR2PriceHistory } from "@/hooks/useR2PriceHistory";
 import { useVolumeProfile, type VolumeProfilePeriod } from "@/hooks/useVolumeProfile";
@@ -43,6 +45,12 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
   const { data: r2History } = useR2PriceHistory();
   const { data: volumeProfile } = useVolumeProfile();
   const marketStats = useCurveMarketRates(controllerAddress);
+
+  // Merkl rewards earnings
+  const { data: merklData } = useMerklRewards(1);
+  const totalEarnedUsd = (merklData?.flatMap((d) => d.rewards) ?? []).reduce((sum, r) => {
+    return sum + parseFloat(formatUnits(BigInt(r.amount), r.token.decimals)) * r.token.price;
+  }, 0);
   const [vpPeriod, setVpPeriod] = useState<VolumeProfilePeriod>("all");
 
   // Measure chart bottom relative to grid so right panel aligns
@@ -201,6 +209,23 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                   onVolumeProfilePeriodChange={setVpPeriod}
                 />
               </div>
+
+              {/* Rewards Banner */}
+              {vault.id === "ycvxcrv" && (
+                <Link
+                  href="/rewards"
+                  className="block border border-green-400/20 bg-green-400/5 rounded-lg px-4 py-3 group hover:border-green-400/40 transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <Image src="/tokens/crvusd.png" alt="crvUSD" width={16} height={16} className="rounded-full" />
+                    <span className="text-sm font-medium text-green-400">crvUSD Rewards</span>
+                    <span className="text-xs text-[var(--muted-foreground)]">
+                      {totalEarnedUsd > 0 ? `Earning ${formatUsd(totalEarnedUsd)}` : `Earn crvUSD by borrowing against ${vault.symbol}`}
+                    </span>
+                    <ArrowUpRight size={14} className="ml-auto text-green-400/60 group-hover:text-green-400 transition-colors" />
+                  </div>
+                </Link>
+              )}
 
               {/* Soft-liquidation warning */}
               {position?.inSoftLiquidation && (
