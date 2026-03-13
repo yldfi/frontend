@@ -292,7 +292,6 @@ export function useZapQuote({
   const { address: userAddress } = useAccount();
   const publicClient = usePublicClient();
   const { isTestNetwork } = useTestNetwork();
-
   // Check if vault uses cvgCVX or pxCVX as underlying (requires custom routing)
   const isCvgCvxVault = underlyingToken?.toLowerCase() === TOKENS.CVGCVX.toLowerCase();
   const isPxCvxVault = underlyingToken?.toLowerCase() === TOKENS.PXCVX.toLowerCase();
@@ -704,6 +703,7 @@ export function useZapQuote({
             inputToken: inputToken.address,
             amountIn: amountInWei,
             slippage: slippage,
+
           });
 
           const outputAmountRaw = bundle.amountsOut[vaultAddress.toLowerCase()]
@@ -755,6 +755,7 @@ export function useZapQuote({
             outputToken: outputToken.address,
             amountIn: amountInWei,
             slippage: slippage,
+
           });
 
           const outputAmountRaw = bundle.amountsOut[outputToken.address.toLowerCase()]
@@ -825,6 +826,7 @@ export function useZapQuote({
             inputToken: inputToken.address,
             amountIn: amountInWei,
             slippage: slippage,
+
           });
 
           const outputAmountRaw = bundle.amountsOut[vaultAddress.toLowerCase()]

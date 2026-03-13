@@ -262,17 +262,25 @@ export function TokenSelector({
     setSearchQuery("");
   };
 
+  // When disabled, show static token label without dropdown affordance
+  if (disabled && selectedToken) {
+    return (
+      <div className="flex items-center gap-1.5 px-2 h-6 min-w-[72px]">
+        <TokenLogo token={selectedToken} size={16} />
+        <span className="mono text-sm font-medium">{selectedToken.symbol}</span>
+      </div>
+    );
+  }
+
   return (
     <>
       <button
         ref={buttonRef}
-        onClick={() => !disabled && setIsOpen(true)}
-        disabled={disabled}
+        onClick={() => setIsOpen(true)}
         className={cn(
           "flex items-center gap-1.5 px-2 h-6 min-w-[72px] rounded-md border border-[var(--border)]",
           "hover:border-[var(--border-hover)] transition-colors",
           "bg-[var(--muted)]",
-          disabled && "opacity-50 cursor-not-allowed"
         )}
       >
         {selectedToken ? (

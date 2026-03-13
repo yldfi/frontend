@@ -101,7 +101,13 @@ export function CollateralTab({
     showSimulationPreview, setShowSimulationPreview, refreshSimulationPreview,
     showSimulationModal, setShowSimulationModal,
     showRoute, toggleRoute,
+    zappersEnabled,
   } = useSettings();
+
+  // Reset to vault token when zappers are disabled
+  useEffect(() => {
+    if (!zappersEnabled) setSelectedToken(vaultToken);
+  }, [zappersEnabled, vaultToken]);
 
   const [rateInverted, setRateInverted] = useState(false);
 
@@ -741,7 +747,8 @@ export function CollateralTab({
     !hasInsufficientBalance &&
     !exceedsCollateral &&
     !healthTooLow &&
-    (isVaultToken || (!quoteLoading && swapQuote !== undefined));
+    (isVaultToken || (!quoteLoading && swapQuote !== undefined)) &&
+    (isVaultToken || zappersEnabled);
 
   const getButtonText = () => {
     if (status === "building") return <>Building transaction<LoadingDots /></>;
@@ -826,6 +833,7 @@ export function CollateralTab({
             onSelect={setSelectedToken}
             priorityTokens={[vaultToken]}
             excludeDefiTokens={mode === "add"}
+            disabled={!zappersEnabled}
           />
           <MaxButton
             balance={maxBalance}

@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { AlertTriangle } from "lucide-react";
 import { useChainId } from "wagmi";
 import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
+import { useSettings } from "@/hooks/useSettings";
 import { cn } from "@/lib/utils";
 
 const SIMULATION_STORAGE_KEY = "yldfi-show-simulation";
@@ -34,6 +35,9 @@ export function SlippageModal({
     }
     return false;
   });
+
+  // Zappers toggle (synced across all components via useSyncExternalStore)
+  const { zappersEnabled, setZappersEnabled } = useSettings();
 
   // Re-read from localStorage when modal opens (React "adjust state from props" pattern)
   const [prevOpen, setPrevOpen] = useState(open);
@@ -212,6 +216,33 @@ export function SlippageModal({
             </p>
           </>
         )}
+
+        <div className="border-t border-[var(--border)]" />
+
+        {/* Zappers Toggle */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium">Zapper Contracts</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-500 font-medium">UNAUDITED</span>
+          </div>
+          <button
+            onClick={() => setZappersEnabled(!zappersEnabled)}
+            className={cn(
+              "relative w-11 h-6 rounded-full transition-colors",
+              zappersEnabled ? "bg-[var(--accent)]" : "bg-[var(--muted)]"
+            )}
+          >
+            <span
+              className={cn(
+                "absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform",
+                zappersEnabled && "translate-x-5"
+              )}
+            />
+          </button>
+        </div>
+        <p className="text-xs text-[var(--muted-foreground)]">
+          Enable leveraged loans, deleverage, and collateral swaps via yld zapper contracts. These contracts have not been audited.
+        </p>
       </div>
     </div>,
     document.body

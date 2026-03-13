@@ -274,7 +274,16 @@ export function BorrowTab({
     showSimulationPreview, setShowSimulationPreview, refreshSimulationPreview,
     showSimulationModal, setShowSimulationModal,
     showRoute, toggleRoute,
+    zappersEnabled,
   } = useSettings();
+
+  // Reset tokens to defaults when zappers are disabled
+  useEffect(() => {
+    if (!zappersEnabled) {
+      setBorrowToken(CRVUSD_TOKEN);
+      setCollateralToken(vaultToken);
+    }
+  }, [zappersEnabled, vaultToken]);
 
   // Rate inversion toggle
   const [rateInverted, setRateInverted] = useState(false);
@@ -934,6 +943,8 @@ export function BorrowTab({
   const collateralQuoteFetching = collateralSwapFetching || collateralDebouncePending;
   const collateralSwapPending = showCollateralInput && !isCollateralToken && !!collateralAmount && Number(collateralAmount) > 0 && (collateralSwapLoading || collateralQuoteFetching);
 
+  const needsZapperForBorrow = !isCrvUsd || (!isCollateralToken && collateralWei > 0n);
+
   const isFormValid =
     !!borrowAmount &&
     Number(borrowAmount) > 0 &&
@@ -942,7 +953,8 @@ export function BorrowTab({
     !debtTooHigh &&
     !hasInsufficientCollateral &&
     !collateralSwapPending &&
-    (isCrvUsd || (!quoteLoading && estimatedCrvUsdBorrow !== null));
+    (isCrvUsd || (!quoteLoading && estimatedCrvUsdBorrow !== null)) &&
+    (!needsZapperForBorrow || zappersEnabled);
 
   const getButtonText = () => {
     if (status === "building") return <>Building transaction<LoadingDots /></>;
@@ -951,7 +963,6 @@ export function BorrowTab({
     if (status === "waitingTx") return <>Waiting for confirmation<LoadingDots /></>;
     if (hasInsufficientCollateral) return "Insufficient collateral balance";
     if (debtTooHigh || exceedsMax) return "Exceeds max borrowable";
-
     if (isCrvUsd) return collateralWei > 0n ? "Add Collateral & Borrow" : "Borrow crvUSD";
     if (isVaultWithCrvUsdUnderlying) return "Borrow & Deposit";
     return "Borrow & Swap";
@@ -963,7 +974,7 @@ export function BorrowTab({
         <AlertTriangle size={20} className="mx-auto text-yellow-500" />
         <div className="text-sm font-medium text-[var(--foreground)]">Borrowing unavailable</div>
         <div className="text-xs text-[var(--muted-foreground)]">
-          Your position is in soft-liquidation.{onSwitchTab ? (<> Use <button type="button" onClick={() => onSwitchTab("repay")} className="underline hover:text-[var(--foreground)] transition-colors">Repay</button> to reduce debt or <button type="button" onClick={() => onSwitchTab("leverage")} className="underline hover:text-[var(--foreground)] transition-colors">Liquidate</button> to close your position.</>) : " Repay debt to resume borrowing."}
+          Your position is in soft-liquidation.{onSwitchTab ? (<> Use <button type="button" onClick={() => onSwitchTab("repay")} className="underline hover:text-[var(--foreground)] transition-colors">Repay</button> to reduce debt or <button type="button" onClick={() => onSwitchTab("leverage")} className="underline hover:text-[var(--foreground)] transition-colors">Liquidate</button> to close or reduce your position.</>) : " Repay debt to resume borrowing."}
         </div>
       </div>
     );
@@ -1002,6 +1013,7 @@ export function BorrowTab({
             onSelect={setBorrowToken}
             priorityTokens={[CRVUSD_TOKEN, SCRVUSD_TOKEN]}
             excludeDefiTokens
+            disabled={!zappersEnabled}
           />
           {maxBorrowable !== null && maxBorrowable > 0n && (
             isCrvUsd ? (
@@ -1192,6 +1204,7 @@ export function BorrowTab({
                   onSelect={(token) => { setCollateralToken(token); setCollateralAmountState(""); }}
                   priorityTokens={[vaultToken]}
                   excludeDefiTokens
+                  disabled={!zappersEnabled}
                 />
                 {isCollateralToken ? (
                   <MaxButton

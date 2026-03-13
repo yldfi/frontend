@@ -253,6 +253,9 @@ export function LeverageTab({
   // When collateral is fully converted (0), partial liquidation_extended reverts — only full close works
   const forceFullLiquidation = position?.collateral === 0n;
 
+  // Self-liquidation method: "direct" = user provides crvUSD, "swap" = zapper swaps collateral
+  const [selfLiqMethod, setSelfLiqMethod] = useState<"direct" | "swap">("direct");
+
   // Determine mode based on position state
   // selfLiquidate when health ≤ 0 OR in soft-liquidation (direct self-liquidation works at any health)
   const mode: LeverageMode = useMemo(() => {
@@ -409,6 +412,7 @@ export function LeverageTab({
     showSimulationPreview, setShowSimulationPreview, refreshSimulationPreview,
     showSimulationModal, setShowSimulationModal,
     showRoute, toggleRoute,
+    zappersEnabled,
   } = useSettings();
   const simulationBlock = useRef<bigint>(0n);
   const [ethPrice, setEthPrice] = useState<number | null>(null);
@@ -436,7 +440,7 @@ export function LeverageTab({
     deleverage: deleverageAction,
     deleverageAndWithdraw: deleverageAndWithdrawAction,
     deleverageAndWithdrawToToken: deleverageAndWithdrawToTokenAction,
-    selfLiquidate: _selfLiquidateAction, // unused — kept for zapper API compat
+    selfLiquidate: selfLiquidateAction,
     directLiquidate: directLiquidateAction,
     pendingApproval,
     approvalProgress,
@@ -477,6 +481,15 @@ export function LeverageTab({
 
   const [selectedToken, setSelectedToken] = useState<EnsoToken>(vaultToken);
   const isCollateralToken = selectedToken.address.toLowerCase() === vault.address.toLowerCase();
+
+  // Reset tokens to defaults when zappers are disabled
+  useEffect(() => {
+    if (!zappersEnabled) {
+      setSelectedToken(vaultToken);
+      setWithdrawToken(null);
+      setSelfLiqMethod("direct");
+    }
+  }, [zappersEnabled, vaultToken]);
 
   // Detect if selected input token is a vault token (e.g. yscvgCVX) that needs special routing
   const inputVaultInfo = useMemo(
@@ -563,7 +576,7 @@ export function LeverageTab({
             collateralOut = BigInt(route.amountOut);
             routeSteps = [
               { tokenSymbol: selectedToken.symbol, action: "Redeem", description: `for cvgCVX`, protocol: "ERC4626 Vault" },
-              { tokenSymbol: "cvgCVX", action: "Swap", description: `via CVX1 to CVX`, protocol: "Curve + HybridZapper" },
+              { tokenSymbol: "cvgCVX", action: "Swap", description: `via CVX1 to CVX`, protocol: "Curve" },
               { tokenSymbol: "CVX", action: "Swap", description: `for ${vault.symbol}`, protocol: "Enso Router" },
               { tokenSymbol: vault.symbol, action: "Deposit as Collateral", protocol: "Curve LlamaLend", amount: Number(formatUnits(collateralOut, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 }) },
             ];
@@ -1038,6 +1051,33 @@ export function LeverageTab({
     return { steps };
   }, [activeMode, deleverageCollateralToSell, withdrawAmountBn, vault, debtToRepay, isWithdrawToOtherToken, withdrawToken]);
 
+  // Route info for self-liquidation via zapper (collateral → crvUSD swap)
+  const selfLiquidateRouteInfo = useMemo((): RouteInfo | undefined => {
+    if (activeMode !== "selfLiquidate" || selfLiqMethod !== "swap" || effectiveSelfLiqPercent <= 0) return undefined;
+    if (!position?.hasLoan) return undefined;
+    const steps: RouteInfo["steps"] = [];
+    // Zapper receives collateral from controller callback, swaps to crvUSD
+    const collateralAmount = position.collateral * BigInt(effectiveSelfLiqPercent) / 100n;
+    if (collateralAmount > 0n) {
+      steps.push({
+        tokenSymbol: vault.symbol,
+        action: "Swap",
+        description: "collateral → crvUSD",
+        protocol: "Enso Router",
+        amount: Number(formatUnits(collateralAmount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 }),
+      });
+    }
+    const debtRepaid = position.debt * BigInt(effectiveSelfLiqPercent) / 100n;
+    steps.push({
+      tokenSymbol: "crvUSD",
+      action: "Repay",
+      description: "debt to controller",
+      protocol: "Curve LlamaLend",
+      amount: Number(formatUnits(debtRepaid, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 }),
+    });
+    return { steps };
+  }, [activeMode, canDirectLiquidate, effectiveSelfLiqPercent, position, vault]);
+
   // Estimate health for new positions
   useEffect(() => {
     async function calcHealth() {
@@ -1207,6 +1247,8 @@ export function LeverageTab({
       setCrvUsdGap(0n);
       return;
     }
+    // Reset while fetching to avoid stale enabled state
+    setCanDirectLiquidate(false);
     let stale = false;
     async function check() {
       try {
@@ -1380,14 +1422,24 @@ export function LeverageTab({
           await deleverageAction(controllerAddress, deleverageCollateralToSell, collateralToken, Number(slippage), false);
         }
       } else if (activeMode === "selfLiquidate") {
-        // Direct self-liquidation only: user calls controller.liquidate directly
-        // No health check, no liquidation fee (msg.sender == user)
         const percentage = BigInt(effectiveSelfLiqPercent) * 10n ** 16n;
-        if (preview) {
-          const result = await directLiquidateAction(controllerAddress, percentage, true, crvUsdGap);
-          if (openModalIfPreview(result)) return;
+        if (selfLiqMethod === "direct") {
+          // Direct self-liquidation: user calls controller.liquidate directly
+          // No health check, no liquidation fee (msg.sender == user)
+          if (preview) {
+            const result = await directLiquidateAction(controllerAddress, percentage, true, crvUsdGap);
+            if (openModalIfPreview(result)) return;
+          }
+          await directLiquidateAction(controllerAddress, percentage, false, crvUsdGap);
+        } else {
+          // Zapper self-liquidation: swaps collateral → crvUSD to cover gap
+          // No crvUSD needed from user
+          if (preview) {
+            const result = await selfLiquidateAction(controllerAddress, percentage, collateralToken, Number(slippage), true);
+            if (openModalIfPreview(result)) return;
+          }
+          await selfLiquidateAction(controllerAddress, percentage, collateralToken, Number(slippage), false);
         }
-        await directLiquidateAction(controllerAddress, percentage, false, crvUsdGap);
       }
     } catch (err) {
       console.error("Leverage action failed:", err);
@@ -1421,7 +1473,11 @@ export function LeverageTab({
       return "Deleverage";
     }
     if (activeMode === "selfLiquidate") {
-      if (!canDirectLiquidate && effectiveSelfLiqPercent > 0) return "Insufficient crvUSD";
+      if (selfLiqMethod === "direct" && !canDirectLiquidate && effectiveSelfLiqPercent > 0) return "Insufficient crvUSD";
+      if (selfLiqMethod === "swap") {
+        if (effectiveSelfLiqPercent === 100) return "Close Position via Swap";
+        return `Self Liquidate ${effectiveSelfLiqPercent}% via Swap`;
+      }
       if (effectiveSelfLiqPercent === 100) return "Close Position";
       return `Self Liquidate ${effectiveSelfLiqPercent}%`;
     }
@@ -1430,13 +1486,19 @@ export function LeverageTab({
 
   const isFormValid = () => {
     if (activeMode === "leverageUp") {
+      if (!zappersEnabled) return false;
       // Must have debt AND user must have actually increased leverage or added collateral
       return debtAmount > 0n && (effectiveLeverage > baseLeverage + 0.005 || collateralAmount !== "");
     }
-    if (activeMode === "deleverage") return position?.hasLoan === true && position.collateral > 0n && (deleverageCollateralToSell > 0n || withdrawAmountBn > 0n);
+    if (activeMode === "deleverage") {
+      if (!zappersEnabled) return false;
+      return position?.hasLoan === true && position.collateral > 0n && (deleverageCollateralToSell > 0n || withdrawAmountBn > 0n);
+    }
     if (activeMode === "selfLiquidate") {
       if (isUnderwater && !underwaterConfirmed) return false;
-      return effectiveSelfLiqPercent > 0 && canDirectLiquidate;
+      if (selfLiqMethod === "direct" && !canDirectLiquidate) return false;
+      if (selfLiqMethod === "swap" && !zappersEnabled) return false;
+      return effectiveSelfLiqPercent > 0;
     }
     return false;
   };
@@ -1499,6 +1561,7 @@ export function LeverageTab({
                     onSelect={(token) => { setSelectedToken(token); setCollateralAmount(""); }}
                     priorityTokens={[vaultToken]}
                     excludeDefiTokens
+                    disabled={!zappersEnabled}
                   />
                   <MaxButton
                     balance={isCollateralToken ? formatUnits(userBalanceBn, vault.decimals) : (isEth && altTokenBalance?.value ? getMaxEthAmount(altTokenBalance.value, gasPrice) : formatUnits(effectiveBalance, effectiveDecimals))}
@@ -1675,6 +1738,7 @@ export function LeverageTab({
                       onSelect={(token) => { setWithdrawToken(token.address.toLowerCase() === vault.address.toLowerCase() ? null : token); setWithdrawAmount(""); }}
                       priorityTokens={[vaultToken]}
                       excludeDefiTokens
+                      disabled={!zappersEnabled}
                     />
                     <MaxButton
                       balance={(() => {
@@ -1825,12 +1889,40 @@ export function LeverageTab({
                   : "Soft Liquidation"}
               </div>
               <div className="text-xs mt-0.5">
-                Withdraw collateral and close all or part of your position. Converted crvUSD covers debt — you pay any remaining gap from your wallet.{onSwitchTab && (
-                  <> Use <button type="button" onClick={() => onSwitchTab("repay")} className="underline hover:text-yellow-300 transition-colors">Repay</button> to reduce debt while keeping your position open.</>
+                Close all or part of your position using wallet crvUSD or by swapping collateral.{onSwitchTab && (
+                  <> Use <button type="button" onClick={() => onSwitchTab("repay")} className="underline hover:text-yellow-300 transition-colors">Repay</button> instead to reduce debt while keeping your position open.</>
                 )}
               </div>
             </div>
           </div>
+
+          {/* Method selector — only show when both options available (zappers enabled) */}
+          {crvUsdGap > 0n && zappersEnabled && (
+            <div className="flex items-center gap-1 p-1 rounded-lg bg-[var(--muted)] border border-[var(--border)]">
+              <button
+                onClick={() => setSelfLiqMethod("direct")}
+                className={cn(
+                  "flex-1 py-2 rounded-md text-sm font-medium transition-all",
+                  selfLiqMethod === "direct"
+                    ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm"
+                    : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Use wallet crvUSD
+              </button>
+              <button
+                onClick={() => setSelfLiqMethod("swap")}
+                className={cn(
+                  "flex-1 py-2 rounded-md text-sm font-medium transition-all",
+                  selfLiqMethod === "swap"
+                    ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm"
+                    : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                )}
+              >
+                Swap collateral
+              </button>
+            </div>
+          )}
 
           {/* AMM Breakdown */}
           {position?.hasLoan && (
@@ -1847,37 +1939,26 @@ export function LeverageTab({
                 <span className="text-[var(--muted-foreground)]">Debt</span>
                 <span className="mono">{Number(formatUnits(position.debt, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} crvUSD</span>
               </div>
-              <div
-                className="grid transition-[grid-template-rows] duration-300 ease-in-out"
-                style={{ gridTemplateRows: crvUsdGap > 0n ? "1fr" : "0fr" }}
-              >
-                <div className="overflow-hidden space-y-1.5">
+              {selfLiqMethod === "direct" && crvUsdGap > 0n && (
+                <>
                   <div className="border-t border-[var(--border)] my-1" />
                   <div className="flex justify-between">
-                    <span className="text-[var(--muted-foreground)]">crvUSD gap (you provide)</span>
+                    <span className="text-[var(--muted-foreground)]">crvUSD gap</span>
                     <span className="mono text-yellow-500">{Number(formatUnits(crvUsdGap, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} crvUSD</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-[var(--muted-foreground)]">Your crvUSD balance</span>
-                    <span className={cn("mono", userCrvUsdBalance < crvUsdGap ? "text-red-500" : "text-green-500")}>
+                    <span className={cn("mono", canDirectLiquidate ? "text-green-500" : "text-red-500")}>
                       {Number(formatUnits(userCrvUsdBalance, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} crvUSD
                     </span>
                   </div>
-                  <div
-                    className="grid transition-[grid-template-rows] duration-300 ease-in-out"
-                    style={{ gridTemplateRows: userCrvUsdBalance < crvUsdGap ? "1fr" : "0fr" }}
-                  >
-                    <div className="overflow-hidden">
-                      <div className="flex justify-between">
-                        <span className="text-[var(--muted-foreground)]">Need</span>
-                        <span className="mono text-red-500">
-                          {Number(formatUnits(crvUsdGap > userCrvUsdBalance ? crvUsdGap - userCrvUsdBalance : 0n, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} more crvUSD
-                        </span>
-                      </div>
+                  {!canDirectLiquidate && (
+                    <div className="mt-1 text-red-500">
+                      Need {Number(formatUnits(crvUsdGap > userCrvUsdBalance ? crvUsdGap - userCrvUsdBalance : 0n, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 })} more crvUSD
                     </div>
-                  </div>
-                </div>
-              </div>
+                  )}
+                </>
+              )}
             </div>
           )}
 
@@ -2013,8 +2094,8 @@ export function LeverageTab({
         </div>
       </div>
 
-      {/* Powered by Enso + Route toggle + Settings — hide for self-liquidation (no Enso involved) */}
-      {activeMode !== "selfLiquidate" && (
+      {/* Powered by Enso + Route toggle + Settings — show when Enso is involved */}
+      {(activeMode !== "selfLiquidate" || selfLiqMethod === "swap") && (
       <div className="flex items-center justify-between pt-2">
         <a
           href="https://www.enso.build"
@@ -2070,7 +2151,8 @@ export function LeverageTab({
       {(() => {
         const hasLeverageRoute = activeMode === "leverageUp" && !isCollateralToken && collateralAmount && Number(collateralAmount) > 0 && (swapRouteInfo || swapQuoteLoading);
         const hasDeleverageRoute = activeMode === "deleverage" && deleverageRouteInfo;
-        const routeVisible = showRoute && (hasLeverageRoute || hasDeleverageRoute);
+        const hasSelfLiqRoute = activeMode === "selfLiquidate" && selfLiquidateRouteInfo;
+        const routeVisible = showRoute && (hasLeverageRoute || hasDeleverageRoute || hasSelfLiqRoute);
         return (
           <div
             className="grid transition-[grid-template-rows] duration-300 ease-in-out"
@@ -2094,6 +2176,11 @@ export function LeverageTab({
                 {hasDeleverageRoute && (
                   <RouteDisplay
                     routeInfo={deleverageRouteInfo}
+                  />
+                )}
+                {hasSelfLiqRoute && (
+                  <RouteDisplay
+                    routeInfo={selfLiquidateRouteInfo}
                   />
                 )}
               </div>

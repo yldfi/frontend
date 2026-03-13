@@ -1,6 +1,40 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useSyncExternalStore } from "react";
+
+// ============================================================================
+// Zappers toggle — shared across all components via useSyncExternalStore
+// ============================================================================
+
+const ZAPPERS_KEY = "yldfi-zappers-enabled";
+const zappersListeners = new Set<() => void>();
+
+function subscribeZappers(callback: () => void) {
+  zappersListeners.add(callback);
+  return () => zappersListeners.delete(callback);
+}
+
+function getZappersSnapshot(): boolean {
+  try {
+    return localStorage.getItem(ZAPPERS_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function getZappersServerSnapshot(): boolean {
+  return false;
+}
+
+function setZappersValue(value: boolean) {
+  try {
+    localStorage.setItem(ZAPPERS_KEY, String(value));
+  } catch { /* ignore */ }
+  // Notify all subscribers (every useSettings() consumer re-renders)
+  zappersListeners.forEach((cb) => cb());
+}
+
+// ============================================================================
 
 /**
  * Shared settings hook for slippage, simulation preview, and route display.
@@ -8,6 +42,7 @@ import { useState, useCallback } from "react";
  *   - yldfi-slippage (default "50", basis points)
  *   - yldfi-show-simulation (default false)
  *   - yldfi-lending-show-route (default true)
+ *   - yldfi-zappers-enabled (default false) — synced across all consumers
  */
 export function useSettings() {
   // --- Slippage (basis points) ---
@@ -55,6 +90,17 @@ export function useSettings() {
     } catch { /* ignore */ }
   }, []);
 
+  // --- Zappers toggle (synced via useSyncExternalStore) ---
+  const zappersEnabled = useSyncExternalStore(
+    subscribeZappers,
+    getZappersSnapshot,
+    getZappersServerSnapshot,
+  );
+
+  const setZappersEnabled = useCallback((value: boolean) => {
+    setZappersValue(value);
+  }, []);
+
   // --- Route display toggle ---
   const [showRoute, setShowRoute] = useState(() => {
     if (typeof window === "undefined") return true;
@@ -87,5 +133,7 @@ export function useSettings() {
     setShowSimulationModal,
     showRoute,
     toggleRoute,
+    zappersEnabled,
+    setZappersEnabled,
   };
 }

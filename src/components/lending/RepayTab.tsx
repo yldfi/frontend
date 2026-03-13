@@ -129,7 +129,16 @@ export function RepayTab({
     showSimulationPreview, setShowSimulationPreview, refreshSimulationPreview,
     showSimulationModal, setShowSimulationModal,
     showRoute, toggleRoute,
+    zappersEnabled,
   } = useSettings();
+
+  // Reset tokens to defaults when zappers are disabled
+  useEffect(() => {
+    if (!zappersEnabled) {
+      setRepayToken(CRVUSD_TOKEN);
+      setWithdrawToken(defaultWithdrawToken);
+    }
+  }, [zappersEnabled, defaultWithdrawToken]);
 
   const [rateInverted, setRateInverted] = useState(false);
 
@@ -1075,12 +1084,15 @@ export function RepayTab({
     Number(withdrawAmount) > 0 &&
     (withdrawSwapLoading || withdrawQuoteFetching);
 
+  const needsZapperForRepay = withdrawAmountWei > 0n;
+
   const isFormValid =
     !!repayAmount &&
     Number(repayAmount) > 0 &&
     position?.hasLoan &&
     !hasInsufficientBalance &&
-    (isCrvUsd || isVaultWithCrvUsdUnderlying || (!isCrvUsd && !quoteLoading));
+    (isCrvUsd || isVaultWithCrvUsdUnderlying || (!isCrvUsd && !quoteLoading)) &&
+    (!needsZapperForRepay || zappersEnabled);
 
   const getButtonText = () => {
     if (status === "building") return <>Building transaction<LoadingDots /></>;
@@ -1088,7 +1100,6 @@ export function RepayTab({
     if (status === "executing") return <>Confirm in wallet<LoadingDots /></>;
     if (status === "waitingTx") return <>Waiting for confirmation<LoadingDots /></>;
     if (hasInsufficientBalance) return "Insufficient balance";
-
     const hasWithdrawal = withdrawAmountWei > 0n;
 
     if (isCrvUsd) {
@@ -1155,6 +1166,7 @@ export function RepayTab({
             onSelect={setRepayToken}
             priorityTokens={[CRVUSD_TOKEN, SCRVUSD_TOKEN]}
             excludeDefiTokens
+            disabled={!zappersEnabled}
           />
           {isCrvUsd ? (
             <MaxButton
@@ -1313,6 +1325,7 @@ export function RepayTab({
                     selectedToken={withdrawToken}
                     onSelect={setWithdrawToken}
                     priorityTokens={[defaultWithdrawToken, CRVUSD_TOKEN]}
+                    disabled={!zappersEnabled}
                   />
                   {isWithdrawSwap ? (
                     maxWithdrawInTokenUnits ? (
