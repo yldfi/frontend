@@ -8,6 +8,7 @@ import { ChevronRight, AlertTriangle, ExternalLink, Info, Activity, Coins, Trend
 import { useAccount } from "wagmi";
 import { formatUnits } from "viem";
 import { getVault, CURVE_CONTROLLERS, CURVE_SAVINGS } from "@/config/vaults";
+import { useSettings } from "@/hooks/useSettings";
 import { useVaultBalance } from "@/hooks/useVaultBalance";
 import { useCurveLendingPosition } from "@/hooks/useCurveLendingPosition";
 import { useOraclePriceHistory, useMarketBands } from "@/hooks/useOraclePriceHistory";
@@ -23,6 +24,7 @@ import { useClearOnNavigation } from "@/hooks/useClearOnNavigation";
 export function LendingPageContent({ vaultId }: { vaultId: string }) {
   const router = useRouter();
   const { address } = useAccount();
+  const { zappersEnabled } = useSettings();
   const vault = getVault(vaultId);
   const { balance } = useVaultBalance(vault?.address as `0x${string}`);
 
@@ -228,7 +230,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                     <div>
                       <h3 className="text-base font-medium text-[var(--foreground)]">Market Overview</h3>
                       <p className="text-sm text-[var(--muted-foreground)] leading-relaxed mt-1">
-                        Borrow crvUSD against {vault.symbol} collateral. Use leverage to amplify your position.
+                        Borrow crvUSD against {vault.symbol} collateral.{zappersEnabled ? " Use leverage to amplify your position." : ""}
                       </p>
                     </div>
                   </div>
@@ -269,7 +271,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                       <div className="flex justify-between items-center bg-[var(--background)]/50 px-3 py-2 rounded-md border border-[var(--border)]/50">
                         <span className="text-[var(--muted-foreground)] text-xs font-medium uppercase tracking-wider">Collateral</span>
                         <a
-                          href={`https://etherscan.io/address/${vault.assetAddress}`}
+                          href={`https://etherscan.io/address/${vault.address}`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-1.5 hover:text-[var(--accent)] transition-colors group"
