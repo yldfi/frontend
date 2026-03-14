@@ -33,8 +33,6 @@ export function BetaBanner() {
     >
       <span className="px-8">
         Always ensure you are on <span className="font-semibold">yldfi.co</span>
-        <span className="mx-1.5 opacity-40">|</span>
-        In beta — use at own risk
       </span>
       <button
         onClick={() => {
