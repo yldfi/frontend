@@ -498,7 +498,7 @@ export function HomePageContent() {
                             <ArrowUpRight size={10} />
                           </button>
                         ) : (
-                          <span key={badge} className={`inline-flex items-center px-2 py-1 text-[11px] font-medium bg-[var(--muted)] text-white rounded border border-transparent whitespace-nowrap${badge === "Compounder" ? " hidden sm:inline-flex" : ""}`}>
+                          <span key={badge} className={`inline-flex items-center px-2 py-1 text-[11px] font-medium bg-[var(--muted)] text-white rounded border border-transparent whitespace-nowrap${badge === "Compounder" ? " hidden md:inline-flex" : ""}`}>
                             {badge}
                           </span>
                         )
@@ -569,7 +569,7 @@ export function HomePageContent() {
                                 <ArrowUpRight size={10} />
                               </button>
                             ) : (
-                              <span key={badge} className={`inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-[var(--muted)] text-white rounded border border-transparent whitespace-nowrap${badge === "Compounder" ? " hidden sm:inline-flex" : ""}`}>
+                              <span key={badge} className={`inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-[var(--muted)] text-white rounded border border-transparent whitespace-nowrap${badge === "Compounder" ? " hidden md:inline-flex" : ""}`}>
                                 {badge}
                               </span>
                             )
