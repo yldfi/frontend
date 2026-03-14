@@ -469,7 +469,7 @@ export function HomePageContent() {
                         {vault.name}
                       </h3>
                     </div>
-                    <p className="text-sm text-[var(--muted-foreground)] mb-3 leading-relaxed line-clamp-1">
+                    <p className="text-sm text-[var(--muted-foreground)] mb-3 leading-relaxed">
                       {vault.description}
                     </p>
                     <div className="flex items-center gap-2.5 mb-4">
@@ -575,7 +575,7 @@ export function HomePageContent() {
                             )
                           ))}
                         </div>
-                        <p className="text-sm text-[var(--muted-foreground)] max-w-md mt-1.5">
+                        <p className="text-sm text-[var(--muted-foreground)] mt-1.5">
                           {vault.description}
                         </p>
                       </div>
