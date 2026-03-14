@@ -400,7 +400,7 @@ export const VAULTS: Record<string, VaultConfig> = {
     decimals: 18,
     assetDecimals: 18,
     description:
-      "Auto-compounding cvxCRV staking rewards via Convex. Collateral on Curve LlamaLend",
+      "Auto-compounding cvxCRV staking rewards via Convex with collateral support on Curve LlamaLend",
     longDescription:
       "Deposits are allocated to the yscvxCRV strategy, which auto-compounds cvxCRV staking rewards from Convex. Use as collateral on Curve LlamaLend to borrow crvUSD. A portion of vault fees is distributed to LlamaLend lenders to encourage borrowing liquidity.",
     strategy: "cvxCRV Compounder",
