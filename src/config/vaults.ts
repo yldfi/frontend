@@ -455,7 +455,7 @@ export const VAULTS: Record<string, VaultConfig> = {
     assetDecimals: 18,
     description: "Auto-compounding cvgCVX staking rewards via Tangent LiquidBoost",
     longDescription:
-      "This strategy accepts cvgCVX deposits and stakes them on Tangent Finance's LiquidBoost platform. Earned voting incentives, CVX1 wrapper returns, and treasury boost rewards are automatically harvested, swapped to cvgCVX, and re-deposited to compound your position. cvgCVX is a liquid derivative of vlCVX that can be staked or unstaked anytime.",
+      "This strategy accepts cvgCVX deposits and stakes them on Tangent Finance's LiquidBoost platform. Earned voting incentives, CVX1 wrapper returns, and treasury boost rewards are automatically harvested and compounded.",
     strategy: "Staked cvgCVX Compounder",
     badges: ["cvgCVX", "Compounder", "LiquidBoost"],
     logo: "/yscvgcvx-128.png",
