@@ -457,7 +457,7 @@ export const VAULTS: Record<string, VaultConfig> = {
     longDescription:
       "This strategy accepts cvgCVX deposits and stakes them on Tangent Finance's LiquidBoost platform. Earned voting incentives, CVX1 wrapper returns, and treasury boost rewards are automatically harvested and compounded.",
     strategy: "Staked cvgCVX Compounder",
-    badges: ["LiquidBoost", "cvgCVX", "Compounder"],
+    badges: ["Tangent", "cvgCVX", "Compounder"],
     logo: "/yscvgcvx-128.png",
     logoSmall: "/yscvgcvx-64.png",
     fees: { management: 0, performance: 0 },
