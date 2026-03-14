@@ -217,9 +217,9 @@ export function SlippageModal({
           </>
         )}
 
+        {/* Zappers Toggle — only in development */}
+        {process.env.NODE_ENV !== "production" && (<>
         <div className="border-t border-[var(--border)]" />
-
-        {/* Zappers Toggle */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <AlertTriangle size={14} className="text-red-500" />
@@ -244,6 +244,7 @@ export function SlippageModal({
         <p className="text-xs text-red-400/80">
           Enable leveraged loans, deleverage, and collateral swaps via yld zapper contract. This contract has not been audited. <span className="font-bold text-red-500">USE AT OWN RISK</span>
         </p>
+        </>)}
       </div>
     </div>,
     document.body
