@@ -143,30 +143,30 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
         </div>
 
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
-          <div ref={gridRef} className="grid lg:grid-cols-5 gap-8 lg:gap-12">
-            {/* Left column - Chart + Position + Info */}
-            <div className="lg:col-span-3 space-y-8 min-w-0 overflow-hidden">
-              {/* Section Header */}
-              <div>
-                <p className="mono text-sm text-[var(--muted-foreground)] mb-2">
-                  [004] Lending
-                </p>
-                <div className="flex items-center gap-3">
-                  {vault.logo && (
-                    <Image
-                      src={vault.logo}
-                      alt={vault.name}
-                      width={40}
-                      height={40}
-                      className="rounded-full translate-y-[1px]"
-                    />
-                  )}
-                  <h2 className="text-3xl md:text-4xl font-medium tracking-tight">
-                    {vault.name} <span className="text-[var(--muted-foreground)]">LlamaLend</span>
-                  </h2>
-                </div>
-              </div>
+          {/* Section Header — always first */}
+          <div className="mb-8">
+            <p className="mono text-sm text-[var(--muted-foreground)] mb-2">
+              [004] Lending
+            </p>
+            <div className="flex items-center gap-3">
+              {vault.logo && (
+                <Image
+                  src={vault.logo}
+                  alt={vault.name}
+                  width={40}
+                  height={40}
+                  className="rounded-full translate-y-[1px]"
+                />
+              )}
+              <h2 className="text-3xl md:text-4xl font-medium tracking-tight">
+                {vault.name} <span className="text-[var(--muted-foreground)]">LlamaLend</span>
+              </h2>
+            </div>
+          </div>
 
+          <div ref={gridRef} className="grid lg:grid-cols-5 gap-8 lg:gap-12">
+            {/* Left column - Chart + Info (on mobile: renders after lending panel) */}
+            <div className="lg:col-span-3 space-y-8 min-w-0 overflow-hidden order-2 lg:order-1">
               {/* Price Chart */}
               <div ref={chartRef}>
                 <PriceChart
@@ -330,8 +330,8 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
               </div>
             </div>
 
-            {/* Right column - Lending Panel */}
-            <div className="lg:col-span-2 lg:self-start flex flex-col" style={panelMinH ? { minHeight: panelMinH } : undefined}>
+            {/* Right column - Lending Panel (on mobile: renders first) */}
+            <div className="lg:col-span-2 lg:self-start flex flex-col order-1 lg:order-2" style={panelMinH ? { minHeight: panelMinH } : undefined}>
               <div className="flex-1 flex flex-col">
                 <LendingInterface
                   vault={vault}
