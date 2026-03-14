@@ -164,7 +164,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
             </div>
           </div>
 
-          <div ref={gridRef} className="grid lg:grid-cols-5 gap-8 lg:gap-12">
+          <div ref={gridRef} className="grid lg:grid-cols-5 gap-4 lg:gap-12">
             {/* Left column - Chart + Info (on mobile: renders after lending panel) */}
             <div className="lg:col-span-3 space-y-8 min-w-0 overflow-hidden order-2 lg:order-1">
               {/* Price Chart */}
