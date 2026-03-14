@@ -346,7 +346,7 @@ export const VAULTS: Record<string, VaultConfig> = {
     longDescription:
       "Deposits are allocated to the yscvx strategy, which stakes CVX on Convex Finance to earn cvxCRV rewards. Rewards are automatically auctioned for more CVX and re-deposited to compound your position. Use as collateral on Curve LlamaLend to borrow crvUSD.",
     strategy: "Convex CVX Compounder",
-    badges: ["CVX", "Compounder", "Collateral (LlamaLend)"],
+    badges: ["Convex", "CVX", "Compounder", "Collateral (LlamaLend)"],
     logo: "/ycvx-128.png",
     logoSmall: "/ycvx-64.png",
     fees: { management: 0, performance: 20 },
@@ -374,7 +374,7 @@ export const VAULTS: Record<string, VaultConfig> = {
     longDescription:
       "This strategy accepts CVX deposits and stakes them on Convex Finance's cvxRewardPool. Earned cvxCRV rewards are automatically auctioned for more CVX and re-deposited to compound your position. Lower 5% performance fee but cannot be used as collateral on LlamaLend.",
     strategy: "Convex CVX Compounder",
-    badges: ["CVX", "Compounder"],
+    badges: ["Convex", "CVX", "Compounder"],
     logo: "/yscvx-128.png",
     logoSmall: "/yscvx-64.png",
     fees: { management: 0, performance: 5 },
@@ -402,9 +402,9 @@ export const VAULTS: Record<string, VaultConfig> = {
     description:
       "Auto-compounding cvxCRV staking rewards via Convex",
     longDescription:
-      "Deposits are allocated to the yscvxCRV strategy, which auto-compounds cvxCRV staking rewards from Convex. ycvxCRV can be used as collateral on Curve LlamaLend to borrow crvUSD. All Vault fees are distributed to LlamaLend lenders to encourage borrowing liquidity.",
+      "Deposits are allocated to the yscvxCRV strategy, which auto-compounds cvxCRV staking rewards from Convex. ycvxCRV can be used as collateral on Curve LlamaLend to borrow crvUSD. All vault fees are distributed to LlamaLend lenders to encourage borrowing liquidity.",
     strategy: "cvxCRV Compounder",
-    badges: ["cvxCRV", "Compounder", "Convex", "Collateral (LlamaLend)"],
+    badges: ["Convex", "cvxCRV", "Compounder", "Collateral (LlamaLend)"],
     logo: "/ycvxcrv-128.png",
     logoSmall: "/ycvxcrv-64.png",
     fees: { management: 0, performance: 20 },
@@ -431,7 +431,7 @@ export const VAULTS: Record<string, VaultConfig> = {
     longDescription:
       "This strategy accepts cvxCRV deposits and stakes them on Convex Finance. crvUSD rewards are automatically harvested, swapped to cvxCRV and compounded.",
     strategy: "cvxCRV Compounder",
-    badges: ["cvxCRV", "Compounder", "Convex"],
+    badges: ["Convex", "cvxCRV", "Compounder"],
     logo: "/yscvxcrv-128.png",
     logoSmall: "/yscvxcrv-64.png",
     fees: { management: 0, performance: 5 },
@@ -457,7 +457,7 @@ export const VAULTS: Record<string, VaultConfig> = {
     longDescription:
       "This strategy accepts cvgCVX deposits and stakes them on Tangent Finance's LiquidBoost platform. Earned voting incentives, CVX1 wrapper returns, and treasury boost rewards are automatically harvested and compounded.",
     strategy: "Staked cvgCVX Compounder",
-    badges: ["cvgCVX", "Compounder", "LiquidBoost"],
+    badges: ["LiquidBoost", "cvgCVX", "Compounder"],
     logo: "/yscvgcvx-128.png",
     logoSmall: "/yscvgcvx-64.png",
     fees: { management: 0, performance: 0 },
@@ -483,7 +483,7 @@ export const VAULTS: Record<string, VaultConfig> = {
     longDescription:
       "This strategy accepts pxCVX deposits and claims Votium snapshot rewards from Pirex CVX. Earned reward tokens are automatically auctioned for more pxCVX and re-deposited to compound your position. pxCVX is a liquid derivative of CVX that earns vlCVX voting incentives without locking.",
     strategy: "Pirex pxCVX Compounder",
-    badges: ["pxCVX", "Compounder", "Votium"],
+    badges: ["Votium", "pxCVX", "Compounder"],
     logo: "/yspxcvx-128.png",
     logoSmall: "/yspxcvx-64.png",
     fees: { management: 0, performance: 5 },
