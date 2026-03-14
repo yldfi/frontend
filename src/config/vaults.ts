@@ -342,7 +342,7 @@ export const VAULTS: Record<string, VaultConfig> = {
     decimals: 18,
     assetDecimals: 18,
     description:
-      "Auto-compounding CVX staking rewards via Convex. Use as collateral on Curve LlamaLend to borrow crvUSD.",
+      "Auto-compounding CVX staking rewards via Convex. Collateral on Curve LlamaLend",
     longDescription:
       "Deposits are allocated to the yscvx strategy, which stakes CVX on Convex Finance to earn cvxCRV rewards. Rewards are automatically auctioned for more CVX and re-deposited to compound your position. Use as collateral on Curve LlamaLend to borrow crvUSD.",
     strategy: "Convex CVX Compounder",
@@ -370,7 +370,7 @@ export const VAULTS: Record<string, VaultConfig> = {
     assetAddress: TOKENS.CVX,
     decimals: 18,
     assetDecimals: 18,
-    description: "Auto-compounding CVX staking rewards via Convex. Lower 5% fee but no collateral support.",
+    description: "Auto-compounding CVX staking rewards via Convex",
     longDescription:
       "This strategy accepts CVX deposits and stakes them on Convex Finance's cvxRewardPool. Earned cvxCRV rewards are automatically auctioned for more CVX and re-deposited to compound your position. Lower 5% performance fee but cannot be used as collateral on LlamaLend.",
     strategy: "Convex CVX Compounder",
@@ -400,7 +400,7 @@ export const VAULTS: Record<string, VaultConfig> = {
     decimals: 18,
     assetDecimals: 18,
     description:
-      "Auto-compounding cvxCRV staking rewards via Convex with collateral support on Curve LlamaLend",
+      "Auto-compounding cvxCRV staking rewards via Convex. Collateral on Curve LlamaLend",
     longDescription:
       "Deposits are allocated to the yscvxCRV strategy, which auto-compounds cvxCRV staking rewards from Convex. Use as collateral on Curve LlamaLend to borrow crvUSD. A portion of vault fees is distributed to LlamaLend lenders to encourage borrowing liquidity.",
     strategy: "cvxCRV Compounder",
@@ -453,7 +453,7 @@ export const VAULTS: Record<string, VaultConfig> = {
     assetAddress: TOKENS.CVGCVX,
     decimals: 18,
     assetDecimals: 18,
-    description: "Auto-compounding cvgCVX staking rewards via Tangent LiquidBoost. Earn vlCVX voting incentives without locking.",
+    description: "Auto-compounding cvgCVX staking rewards via Tangent LiquidBoost",
     longDescription:
       "This strategy accepts cvgCVX deposits and stakes them on Tangent Finance's LiquidBoost platform. Earned voting incentives, CVX1 wrapper returns, and treasury boost rewards are automatically harvested, swapped to cvgCVX, and re-deposited to compound your position. cvgCVX is a liquid derivative of vlCVX that can be staked or unstaked anytime.",
     strategy: "Staked cvgCVX Compounder",
@@ -479,7 +479,7 @@ export const VAULTS: Record<string, VaultConfig> = {
     assetAddress: TOKENS.PXCVX,
     decimals: 18,
     assetDecimals: 18,
-    description: "Auto-compounding pxCVX Votium snapshot rewards via Pirex. Earn vlCVX voting incentives without locking.",
+    description: "Auto-compounding pxCVX Votium snapshot rewards via Pirex",
     longDescription:
       "This strategy accepts pxCVX deposits and claims Votium snapshot rewards from Pirex CVX. Earned reward tokens are automatically auctioned for more pxCVX and re-deposited to compound your position. pxCVX is a liquid derivative of CVX that earns vlCVX voting incentives without locking.",
     strategy: "Pirex pxCVX Compounder",
