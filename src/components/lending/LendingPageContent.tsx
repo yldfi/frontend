@@ -23,7 +23,7 @@ import { useClearOnNavigation } from "@/hooks/useClearOnNavigation";
 
 export function LendingPageContent({ vaultId }: { vaultId: string }) {
   const router = useRouter();
-  const { address } = useAccount();
+  const { address, isConnecting, isReconnecting } = useAccount();
   const { zappersEnabled } = useSettings();
   const vault = getVault(vaultId);
   const { balance } = useVaultBalance(vault?.address as `0x${string}`);
@@ -331,13 +331,13 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
             </div>
 
             {/* Right column - Lending Panel (on mobile: renders first) */}
-            <div className="lg:col-span-2 lg:self-start flex flex-col order-1 lg:order-2" style={panelMinH ? { minHeight: panelMinH } : undefined}>
+            <div className="lg:col-span-2 lg:self-start flex flex-col order-1 lg:order-2 max-lg:!min-h-0" style={panelMinH ? { minHeight: panelMinH } : undefined}>
               <div className="flex-1 flex flex-col">
                 <LendingInterface
                   vault={vault}
                   userBalance={String(balance ?? 0n)}
                   position={position}
-                  positionLoading={positionLoading && !position}
+                  positionLoading={(positionLoading || isConnecting || isReconnecting) && !position}
                   controllerAddress={controllerAddress}
                   onTransactionSuccess={() => refetchPosition()}
                   onPreviewLiqPrices={handlePreviewLiqPrices}
