@@ -44,11 +44,12 @@ export function PixelAnimation() {
       canvas.height = rect.height * dpr;
       ctx.scale(dpr, dpr);
 
+      // Reinit particles if dimensions changed significantly (e.g. orientation change)
+      const prev = fullDimensionsRef.current;
+
       // Store full dimensions for boundary calculations (prevents particle corruption during collapse)
       fullDimensionsRef.current = { width: rect.width, height: rect.height };
-
-      // Only init particles on first load or if we had no particles
-      if (particlesRef.current.length === 0) {
+      if (particlesRef.current.length === 0 || Math.abs(prev.width - rect.width) > 50 || Math.abs(prev.height - rect.height) > 50) {
         initParticles();
       }
     };
