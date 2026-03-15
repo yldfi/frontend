@@ -86,6 +86,8 @@ import {
   trackApprovalSuccess,
   trackTransactionError,
   trackTransactionCancelled,
+  trackZapInitiated,
+  trackZapSuccess,
   isUserRejection,
 } from "@/lib/analytics";
 import { toast } from "sonner";
@@ -1121,6 +1123,7 @@ export function VaultPageContent({ id }: { id: string }) {
             resetZapActions();
           }, 2000);
 
+          if (vault) trackZapSuccess(vault.id, zapDirection, zapDirection === "in" ? (zapInputToken?.symbol ?? "") : vault.symbol, zapDirection === "in" ? vault.symbol : (zapOutputToken?.symbol ?? ""), zapAmount || "0", zapQuote?.outputAmountFormatted ?? "0");
           toast.success("Zap successful!", {
             action: {
               label: "View Tx",
@@ -2347,6 +2350,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               if (result) return; // Modal opened — bail
                               // No simulation data (e.g. Anvil) — fall through to execute
                               setZapPendingDetails();
+                              if (vault && zapAmount) trackZapInitiated(vault.id, zapDirection, zapDirection === "in" ? (zapInputToken?.symbol ?? "") : vault.symbol, zapDirection === "in" ? vault.symbol : (zapOutputToken?.symbol ?? ""), zapAmount);
                               executeZap();
                             } else if ((zapQuote?.priceImpact ?? 0) >= PRICE_IMPACT_CONFIRM_THRESHOLD) {
                               // High price impact - show confirmation modal
@@ -2354,6 +2358,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               setShowPriceImpactModal(true);
                             } else {
                               setZapPendingDetails();
+                              if (vault && zapAmount) trackZapInitiated(vault.id, zapDirection, zapDirection === "in" ? (zapInputToken?.symbol ?? "") : vault.symbol, zapDirection === "in" ? vault.symbol : (zapOutputToken?.symbol ?? ""), zapAmount);
                               executeZap();
                             }
                           }}
@@ -2521,6 +2526,7 @@ export function VaultPageContent({ id }: { id: string }) {
                   setShowPriceImpactModal(false);
                   setPriceImpactConfirmText("");
                   setZapPendingDetails();
+                  if (vault && zapAmount) trackZapInitiated(vault.id, zapDirection, zapDirection === "in" ? (zapInputToken?.symbol ?? "") : vault.symbol, zapDirection === "in" ? vault.symbol : (zapOutputToken?.symbol ?? ""), zapAmount);
                   if (skipSimulationOnConfirm) {
                     setSkipSimulationOnConfirm(false);
                     executeZap({ skipSimulation: true });

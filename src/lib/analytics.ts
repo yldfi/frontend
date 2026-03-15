@@ -4,14 +4,24 @@
  * Events tracked:
  * - wallet_connect: When user connects wallet
  * - wallet_disconnect: When user disconnects wallet
- * - deposit_initiated: When user starts a deposit
- * - deposit_success: When deposit transaction succeeds
- * - withdraw_initiated: When user starts a withdrawal
- * - withdraw_success: When withdrawal transaction succeeds
- * - approval_initiated: When user starts token approval
- * - approval_success: When approval transaction succeeds
+ * - deposit_initiated / deposit_success: Vault deposits
+ * - withdraw_initiated / withdraw_success: Vault withdrawals
+ * - approval_initiated / approval_success: Token approvals
  * - vault_view: When user views a vault page
- * - network_switch: When user switches networks
+ * - zap_initiated / zap_success: Zap operations
+ * - lending_borrow_initiated / lending_borrow_success: Borrow operations
+ * - lending_repay_initiated / lending_repay_success: Repay operations
+ * - lending_collateral_add_initiated / lending_collateral_add_success: Add collateral
+ * - lending_leverage_initiated / lending_leverage_success: Leverage/deleverage
+ * - lending_self_liquidate_initiated / lending_self_liquidate_success: Self-liquidation
+ * - rewards_page_view: Rewards page viewed
+ * - rewards_claim_click: Claim button clicked
+ * - rewards_eligibility_check: Eligibility state tracked
+ * - cta_click: CTA buttons clicked
+ * - external_link_click: External links clicked
+ * - lending_tab_switch: Lending tab changed
+ * - transaction_error: Transaction errors with categorized error_type
+ * - transaction_cancelled: User rejected in wallet
  */
 
 import { isAnalyticsAllowed } from "@/components/CookieConsent";
@@ -198,7 +208,7 @@ export function trackDepositInitiated(
 ): void {
   trackEvent("deposit_initiated", {
     vault_id: vaultId,
-    amount,
+    amount_bucket: bucketAmount(amount),
     token_symbol: tokenSymbol,
   });
 }
@@ -210,7 +220,7 @@ export function trackDepositSuccess(
 ): void {
   trackEvent("deposit_success", {
     vault_id: vaultId,
-    amount,
+    amount_bucket: bucketAmount(amount),
     token_symbol: tokenSymbol,
   });
   setUserProperty("has_deposited", true);
@@ -223,7 +233,7 @@ export function trackWithdrawInitiated(
 ): void {
   trackEvent("withdraw_initiated", {
     vault_id: vaultId,
-    shares,
+    amount_bucket: bucketAmount(shares),
     token_symbol: tokenSymbol,
   });
 }
@@ -235,7 +245,7 @@ export function trackWithdrawSuccess(
 ): void {
   trackEvent("withdraw_success", {
     vault_id: vaultId,
-    shares,
+    amount_bucket: bucketAmount(shares),
     token_symbol: tokenSymbol,
   });
 }
@@ -268,39 +278,59 @@ export function trackVaultView(vaultId: string, vaultName: string): void {
   });
 }
 
-// Network Events
-export function trackNetworkSwitch(
-  fromChain: string | undefined,
-  toChain: string
-): void {
-  trackEvent("network_switch", {
-    from_chain: fromChain || "unknown",
-    to_chain: toChain,
-  });
+// Error categorization
+export type TransactionErrorType = "user_rejected" | "revert" | "timeout" | "network" | "unknown";
+
+/**
+ * Categorize an error into a known error type for analytics
+ */
+export function categorizeError(error: Error | string | unknown): TransactionErrorType {
+  if (isUserRejection(error)) return "user_rejected";
+  const msg = typeof error === "string" ? error : (error as Error)?.message || "";
+  const lower = msg.toLowerCase();
+  if (lower.includes("revert") || lower.includes("execution reverted") || lower.includes("call revert")) return "revert";
+  if (lower.includes("timeout") || lower.includes("timed out")) return "timeout";
+  if (lower.includes("network") || lower.includes("fetch") || lower.includes("econnrefused") || lower.includes("failed to fetch")) return "network";
+  return "unknown";
 }
 
 // Error Events
 export function trackTransactionError(
-  action: "deposit" | "withdraw" | "approval" | "zap",
+  action: "deposit" | "withdraw" | "approval" | "zap" | "borrow" | "repay" | "collateral" | "leverage" | "self_liquidate",
   vaultId: string,
-  errorMessage: string
+  errorOrMessage: Error | string | unknown,
+  errorType?: TransactionErrorType
 ): void {
   trackEvent("transaction_error", {
     action,
     vault_id: vaultId,
-    error_message: errorMessage.slice(0, 100), // Truncate long errors
+    error_type: errorType || categorizeError(errorOrMessage),
   });
 }
 
 // Cancelled Events (user rejected in wallet)
 export function trackTransactionCancelled(
-  action: "deposit" | "withdraw" | "approval" | "zap",
+  action: "deposit" | "withdraw" | "approval" | "zap" | "borrow" | "repay" | "collateral" | "leverage" | "self_liquidate",
   vaultId: string
 ): void {
   trackEvent("transaction_cancelled", {
     action,
     vault_id: vaultId,
   });
+}
+
+/**
+ * Bucket an amount into a range to prevent on-chain deanonymization.
+ * Exact amounts + vault_id + timestamp could correlate users to chain activity.
+ */
+function bucketAmount(amount: string): string {
+  const n = parseFloat(amount);
+  if (isNaN(n) || n <= 0) return "0";
+  if (n < 100) return "<100";
+  if (n < 1000) return "100-1K";
+  if (n < 10000) return "1K-10K";
+  if (n < 100000) return "10K-100K";
+  return "100K+";
 }
 
 // Zap Events
@@ -316,7 +346,7 @@ export function trackZapInitiated(
     direction,
     input_token: inputToken,
     output_token: outputToken,
-    input_amount: inputAmount,
+    amount_bucket: bucketAmount(inputAmount),
   });
 }
 
@@ -333,10 +363,165 @@ export function trackZapSuccess(
     direction,
     input_token: inputToken,
     output_token: outputToken,
-    input_amount: inputAmount,
-    output_amount: outputAmount,
+    amount_bucket: bucketAmount(inputAmount),
+    amount_bucket_out: bucketAmount(outputAmount),
   });
   setUserProperty("has_used_zap", true);
+}
+
+// Lending Events — Borrow
+export function trackLendingBorrowInitiated(
+  vaultId: string,
+  amount: string,
+  tokenSymbol: string
+): void {
+  trackEvent("lending_borrow_initiated", {
+    vault_id: vaultId,
+    amount_bucket: bucketAmount(amount),
+    token_symbol: tokenSymbol,
+  });
+}
+
+export function trackLendingBorrowSuccess(
+  vaultId: string,
+  amount: string,
+  tokenSymbol: string
+): void {
+  trackEvent("lending_borrow_success", {
+    vault_id: vaultId,
+    amount_bucket: bucketAmount(amount),
+    token_symbol: tokenSymbol,
+  });
+  setUserProperty("has_borrowed", true);
+}
+
+// Lending Events — Repay
+export function trackLendingRepayInitiated(
+  vaultId: string,
+  amount: string
+): void {
+  trackEvent("lending_repay_initiated", {
+    vault_id: vaultId,
+    amount_bucket: bucketAmount(amount),
+  });
+}
+
+export function trackLendingRepaySuccess(
+  vaultId: string,
+  amount: string
+): void {
+  trackEvent("lending_repay_success", {
+    vault_id: vaultId,
+    amount_bucket: bucketAmount(amount),
+  });
+}
+
+// Lending Events — Collateral
+export function trackLendingCollateralAddInitiated(
+  vaultId: string,
+  amount: string,
+  tokenSymbol: string
+): void {
+  trackEvent("lending_collateral_add_initiated", {
+    vault_id: vaultId,
+    amount_bucket: bucketAmount(amount),
+    token_symbol: tokenSymbol,
+  });
+}
+
+export function trackLendingCollateralAddSuccess(
+  vaultId: string,
+  amount: string,
+  tokenSymbol: string
+): void {
+  trackEvent("lending_collateral_add_success", {
+    vault_id: vaultId,
+    amount_bucket: bucketAmount(amount),
+    token_symbol: tokenSymbol,
+  });
+}
+
+// Lending Events — Leverage
+export function trackLendingLeverageInitiated(
+  vaultId: string,
+  amount: string,
+  leverageMultiplier: string
+): void {
+  trackEvent("lending_leverage_initiated", {
+    vault_id: vaultId,
+    amount_bucket: bucketAmount(amount),
+    leverage_multiplier: leverageMultiplier,
+  });
+}
+
+export function trackLendingLeverageSuccess(
+  vaultId: string,
+  amount: string,
+  leverageMultiplier: string
+): void {
+  trackEvent("lending_leverage_success", {
+    vault_id: vaultId,
+    amount_bucket: bucketAmount(amount),
+    leverage_multiplier: leverageMultiplier,
+  });
+  setUserProperty("has_used_leverage", true);
+}
+
+// Lending Events — Self-Liquidate
+export function trackLendingSelfLiquidateInitiated(
+  vaultId: string
+): void {
+  trackEvent("lending_self_liquidate_initiated", {
+    vault_id: vaultId,
+  });
+}
+
+export function trackLendingSelfLiquidateSuccess(
+  vaultId: string
+): void {
+  trackEvent("lending_self_liquidate_success", {
+    vault_id: vaultId,
+  });
+}
+
+// Rewards Events
+export function trackRewardsPageView(): void {
+  trackEvent("rewards_page_view");
+}
+
+export function trackRewardsClaimClick(): void {
+  trackEvent("rewards_claim_click");
+}
+
+export function trackRewardsEligibilityCheck(
+  hasYcvxcrv: boolean,
+  hasBorrowPosition: boolean
+): void {
+  trackEvent("rewards_eligibility_check", {
+    has_ycvxcrv: hasYcvxcrv,
+    has_borrow_position: hasBorrowPosition,
+  });
+}
+
+// CTA and Navigation Events
+export function trackCtaClick(ctaName: string, page: string): void {
+  trackEvent("cta_click", {
+    cta_name: ctaName,
+    page,
+  });
+}
+
+export function trackExternalLinkClick(url: string, linkName: string): void {
+  trackEvent("external_link_click", {
+    url,
+    link_name: linkName,
+  });
+}
+
+export function trackLendingTabSwitch(tabName: string): void {
+  trackEvent("lending_tab_switch", {
+    tab_name: tabName,
+  });
 }
 
 /**

@@ -4,7 +4,14 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
 import { toast } from "sonner";
-import { isUserRejection } from "@/lib/analytics";
+import {
+  isUserRejection,
+  trackLendingBorrowInitiated,
+  trackLendingBorrowSuccess,
+  trackTransactionError,
+  trackTransactionCancelled,
+  categorizeError,
+} from "@/lib/analytics";
 import {
   AlertTriangle,
   ArrowRightLeft,
@@ -337,6 +344,7 @@ export function BorrowTab({
   // Toast notifications
   useEffect(() => {
     if (status === "success" && txHash) {
+      trackLendingBorrowSuccess(vault.id, borrowAmount, borrowToken.symbol);
       toast.success("Borrow successful!", {
         action: {
           label: "View Tx",
@@ -345,20 +353,22 @@ export function BorrowTab({
       });
       onTransactionSuccess();
     }
-  }, [status, txHash, onTransactionSuccess]);
+  }, [status, txHash, onTransactionSuccess, vault.id, borrowAmount, borrowToken.symbol]);
 
   useEffect(() => {
     if ((status === "error" || status === "reverted") && error) {
       if (isUserRejection(error)) {
+        trackTransactionCancelled("borrow", vault.id);
         // Wallet rejection: show toast, clear error but keep simulation cached
         toast("Transaction cancelled", { id: "borrow-cancelled", duration: 3000 });
         clearError();
       } else {
+        trackTransactionError("borrow", vault.id, typeof error === "string" ? error : error, categorizeError(error));
         toast.error(error);
         reset();
       }
     }
-  }, [status, error, reset, clearError]);
+  }, [status, error, reset, clearError, vault.id]);
 
   // Debounced amount for quote fetching
   const debouncedAmount = useDebouncedValue(borrowAmount, 500);
@@ -799,6 +809,8 @@ export function BorrowTab({
   const handleSubmit = async () => {
     if (!address || !controllerAddress || !borrowAmount || !position?.hasLoan)
       return;
+
+    trackLendingBorrowInitiated(vault.id, borrowAmount, borrowToken.symbol);
 
     try {
       if (isCrvUsd) {

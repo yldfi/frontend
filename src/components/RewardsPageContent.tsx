@@ -15,6 +15,7 @@ import { useCurveLendingPosition } from "@/hooks/useCurveLendingPosition";
 import { VAULT_ADDRESSES } from "@/config/vaults";
 import { formatUsd } from "@/lib/utils";
 import { Footer } from "@/components/Footer";
+import { trackRewardsPageView, trackRewardsClaimClick, trackRewardsEligibilityCheck } from "@/lib/analytics";
 
 
 function Countdown({ target }: { target: number }) {
@@ -75,6 +76,7 @@ function RewardRow({ reward }: { reward: MerklReward }) {
           <button
             className="px-4 py-1.5 text-sm font-medium rounded-md bg-white text-black hover:bg-white/90 transition-colors"
             onClick={() => {
+              trackRewardsClaimClick();
               // TODO: implement claim transaction using reward.proofs
             }}
           >
@@ -137,6 +139,18 @@ export function RewardsPageContent() {
 
   // Is the user actively earning rewards?
   const isEarning = hasBorrowPosition;
+
+  // Track page view on mount
+  useEffect(() => {
+    trackRewardsPageView();
+  }, []);
+
+  // Track eligibility when data is loaded
+  useEffect(() => {
+    if (isConnected && !isLoading) {
+      trackRewardsEligibilityCheck(hasYcvxcrv, hasBorrowPosition);
+    }
+  }, [isConnected, isLoading, hasYcvxcrv, hasBorrowPosition]);
 
   // Flatten all rewards across chains
   const rewards: MerklReward[] = data?.flatMap((d) => d.rewards) ?? [];

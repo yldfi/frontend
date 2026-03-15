@@ -20,6 +20,7 @@ import { useCvxCrvPrice } from "@/hooks/useCvxCrvPrice";
 import { useCurveLendingPosition, formatHealth } from "@/hooks/useCurveLendingPosition";
 import { VAULTS, VAULT_ADDRESSES, CURVE_CONTROLLERS } from "@/config/vaults";
 import { useMerklRewards } from "@/hooks/useMerklRewards";
+import { trackCtaClick, trackExternalLinkClick } from "@/lib/analytics";
 
 // Build vault configs from centralized config
 // In development, show all vaults including hidden ones
@@ -345,6 +346,7 @@ export function HomePageContent() {
                 <div className="flex items-center gap-4 animate-fade-in-up opacity-0 delay-300">
                   <a
                     href="#vaults"
+                    onClick={() => trackCtaClick("view_vaults", "home")}
                     className="inline-flex items-center gap-2 px-5 py-2.5 bg-[var(--foreground)] text-[var(--background)] text-sm font-medium rounded-md hover:opacity-90 transition-opacity"
                   >
                     View Vaults
@@ -353,6 +355,7 @@ export function HomePageContent() {
                     href="https://yldfi.gitbook.io/docs"
                     target="_blank"
                     rel="noopener noreferrer"
+                    onClick={() => trackExternalLinkClick("https://yldfi.gitbook.io/docs", "docs")}
                     className="inline-flex items-center gap-2 px-5 py-2.5 border border-[var(--border)] text-sm font-medium rounded-md hover:bg-[var(--muted)] transition-colors"
                   >
                     Read Docs <ArrowUpRight size={14} />
@@ -492,7 +495,7 @@ export function HomePageContent() {
                         badge === "Collateral (LlamaLend)" ? (
                           <button
                             key={badge}
-                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); router.push(`/vaults/${vault.id}/lending`); }}
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); trackCtaClick("borrow_against_vault", "home"); router.push(`/vaults/${vault.id}/lending`); }}
                             className="group/badge collateral-badge inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium bg-[var(--muted)] text-white rounded whitespace-nowrap hover:text-[var(--foreground)] transition-colors max-w-full"
                           >
                             <Image src="/curve-logo.png" alt="Curve" width={12} height={12} className="rounded-full" />
@@ -520,7 +523,7 @@ export function HomePageContent() {
                       ))}
                       {vault.hasRewards && (
                         <button
-                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); router.push("/rewards"); }}
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); trackCtaClick("rewards_banner", "home"); router.push("/rewards"); }}
                           className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium bg-green-400/10 text-green-400 border border-green-400/20 rounded whitespace-nowrap hover:bg-green-400/20 transition-colors"
                         >
                           <Gift size={10} />
@@ -573,7 +576,7 @@ export function HomePageContent() {
                             badge === "Collateral (LlamaLend)" ? (
                               <button
                                 key={badge}
-                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); router.push(`/vaults/${vault.id}/lending`); }}
+                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); trackCtaClick("borrow_against_vault", "home"); router.push(`/vaults/${vault.id}/lending`); }}
                                 className="group/badge collateral-badge inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium bg-[var(--muted)] text-white rounded whitespace-nowrap hover:text-[var(--foreground)] transition-colors max-w-full"
                               >
                                 <Image src="/curve-logo.png" alt="Curve" width={10} height={10} className="rounded-full" />
@@ -601,7 +604,7 @@ export function HomePageContent() {
                           ))}
                           {vault.hasRewards && (
                             <button
-                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); router.push("/rewards"); }}
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); trackCtaClick("rewards_banner", "home"); router.push("/rewards"); }}
                               className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium bg-green-400/10 text-green-400 border border-green-400/20 rounded whitespace-nowrap hover:bg-green-400/20 transition-colors"
                             >
                               <Gift size={10} />

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { BookOpen, Github, Send, Gift } from "lucide-react";
 import { Logo } from "@/components/Logo";
+import { trackExternalLinkClick } from "@/lib/analytics";
 
 export function Footer() {
   return (
@@ -29,6 +30,7 @@ export function Footer() {
               href="https://yldfi.gitbook.io/docs"
               target="_blank"
               rel="noopener noreferrer"
+              onClick={() => trackExternalLinkClick("https://yldfi.gitbook.io/docs", "docs")}
               className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
               aria-label="Documentation"
             >
@@ -38,6 +40,7 @@ export function Footer() {
               href="https://github.com/yldfi"
               target="_blank"
               rel="noopener noreferrer"
+              onClick={() => trackExternalLinkClick("https://github.com/yldfi", "github")}
               className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
               aria-label="GitHub"
             >
@@ -47,6 +50,7 @@ export function Footer() {
               href="https://t.me/yld_fi"
               target="_blank"
               rel="noopener noreferrer"
+              onClick={() => trackExternalLinkClick("https://t.me/yld_fi", "telegram")}
               className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
               aria-label="Telegram"
             >

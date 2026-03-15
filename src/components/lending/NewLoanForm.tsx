@@ -4,7 +4,16 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
 import { toast } from "sonner";
-import { isUserRejection } from "@/lib/analytics";
+import {
+  isUserRejection,
+  trackLendingBorrowInitiated,
+  trackLendingBorrowSuccess,
+  trackLendingLeverageInitiated,
+  trackLendingLeverageSuccess,
+  trackTransactionError,
+  trackTransactionCancelled,
+  categorizeError,
+} from "@/lib/analytics";
 import {
   AlertTriangle,
   Route,
@@ -1457,6 +1466,11 @@ export function NewLoanForm({
   // Handle transaction success — clear all inputs and reset to idle
   useEffect(() => {
     if (status === "success" && txHash) {
+      if (isLeveraged) {
+        trackLendingLeverageSuccess(vault.id, amount, effectiveLeverage.toFixed(2));
+      } else {
+        trackLendingBorrowSuccess(vault.id, debtInput || "0", "crvUSD");
+      }
       setAmountState("");
       setDebtInputState("");
       debtRatio.current = null;
@@ -1477,11 +1491,12 @@ export function NewLoanForm({
       refetchBalance();
       reset();
     }
-  }, [status, txHash, onTransactionSuccess, reset, refetchBalance, amountStorageKey, debtStorageKey, tokenStorageKey, outputTokenStorageKey]);
+  }, [status, txHash, onTransactionSuccess, reset, refetchBalance, amountStorageKey, debtStorageKey, tokenStorageKey, outputTokenStorageKey, isLeveraged, vault.id, amount, effectiveLeverage, debtInput]);
 
   useEffect(() => {
     if ((status === "error" || status === "reverted") && error) {
       if (isUserRejection(error)) {
+        trackTransactionCancelled(isLeveraged ? "leverage" : "borrow", vault.id);
         toast("Transaction cancelled", { id: "new-loan-cancelled", duration: 3000 });
         if (isLeveraged) {
           zapperReset();
@@ -1489,11 +1504,12 @@ export function NewLoanForm({
           lendingClearError();
         }
       } else {
+        trackTransactionError(isLeveraged ? "leverage" : "borrow", vault.id, typeof error === "string" ? error : error, categorizeError(error));
         toast.error(error);
         reset();
       }
     }
-  }, [status, error, reset, isLeveraged, zapperReset, lendingClearError]);
+  }, [status, error, reset, isLeveraged, zapperReset, lendingClearError, vault.id]);
 
   // Handle approval success
   useEffect(() => {
@@ -1572,6 +1588,12 @@ export function NewLoanForm({
 
   const handleSubmit = async () => {
     if (!address || !controllerAddress || !amount || Number(amount) <= 0 || debtAmount === 0n) return;
+
+    if (isLeveraged) {
+      trackLendingLeverageInitiated(vault.id, amount, effectiveLeverage.toFixed(2));
+    } else {
+      trackLendingBorrowInitiated(vault.id, debtInput || "0", "crvUSD");
+    }
 
     const preview = showSimulationPreview;
 
