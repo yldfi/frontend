@@ -32,7 +32,7 @@ export default function PrivacyPage() {
       <main className="max-w-4xl mx-auto px-6 py-12">
         <h1 className="text-3xl font-semibold mb-2">Privacy Policy</h1>
         <p className="text-[var(--muted-foreground)] mb-8">
-          Last updated: December 2025
+          Last updated: March 2026
         </p>
 
         <div className="space-y-8">
@@ -41,13 +41,17 @@ export default function PrivacyPage() {
             <h2 className="text-xl font-medium mb-4">1. Introduction</h2>
             <p className="text-[var(--muted-foreground)] leading-relaxed">
               yld (&quot;we&quot;, &quot;us&quot;, or &quot;our&quot;) is committed to protecting your privacy.
-              This Privacy Policy explains how we collect, use, and safeguard information when you use our web interface.
+              This Privacy Policy explains how we collect, use, and safeguard information when you use our web interface (the &quot;interface&quot;).
+              The data controller for the purposes of applicable data protection law is yld, contactable at contact@yldfi.co.
             </p>
           </section>
 
           {/* Information We Collect */}
           <section>
             <h2 className="text-xl font-medium mb-4">2. Information We Collect</h2>
+            <p className="text-[var(--muted-foreground)] leading-relaxed mb-4">
+              We collect a limited amount of information automatically to secure and improve our interface. We do not collect personal information that directly identifies you unless you voluntarily provide it (e.g., by contacting us).
+            </p>
 
             <h3 className="text-lg font-medium mb-3 mt-6">Blockchain Data</h3>
             <p className="text-[var(--muted-foreground)] leading-relaxed mb-4">
@@ -58,17 +62,17 @@ export default function PrivacyPage() {
 
             <h3 className="text-lg font-medium mb-3 mt-6">Analytics Data</h3>
             <p className="text-[var(--muted-foreground)] leading-relaxed mb-4">
-              We use Google Analytics to understand how visitors use our interface. This service may collect:
+              We use Google Analytics with Google Consent Mode v2 to understand how visitors use our interface. Based on your consent choices provided via our cookie banner, this service may collect:
             </p>
             <ul className="list-disc list-inside text-[var(--muted-foreground)] space-y-1 ml-4 mb-4">
-              <li>Pages visited and time spent on pages</li>
+              <li>Anonymized or pseudonymous identifiers (if consent is given)</li>
+              <li>Pages visited and interaction events (e.g., button clicks)</li>
               <li>Device type, browser, and operating system</li>
               <li>Approximate geographic location (country/region level)</li>
               <li>Referral sources</li>
             </ul>
             <p className="text-[var(--muted-foreground)] leading-relaxed">
-              Google Analytics uses cookies to collect this information. You can opt out by using browser extensions
-              or adjusting your browser settings to block cookies.
+              If you do not consent to analytics cookies, we only receive aggregated, non-identifying data for basic service measurement.
             </p>
 
             <h3 className="text-lg font-medium mb-3 mt-6">Infrastructure Data</h3>
@@ -86,9 +90,18 @@ export default function PrivacyPage() {
               </a>.
             </p>
 
+            <h3 className="text-lg font-medium mb-3 mt-6">Third-Party API Data</h3>
+            <p className="text-[var(--muted-foreground)] leading-relaxed mb-4">
+              To provide certain features, we interact with third-party APIs. This may involve sharing your wallet address and/or transaction intent:
+            </p>
+            <ul className="list-disc list-inside text-[var(--muted-foreground)] space-y-1 ml-4">
+              <li><b>Enso Finance:</b> For &quot;zap&quot; functionality, we send your desired swap and deposit details (e.g., token addresses and amounts) to Enso&apos;s API to construct the transaction.</li>
+              <li><b>Merkl:</b> To determine your eligibility for and allow you to claim rewards, your wallet address is used to query the Merkl rewards system.</li>
+            </ul>
+
             <h3 className="text-lg font-medium mb-3 mt-6">Transaction Simulation Data</h3>
             <p className="text-[var(--muted-foreground)] leading-relaxed">
-              When you initiate a zap, we may simulate the transaction server-side to detect failures before
+              When you initiate a complex transaction, we may simulate it server-side to detect failures before
               on-chain submission. This can include your wallet address, transaction calldata, and related
               metadata processed by our transaction simulation provider (Tenderly). This data is used only
               to validate execution and improve reliability.
@@ -103,7 +116,7 @@ export default function PrivacyPage() {
             </p>
             <ul className="list-disc list-inside text-[var(--muted-foreground)] space-y-1 ml-4">
               <li>Your private keys or seed phrases</li>
-              <li>Personal identification information (name, email, phone) unless you contact us</li>
+              <li>Personal identification information (name, email, phone) unless you contact us directly</li>
               <li>Your funds or assets (we are a non-custodial interface)</li>
               <li>Passwords or account credentials</li>
             </ul>
@@ -116,44 +129,72 @@ export default function PrivacyPage() {
               The limited information we collect is used to:
             </p>
             <ul className="list-disc list-inside text-[var(--muted-foreground)] space-y-1 ml-4">
-              <li>Improve the functionality and user experience of our interface</li>
+              <li>Provide, maintain, and improve the functionality and user experience of our interface</li>
               <li>Analyze usage patterns to guide development priorities</li>
-              <li>Ensure security and prevent abuse</li>
+              <li>Ensure security, prevent abuse, and protect against malicious activity</li>
               <li>Comply with legal obligations</li>
             </ul>
           </section>
 
-          {/* Cookies */}
+          {/* Legal Basis for Processing */}
           <section>
-            <h2 className="text-xl font-medium mb-4">5. Cookies</h2>
-            <p className="text-[var(--muted-foreground)] leading-relaxed">
-              We use cookies for analytics purposes through Google Analytics. These cookies help us understand
-              how visitors interact with our interface. You can control cookie preferences through your browser settings.
-              Disabling cookies may affect certain functionality but will not prevent you from using our core interface features.
+            <h2 className="text-xl font-medium mb-4">5. Legal Basis for Processing</h2>
+            <p className="text-[var(--muted-foreground)] leading-relaxed mb-4">
+              For users in the European Economic Area (EEA), we process your data under the following legal bases as defined by the General Data Protection Regulation (GDPR):
+            </p>
+            <ul className="list-disc list-inside text-[var(--muted-foreground)] space-y-2 ml-4">
+              <li>
+                <b>Consent:</b> We rely on your explicit consent, collected via our cookie consent banner, to process non-essential analytics data. You can withdraw your consent at any time.
+              </li>
+              <li>
+                <b>Legitimate Interest:</b> We process certain technical data (e.g., from Cloudflare logs and transaction simulations) for the legitimate interests of securing our interface, preventing fraud, and ensuring its performance and reliability.
+              </li>
+            </ul>
+          </section>
+
+          {/* Cookies and Local Storage */}
+          <section>
+            <h2 className="text-xl font-medium mb-4">6. Cookies and Local Storage</h2>
+            <p className="text-[var(--muted-foreground)] leading-relaxed mb-4">
+              A cookie is a small file placed on your device. We use cookies, local storage, and similar technologies for the following purposes:
+            </p>
+            <ul className="list-disc list-inside text-[var(--muted-foreground)] space-y-2 ml-4">
+              <li>
+                <b>Essential:</b> These are necessary for the site to function and cannot be switched off. They include preferences such as your choice regarding analytics consent.
+              </li>
+              <li>
+                <b>Analytics:</b> These are optional and are used to collect information about how you interact with our website. We use this information to improve our interface.
+              </li>
+            </ul>
+            <p className="text-[var(--muted-foreground)] leading-relaxed mt-4">
+              You can manage your cookie preferences at any time through our cookie consent banner. Disabling analytics cookies will not prevent you from using our core interface features.
             </p>
           </section>
 
           {/* Third-Party Services */}
           <section>
-            <h2 className="text-xl font-medium mb-4">6. Third-Party Services</h2>
+            <h2 className="text-xl font-medium mb-4">7. Third-Party Services</h2>
             <p className="text-[var(--muted-foreground)] leading-relaxed mb-4">
-              Our interface integrates with third-party services that have their own privacy policies:
+              Our interface integrates with third-party services that have their own privacy policies. We do not control these third parties.
             </p>
             <ul className="list-disc list-inside text-[var(--muted-foreground)] space-y-1 ml-4">
               <li>
-                <strong>Wallet Providers</strong> (MetaMask, WalletConnect, etc.) - governed by their respective privacy policies
+                <strong>Wallet Providers</strong> (e.g., RainbowKit, WalletConnect, MetaMask) - governed by their respective privacy policies
               </li>
               <li>
                 <strong>Cloudflare</strong> - infrastructure and security services
               </li>
               <li>
-                <strong>Enso</strong> - route/bundle API for transaction construction and quoting
+                <strong>Enso</strong> - API for transaction construction and quoting
               </li>
               <li>
-                <strong>Tenderly</strong> - server-side transaction simulation for pre-flight checks
+                <strong>Merkl</strong> - API for rewards distribution
               </li>
               <li>
-                <strong>RPC Providers</strong> (public Ethereum RPC endpoints) - used to read chain data and simulate transactions
+                <strong>Tenderly</strong> - server-side transaction simulation
+              </li>
+              <li>
+                <strong>RPC Providers</strong> (public Ethereum RPC endpoints) - used to read chain data
               </li>
               <li>
                 <strong>Google Analytics</strong> - usage analytics
@@ -166,35 +207,44 @@ export default function PrivacyPage() {
 
           {/* Data Retention */}
           <section>
-            <h2 className="text-xl font-medium mb-4">7. Data Retention</h2>
+            <h2 className="text-xl font-medium mb-4">8. Data Retention</h2>
             <p className="text-[var(--muted-foreground)] leading-relaxed">
-              Analytics data is retained according to Google Analytics&apos; standard retention policies.
-              Cloudflare logs are retained according to their data retention policies.
-              We do not store transaction simulation results on our servers.
-              Blockchain data is permanent and immutable by nature.
+              Analytics data collected via Google Analytics is configured to be automatically retained for 14 months before deletion. Cloudflare logs are retained according to their data retention policies. We do not store transaction simulation results on our servers. Blockchain data is permanent and immutable by nature.
             </p>
           </section>
 
           {/* Your Rights */}
           <section>
-            <h2 className="text-xl font-medium mb-4">8. Your Rights</h2>
+            <h2 className="text-xl font-medium mb-4">9. Your Rights</h2>
             <p className="text-[var(--muted-foreground)] leading-relaxed mb-4">
-              Depending on your jurisdiction, you may have the right to:
+              Depending on your jurisdiction (e.g., the EEA under GDPR or California under CCPA), you may have the following rights regarding your personal information:
             </p>
             <ul className="list-disc list-inside text-[var(--muted-foreground)] space-y-1 ml-4">
-              <li>Request information about data we hold</li>
-              <li>Request deletion of data (where technically feasible)</li>
-              <li>Opt out of analytics tracking</li>
-              <li>Lodge complaints with data protection authorities</li>
+              <li>The right to access the data we hold about you.</li>
+              <li>The right to rectify inaccurate information.</li>
+              <li>The right to erasure (&quot;right to be forgotten&quot;).</li>
+              <li>The right to restrict processing of your data.</li>
+              <li>The right to data portability.</li>
+              <li>The right to object to processing based on legitimate interests.</li>
+              <li>The right to withdraw consent at any time (e.g., via the cookie consent banner).</li>
+              <li>The right to lodge a complaint with a relevant supervisory authority.</li>
             </ul>
             <p className="text-[var(--muted-foreground)] leading-relaxed mt-4">
-              Note that blockchain data cannot be modified or deleted due to the immutable nature of distributed ledgers.
+              Please note that these rights are not absolute and may be subject to legal limitations. Due to the nature of our service, most data we process is either public blockchain data (which cannot be altered) or anonymized technical data. To exercise your rights, please contact us.
+            </p>
+          </section>
+
+          {/* Cross-Border Data Transfers */}
+          <section>
+            <h2 className="text-xl font-medium mb-4">10. Cross-Border Data Transfers</h2>
+            <p className="text-[var(--muted-foreground)] leading-relaxed">
+              Our service is global. The information we collect may be stored and processed in any country where our third-party service providers (like Google and Cloudflare) have facilities, including the United States. When we transfer data internationally, we rely on appropriate legal mechanisms, such as the European Commission&apos;s Standard Contractual Clauses, to ensure your data is afforded a level of protection consistent with applicable law.
             </p>
           </section>
 
           {/* Changes */}
           <section>
-            <h2 className="text-xl font-medium mb-4">9. Changes to This Policy</h2>
+            <h2 className="text-xl font-medium mb-4">11. Changes to This Policy</h2>
             <p className="text-[var(--muted-foreground)] leading-relaxed">
               We may update this Privacy Policy from time to time. Changes will be posted on this page with an updated revision date.
               Your continued use of the interface after changes constitutes acceptance of the revised policy.
@@ -203,7 +253,7 @@ export default function PrivacyPage() {
 
           {/* Contact */}
           <section>
-            <h2 className="text-xl font-medium mb-4">10. Contact</h2>
+            <h2 className="text-xl font-medium mb-4">12. Contact</h2>
             <p className="text-[var(--muted-foreground)] leading-relaxed">
               If you have questions about this Privacy Policy, please contact us at{" "}
               <a
