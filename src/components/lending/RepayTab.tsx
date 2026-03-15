@@ -4,7 +4,14 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
 import { toast } from "sonner";
-import { isUserRejection } from "@/lib/analytics";
+import {
+  isUserRejection,
+  trackLendingRepayInitiated,
+  trackLendingRepaySuccess,
+  trackTransactionError,
+  trackTransactionCancelled,
+  categorizeError,
+} from "@/lib/analytics";
 import {
   AlertTriangle,
   Route,
@@ -893,6 +900,7 @@ export function RepayTab({
   // Handle transaction success — clear all inputs and reset to idle
   useEffect(() => {
     if (status === "success") {
+      trackLendingRepaySuccess(vault.id, repayAmount);
       setRepayAmountState("");
       setWithdrawAmountState("");
       setIsClosingLoan(false);
@@ -901,20 +909,22 @@ export function RepayTab({
       refetchBalance();
       reset();
     }
-  }, [status, onTransactionSuccess, reset, refetchBalance, repayStorageKey]);
+  }, [status, onTransactionSuccess, reset, refetchBalance, repayStorageKey, vault.id, repayAmount]);
 
   // Toast error messages to user
   useEffect(() => {
     if ((status === "error" || status === "reverted") && error) {
       if (isUserRejection(error)) {
+        trackTransactionCancelled("repay", vault.id);
         toast("Transaction cancelled", { id: "repay-cancelled", duration: 3000 });
         clearError();
       } else {
+        trackTransactionError("repay", vault.id, typeof error === "string" ? error : error, categorizeError(error));
         toast.error(error);
         reset();
       }
     }
-  }, [status, error, reset, clearError]);
+  }, [status, error, reset, clearError, vault.id]);
 
   // Handle approval success -> continue execution
   useEffect(() => {
@@ -991,6 +1001,8 @@ export function RepayTab({
   const handleSubmit = async () => {
     if (!address || !controllerAddress || !repayAmount || !position?.hasLoan)
       return;
+
+    trackLendingRepayInitiated(vault.id, repayAmount);
 
     const hasWithdrawal = withdrawAmountWei > 0n;
 

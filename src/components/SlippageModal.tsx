@@ -8,6 +8,7 @@ import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
 import { useSettings } from "@/hooks/useSettings";
 import { cn } from "@/lib/utils";
 
+
 const SIMULATION_STORAGE_KEY = "yldfi-show-simulation";
 
 interface SlippageModalProps {

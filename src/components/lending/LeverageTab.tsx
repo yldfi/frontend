@@ -6,7 +6,16 @@ import { ApprovalCard } from "@/components/ApprovalCard";
 import { useAccount, usePublicClient, useGasPrice, useBlockNumber, useBalance } from "wagmi";
 import { SimulationModal } from "@/components/SimulationModal";
 import { toast } from "sonner";
-import { isUserRejection } from "@/lib/analytics";
+import {
+  isUserRejection,
+  trackLendingLeverageInitiated,
+  trackLendingLeverageSuccess,
+  trackLendingSelfLiquidateInitiated,
+  trackLendingSelfLiquidateSuccess,
+  trackTransactionError,
+  trackTransactionCancelled,
+  categorizeError,
+} from "@/lib/analytics";
 import { formatUnits, parseUnits } from "viem";
 import type { VaultConfig } from "@/config/vaults";
 import { CURVE_CONTROLLERS, TOKENS, TANGENT } from "@/config/vaults";
@@ -1287,6 +1296,11 @@ export function LeverageTab({
   // Handle transaction success — clear all inputs and reset to idle
   useEffect(() => {
     if (status === "success") {
+      if (activeMode === "selfLiquidate") {
+        trackLendingSelfLiquidateSuccess(vault.id);
+      } else {
+        trackLendingLeverageSuccess(vault.id, collateralAmount || "0", leverage.toFixed(2));
+      }
       setCollateralAmountRaw("");
       setWithdrawAmount("");
       leverageFollowsBase.current = true;
@@ -1295,20 +1309,22 @@ export function LeverageTab({
       refetchBalance();
       reset();
     }
-  }, [status, onTransactionSuccess, reset, refetchBalance, leverageStorageKey]);
+  }, [status, onTransactionSuccess, reset, refetchBalance, leverageStorageKey, activeMode, vault.id, collateralAmount, leverage]);
 
   // Toast error messages to user
   useEffect(() => {
     if ((status === "error" || status === "reverted") && error) {
       if (isUserRejection(error)) {
+        trackTransactionCancelled(activeMode === "selfLiquidate" ? "self_liquidate" : "leverage", vault.id);
         toast("Transaction cancelled", { id: "leverage-cancelled", duration: 3000 });
         clearError();
       } else {
+        trackTransactionError(activeMode === "selfLiquidate" ? "self_liquidate" : "leverage", vault.id, typeof error === "string" ? error : error, categorizeError(error));
         toast.error(error);
         reset();
       }
     }
-  }, [status, error, reset, clearError]);
+  }, [status, error, reset, clearError, activeMode, vault.id]);
 
   // Handle approval success -> continue execution
   useEffect(() => {
@@ -1327,6 +1343,12 @@ export function LeverageTab({
 
   const handleSubmit = async () => {
     if (!address || !controllerAddress) return;
+
+    if (activeMode === "selfLiquidate") {
+      trackLendingSelfLiquidateInitiated(vault.id);
+    } else {
+      trackLendingLeverageInitiated(vault.id, collateralAmount || "0", leverage.toFixed(2));
+    }
 
     const preview = showSimulationPreview;
 

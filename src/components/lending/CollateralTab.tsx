@@ -4,7 +4,14 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
 import { toast } from "sonner";
-import { isUserRejection } from "@/lib/analytics";
+import {
+  isUserRejection,
+  trackLendingCollateralAddInitiated,
+  trackLendingCollateralAddSuccess,
+  trackTransactionError,
+  trackTransactionCancelled,
+  categorizeError,
+} from "@/lib/analytics";
 import {
   AlertTriangle,
   Route,
@@ -526,6 +533,9 @@ export function CollateralTab({
   // Handle transaction success — clear all inputs and reset to idle
   useEffect(() => {
     if (status === "success" && txHash) {
+      if (mode === "add") {
+        trackLendingCollateralAddSuccess(vault.id, amount, selectedToken.symbol);
+      }
       setAmountState("");
       setSelectedToken(vaultToken);
       try { sessionStorage.removeItem(storageKey); } catch { /* */ }
@@ -539,19 +549,21 @@ export function CollateralTab({
       refetchBalance();
       reset();
     }
-  }, [status, txHash, mode, onTransactionSuccess, reset, refetchBalance, storageKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [status, txHash, mode, onTransactionSuccess, reset, refetchBalance, storageKey, vault.id, amount, selectedToken.symbol]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if ((status === "error" || status === "reverted") && error) {
       if (isUserRejection(error)) {
+        trackTransactionCancelled("collateral", vault.id);
         toast("Transaction cancelled", { id: "collateral-cancelled", duration: 3000 });
         clearError();
       } else {
+        trackTransactionError("collateral", vault.id, typeof error === "string" ? error : error, categorizeError(error));
         toast.error(error);
         reset();
       }
     }
-  }, [status, error, reset, clearError]);
+  }, [status, error, reset, clearError, vault.id]);
 
   // Handle approval success -> continue execution
   useEffect(() => {
@@ -594,6 +606,10 @@ export function CollateralTab({
 
   const handleSubmit = async () => {
     if (!address || !controllerAddress || !amount || Number(amount) <= 0) return;
+
+    if (mode === "add") {
+      trackLendingCollateralAddInitiated(vault.id, amount, selectedToken.symbol);
+    }
 
     try {
       if (mode === "add") {

@@ -19,6 +19,7 @@ import { CACHE_TIMES } from "@/config/query";
 import { useYearnVault, formatYearnVaultData } from "@/hooks/useYearnVault";
 import { LoadingDots } from "@/components/LoadingDots";
 import { useSettings } from "@/hooks/useSettings";
+import { trackLendingTabSwitch } from "@/lib/analytics";
 
 export type LendingTxState = {
   status: "pending" | "success" | "reverted";
@@ -299,6 +300,7 @@ export function LendingInterface({
   });
   const setActiveTab = (tab: Tab) => {
     setActiveTabState(tab);
+    trackLendingTabSwitch(tab);
     try {
       localStorage.setItem("yldfi-lending-tab", tab);
     } catch {
