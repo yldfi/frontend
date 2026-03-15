@@ -172,7 +172,7 @@ export default function TermsPage() {
                 <b>Third-Party Protocol Risk:</b> The interface integrates with third-party protocols such as Curve, Enso, and Merkl. These are independent systems outside of our control. Any failure, exploit, or adverse event on these protocols could negatively impact your funds or rewards.
               </li>
               <li>
-                <b>Price Oracle Risk:</b> The lending functionality relies on price oracles to determine the value of your collateral. yld deployed the oracle used by the ycvxCRV LlamaLend market; however, the oracle contract can be changed by the Curve DAO through governance. Oracles may report incorrect prices or be subject to manipulation, which could lead to premature liquidations or other unintended outcomes.
+                <b>Price Oracle Risk:</b> The lending functionality relies on price oracles to determine the value of your collateral. yld deployed the oracle used by the ycvxCRV LlamaLend market; however, the oracle contract can be changed by the Curve DAO through governance. Oracle prices reflect on-chain conditions and may diverge from market prices on centralised exchanges, which could trigger liquidations during periods of volatility or low liquidity.
               </li>
               <li>
                 <b>Impermanent Loss:</b> Certain DeFi strategies, particularly those involving liquidity pools, may expose you to impermanent loss, where the value of your deposited assets diverges from what their value would have been if you had simply held them.
@@ -216,7 +216,7 @@ export default function TermsPage() {
           <section>
             <h2 className="text-xl font-medium mb-4">10. Intellectual Property</h2>
             <p className="text-[var(--muted-foreground)] leading-relaxed">
-              We grant you a limited, non-exclusive, non-transferable, revocable license to access and use the yld interface for its intended purposes. The &quot;yld&quot; name, logo, and other related graphics, as well as the source code for the interface, are the property of the yld contributors and are protected by copyright, trademark, and other intellectual property laws.
+              We grant you a limited, non-exclusive, non-transferable, revocable license to access and use the yld interface for its intended purposes. The logo, graphics, and source code for the interface are the property of the yld contributors and are protected by copyright and other applicable intellectual property laws.
             </p>
           </section>
 
