@@ -49,6 +49,9 @@ import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { useSettings } from "@/hooks/useSettings";
+import { useMerklRewards } from "@/hooks/useMerklRewards";
+import { formatUsd } from "@/lib/utils";
+import { Footer } from "@/components/Footer";
 import { Logo } from "@/components/Logo";
 import { useCurveLendingVault, formatCurveVaultData } from "@/hooks/useCurveLendingData";
 import { useCurveLendingPosition, formatHealth } from "@/hooks/useCurveLendingPosition";
@@ -599,6 +602,12 @@ export function VaultPageContent({ id }: { id: string }) {
     userAddress
   );
   const onChainRates = useCurveMarketRates(controllerAddress);
+
+  // Merkl rewards earnings
+  const { data: merklData } = useMerklRewards(1);
+  const totalEarnedUsd = (merklData?.flatMap((d) => d.rewards) ?? []).reduce((sum, r) => {
+    return sum + parseFloat(formatUnits(BigInt(r.amount), r.token.decimals)) * r.token.price;
+  }, 0);
 
   // Fetch cvxCRV price from on-chain oracles
   const { price: cvxCrvPrice } = useCvxCrvPrice();
@@ -1367,16 +1376,38 @@ export function VaultPageContent({ id }: { id: string }) {
                 return (
                   <Link
                     href={`/vaults/${vault.id}/lending`}
-                    className="collateral-link block"
+                    className="collateral-link block w-full"
+                    style={{ display: "flex" }}
                   >
-                    <span>
-                      <Image src="/curve-logo.png" alt="Curve" width={14} height={14} className="rounded-full inline-block" />
-                      Borrow against {vault.symbol}
-                      <ArrowUpRight size={14} />
+                    <span className="w-full flex items-center gap-2 !justify-start !px-4" style={{ height: 44 }}>
+                      <Image src="/curve-logo.png" alt="Curve" width={16} height={16} className="rounded-full flex-shrink-0" />
+                      <span className="text-sm font-medium whitespace-nowrap">Borrow against {vault.symbol}</span>
+                      <span className="text-xs font-normal text-[var(--muted-foreground)]">
+                        Borrow crvUSD on Curve LlamaLend
+                      </span>
+                      <ArrowUpRight size={14} className="ml-auto flex-shrink-0" />
                     </span>
                   </Link>
                 );
               })()}
+
+              {/* Rewards Banner */}
+              {vault.id === "ycvxcrv" && (
+                <Link
+                  href="/rewards"
+                  className="block border border-green-400/20 bg-green-400/5 rounded-md px-4 group hover:border-green-400/40 transition-colors"
+                  style={{ height: 46 }}
+                >
+                  <div className="flex items-center gap-2 h-full">
+                    <Image src="/tokens/crvusd.png" alt="crvUSD" width={16} height={16} className="rounded-full" />
+                    <span className="text-sm font-medium text-green-400">crvUSD Rewards</span>
+                    <span className="text-xs text-[var(--muted-foreground)]">
+                      {totalEarnedUsd > 0 ? `Earning ${formatUsd(totalEarnedUsd)}` : `Earn crvUSD by borrowing against ${vault.symbol}`}
+                    </span>
+                    <ArrowUpRight size={14} className="ml-auto text-green-400/60 group-hover:text-green-400 transition-colors" />
+                  </div>
+                </Link>
+              )}
 
               {/* Stats */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -2424,6 +2455,7 @@ export function VaultPageContent({ id }: { id: string }) {
           </div>
         </div>
       </main>
+      <Footer />
 
       {/* Settings Modal */}
       <SlippageModal
