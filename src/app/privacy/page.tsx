@@ -217,7 +217,7 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-xl font-medium mb-4">9. Your Rights</h2>
             <p className="text-[var(--muted-foreground)] leading-relaxed mb-4">
-              Depending on your jurisdiction (e.g., the EEA under GDPR or California under CCPA), you may have the following rights regarding your personal information:
+              Depending on your jurisdiction (e.g., the EEA under GDPR), you may have the following rights regarding your personal information:
             </p>
             <ul className="list-disc list-inside text-[var(--muted-foreground)] space-y-1 ml-4">
               <li>The right to access the data we hold about you.</li>
