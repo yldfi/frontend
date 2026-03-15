@@ -14,6 +14,7 @@ import { useVaultBalance } from "@/hooks/useVaultBalance";
 import { useCurveLendingPosition } from "@/hooks/useCurveLendingPosition";
 import { VAULT_ADDRESSES } from "@/config/vaults";
 import { formatUsd } from "@/lib/utils";
+import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { trackRewardsPageView, trackRewardsClaimClick, trackRewardsEligibilityCheck } from "@/lib/analytics";
 
@@ -210,21 +211,7 @@ export function RewardsPageContent() {
 
   return (
     <div className="min-h-screen bg-[var(--background)]">
-      {/* Header */}
-      <header
-        className="fixed left-0 right-0 z-50 border-b border-[var(--border)] backdrop-blur-lg bg-[var(--background)]/80"
-        style={{ top: "var(--test-banner-height)" }}
-      >
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2">
-            <Logo size={28} />
-            <span className="mono text-lg font-medium tracking-tight leading-none">
-              yld
-            </span>
-          </Link>
-          <CustomConnectButton />
-        </div>
-      </header>
+      <Header />
 
       <main style={{ paddingTop: "calc(4rem + var(--test-banner-height))" }}>
         {/* Breadcrumb navigation */}
