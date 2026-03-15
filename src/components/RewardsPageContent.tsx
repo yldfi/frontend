@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAccount } from "wagmi";
+import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { formatUnits } from "viem";
 import Link from "next/link";
 import Image from "next/image";
@@ -17,6 +17,21 @@ import { formatUsd } from "@/lib/utils";
 import { Footer } from "@/components/Footer";
 import { trackRewardsPageView, trackRewardsClaimClick, trackRewardsEligibilityCheck } from "@/lib/analytics";
 
+const MERKL_DISTRIBUTOR = "0x3Ef3D8bA38EBe18DB133cEc108f4D14CE00Dd9Ae" as const;
+const MERKL_DISTRIBUTOR_ABI = [
+  {
+    name: "claim",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "users", type: "address[]" },
+      { name: "tokens", type: "address[]" },
+      { name: "amounts", type: "uint256[]" },
+      { name: "proofs", type: "bytes32[][]" },
+    ],
+    outputs: [],
+  },
+] as const;
 
 function Countdown({ target }: { target: number }) {
   const [remaining, setRemaining] = useState(() => target - Math.floor(Date.now() / 1000));
@@ -43,6 +58,7 @@ function Countdown({ target }: { target: number }) {
 }
 
 function RewardRow({ reward }: { reward: MerklReward }) {
+  const { address } = useAccount();
   const amount = BigInt(reward.amount);
   const claimed = BigInt(reward.claimed);
   const claimable = amount - claimed;
@@ -53,6 +69,25 @@ function RewardRow({ reward }: { reward: MerklReward }) {
   const formattedClaimable = parseFloat(formatUnits(claimable, reward.token.decimals));
 
   const claimableUsd = formattedClaimable * reward.token.price;
+
+  const { writeContract, data: txHash, isPending: isClaiming } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
+
+  const handleClaim = () => {
+    if (!address) return;
+    trackRewardsClaimClick();
+    writeContract({
+      address: MERKL_DISTRIBUTOR,
+      abi: MERKL_DISTRIBUTOR_ABI,
+      functionName: "claim",
+      args: [
+        [address],
+        [reward.token.address as `0x${string}`],
+        [BigInt(reward.amount)],
+        [reward.proofs as `0x${string}`[]],
+      ],
+    });
+  };
 
   return (
     <div className="border border-[var(--border)] rounded-lg p-5 hover:border-[var(--border-hover)] transition-colors">
@@ -72,16 +107,19 @@ function RewardRow({ reward }: { reward: MerklReward }) {
             </div>
           </div>
         </div>
-        {hasClaimable && (
+        {hasClaimable && !isConfirmed && (
           <button
-            className="px-4 py-1.5 text-sm font-medium rounded-md bg-white text-black hover:bg-white/90 transition-colors"
-            onClick={() => {
-              trackRewardsClaimClick();
-              // TODO: implement claim transaction using reward.proofs
-            }}
+            className="px-4 py-1.5 text-sm font-medium rounded-md bg-white text-black hover:bg-white/90 transition-colors disabled:opacity-50"
+            onClick={handleClaim}
+            disabled={isClaiming || isConfirming}
           >
-            Claim
+            {isClaiming ? "Confirm in wallet..." : isConfirming ? "Claiming..." : "Claim"}
           </button>
+        )}
+        {isConfirmed && (
+          <span className="px-4 py-1.5 text-sm font-medium text-green-400 flex items-center gap-1.5">
+            <CheckCircle2 className="w-4 h-4" /> Claimed
+          </span>
         )}
       </div>
 
