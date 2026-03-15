@@ -53,7 +53,7 @@ export default function TermsPage() {
               The yld interface provides access to the following features, which are enabled by smart contracts and integrations with third-party protocols:
             </p>
             <p className="text-[var(--muted-foreground)] leading-relaxed mb-4">
-              yld has deployed certain smart contracts (vaults and strategies) to the Ethereum blockchain. These vault and strategy contracts are immutable and cannot be modified, paused, or upgraded by anyone, including yld. yld also deployed the price oracle used by the ycvxCRV LlamaLend market, which can be changed by the Curve DAO through governance. The LlamaLend lending market itself is operated by Curve&apos;s protocol. yld does not custody user assets and does not control the Ethereum network or third-party protocols.
+              yld has deployed certain smart contracts (vaults, strategies, and price oracles) to the Ethereum blockchain. Vault and strategy contracts are immutable and cannot be modified, paused, or upgraded by anyone, including yld. Price oracles deployed by yld may be changed by the Curve DAO through governance. The LlamaLend lending markets are operated by Curve&apos;s protocol. yld does not custody user assets and does not control the Ethereum network or third-party protocols.
             </p>
             <ul className="list-disc list-inside text-[var(--muted-foreground)] space-y-2 ml-4">
               <li>
@@ -172,7 +172,7 @@ export default function TermsPage() {
                 <b>Third-Party Protocol Risk:</b> The interface integrates with third-party protocols such as Curve, Enso, and Merkl. These are independent systems outside of our control. Any failure, exploit, or adverse event on these protocols could negatively impact your funds or rewards.
               </li>
               <li>
-                <b>Price Oracle Risk:</b> The lending functionality relies on price oracles to determine the value of your collateral. yld deployed the oracle used by the ycvxCRV LlamaLend market; however, the oracle contract can be changed by the Curve DAO through governance. Oracle prices reflect on-chain conditions and may diverge from market prices on centralised exchanges, which could trigger liquidations during periods of volatility or low liquidity.
+                <b>Price Oracle Risk:</b> The lending functionality relies on price oracles to determine the value of your collateral. yld has deployed price oracles for use by LlamaLend markets; these oracle contracts may be changed by the Curve DAO through governance. Oracle prices reflect on-chain conditions and may diverge from market prices on centralised exchanges, which could trigger liquidations during periods of volatility or low liquidity.
               </li>
               <li>
                 <b>Impermanent Loss:</b> Certain DeFi strategies, particularly those involving liquidity pools, may expose you to impermanent loss, where the value of your deposited assets diverges from what their value would have been if you had simply held them.
