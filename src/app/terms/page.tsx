@@ -163,7 +163,7 @@ export default function TermsPage() {
             </p>
             <ul className="list-disc list-inside text-[var(--muted-foreground)] space-y-3 ml-4">
               <li>
-                <b>Smart Contract Risk:</b> The Protocol involves complex smart contracts. Despite audits, there is a risk of vulnerabilities, bugs, or exploits that could lead to a partial or total loss of your funds. All transactions are irreversible.
+                <b>Smart Contract Risk:</b> The interface interacts with complex smart contracts. The ERC-4626 vault architecture is provided by Yearn V3, which has undergone independent security audits. However, yld&apos;s own strategy contracts and oracle have not been independently audited. There is a risk of vulnerabilities, bugs, or exploits in any smart contract that could lead to a partial or total loss of your funds. All transactions are irreversible.
               </li>
               <li>
                 <b>Lending and Liquidation Risk:</b> When you borrow assets, the value of your collateral may fluctuate. If your collateral value falls below a certain threshold, your position may be subject to liquidation, meaning your collateral will be sold to repay your debt, potentially at a loss. The LlamaLend protocol uses a &quot;soft-liquidation&quot; mechanism, which you are responsible for understanding.
