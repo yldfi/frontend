@@ -14,16 +14,16 @@ export function Header() {
   const { data: merklData } = useMerklRewards(1);
   const rewards = merklData?.flatMap((d) => d.rewards) ?? [];
 
-  // Calculate total claimable (amount - claimed) + pending
-  const totalClaimable = rewards.reduce((sum, r) => {
-    const claimable = BigInt(r.amount) - BigInt(r.claimed);
+  // Calculate total earned (amount if finalized, otherwise pending)
+  const totalEarned = rewards.reduce((sum, r) => {
+    const amount = BigInt(r.amount);
     const pending = BigInt(r.pending);
-    const total = claimable > 0n ? claimable : pending;
+    const earned = amount > 0n ? amount : pending;
     const price = r.token.price ?? 1; // crvUSD ≈ $1
-    return sum + parseFloat(formatUnits(total, r.token.decimals)) * price;
+    return sum + parseFloat(formatUnits(earned, r.token.decimals)) * price;
   }, 0);
 
-  const isEarning = address && totalClaimable > 0;
+  const isEarning = address && totalEarned > 0;
 
   return (
     <header
@@ -48,7 +48,7 @@ export function Header() {
             }`}
           >
             <Gift className="w-4 h-4" />
-            {isEarning ? formatUsd(totalClaimable) : "Rewards"}
+            {isEarning ? formatUsd(totalEarned) : "Rewards"}
           </Link>
           <CustomConnectButton />
         </div>
