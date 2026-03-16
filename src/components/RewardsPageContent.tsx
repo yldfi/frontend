@@ -132,18 +132,15 @@ function RewardRow({ reward }: { reward: MerklReward }) {
 
       <div className="grid grid-cols-3 gap-4 text-sm">
         <div>
-          <div className="text-[var(--muted-foreground)] mb-1">Earned</div>
+          <div className="text-[var(--muted-foreground)] mb-1">
+            {formattedPending > 0 && amount === 0n ? "Pending" : "Earned"}
+          </div>
           <div className="font-medium mono">
             {formattedAmount.toLocaleString("en-US", { maximumFractionDigits: 4 })}
           </div>
           {price > 0 && (
             <div className="text-xs text-[var(--muted-foreground)]">
               {formatUsd(formattedAmount * price)}
-            </div>
-          )}
-          {formattedPending > 0 && (
-            <div className="text-xs text-yellow-400/70">
-              {formattedPending.toLocaleString("en-US", { maximumFractionDigits: 4 })} pending
             </div>
           )}
         </div>
