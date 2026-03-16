@@ -20,7 +20,7 @@ import { useVaultCache } from "@/hooks/useVaultCache";
 import { useCvxCrvPrice } from "@/hooks/useCvxCrvPrice";
 import { useCurveLendingPosition, formatHealth } from "@/hooks/useCurveLendingPosition";
 import { VAULTS, VAULT_ADDRESSES, CURVE_CONTROLLERS } from "@/config/vaults";
-import { useMerklRewards } from "@/hooks/useMerklRewards";
+import { useMerklRewards, useMerklOpportunities } from "@/hooks/useMerklRewards";
 import { trackCtaClick, trackExternalLinkClick } from "@/lib/analytics";
 
 // Build vault configs from centralized config
@@ -150,6 +150,11 @@ export function HomePageContent() {
   const totalEarnedUsd = merklRewards.reduce((sum, r) => {
     return sum + parseFloat(formatUnits(BigInt(r.amount), r.token.decimals)) * r.token.price;
   }, 0);
+
+  // Merkl reward APR
+  const { data: merklOpportunities } = useMerklOpportunities();
+  const rewardOpportunity = merklOpportunities?.find((o) => o.name === "Yld Borrow crvUSD");
+  const rewardApr = rewardOpportunity?.apr;
 
   // Fetch price per share from on-chain
   const { prices: pricePerShareData } = useMultiplePricePerShare([
@@ -511,7 +516,7 @@ export function HomePageContent() {
                           className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium bg-green-400/10 text-green-400 border border-green-400/20 rounded whitespace-nowrap hover:bg-green-400/20 transition-colors"
                         >
                           <Gift size={10} />
-                          <span>{totalEarnedUsd > 0 ? `Earning ${formatUsd(totalEarnedUsd)}` : "Rewards"}</span>
+                          <span>{totalEarnedUsd > 0 ? `Earning ${formatUsd(totalEarnedUsd)}` : rewardApr != null ? `${rewardApr.toFixed(1)}% APR` : "Rewards"}</span>
                           <ArrowUpRight size={10} />
                         </button>
                       )}
@@ -592,7 +597,7 @@ export function HomePageContent() {
                               className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium bg-green-400/10 text-green-400 border border-green-400/20 rounded whitespace-nowrap hover:bg-green-400/20 transition-colors"
                             >
                               <Gift size={10} />
-                              <span>{totalEarnedUsd > 0 ? `Earning ${formatUsd(totalEarnedUsd)}` : "Rewards"}</span>
+                              <span>{totalEarnedUsd > 0 ? `Earning ${formatUsd(totalEarnedUsd)}` : rewardApr != null ? `${rewardApr.toFixed(1)}% APR` : "Rewards"}</span>
                               <ArrowUpRight size={10} />
                             </button>
                           )}

@@ -8,7 +8,7 @@ import { parseUnits, formatUnits } from "viem";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
 import { MaxButton } from "@/components/MaxButton";
-import { ArrowUpRight, ExternalLink, Search, Route, RouteOff, Copy, ChevronDown, ChevronRight, Check, X, Clock, ArrowRightLeft, HeartPulse, Shield, Wallet, Banknote, Percent, TrendingUp, Info, Coins } from "lucide-react";
+import { ArrowUpRight, ExternalLink, Search, Route, RouteOff, Copy, ChevronDown, ChevronRight, Check, X, Clock, ArrowRightLeft, HeartPulse, Shield, Wallet, Banknote, Percent, TrendingUp, Info, Coins, Gift } from "lucide-react";
 import { RouteDisplay } from "@/components/RouteDisplay";
 import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
@@ -49,7 +49,7 @@ import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { useSettings } from "@/hooks/useSettings";
-import { useMerklRewards } from "@/hooks/useMerklRewards";
+import { useMerklRewards, useMerklOpportunities } from "@/hooks/useMerklRewards";
 import { formatUsd } from "@/lib/utils";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
@@ -611,6 +611,11 @@ export function VaultPageContent({ id }: { id: string }) {
   const totalEarnedUsd = (merklData?.flatMap((d) => d.rewards) ?? []).reduce((sum, r) => {
     return sum + parseFloat(formatUnits(BigInt(r.amount), r.token.decimals)) * r.token.price;
   }, 0);
+
+  // Merkl reward APR
+  const { data: merklOpportunities } = useMerklOpportunities();
+  const rewardOpportunity = merklOpportunities?.find((o) => o.name === "Yld Borrow crvUSD");
+  const rewardApr = rewardOpportunity?.apr;
 
   // Fetch cvxCRV price from on-chain oracles
   const { price: cvxCrvPrice } = useCvxCrvPrice();
@@ -1351,6 +1356,11 @@ export function VaultPageContent({ id }: { id: string }) {
                             <p className="mono text-sm font-medium">{display.leverageFormatted}</p>
                             <p className={cn("text-xs mono", display.netApy >= 0 ? "text-green-500" : "text-red-500")}>
                               {display.netApyFormatted} NET
+                              {vault.id === "ycvxcrv" && rewardApr != null && (
+                                <span className="inline-flex items-center gap-0.5 text-green-400 ml-1">
+                                  <Gift size={9} />+{rewardApr.toFixed(1)}%
+                                </span>
+                              )}
                             </p>
                           </div>
                           <div>
@@ -1393,6 +1403,8 @@ export function VaultPageContent({ id }: { id: string }) {
                 >
                   <div className="flex items-center gap-2 h-full">
                     <Image src="/tokens/crvusd.png" alt="crvUSD" width={16} height={16} className="rounded-full" />
+                    {rewardApr != null && <span className="text-sm font-bold text-green-400 mono">{rewardApr.toFixed(1)}% APR</span>}
+                    {rewardApr != null && <span className="text-green-400/40">·</span>}
                     <span className="text-sm font-medium text-green-400">crvUSD Rewards</span>
                     <span className="text-xs text-[var(--muted-foreground)]">
                       {totalEarnedUsd > 0 ? `Earning ${formatUsd(totalEarnedUsd)}` : `Earn crvUSD by borrowing against ${vault.symbol}`}
