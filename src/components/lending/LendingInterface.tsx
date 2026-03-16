@@ -286,7 +286,7 @@ export function LendingInterface({
   const { data: yearnRaw } = useYearnVault(vault.address);
   const collateralAPY = useMemo(() => {
     const formatted = formatYearnVaultData(yearnRaw?.vault);
-    return formatted?.weeklyApy ?? null;
+    return formatted?.apy ?? null;
   }, [yearnRaw]);
 
   // Active tab with localStorage persistence

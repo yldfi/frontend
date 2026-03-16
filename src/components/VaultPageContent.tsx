@@ -588,7 +588,7 @@ export function VaultPageContent({ id }: { id: string }) {
   const yearnVault = formatYearnVaultData(yearnData?.vault, yearnData?.vaultStrategies);
 
   // Kong returns net APY (after fees) for both vaults and strategies
-  const displayApyFormatted = yearnVault?.weeklyApyFormatted ?? "—";
+  const displayApyFormatted = yearnVault?.apyFormatted ?? "—";
 
   // Fetch Curve lending market data (only for vault type)
   const { vault: curveVault } = useCurveLendingVault(
@@ -1311,7 +1311,7 @@ export function VaultPageContent({ id }: { id: string }) {
               {/* Lending Position / Borrow CTA */}
               {vault.type === "vault" && controllerAddress && (() => {
                 if (lendingPosition?.hasLoan && (onChainRates || curveVault)) {
-                  const collateralApy = yearnVault?.weeklyApy ?? 0;
+                  const collateralApy = yearnVault?.apy ?? 0;
                   const borrowApy = onChainRates?.borrowApy ?? (curveVault ? (Math.exp(curveVault.rates.borrowApr) - 1) * 100 : 0);
                   const display = buildLendingPositionDisplay(
                     lendingPosition.collateral,
