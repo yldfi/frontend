@@ -59,6 +59,8 @@ export interface MerklOpportunity {
   status: string;
   chainId: number;
   type: string;
+  apr: number;
+  tvl: number;
 }
 
 async function fetchMerklOpportunities(): Promise<MerklOpportunity[]> {
