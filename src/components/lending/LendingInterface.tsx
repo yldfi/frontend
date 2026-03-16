@@ -1484,14 +1484,16 @@ export function LendingInterface({
                 const net = projectedNetAPY ?? currentNetAPY ?? (currentBorrowAPY != null ? -currentBorrowAPY : null);
                 if (net == null) return null;
                 return (
-                  <div className="flex items-center gap-1 mt-0.5">
-                    <span className={cn("text-[10px]", net >= 0 ? "text-green-500" : "text-red-500")}>
+                  <>
+                    <div className={cn("text-[10px] mt-0.5", net >= 0 ? "text-green-500" : "text-red-500")}>
                       {net >= 0 ? "+" : ""}{net.toFixed(2)}% NET
-                    </span>
+                    </div>
                     {vault.id === "ycvxcrv" && rewardApr != null && (
-                      <span className="text-[10px] text-green-400">(+{rewardApr.toFixed(1)}% rewards)</span>
+                      <div className="text-[10px] text-green-400">
+                        +{rewardApr.toFixed(1)}% rewards
+                      </div>
                     )}
-                  </div>
+                  </>
                 );
               })()}
             </div>
