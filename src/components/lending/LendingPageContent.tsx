@@ -9,7 +9,7 @@ import { useAccount } from "wagmi";
 import { formatUnits } from "viem";
 import { getVault, CURVE_CONTROLLERS, CURVE_SAVINGS } from "@/config/vaults";
 import { useSettings } from "@/hooks/useSettings";
-import { useMerklRewards } from "@/hooks/useMerklRewards";
+import { useMerklRewards, useMerklOpportunities } from "@/hooks/useMerklRewards";
 import { formatUsd } from "@/lib/utils";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
@@ -55,6 +55,11 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
   const totalEarnedUsd = (merklData?.flatMap((d) => d.rewards) ?? []).reduce((sum, r) => {
     return sum + parseFloat(formatUnits(BigInt(r.amount), r.token.decimals)) * r.token.price;
   }, 0);
+
+  // Merkl reward APR
+  const { data: merklOpportunities } = useMerklOpportunities();
+  const rewardOpportunity = merklOpportunities?.find((o) => o.name === "Yld Borrow crvUSD");
+  const rewardApr = rewardOpportunity?.apr;
 
   const [vpPeriod, setVpPeriod] = useState<VolumeProfilePeriod>("all");
 
@@ -225,6 +230,8 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                 >
                   <div className="flex items-center gap-2">
                     <Image src="/tokens/crvusd.png" alt="crvUSD" width={16} height={16} className="rounded-full" />
+                    {rewardApr != null && <span className="text-sm font-bold text-green-400 mono">{rewardApr.toFixed(1)}% APR</span>}
+                    {rewardApr != null && <span className="text-green-400/40">·</span>}
                     <span className="text-sm font-medium text-green-400">crvUSD Rewards</span>
                     <span className="text-xs text-[var(--muted-foreground)]">
                       {totalEarnedUsd > 0 ? `Earning ${formatUsd(totalEarnedUsd)}` : `Earn crvUSD by borrowing against ${vault.symbol}`}
