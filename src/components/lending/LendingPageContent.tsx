@@ -366,6 +366,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                   controllerAddress={controllerAddress}
                   onTransactionSuccess={() => refetchPosition()}
                   onPreviewLiqPrices={handlePreviewLiqPrices}
+                  rewardApr={rewardApr}
                 />
               </div>
             </div>
