@@ -198,10 +198,10 @@ export function HomePageContent() {
 
   // Build vault list with live data
   // Kong returns net APY (after fees) for all vaults and strategies
-  const ycvxcrvNetApy = ycvxcrvVault?.weeklyApy ?? 0;
-  const yscvxcrvNetApy = yscvxcrvVault?.weeklyApy ?? 0;
-  const yscvgcvxNetApy = yscvgcvxVault?.weeklyApy ?? 0;
-  const yspxcvxNetApy = yspxcvxVault?.weeklyApy ?? 0;
+  const ycvxcrvNetApy = ycvxcrvVault?.apy ?? 0;
+  const yscvxcrvNetApy = yscvxcrvVault?.apy ?? 0;
+  const yscvgcvxNetApy = yscvgcvxVault?.apy ?? 0;
+  const yspxcvxNetApy = yspxcvxVault?.apy ?? 0;
 
   // Use cached TVL (fast) or fall back to Yearn API TVL
   const ycvxcrvTvl = cacheData?.ycvxcrv?.tvlUsd ?? ycvxcrvVault?.tvl ?? 0;
