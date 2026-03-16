@@ -14,16 +14,15 @@ export function Header() {
   const { data: merklData } = useMerklRewards(1);
   const rewards = merklData?.flatMap((d) => d.rewards) ?? [];
 
-  // Calculate total earned (amount if finalized, otherwise pending)
-  const totalEarned = rewards.reduce((sum, r) => {
-    const amount = BigInt(r.amount);
-    const pending = BigInt(r.pending);
-    const earned = amount > 0n ? amount : pending;
-    const price = r.token.price ?? 1; // crvUSD ≈ $1
-    return sum + parseFloat(formatUnits(earned, r.token.decimals)) * price;
+  // Calculate total claimable (finalized amount minus already claimed)
+  const totalClaimable = rewards.reduce((sum, r) => {
+    const claimable = BigInt(r.amount) - BigInt(r.claimed);
+    if (claimable <= 0n) return sum;
+    const price = r.token.price ?? (r.token.symbol === "crvUSD" ? 1 : 0);
+    return sum + parseFloat(formatUnits(claimable, r.token.decimals)) * price;
   }, 0);
 
-  const isEarning = address && totalEarned > 0;
+  const hasClaimable = address && totalClaimable > 0;
 
   return (
     <header
@@ -42,13 +41,13 @@ export function Header() {
           <Link
             href="/rewards"
             className={`flex items-center gap-1.5 text-sm transition-colors ${
-              isEarning
+              hasClaimable
                 ? "text-green-400 hover:text-green-300"
                 : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
             }`}
           >
             <Gift className="w-4 h-4" />
-            {isEarning ? formatUsd(totalEarned) : "Rewards"}
+            {hasClaimable ? formatUsd(totalClaimable) : "Rewards"}
           </Link>
           <CustomConnectButton />
         </div>
