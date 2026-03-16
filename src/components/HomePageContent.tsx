@@ -500,7 +500,7 @@ export function HomePageContent() {
                                 {(() => { const h = formatHealth(vault.lendingPosition.health); const hoverColor = h.status === "healthy" ? "group-hover/badge:text-green-500" : h.status === "warning" ? "group-hover/badge:text-yellow-500" : "group-hover/badge:text-red-400"; return <span className={`hidden lg:inline-flex items-center gap-0.5 ${h.color} ${hoverColor} transition-colors`}><HeartPulse size={10} /><span className="mono">{h.value.toFixed(0)}%</span></span>; })()}
                               </>
                             ) : (
-                              <span>Borrow against {vault.name}</span>
+                              <span>Borrow</span>
                             )}
                             <ArrowUpRight size={10} />
                           </button>

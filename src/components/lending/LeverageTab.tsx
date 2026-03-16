@@ -1911,7 +1911,7 @@ export function LeverageTab({
                   : "Soft Liquidation"}
               </div>
               <div className="text-xs mt-0.5">
-                Close all or part of your position using wallet crvUSD or by swapping collateral.{onSwitchTab && (
+                Close all or part of your position using wallet crvUSD{crvUsdGap > 0n && zappersEnabled ? " or by swapping collateral" : ""}.{onSwitchTab && (
                   <> Use <button type="button" onClick={() => onSwitchTab("repay")} className="underline hover:text-yellow-300 transition-colors">Repay</button> instead to reduce debt while keeping your position open.</>
                 )}
               </div>
