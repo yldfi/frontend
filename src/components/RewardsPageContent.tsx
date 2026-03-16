@@ -62,14 +62,20 @@ function RewardRow({ reward }: { reward: MerklReward }) {
   const { address } = useAccount();
   const amount = BigInt(reward.amount);
   const claimed = BigInt(reward.claimed);
+  const pending = BigInt(reward.pending);
   const claimable = amount - claimed;
   const hasClaimable = claimable > 0n;
 
-  const formattedAmount = parseFloat(formatUnits(amount, reward.token.decimals));
+  // Total earned = claimable + claimed + pending
+  const totalEarned = amount > 0n ? amount : pending;
+
+  const formattedAmount = parseFloat(formatUnits(totalEarned, reward.token.decimals));
   const formattedClaimed = parseFloat(formatUnits(claimed, reward.token.decimals));
   const formattedClaimable = parseFloat(formatUnits(claimable, reward.token.decimals));
+  const formattedPending = parseFloat(formatUnits(pending, reward.token.decimals));
 
-  const claimableUsd = formattedClaimable * reward.token.price;
+  const price = reward.token.price ?? 0;
+  const claimableUsd = formattedClaimable * price;
 
   const { writeContract, data: txHash, isPending: isClaiming } = useWriteContract();
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
@@ -104,7 +110,7 @@ function RewardRow({ reward }: { reward: MerklReward }) {
           <div>
             <div className="font-medium">{reward.token.symbol}</div>
             <div className="text-xs text-[var(--muted-foreground)]">
-              {reward.breakdowns.length} campaign{reward.breakdowns.length !== 1 ? "s" : ""}
+              {reward.breakdowns.length} epoch{reward.breakdowns.length !== 1 ? "s" : ""}
             </div>
           </div>
         </div>
@@ -130,9 +136,16 @@ function RewardRow({ reward }: { reward: MerklReward }) {
           <div className="font-medium mono">
             {formattedAmount.toLocaleString("en-US", { maximumFractionDigits: 4 })}
           </div>
-          <div className="text-xs text-[var(--muted-foreground)]">
-            {formatUsd(formattedAmount * reward.token.price)}
-          </div>
+          {price > 0 && (
+            <div className="text-xs text-[var(--muted-foreground)]">
+              {formatUsd(formattedAmount * price)}
+            </div>
+          )}
+          {formattedPending > 0 && (
+            <div className="text-xs text-yellow-400/70">
+              {formattedPending.toLocaleString("en-US", { maximumFractionDigits: 4 })} pending
+            </div>
+          )}
         </div>
         <div>
           <div className="text-[var(--muted-foreground)] mb-1 flex items-center gap-1">
@@ -194,19 +207,23 @@ export function RewardsPageContent() {
   // Flatten all rewards across chains
   const rewards: MerklReward[] = data?.flatMap((d) => d.rewards) ?? [];
 
-  // Total earned for campaign card display
+  // Total earned for campaign card display (use amount if available, otherwise pending)
   const totalEarnedUsd = rewards.reduce((sum, r) => {
-    return sum + parseFloat(formatUnits(BigInt(r.amount), r.token.decimals)) * r.token.price;
+    const earned = BigInt(r.amount) > 0n ? BigInt(r.amount) : BigInt(r.pending);
+    const price = r.token.price ?? 0;
+    return sum + parseFloat(formatUnits(earned, r.token.decimals)) * price;
   }, 0);
 
   // Calculate totals
   const totalClaimableUsd = rewards.reduce((sum, r) => {
     const claimable = BigInt(r.amount) - BigInt(r.claimed);
-    return sum + parseFloat(formatUnits(claimable, r.token.decimals)) * r.token.price;
+    const price = r.token.price ?? 0;
+    return sum + parseFloat(formatUnits(claimable, r.token.decimals)) * price;
   }, 0);
 
   const totalPendingUsd = rewards.reduce((sum, r) => {
-    return sum + parseFloat(formatUnits(BigInt(r.pending), r.token.decimals)) * r.token.price;
+    const price = r.token.price ?? 0;
+    return sum + parseFloat(formatUnits(BigInt(r.pending), r.token.decimals)) * price;
   }, 0);
 
   return (
