@@ -287,7 +287,12 @@ export function RewardsPageContent() {
           <h2 className="text-sm font-medium text-[var(--muted-foreground)] uppercase tracking-wider mb-4">
             {sectionTitle}
           </h2>
-          <div className="border border-[var(--border)] rounded-lg overflow-hidden">
+          <div className="border border-[var(--border)] rounded-lg overflow-hidden relative">
+            {yldOpportunity && (
+              <div className="absolute top-0 right-0 bg-green-400 text-black text-xs font-bold mono px-3 py-1 rounded-bl-lg">
+                {yldOpportunity.apr?.toFixed(1) ?? "0"}% APR
+              </div>
+            )}
             <div className="p-5">
               {/* Campaign header */}
               <div className="flex items-center gap-3 mb-4">
