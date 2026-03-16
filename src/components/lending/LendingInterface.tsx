@@ -13,7 +13,7 @@ import { RepayTab } from "./RepayTab";
 import { BorrowTab } from "./BorrowTab";
 import { CollateralTab } from "./CollateralTab";
 import { NewLoanForm } from "./NewLoanForm";
-import { Check, X, ExternalLink, ArrowRight, ChevronLeft } from "lucide-react";
+import { Check, X, ExternalLink, ArrowRight, ChevronLeft, Gift } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CACHE_TIMES } from "@/config/query";
 import { useYearnVault, formatYearnVaultData } from "@/hooks/useYearnVault";
@@ -1489,8 +1489,8 @@ export function LendingInterface({
                       {net >= 0 ? "+" : ""}{net.toFixed(2)}% NET
                     </div>
                     {vault.id === "ycvxcrv" && rewardApr != null && (
-                      <div className="text-[10px] text-green-400">
-                        +{rewardApr.toFixed(1)}% rewards
+                      <div className="text-[10px] text-green-400 flex items-center gap-0.5">
+                        +{rewardApr.toFixed(1)}% <Gift size={9} />
                       </div>
                     )}
                   </>
