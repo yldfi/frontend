@@ -836,11 +836,8 @@ export function RepayTab({
   }, [repayAmount, repayToken.decimals, currentBalance]);
 
   // Report debt delta to parent (negative = repaying)
-  // Skip when balance is insufficient — showing estimated 0 debt is misleading
   useEffect(() => {
-    if (hasInsufficientBalance) {
-      onDebtDeltaChange?.(null);
-    } else if (isCrvUsd && repayAmount && Number(repayAmount) > 0) {
+    if (isCrvUsd && repayAmount && Number(repayAmount) > 0) {
       try {
         onDebtDeltaChange?.(-parseUnits(repayAmount, 18));
       } catch {
@@ -851,7 +848,7 @@ export function RepayTab({
     } else {
       onDebtDeltaChange?.(null);
     }
-  }, [isCrvUsd, repayAmount, estimatedCrvUsdOut, onDebtDeltaChange, hasInsufficientBalance]);
+  }, [isCrvUsd, repayAmount, estimatedCrvUsdOut, onDebtDeltaChange]);
 
   // Report collateral delta to parent (negative = withdrawing collateral)
   useEffect(() => {
