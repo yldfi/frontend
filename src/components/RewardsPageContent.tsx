@@ -109,9 +109,6 @@ function RewardRow({ reward }: { reward: MerklReward }) {
           )}
           <div>
             <div className="font-medium">{reward.token.symbol}</div>
-            <div className="text-xs text-[var(--muted-foreground)]">
-              {reward.breakdowns.length} epoch{reward.breakdowns.length !== 1 ? "s" : ""}
-            </div>
           </div>
         </div>
         {hasClaimable && !isConfirmed && (
