@@ -14,6 +14,7 @@ import { useVaultBalance } from "@/hooks/useVaultBalance";
 import { useCurveLendingPosition } from "@/hooks/useCurveLendingPosition";
 import { VAULT_ADDRESSES } from "@/config/vaults";
 import { formatUsd } from "@/lib/utils";
+import { toast } from "sonner";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { trackRewardsPageView, trackRewardsClaimClick, trackRewardsEligibilityCheck } from "@/lib/analytics";
@@ -77,8 +78,21 @@ function RewardRow({ reward }: { reward: MerklReward }) {
   const price = reward.token.price ?? (reward.token.symbol === "crvUSD" ? 1 : 0);
   const claimableUsd = formattedClaimable * price;
 
-  const { writeContract, data: txHash, isPending: isClaiming } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
+  const { writeContract, data: txHash, isPending: isClaiming, error: writeError } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess: isConfirmed, error: receiptError } = useWaitForTransactionReceipt({ hash: txHash });
+
+  useEffect(() => {
+    if (isConfirmed) {
+      toast.success("Rewards claimed successfully!", {
+        description: `${formattedClaimable.toLocaleString("en-US", { maximumFractionDigits: 4 })} ${reward.token.symbol}`,
+      });
+    }
+  }, [isConfirmed, formattedClaimable, reward.token.symbol]);
+
+  useEffect(() => {
+    if (writeError) toast.error(writeError.message?.split("\n")[0] || "Failed to submit claim");
+    if (receiptError) toast.error("Claim transaction failed");
+  }, [writeError, receiptError]);
 
   const handleClaim = () => {
     if (!address) return;
@@ -113,11 +127,11 @@ function RewardRow({ reward }: { reward: MerklReward }) {
         </div>
         {hasClaimable && !isConfirmed && (
           <button
-            className="px-4 py-1.5 text-sm font-medium rounded-md bg-white text-black hover:bg-white/90 transition-colors disabled:opacity-50"
+            className="px-4 py-1.5 text-sm font-medium rounded-md bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
             onClick={handleClaim}
             disabled={isClaiming || isConfirming}
           >
-            {isClaiming ? "Confirm in wallet..." : isConfirming ? "Claiming..." : "Claim"}
+            {isClaiming || isConfirming ? <LoadingDots /> : "Claim"}
           </button>
         )}
         {isConfirmed && (
