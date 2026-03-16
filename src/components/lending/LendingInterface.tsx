@@ -1489,7 +1489,7 @@ export function LendingInterface({
                       {net >= 0 ? "+" : ""}{net.toFixed(2)}% NET
                     </div>
                     {vault.id === "ycvxcrv" && rewardApr != null && (
-                      <div className="text-[10px] text-green-400 flex items-center gap-0.5">
+                      <div className="text-[10px] text-green-400 flex items-center gap-0.5 justify-end">
                         +{rewardApr.toFixed(1)}% <Gift size={9} />
                       </div>
                     )}
