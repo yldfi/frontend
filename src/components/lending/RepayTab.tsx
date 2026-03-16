@@ -139,10 +139,9 @@ export function RepayTab({
     zappersEnabled,
   } = useSettings();
 
-  // Reset tokens to defaults when zappers are disabled
+  // Reset withdraw token to default when zappers are disabled (withdrawal requires zapper)
   useEffect(() => {
     if (!zappersEnabled) {
-      setRepayToken(CRVUSD_TOKEN);
       setWithdrawToken(defaultWithdrawToken);
     }
   }, [zappersEnabled, defaultWithdrawToken]);
@@ -1178,7 +1177,6 @@ export function RepayTab({
             onSelect={setRepayToken}
             priorityTokens={[CRVUSD_TOKEN, SCRVUSD_TOKEN]}
             excludeDefiTokens
-            disabled={!zappersEnabled}
           />
           {isCrvUsd ? (
             <MaxButton
@@ -1286,8 +1284,8 @@ export function RepayTab({
         )
       )}
 
-      {/* Withdraw Collateral toggle + panel — hidden during soft-liq and closing loan */}
-      {!position?.inSoftLiquidation && !isClosingLoan && (
+      {/* Withdraw Collateral toggle + panel — hidden during soft-liq, closing loan, and when zappers disabled */}
+      {!position?.inSoftLiquidation && !isClosingLoan && zappersEnabled && (
         <div>
           <button
             type="button"
