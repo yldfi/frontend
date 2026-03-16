@@ -44,6 +44,7 @@ interface LendingPanelProps {
   controllerAddress: `0x${string}`;
   onTransactionSuccess: () => void;
   onPreviewLiqPrices?: (upper: number | null, lower: number | null) => void;
+  rewardApr?: number;
 }
 
 type Tab = "collateral" | "borrow" | "repay" | "leverage";
@@ -170,6 +171,7 @@ export function LendingInterface({
   controllerAddress,
   onTransactionSuccess,
   onPreviewLiqPrices,
+  rewardApr,
 }: LendingPanelProps) {
   const { address } = useAccount();
   const publicClient = usePublicClient();
@@ -1482,8 +1484,13 @@ export function LendingInterface({
                 const net = projectedNetAPY ?? currentNetAPY ?? (currentBorrowAPY != null ? -currentBorrowAPY : null);
                 if (net == null) return null;
                 return (
-                  <div className={cn("text-[10px] mt-0.5", net >= 0 ? "text-green-500" : "text-red-500")}>
-                    {net >= 0 ? "+" : ""}{net.toFixed(2)}% NET
+                  <div className="flex items-center gap-1 mt-0.5">
+                    <span className={cn("text-[10px]", net >= 0 ? "text-green-500" : "text-red-500")}>
+                      {net >= 0 ? "+" : ""}{net.toFixed(2)}% NET
+                    </span>
+                    {vault.id === "ycvxcrv" && rewardApr != null && (
+                      <span className="text-[10px] text-green-400">(+{rewardApr.toFixed(1)}% rewards)</span>
+                    )}
                   </div>
                 );
               })()}
