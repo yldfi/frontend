@@ -74,7 +74,7 @@ function RewardRow({ reward }: { reward: MerklReward }) {
   const formattedClaimable = parseFloat(formatUnits(claimable, reward.token.decimals));
   const formattedPending = parseFloat(formatUnits(pending, reward.token.decimals));
 
-  const price = reward.token.price ?? 0;
+  const price = reward.token.price ?? (reward.token.symbol === "crvUSD" ? 1 : 0);
   const claimableUsd = formattedClaimable * price;
 
   const { writeContract, data: txHash, isPending: isClaiming } = useWriteContract();
@@ -207,23 +207,23 @@ export function RewardsPageContent() {
   // Flatten all rewards across chains
   const rewards: MerklReward[] = data?.flatMap((d) => d.rewards) ?? [];
 
+  // Use price from API, fallback to $1 for stablecoins
+  const getPrice = (r: MerklReward) => r.token.price ?? (r.token.symbol === "crvUSD" ? 1 : 0);
+
   // Total earned for campaign card display (use amount if available, otherwise pending)
   const totalEarnedUsd = rewards.reduce((sum, r) => {
     const earned = BigInt(r.amount) > 0n ? BigInt(r.amount) : BigInt(r.pending);
-    const price = r.token.price ?? 0;
-    return sum + parseFloat(formatUnits(earned, r.token.decimals)) * price;
+    return sum + parseFloat(formatUnits(earned, r.token.decimals)) * getPrice(r);
   }, 0);
 
   // Calculate totals
   const totalClaimableUsd = rewards.reduce((sum, r) => {
     const claimable = BigInt(r.amount) - BigInt(r.claimed);
-    const price = r.token.price ?? 0;
-    return sum + parseFloat(formatUnits(claimable, r.token.decimals)) * price;
+    return sum + parseFloat(formatUnits(claimable, r.token.decimals)) * getPrice(r);
   }, 0);
 
   const totalPendingUsd = rewards.reduce((sum, r) => {
-    const price = r.token.price ?? 0;
-    return sum + parseFloat(formatUnits(BigInt(r.pending), r.token.decimals)) * price;
+    return sum + parseFloat(formatUnits(BigInt(r.pending), r.token.decimals)) * getPrice(r);
   }, 0);
 
   return (
