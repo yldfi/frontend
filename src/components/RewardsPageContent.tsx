@@ -131,7 +131,7 @@ function RewardRow({ reward }: { reward: MerklReward }) {
             onClick={handleClaim}
             disabled={isClaiming || isConfirming}
           >
-            {isClaiming || isConfirming ? <LoadingDots /> : "Claim"}
+            {isClaiming || isConfirming ? <>Claiming<LoadingDots /></> : "Claim"}
           </button>
         )}
         {isConfirmed && (
