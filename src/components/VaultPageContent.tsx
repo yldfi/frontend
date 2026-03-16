@@ -1385,7 +1385,7 @@ export function VaultPageContent({ id }: { id: string }) {
                     <span className="w-full flex items-center gap-2 !justify-start !px-4" style={{ height: 44 }}>
                       <Image src="/curve-logo.png" alt="Curve" width={16} height={16} className="rounded-full flex-shrink-0" />
                       <span className="text-sm font-medium whitespace-nowrap">Borrow against {vault.symbol}</span>
-                      <span className="text-xs font-normal text-[var(--muted-foreground)]">
+                      <span className="text-xs font-normal text-[var(--muted-foreground)] hidden sm:inline">
                         Borrow crvUSD on Curve LlamaLend
                       </span>
                       <ArrowUpRight size={14} className="ml-auto flex-shrink-0" />
