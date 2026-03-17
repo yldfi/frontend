@@ -9,6 +9,7 @@ interface VaultCacheData {
   tvl: number;
   pps: number;
   tvlUsd: number;
+  apy: number | null;
 }
 
 interface CacheResponse {

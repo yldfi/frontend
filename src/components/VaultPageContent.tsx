@@ -587,8 +587,7 @@ export function VaultPageContent({ id }: { id: string }) {
   const { data: yearnData, isLoading: yearnLoading } = useYearnVault(vault?.address ?? "");
   const yearnVault = formatYearnVaultData(yearnData?.vault, yearnData?.vaultStrategies);
 
-  // Kong returns net APY (after fees) for both vaults and strategies
-  const displayApyFormatted = yearnVault?.apyFormatted ?? "—";
+  const displayApyFormatted = yearnVault?.apyFormatted ?? "—"; // Replaced below after vaultCache loads
 
   // Fetch Curve lending market data (only for vault type)
   const { vault: curveVault } = useCurveLendingVault(
@@ -620,8 +619,12 @@ export function VaultPageContent({ id }: { id: string }) {
   // Fetch cvxCRV price from on-chain oracles
   const { price: cvxCrvPrice } = useCvxCrvPrice();
 
-  // Fetch vault cache for all underlying prices
+  // Fetch vault cache for all underlying prices and on-chain APYs
   const { data: vaultCache } = useVaultCache();
+
+  // On-chain APY from cache (convertToAssets now vs 24h ago), fallback to Kong
+  const cachedApy = vault ? (vaultCache as Record<string, { apy?: number | null }> | undefined)?.[vault.id]?.apy : null;
+  const displayApy = cachedApy != null ? `${cachedApy.toFixed(2)}%` : displayApyFormatted;
 
   // Get the correct underlying price based on vault's asset
   const getUnderlyingPrice = (): number => {
@@ -1311,7 +1314,7 @@ export function VaultPageContent({ id }: { id: string }) {
               {/* Lending Position / Borrow CTA */}
               {vault.type === "vault" && controllerAddress && (() => {
                 if (lendingPosition?.hasLoan && (onChainRates || curveVault)) {
-                  const collateralApy = yearnVault?.apy ?? 0;
+                  const collateralApy = cachedApy ?? yearnVault?.apy ?? 0;
                   const borrowApy = onChainRates?.borrowApy ?? (curveVault ? (Math.exp(curveVault.rates.borrowApr) - 1) * 100 : 0);
                   const display = buildLendingPositionDisplay(
                     lendingPosition.collateral,
@@ -1422,7 +1425,7 @@ export function VaultPageContent({ id }: { id: string }) {
                     <span className="text-xs font-medium uppercase tracking-wider">APY</span>
                   </div>
                   <p className="mono xl:text-2xl text-xl font-medium text-[var(--success)]">
-                    {yearnLoading ? "..." : displayApyFormatted}
+                    {yearnLoading ? "..." : displayApy}
                   </p>
                 </div>
 

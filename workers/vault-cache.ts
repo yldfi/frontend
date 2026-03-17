@@ -75,9 +75,13 @@ const YSCVXCRV_VAULT = "0xCa960E6DF1150100586c51382f619efCCcF72706";
 const YSCVGCVX_VAULT = "0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359";
 const YSPXCVX_VAULT = "0xB246DB2A73EEE3ee026153660c74657C123f8E42";
 
-// Function selectors (only needed for yspxcvx fallback)
+// Function selectors
 const TOTAL_ASSETS = "0x01e1d114"; // totalAssets()
 const PRICE_PER_SHARE = "0x99530b06"; // pricePerShare()
+// convertToAssets(1e18) — selector + uint256(1e18) zero-padded to 32 bytes
+const CONVERT_TO_ASSETS_1E18 = "0x07a2d13a0000000000000000000000000000000000000000000000000de0b6b3a7640000";
+
+const BLOCKS_PER_DAY = 7200; // ~86400s / 12s per block
 
 /**
  * Convert BigInt with 18 decimals to Number
@@ -180,7 +184,7 @@ function rpcHeaders(rpcUrl: string): { url: string; headers: Record<string, stri
   return { url: parsed.toString(), headers };
 }
 
-async function ethCall(to: string, data: string, rpcUrls: string[], logger: Logger): Promise<string> {
+async function ethCall(to: string, data: string, rpcUrls: string[], logger: Logger, block: string = "latest"): Promise<string> {
   let lastError: Error | null = null;
   const rpcLabel = (url: string) => new URL(url).hostname;
 
@@ -194,7 +198,7 @@ async function ethCall(to: string, data: string, rpcUrls: string[], logger: Logg
           jsonrpc: "2.0",
           id: 1,
           method: "eth_call",
-          params: [{ to, data }, "latest"],
+          params: [{ to, data }, block],
         }),
       }, 1); // Only 1 retry per RPC, then try next
 
@@ -219,6 +223,53 @@ async function ethCall(to: string, data: string, rpcUrls: string[], logger: Logg
   }
 
   throw lastError ?? new Error("All RPCs failed");
+}
+
+async function getBlockNumber(rpcUrls: string[], logger: Logger): Promise<bigint> {
+  for (const rpcUrl of rpcUrls) {
+    try {
+      const { url: cleanUrl, headers } = rpcHeaders(rpcUrl);
+      const response = await fetchWithRetry(cleanUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] }),
+      }, 1);
+      if (response.ok) {
+        const json = (await response.json()) as { result?: string };
+        if (json.result) return BigInt(json.result);
+      }
+    } catch { /* try next */ }
+  }
+  throw new Error("Failed to get block number from all RPCs");
+}
+
+/**
+ * Calculate on-chain APY for a vault using convertToAssets at current vs 24h-ago block.
+ * Formula: ((priceNow / priceYesterday) ** 365 - 1) * 100
+ * Matches DefiLlama's getERC4626Info methodology.
+ */
+async function getVaultAPY(vaultAddress: string, currentBlock: bigint, rpcUrls: string[], logger: Logger): Promise<number | null> {
+  try {
+    const blockYesterday = currentBlock - BigInt(BLOCKS_PER_DAY);
+    const blockNowHex = "0x" + currentBlock.toString(16);
+    const blockYesterdayHex = "0x" + blockYesterday.toString(16);
+
+    const [priceNowHex, priceYesterdayHex] = await Promise.all([
+      ethCall(vaultAddress, CONVERT_TO_ASSETS_1E18, rpcUrls, logger, blockNowHex),
+      ethCall(vaultAddress, CONVERT_TO_ASSETS_1E18, rpcUrls, logger, blockYesterdayHex),
+    ]);
+
+    const priceNow = BigInt(priceNowHex);
+    const priceYesterday = BigInt(priceYesterdayHex);
+    if (priceYesterday === 0n) return null;
+
+    const ratio = Number(priceNow) / Number(priceYesterday);
+    const apy = (ratio ** 365 - 1) * 100;
+    return apy;
+  } catch (e) {
+    logger.warn("getVaultAPY", `Failed for ${vaultAddress}`, { error: String(e) });
+    return null;
+  }
 }
 
 async function getVaultData(vaultAddress: string, rpcUrls: string[], logger: Logger) {
@@ -372,10 +423,29 @@ async function fetchVaultData(env: Env, logger: Logger) {
     logger.error("fetchVaultData", "pxCVX price failed (using 0)", { error: String(pxCvxPriceResult.reason) });
   }
 
+  // On-chain APY: convertToAssets now vs 24h ago (matches DefiLlama getERC4626Info)
+  let apys: Record<string, number | null> = {};
+  try {
+    const currentBlock = await getBlockNumber(rpcUrls, logger);
+    const vaultAPYs = await Promise.allSettled([
+      getVaultAPY(YCVXCRV_VAULT, currentBlock, rpcUrls, logger),
+      getVaultAPY(YSCVXCRV_VAULT, currentBlock, rpcUrls, logger),
+      getVaultAPY(YSCVGCVX_VAULT, currentBlock, rpcUrls, logger),
+    ]);
+    apys = {
+      ycvxcrv: vaultAPYs[0].status === "fulfilled" ? vaultAPYs[0].value : null,
+      yscvxcrv: vaultAPYs[1].status === "fulfilled" ? vaultAPYs[1].value : null,
+      yscvgcvx: vaultAPYs[2].status === "fulfilled" ? vaultAPYs[2].value : null,
+    };
+    logger.info("fetchVaultData", "On-chain APYs computed", apys as Record<string, unknown>);
+  } catch (e) {
+    logger.warn("fetchVaultData", "APY computation failed (non-critical)", { error: String(e) });
+  }
+
   return {
-    ycvxcrv: formatKongVault(YCVXCRV_VAULT, kongData.data.ycvxcrv),
-    yscvxcrv: formatKongVault(YSCVXCRV_VAULT, kongData.data.yscvxcrv),
-    yscvgcvx: formatKongVault(YSCVGCVX_VAULT, kongData.data.yscvgcvx),
+    ycvxcrv: { ...formatKongVault(YCVXCRV_VAULT, kongData.data.ycvxcrv), apy: apys.ycvxcrv ?? null },
+    yscvxcrv: { ...formatKongVault(YSCVXCRV_VAULT, kongData.data.yscvxcrv), apy: apys.yscvxcrv ?? null },
+    yscvgcvx: { ...formatKongVault(YSCVGCVX_VAULT, kongData.data.yscvgcvx), apy: apys.yscvgcvx ?? null },
     // yspxcvx excluded until vault is live
     cvxCrvPrice,
     cvgCvxPrice,

@@ -16,7 +16,7 @@ import { NewLoanForm } from "./NewLoanForm";
 import { Check, X, ExternalLink, ArrowRight, ChevronLeft, Gift } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CACHE_TIMES } from "@/config/query";
-import { useOnChainAPY } from "@/hooks/useOnChainAPY";
+import { useVaultCache } from "@/hooks/useVaultCache";
 import { LoadingDots } from "@/components/LoadingDots";
 import { useSettings } from "@/hooks/useSettings";
 import { trackLendingTabSwitch } from "@/lib/analytics";
@@ -282,8 +282,9 @@ export function LendingInterface({
     return (Math.exp(currentBorrowAPR / 100) - 1) * 100;
   }, [currentBorrowAPR]);
 
-  // Collateral APY from on-chain pricePerShare (convertToAssets now vs 24h ago)
-  const { data: collateralAPY } = useOnChainAPY(vault.address as `0x${string}`);
+  // Collateral APY from cache (on-chain convertToAssets now vs 24h ago)
+  const { data: cacheData } = useVaultCache();
+  const collateralAPY = (cacheData as Record<string, { apy?: number | null }> | undefined)?.[vault.id]?.apy ?? null;
 
   // Active tab with localStorage persistence
   const [activeTab, setActiveTabState] = useState<Tab>(() => {
