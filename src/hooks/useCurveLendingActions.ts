@@ -2266,6 +2266,14 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         args: [contractRepayAmount, address, 2n ** 255n - 1n],
       });
 
+      // Store as pseudo-bundle so executeAfterPreview / executeAfterApproval can find it
+      setPendingBundle({
+        tx: { to: controllerAddress, data: callData, value: "0" },
+        gas: "0",
+        createdAt: Date.now(),
+      } as unknown as EnsoBundleResponse);
+      setPendingInputToken(CRVUSD);
+
       // Check crvUSD allowance to controller.
       // When closing, add 0.1% buffer to account for interest accrual between
       // approval and execution — the controller transfers actual debt which keeps growing.
@@ -2280,13 +2288,6 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         : repayAmount;
 
       if (currentAllowance < requiredAllowance) {
-        // Store as a pseudo-bundle so executeAfterApproval can work
-        setPendingBundle({
-          tx: { to: controllerAddress, data: callData, value: "0" },
-          gas: "0",
-          createdAt: Date.now(),
-        } as unknown as EnsoBundleResponse);
-        setPendingInputToken(CRVUSD);
         setPendingApproval({
           token: CRVUSD,
           tokenSymbol: "crvUSD",
@@ -2986,6 +2987,14 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         functionName: "liquidate",
         args: [address, minX],
       });
+
+      // Store as pseudo-bundle so executeAfterPreview can find it
+      setPendingBundle({
+        tx: { to: controllerAddress, data: callData, value: "0" },
+        gas: "0",
+        createdAt: Date.now(),
+      } as unknown as EnsoBundleResponse);
+      setPendingInputToken(vaultAddress);
 
       // Simulate: mainnet → REST API, tenderly VNet → RPC sim, anvil → eth_call only
       if (testNetworkType === null && chainId !== 1337) {
