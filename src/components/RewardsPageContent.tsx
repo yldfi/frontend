@@ -183,7 +183,7 @@ export function RewardsPageContent() {
   const { data, isLoading, error } = useMerklRewards(1);
   const { data: opportunities } = useMerklOpportunities();
   const yldOpportunity = opportunities?.find((o) => o.name === "Yld Borrow crvUSD");
-  const merklUrl = yldOpportunity ? getMerklOpportunityUrl(yldOpportunity) : "https://app.merkl.xyz";
+  const merklUrl = yldOpportunity ? getMerklOpportunityUrl(yldOpportunity) : "https://app.merkl.fr";
 
   // Check eligibility: user holds ycvxCRV
   const { balance: ycvxcrvBalance } = useVaultBalance(VAULT_ADDRESSES.YCVXCRV as `0x${string}`);

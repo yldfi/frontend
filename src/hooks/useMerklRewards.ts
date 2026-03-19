@@ -3,6 +3,28 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAccount } from "wagmi";
 
+const MERKL_API_PRIMARY = "https://api.merkl.xyz";
+const MERKL_API_FALLBACK = "https://api.merkl.fr";
+const MERKL_APP_PRIMARY = "https://app.merkl.xyz";
+const MERKL_APP_FALLBACK = "https://app.merkl.fr";
+
+async function merklFetch(path: string): Promise<Response> {
+  try {
+    const res = await fetch(`${MERKL_API_PRIMARY}${path}`);
+    if (res.ok) return res;
+  } catch {
+    // primary unreachable, try fallback
+  }
+  const res = await fetch(`${MERKL_API_FALLBACK}${path}`);
+  if (!res.ok) throw new Error(`Merkl API error: ${res.status}`);
+  return res;
+}
+
+function getMerklAppBaseUrl(): string {
+  // app.merkl.xyz has DNS issues — prefer .fr for now
+  return MERKL_APP_FALLBACK;
+}
+
 export interface MerklToken {
   chainId: number;
   address: string;
@@ -46,10 +68,7 @@ export interface MerklRewardsResponse {
 }
 
 async function fetchMerklRewards(address: string, chainId: number): Promise<MerklRewardsResponse[]> {
-  const res = await fetch(
-    `https://api.merkl.xyz/v4/users/${address}/rewards?chainId=${chainId}`
-  );
-  if (!res.ok) throw new Error(`Merkl API error: ${res.status}`);
+  const res = await merklFetch(`/v4/users/${address}/rewards?chainId=${chainId}`);
   return res.json();
 }
 
@@ -64,8 +83,7 @@ export interface MerklOpportunity {
 }
 
 async function fetchMerklOpportunities(): Promise<MerklOpportunity[]> {
-  const res = await fetch("https://api.merkl.xyz/v4/opportunities?chainId=1&type=ENCOMPASSING");
-  if (!res.ok) throw new Error(`Merkl API error: ${res.status}`);
+  const res = await merklFetch("/v4/opportunities?chainId=1&type=ENCOMPASSING");
   return res.json();
 }
 
@@ -90,5 +108,5 @@ export function useMerklOpportunities() {
 }
 
 export function getMerklOpportunityUrl(opportunity: MerklOpportunity) {
-  return `https://app.merkl.xyz/opportunities/ethereum/${opportunity.type}/${opportunity.identifier}`;
+  return `${getMerklAppBaseUrl()}/opportunities/ethereum/${opportunity.type}/${opportunity.identifier}`;
 }
