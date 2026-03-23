@@ -608,7 +608,10 @@ export function VaultPageContent({ id }: { id: string }) {
   // Merkl rewards earnings
   const { data: merklData } = useMerklRewards(1);
   const totalEarnedUsd = (merklData?.flatMap((d) => d.rewards) ?? []).reduce((sum, r) => {
-    return sum + parseFloat(formatUnits(BigInt(r.amount), r.token.decimals)) * r.token.price;
+    const claimable = BigInt(r.amount) - BigInt(r.claimed);
+    const unclaimed = claimable > 0n ? claimable : 0n;
+    const pending = BigInt(r.pending);
+    return sum + parseFloat(formatUnits(unclaimed + pending, r.token.decimals)) * r.token.price;
   }, 0);
 
   // Merkl reward APR

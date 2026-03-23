@@ -218,12 +218,6 @@ export function RewardsPageContent() {
   // Use price from API, fallback to $1 for stablecoins
   const getPrice = (r: MerklReward) => r.token.price ?? (r.token.symbol === "crvUSD" ? 1 : 0);
 
-  // Total earned for campaign card display (use amount if available, otherwise pending)
-  const totalEarnedUsd = rewards.reduce((sum, r) => {
-    const earned = BigInt(r.amount) > 0n ? BigInt(r.amount) : BigInt(r.pending);
-    return sum + parseFloat(formatUnits(earned, r.token.decimals)) * getPrice(r);
-  }, 0);
-
   // Calculate totals
   const totalClaimableUsd = rewards.reduce((sum, r) => {
     const claimable = BigInt(r.amount) - BigInt(r.claimed);
@@ -404,9 +398,9 @@ export function RewardsPageContent() {
                   <div className="flex items-center gap-3 text-sm">
                     <span className="text-[var(--muted-foreground)]">Your earnings</span>
                     <span className="font-medium mono text-green-400">
-                      {totalEarnedUsd > 0 ? formatUsd(totalEarnedUsd) : "$0.00"}
+                      {totalClaimableUsd + totalPendingUsd > 0 ? formatUsd(totalClaimableUsd + totalPendingUsd) : "$0.00"}
                     </span>
-                    {totalClaimableUsd > 0 && (
+                    {totalClaimableUsd > 0 && totalPendingUsd > 0 && (
                       <span className="text-xs text-[var(--muted-foreground)]">
                         ({formatUsd(totalClaimableUsd)} claimable)
                       </span>
