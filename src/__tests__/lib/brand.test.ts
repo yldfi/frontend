@@ -49,7 +49,7 @@ describe("brand", () => {
     });
 
     it("has correct Telegram URL", () => {
-      expect(URLS.telegram).toBe("https://t.me/yld_fi");
+      expect(URLS.telegram).toBe("https://t.me/yld_official");
     });
 
     it("has correct email", () => {
