@@ -40,10 +40,10 @@ export function Footer() {
               <Github size={18} aria-hidden="true" />
             </a>
             <a
-              href="https://t.me/yld_fi"
+              href="https://t.me/yld_official"
               target="_blank"
               rel="noopener noreferrer"
-              onClick={() => trackExternalLinkClick("https://t.me/yld_fi", "telegram")}
+              onClick={() => trackExternalLinkClick("https://t.me/yld_official", "telegram")}
               className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
               aria-label="Telegram"
             >

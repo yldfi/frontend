@@ -38,7 +38,7 @@ export const URLS = {
   github: "https://github.com/yldfi",
 
   /** Telegram community */
-  telegram: "https://t.me/yld_fi",
+  telegram: "https://t.me/yld_official",
 
   /** Contact email */
   email: "contact@yldfi.co",
