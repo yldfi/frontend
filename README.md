@@ -11,6 +11,7 @@
 <p align="center">
   <a href="https://yldfi.co">Website</a> •
   <a href="https://docs.yldfi.co">Docs</a> •
+  <a href="https://x.com/yld_fi">X.com</a> •
   <a href="https://github.com/yldfi">GitHub</a>
 </p>
 
