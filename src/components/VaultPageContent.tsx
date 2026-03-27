@@ -60,6 +60,7 @@ import { useCurveMarketRates } from "@/hooks/useCurveMarketRates";
 import { buildLendingPositionDisplay } from "@/lib/lending";
 import { useYearnVault, formatYearnVaultData } from "@/hooks/useYearnVault";
 import { useVaultBalance } from "@/hooks/useVaultBalance";
+import { useVaultData, formatFee } from "@/hooks/useVaultData";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { useCvxCrvPrice } from "@/hooks/useCvxCrvPrice";
 import { usePricePerShare } from "@/hooks/usePricePerShare";
@@ -96,6 +97,7 @@ import { toast } from "sonner";
 export function VaultPageContent({ id }: { id: string }) {
   const vault = getVault(id);
   const router = useRouter();
+  const vaultData = useVaultData(vault?.address as `0x${string}`);
   const [vaultSelectorOpen, setVaultSelectorOpen] = useState(false);
   const vaultSelectorRef = useRef<HTMLDivElement>(null);
 
@@ -1488,7 +1490,7 @@ export function VaultPageContent({ id }: { id: string }) {
                         <span className="hidden sm:inline">Performance Fee</span><span className="sm:hidden">Fee</span>
                       </td>
                       <td className="px-3 sm:px-4 py-2.5 text-right mono font-medium">
-                        {vault.type === "vault" ? "15% Vault + 5% Strategy" : `${vault.fees.performance}%`}
+                        {vault.type === "vault" ? "15% Vault + 5% Strategy" : `${vaultData.performanceFee ? formatFee(vaultData.performanceFee) : vault.fees.performance}%`}
                       </td>
                     </tr>
                     <tr className={vault.underlyingStrategy && vault.type === "vault" ? "border-b border-[var(--border)]/50" : ""}>

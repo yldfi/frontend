@@ -460,8 +460,8 @@ export const VAULTS: Record<string, VaultConfig> = {
     badges: ["Tangent", "cvgCVX", "Compounder"],
     logo: "/yscvgcvx-128.png",
     logoSmall: "/yscvgcvx-64.png",
-    fees: { management: 0, performance: 0 },
-    feeBreakdown: "No fees",
+    fees: { management: 0, performance: 5 },
+    feeBreakdown: "5% strategy",
     links: {
       etherscan: `https://etherscan.io/address/${VAULT_ADDRESSES.YSCVGCVX}`,
     },
