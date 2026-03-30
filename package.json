@@ -62,7 +62,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^5.1.4",
-    "@vitest/coverage-v8": "^4.1.0",
+    "@vitest/coverage-v8": "^4.1.2",
     "cross-fetch": "^4.1.0",
     "dotenv": "^17.3.1",
     "eslint": "^9",
@@ -73,7 +73,7 @@
     "next": "16.1.6",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^4.1.0",
+    "vitest": "^4.1.2",
     "wrangler": "^4.73.0"
   }
 }
