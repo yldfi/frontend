@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAccount, usePublicClient, useWaitForTransactionReceipt } from "wagmi";
 import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
@@ -194,6 +194,7 @@ export interface UseZapperActionsResult {
   isApproving: boolean;
   isApprovalSuccess: boolean;
   executeAfterApproval: () => Promise<void>;
+  wasApprovalRequested: () => boolean;
 
   // State
   status: ZapperStatus;
@@ -231,6 +232,8 @@ export function useZapperActions(): UseZapperActionsResult {
     total: number;
     steps: { label: string; description: string; done: boolean; spender?: string }[];
   } | null>(null);
+  // Track whether the original call requested previewOnly — set synchronously before returning null
+  const pendingPreviewRef = useRef(false);
 
   // Approval tx
   const {
@@ -272,6 +275,7 @@ export function useZapperActions(): UseZapperActionsResult {
     setPendingApproval(null);
     setApprovalQueue(q => q.length === 0 ? q : []);
     setApprovalProgress(null);
+    pendingPreviewRef.current = false;
     resetApprove();
   }, [resetApprove]);
 
@@ -576,8 +580,11 @@ export function useZapperActions(): UseZapperActionsResult {
 
     setPendingApproval(null);
     setApprovalProgress(null);
+    // Respect previewOnly from the original call
+    const wasPreviewOnly = pendingPreviewRef.current;
+    pendingPreviewRef.current = false;
     try {
-      await simulateAndExecute(pendingTx, false);
+      await simulateAndExecute(pendingTx, wasPreviewOnly);
     } catch (err) {
       setError(parseErrorMessage(err));
       setStatus("error");
@@ -766,6 +773,7 @@ export function useZapperActions(): UseZapperActionsResult {
       if (missingApprovals.length > 0) {
         setPendingApproval(missingApprovals[0]);
         setApprovalQueue(missingApprovals.slice(1));
+        pendingPreviewRef.current = previewOnly;
         setStatus("needsApproval");
         return null;
       }
@@ -836,6 +844,7 @@ export function useZapperActions(): UseZapperActionsResult {
       if (missingApprovals.length > 0) {
         setPendingApproval(missingApprovals[0]);
         setApprovalQueue(missingApprovals.slice(1));
+        pendingPreviewRef.current = previewOnly;
         setStatus("needsApproval");
         return null;
       }
@@ -917,6 +926,7 @@ export function useZapperActions(): UseZapperActionsResult {
           spender: ZAPPER_ADDRESS as `0x${string}`,
           spenderName: "yld Zapper",
         });
+        pendingPreviewRef.current = previewOnly;
         setStatus("needsApproval");
         return null;
       }
@@ -1002,6 +1012,7 @@ export function useZapperActions(): UseZapperActionsResult {
           spender: ZAPPER_ADDRESS as `0x${string}`,
           spenderName: "yld Zapper",
         });
+        pendingPreviewRef.current = previewOnly;
         setStatus("needsApproval");
         return null;
       }
@@ -1149,6 +1160,7 @@ export function useZapperActions(): UseZapperActionsResult {
       if (missingApprovals.length > 0) {
         setPendingApproval(missingApprovals[0]);
         setApprovalQueue(missingApprovals.slice(1));
+        pendingPreviewRef.current = previewOnly;
         setStatus("needsApproval");
         return null;
       }
@@ -1247,6 +1259,7 @@ export function useZapperActions(): UseZapperActionsResult {
       if (missingApprovals.length > 0) {
         setPendingApproval(missingApprovals[0]);
         setApprovalQueue(missingApprovals.slice(1));
+        pendingPreviewRef.current = previewOnly;
         setStatus("needsApproval");
         return null;
       }
@@ -1394,6 +1407,7 @@ export function useZapperActions(): UseZapperActionsResult {
         if (missingApprovals.length > 0) {
           setPendingApproval(missingApprovals[0]);
           setApprovalQueue(missingApprovals.slice(1));
+          pendingPreviewRef.current = previewOnly;
           setStatus("needsApproval");
           return null;
         }
@@ -1545,6 +1559,7 @@ export function useZapperActions(): UseZapperActionsResult {
       if (missingApprovals.length > 0) {
         setPendingApproval(missingApprovals[0]);
         setApprovalQueue(missingApprovals.slice(1));
+        pendingPreviewRef.current = previewOnly;
         setStatus("needsApproval");
         return null;
       }
@@ -1633,6 +1648,7 @@ export function useZapperActions(): UseZapperActionsResult {
               done: false,
             }],
           });
+          pendingPreviewRef.current = previewOnly;
           setStatus("needsApproval");
           return null;
         }
@@ -1662,6 +1678,7 @@ export function useZapperActions(): UseZapperActionsResult {
     isApproving,
     isApprovalSuccess,
     executeAfterApproval,
+    wasApprovalRequested: () => pendingPreviewRef.current,
     status,
     txHash,
     error,

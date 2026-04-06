@@ -396,6 +396,7 @@ export function NewLoanForm({
     isApproving: lendingIsApproving,
     isApprovalSuccess: lendingIsApprovalSuccess,
     executeAfterApproval: lendingExecuteAfterApproval,
+    wasApprovalRequested: lendingWasApprovalRequested,
     status: lendingStatus,
     txHash: lendingTxHash,
     error: lendingError,
@@ -416,6 +417,7 @@ export function NewLoanForm({
     isApproving: zapperIsApproving,
     isApprovalSuccess: zapperIsApprovalSuccess,
     executeAfterApproval: zapperExecuteAfterApproval,
+    wasApprovalRequested: zapperWasApprovalRequested,
     status: zapperStatus,
     txHash: zapperTxHash,
     error: zapperError,
@@ -1515,11 +1517,25 @@ export function NewLoanForm({
   useEffect(() => {
     if (isLeveraged) {
       if (zapperIsApprovalSuccess && zapperStatus === "approving") {
-        zapperExecuteAfterApproval();
+        const wasPreview = zapperWasApprovalRequested();
+        zapperExecuteAfterApproval().then(() => {
+          if (wasPreview) {
+            simulationBlock.current = currentBlock ?? 0n;
+            setShowSimulationModal(true);
+            fetchEthPrice();
+          }
+        });
       }
     } else {
       if (lendingIsApprovalSuccess && lendingStatus === "approving") {
-        lendingExecuteAfterApproval();
+        const wasPreview = lendingWasApprovalRequested();
+        lendingExecuteAfterApproval().then(() => {
+          if (wasPreview) {
+            simulationBlock.current = currentBlock ?? 0n;
+            setShowSimulationModal(true);
+            fetchEthPrice();
+          }
+        });
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1620,6 +1636,7 @@ export function NewLoanForm({
         if (preview) {
           const result = await createLeveragedLoan(controllerAddress, collateralWei, debtAmount, bands, vault.address as `0x${string}`, Number(slippage), true);
           if (openModalIfPreview(result)) return;
+          if (zapperWasApprovalRequested()) return;
         }
         await createLeveragedLoan(controllerAddress, parseUnits(amount, vault.decimals), debtAmount, bands, vault.address as `0x${string}`, Number(slippage), false);
       } else if (loanTab === "leverage" && !isVaultToken) {
@@ -1629,6 +1646,7 @@ export function NewLoanForm({
         if (preview) {
           const result = await createLeveragedLoanFromToken(controllerAddress, selectedToken.address as `0x${string}`, inputWei, debtAmount, bands, vault.address as `0x${string}`, selectedToken.symbol, Number(slippage), true, selectedToken.decimals);
           if (openModalIfPreview(result)) return;
+          if (zapperWasApprovalRequested()) return;
         }
         await createLeveragedLoanFromToken(controllerAddress, selectedToken.address as `0x${string}`, parseUnits(amount, selectedToken.decimals), debtAmount, bands, vault.address as `0x${string}`, selectedToken.symbol, Number(slippage), false, selectedToken.decimals);
       } else if (hasOutputSwap) {
@@ -1637,6 +1655,7 @@ export function NewLoanForm({
         if (preview) {
           const result = await createLoanWithOutputSwap(vault.address as `0x${string}`, isVaultToken ? undefined : selectedToken.address, amount, debtAmount.toString(), bands, outputToken.address, Number(slippage), { previewOnly: true, tokenSymbol: isVaultToken ? vault.symbol : selectedToken.symbol, decimals: selectedToken.decimals });
           if (openModalIfPreview(result)) return;
+          if (lendingWasApprovalRequested()) return;
         }
         await createLoanWithOutputSwap(vault.address as `0x${string}`, isVaultToken ? undefined : selectedToken.address, amount, debtAmount.toString(), bands, outputToken.address, Number(slippage), { tokenSymbol: isVaultToken ? vault.symbol : selectedToken.symbol, decimals: selectedToken.decimals });
       } else if (isVaultToken) {
@@ -1645,6 +1664,7 @@ export function NewLoanForm({
         if (preview) {
           const result = await createLoan(vault.address as `0x${string}`, amount, debtAmount.toString(), bands, { previewOnly: true, tokenSymbol: vault.symbol });
           if (openModalIfPreview(result)) return;
+          if (lendingWasApprovalRequested()) return;
         }
         await createLoan(vault.address as `0x${string}`, amount, debtAmount.toString(), bands, { tokenSymbol: vault.symbol });
       } else {
@@ -1653,6 +1673,7 @@ export function NewLoanForm({
         if (preview) {
           const result = await createLoanWithSwap(vault.address as `0x${string}`, selectedToken.address, amount, debtAmount.toString(), bands, Number(slippage), { previewOnly: true, tokenSymbol: selectedToken.symbol, decimals: selectedToken.decimals });
           if (openModalIfPreview(result)) return;
+          if (lendingWasApprovalRequested()) return;
         }
         await createLoanWithSwap(vault.address as `0x${string}`, selectedToken.address, amount, debtAmount.toString(), bands, Number(slippage), { tokenSymbol: selectedToken.symbol, decimals: selectedToken.decimals });
       }

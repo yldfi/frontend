@@ -138,6 +138,7 @@ export function CollateralTab({
     isApproving,
     isApprovalSuccess,
     executeAfterApproval,
+    wasApprovalRequested,
     status,
     txHash,
     error,
@@ -568,7 +569,15 @@ export function CollateralTab({
   // Handle approval success -> continue execution
   useEffect(() => {
     if (isApprovalSuccess && status === "approving") {
-      executeAfterApproval();
+      const wasPreview = wasApprovalRequested();
+      executeAfterApproval().then(() => {
+        // If the original call was previewOnly, the simulation result is now set — open the modal
+        if (wasPreview) {
+          simulationBlock.current = currentBlock ?? 0n;
+          setShowSimulationModal(true);
+          fetchEthPrice();
+        }
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isApprovalSuccess, status]);
@@ -626,6 +635,8 @@ export function CollateralTab({
               fetchEthPrice();
               return; // Modal opened — bail
             }
+            // Approval needed — approval card will handle it, auto-execute after approval
+            if (wasApprovalRequested()) return;
             // No simulation data (e.g. Anvil) — fall through to execute
           }
           await addCollateral(
@@ -649,6 +660,8 @@ export function CollateralTab({
               fetchEthPrice();
               return; // Modal opened — bail
             }
+            // Approval needed — approval card will handle it, auto-execute after approval
+            if (wasApprovalRequested()) return;
             // No simulation data (e.g. Anvil) — fall through to execute
           }
           await addCollateralWithSwap(
@@ -674,6 +687,8 @@ export function CollateralTab({
               fetchEthPrice();
               return; // Modal opened — bail
             }
+            // Approval needed — approval card will handle it, auto-execute after approval
+            if (wasApprovalRequested()) return;
             // No simulation data (e.g. Anvil) — fall through to execute
           }
           await removeCollateral(
@@ -697,6 +712,8 @@ export function CollateralTab({
               fetchEthPrice();
               return; // Modal opened — bail
             }
+            // Approval needed — approval card will handle it, auto-execute after approval
+            if (wasApprovalRequested()) return;
             // No simulation data (e.g. Anvil) — fall through to execute
           }
           await removeCollateralAndSwap(

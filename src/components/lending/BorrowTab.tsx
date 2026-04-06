@@ -312,6 +312,7 @@ export function BorrowTab({
     isApproving,
     isApprovalSuccess,
     executeAfterApproval,
+    wasApprovalRequested,
     status,
     txHash,
     error,
@@ -795,7 +796,20 @@ export function BorrowTab({
   // Handle approval success -> continue execution (queue handles multi-step)
   useEffect(() => {
     if (isApprovalSuccess && status === "approving") {
-      executeAfterApproval();
+      const wasPreview = wasApprovalRequested();
+      executeAfterApproval().then(() => {
+        if (wasPreview) {
+          simulationBlock.current = currentBlock ?? 0n;
+          setShowSimulationModal(true);
+          if (publicClient) {
+            publicClient.readContract({
+              address: CHAINLINK_ETH_USD,
+              abi: [{ name: "latestRoundData", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "roundId", type: "uint80" }, { name: "answer", type: "int256" }, { name: "startedAt", type: "uint256" }, { name: "updatedAt", type: "uint256" }, { name: "answeredInRound", type: "uint80" }] }],
+              functionName: "latestRoundData",
+            }).then(data => { setEthPrice(Number(data[1] as bigint) / 1e8); }).catch(() => {});
+          }
+        }
+      });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isApprovalSuccess, status]);
@@ -864,6 +878,8 @@ export function BorrowTab({
             }
           }
           if (result) return; // Modal opened — bail
+          // Approval needed — approval card will handle it, auto-execute after approval
+          if (wasApprovalRequested()) return;
           // No simulation data (e.g. Anvil) — fall through to execute
         }
         await executeBorrow(false);
@@ -912,6 +928,8 @@ export function BorrowTab({
             }
           }
           if (result) return; // Modal opened — bail
+          // Approval needed — approval card will handle it, auto-execute after approval
+          if (wasApprovalRequested()) return;
           // No simulation data (e.g. Anvil) — fall through to execute
         }
         await borrowAndSwap(

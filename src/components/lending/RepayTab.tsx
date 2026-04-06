@@ -172,6 +172,7 @@ export function RepayTab({
     isApproving,
     isApprovalSuccess,
     executeAfterApproval,
+    wasApprovalRequested,
     status,
     txHash,
     error,
@@ -925,9 +926,16 @@ export function RepayTab({
   // Handle approval success -> continue execution
   useEffect(() => {
     if (isApprovalSuccess && status === "approving") {
-      executeAfterApproval();
+      const wasPreview = wasApprovalRequested();
+      executeAfterApproval().then(() => {
+        if (wasPreview) {
+          simulationBlock.current = currentBlock ?? 0n;
+          setShowSimulationModal(true);
+        }
+      });
     }
-  }, [isApprovalSuccess, status, executeAfterApproval]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isApprovalSuccess, status]);
 
   // Reset stale approval state when user changes inputs
   useEffect(() => {
@@ -1013,6 +1021,7 @@ export function RepayTab({
             setShowSimulationModal(true);
             return;
           }
+          if (wasApprovalRequested()) return;
         }
         await repayDirect(controllerAddress, repayWei, { closeLoan: isClosingLoan });
       } else if (isCrvUsd && hasWithdrawal) {
@@ -1029,6 +1038,7 @@ export function RepayTab({
             setShowSimulationModal(true);
             return;
           }
+          if (wasApprovalRequested()) return;
         }
         await repayAndWithdraw(controllerAddress, repayWei, withdrawAmountWei, vault.address as `0x${string}`, withdrawOpts);
       } else {
@@ -1054,6 +1064,7 @@ export function RepayTab({
             setShowSimulationModal(true);
             return;
           }
+          if (wasApprovalRequested()) return;
         }
         await repayWithSwap(
           vault.address as `0x${string}`,
