@@ -189,6 +189,7 @@ export interface UseCurveLendingActionsResult {
   isApproving: boolean;
   isApprovalSuccess: boolean;
   executeAfterApproval: () => Promise<void>;
+  wasApprovalRequested: () => boolean;
 
   // State
   status: LendingStatus;
@@ -233,6 +234,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
   const [pendingController, setPendingController] = useState<`0x${string}` | null>(null);
   // Stored action to execute after all approvals in the queue complete
   const pendingActionRef = useRef<(() => Promise<SimulationResult | null>) | null>(null);
+  // Track whether the original call requested previewOnly — set synchronously before returning null
+  const pendingPreviewRef = useRef(false);
 
   // Approve contract
   const {
@@ -281,6 +284,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     setPendingInputToken(null);
     setPendingController(null);
     pendingActionRef.current = null;
+    pendingPreviewRef.current = false;
     resetApprove();
   }, [resetApprove]);
 
@@ -382,6 +386,10 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       return;
     }
 
+    // Check if the original call requested previewOnly (Tenderly preview mode)
+    const wasPreviewOnly = pendingPreviewRef.current;
+    pendingPreviewRef.current = false;
+
     try {
       // Clear approval state
       setPendingApproval(null);
@@ -421,6 +429,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         if (!tenderlyResult.ok) {
           if (process.env.NODE_ENV === "development") console.log("[Simulation] Tenderly failed but eth_call passed, proceeding");
         }
+
+        // If original call was previewOnly, stop here — simulation result is set, component will show modal
+        if (wasPreviewOnly) {
+          setStatus("idle");
+          return;
+        }
       } else if (testNetworkType === "tenderly") {
         setStatus("simulating");
 
@@ -445,6 +459,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
         if (!vnetResult.ok) {
           if (process.env.NODE_ENV === "development") console.log("[Simulation] VNet sim failed but eth_call passed, proceeding");
+        }
+
+        // If original call was previewOnly, stop here
+        if (wasPreviewOnly) {
+          setStatus("idle");
+          return;
         }
       } else {
         const ethCallResult = await devEthCall(publicClient, { account: address, ...bundleTxParams });
@@ -614,6 +634,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
             amount: inputAmount,
             decimals: options?.tokenDecimals,
           });
+          pendingPreviewRef.current = !!options?.previewOnly;
           setStatus("needsApproval");
           return null;
         }
@@ -1350,6 +1371,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           amount: amountWei,
           decimals: 18,
         });
+        pendingPreviewRef.current = !!options?.previewOnly;
         setStatus("needsApproval");
         return null;
       }
@@ -1946,6 +1968,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
             amount: collateralWei,
             decimals: 18,
           });
+          pendingPreviewRef.current = !!options?.previewOnly;
           setStatus("needsApproval");
           return null;
         }
@@ -2296,6 +2319,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
           amount: requiredAllowance,
           decimals: 18,
         });
+        pendingPreviewRef.current = !!options?.previewOnly;
         setStatus("needsApproval");
         return null;
       }
@@ -3128,6 +3152,9 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     isApproving,
     isApprovalSuccess,
     executeAfterApproval,
+    // Synchronous check: was approval triggered by a previewOnly call?
+    // Use after an action with previewOnly returns null to distinguish "needs approval" from "no simulation data"
+    wasApprovalRequested: () => pendingPreviewRef.current,
     // State
     status,
     txHash,

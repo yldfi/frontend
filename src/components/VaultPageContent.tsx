@@ -751,6 +751,25 @@ export function VaultPageContent({ id }: { id: string }) {
     setZapInProgress(zapIsLoading);
   }, [zapIsLoading]);
 
+  // Open simulation modal when post-approval auto-execute completes a preview simulation
+  const prevZapSimResult = useRef<typeof simulationResult>(null);
+  useEffect(() => {
+    // Detect when simulationResult transitions from null → non-null while zapStatus is idle
+    // and preview is enabled — this happens when the auto-execute runs with previewOnly after approval
+    if (showSimulationPreview && simulationResult && !prevZapSimResult.current && zapStatus === "idle" && !showSimulationModal && activeTab === "zap") {
+      simulationBlock.current = currentBlock ?? 0n;
+      setShowSimulationModal(true);
+      if (publicClient) {
+        publicClient.readContract({
+          address: CHAINLINK_ETH_USD,
+          abi: [{ name: "latestRoundData", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "roundId", type: "uint80" }, { name: "answer", type: "int256" }, { name: "startedAt", type: "uint256" }, { name: "updatedAt", type: "uint256" }, { name: "answeredInRound", type: "uint80" }] }],
+          functionName: "latestRoundData",
+        }).then(data => { setEthPrice(Number(data[1] as bigint) / 1e8); }).catch(() => {});
+      }
+    }
+    prevZapSimResult.current = simulationResult;
+  }, [simulationResult, zapStatus, showSimulationPreview, showSimulationModal, activeTab, publicClient, CHAINLINK_ETH_USD, currentBlock]);
+
   // Run simulation for preview mode and show modal with result
   const runSimulationPreview = useCallback(async () => {
     if (!zapQuote) return;
@@ -2358,6 +2377,9 @@ export function VaultPageContent({ id }: { id: string }) {
                               // Preview mode - run simulation first
                               const result = await runSimulationPreview();
                               if (result) return; // Modal opened — bail
+                              // executeZap may have returned null because approval is needed
+                              // (approval card now showing, auto-execute will handle the rest)
+                              if (zapNeedsApproval()) return;
                               // No simulation data (e.g. Anvil) — fall through to execute
                               setZapPendingDetails();
                               if (vault && zapAmount) trackZapInitiated(vault.id, zapDirection, zapDirection === "in" ? (zapInputToken?.symbol ?? "") : vault.symbol, zapDirection === "in" ? vault.symbol : (zapOutputToken?.symbol ?? ""), zapAmount);

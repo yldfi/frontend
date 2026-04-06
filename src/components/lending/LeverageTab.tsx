@@ -457,6 +457,7 @@ export function LeverageTab({
     isApproving,
     isApprovalSuccess,
     executeAfterApproval,
+    wasApprovalRequested,
     status,
     txHash,
     error,
@@ -1329,9 +1330,23 @@ export function LeverageTab({
   // Handle approval success -> continue execution
   useEffect(() => {
     if (isApprovalSuccess && status === "approving") {
-      executeAfterApproval();
+      const wasPreview = wasApprovalRequested();
+      executeAfterApproval().then(() => {
+        if (wasPreview) {
+          simulationBlock.current = currentBlock ?? 0n;
+          setShowSimulationModal(true);
+          if (publicClient) {
+            publicClient.readContract({
+              address: CHAINLINK_ETH_USD,
+              abi: [{ name: "latestRoundData", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "roundId", type: "uint80" }, { name: "answer", type: "int256" }, { name: "startedAt", type: "uint256" }, { name: "updatedAt", type: "uint256" }, { name: "answeredInRound", type: "uint80" }] }],
+              functionName: "latestRoundData",
+            }).then(data => { setEthPrice(Number(data[1] as bigint) / 1e8); }).catch(() => {});
+          }
+        }
+      });
     }
-  }, [isApprovalSuccess, status, executeAfterApproval]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isApprovalSuccess, status]);
 
   // Reset stale approval state when user changes inputs
   useEffect(() => {
@@ -1392,6 +1407,7 @@ export function LeverageTab({
           if (preview) {
             const result = await leverageUpAction(controllerAddress, additionalCollateral, debtAmount, collateralToken, Number(slippage), true);
             if (openModalIfPreview(result)) return;
+            if (wasApprovalRequested()) return;
           }
           await leverageUpAction(controllerAddress, collateralAmount ? parseUnits(collateralAmount, vault.decimals) : 0n, debtAmount, collateralToken, Number(slippage), false);
         } else if (position?.hasLoan) {
@@ -1400,6 +1416,7 @@ export function LeverageTab({
           if (preview) {
             const result = await leverageUpFromTokenAction(controllerAddress, selectedToken.address as `0x${string}`, inputAmount, debtAmount, collateralToken, selectedToken.symbol, Number(slippage), true, effectiveDecimals);
             if (openModalIfPreview(result)) return;
+            if (wasApprovalRequested()) return;
           }
           await leverageUpFromTokenAction(controllerAddress, selectedToken.address as `0x${string}`, collateralAmount ? parseUnits(collateralAmount, effectiveDecimals) : 0n, debtAmount, collateralToken, selectedToken.symbol, Number(slippage), false, effectiveDecimals);
         } else {
@@ -1408,6 +1425,7 @@ export function LeverageTab({
           if (preview) {
             const result = await createLeveragedLoanFromTokenAction(controllerAddress, selectedToken.address as `0x${string}`, inputAmount, debtAmount, positionBands, collateralToken, selectedToken.symbol, Number(slippage), true, effectiveDecimals);
             if (openModalIfPreview(result)) return;
+            if (wasApprovalRequested()) return;
           }
           await createLeveragedLoanFromTokenAction(controllerAddress, selectedToken.address as `0x${string}`, collateralAmount ? parseUnits(collateralAmount, effectiveDecimals) : 0n, debtAmount, positionBands, collateralToken, selectedToken.symbol, Number(slippage), false, effectiveDecimals);
         }
@@ -1417,6 +1435,7 @@ export function LeverageTab({
           if (preview) {
             const result = await deleverageAction(controllerAddress, position?.collateral ?? 0n, collateralToken, Number(slippage), true);
             if (openModalIfPreview(result)) return;
+            if (wasApprovalRequested()) return;
           }
           await deleverageAction(controllerAddress, position?.collateral ?? 0n, collateralToken, Number(slippage), false);
         } else if (withdrawAmountBn > 0n && isV2Available) {
@@ -1425,6 +1444,7 @@ export function LeverageTab({
             if (preview) {
               const result = await deleverageAndWithdrawToTokenAction(controllerAddress, deleverageCollateralToSell, withdrawAmountBn, collateralToken, withdrawToken.address as `0x${string}`, withdrawToken.symbol, vault.symbol, Number(slippage), true);
               if (openModalIfPreview(result)) return;
+              if (wasApprovalRequested()) return;
             }
             await deleverageAndWithdrawToTokenAction(controllerAddress, deleverageCollateralToSell, withdrawAmountBn, collateralToken, withdrawToken.address as `0x${string}`, withdrawToken.symbol, vault.symbol, Number(slippage), false);
           } else {
@@ -1432,6 +1452,7 @@ export function LeverageTab({
             if (preview) {
               const result = await deleverageAndWithdrawAction(controllerAddress, deleverageCollateralToSell, withdrawAmountBn, collateralToken, Number(slippage), true);
               if (openModalIfPreview(result)) return;
+              if (wasApprovalRequested()) return;
             }
             await deleverageAndWithdrawAction(controllerAddress, deleverageCollateralToSell, withdrawAmountBn, collateralToken, Number(slippage), false);
           }
@@ -1440,6 +1461,7 @@ export function LeverageTab({
           if (preview) {
             const result = await deleverageAction(controllerAddress, deleverageCollateralToSell, collateralToken, Number(slippage), true);
             if (openModalIfPreview(result)) return;
+            if (wasApprovalRequested()) return;
           }
           await deleverageAction(controllerAddress, deleverageCollateralToSell, collateralToken, Number(slippage), false);
         }
@@ -1451,6 +1473,7 @@ export function LeverageTab({
           if (preview) {
             const result = await directLiquidateAction(controllerAddress, percentage, true, crvUsdGap);
             if (openModalIfPreview(result)) return;
+            if (wasApprovalRequested()) return;
           }
           await directLiquidateAction(controllerAddress, percentage, false, crvUsdGap);
         } else {
@@ -1459,6 +1482,7 @@ export function LeverageTab({
           if (preview) {
             const result = await selfLiquidateAction(controllerAddress, percentage, collateralToken, Number(slippage), true);
             if (openModalIfPreview(result)) return;
+            if (wasApprovalRequested()) return;
           }
           await selfLiquidateAction(controllerAddress, percentage, collateralToken, Number(slippage), false);
         }
