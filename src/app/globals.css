@@ -272,7 +272,7 @@ input[type="range"]::-moz-range-track {
   animation: rainbowSlide 4s linear infinite;
 }
 
-.collateral-link span {
+.collateral-link > span {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -283,7 +283,7 @@ input[type="range"]::-moz-range-track {
   transition: background 0.2s ease;
 }
 
-.collateral-link:hover span {
+.collateral-link:hover > span {
   background: var(--muted);
 }
 
