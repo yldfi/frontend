@@ -3,19 +3,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAccount } from "wagmi";
 
-const MERKL_API_PRIMARY = "https://api.merkl.xyz";
-const MERKL_API_FALLBACK = "https://api.merkl.fr";
-const MERKL_APP_PRIMARY = "https://app.merkl.xyz";
+// Merkl API calls are proxied through our Next.js server (see
+// src/app/api/merkl/[...path]/route.ts) because Merkl's Cloudflare edge
+// blocks many VPN / datacenter exit IPs directly from the browser.
+const MERKL_API = "/api/merkl";
 const MERKL_APP_FALLBACK = "https://app.merkl.fr";
 
 async function merklFetch(path: string): Promise<Response> {
-  try {
-    const res = await fetch(`${MERKL_API_PRIMARY}${path}`);
-    if (res.ok) return res;
-  } catch {
-    // primary unreachable, try fallback
-  }
-  const res = await fetch(`${MERKL_API_FALLBACK}${path}`);
+  const res = await fetch(`${MERKL_API}${path}`);
   if (!res.ok) throw new Error(`Merkl API error: ${res.status}`);
   return res;
 }
