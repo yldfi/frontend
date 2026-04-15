@@ -274,6 +274,15 @@ export function RewardsPageContent() {
         {/* Campaign */}
         <div className="mb-10">
           {(() => {
+            const hasActiveCampaign = !!yldOpportunity && yldOpportunity.status !== "PAST";
+            if (!hasActiveCampaign) {
+              return (
+                <div className="border border-[var(--border)] rounded-lg p-12 text-center">
+                  <Gift className="w-10 h-10 mx-auto mb-4 text-[var(--muted-foreground)]" />
+                  <p className="text-[var(--muted-foreground)]">No active campaigns</p>
+                </div>
+              );
+            }
             const now = Math.floor(Date.now() / 1000);
             const campaignStart = 1773619200; // 2026-03-16 00:00:00 UTC
             const campaignEnd = 1776211200;   // 2026-04-15 00:00:00 UTC

@@ -620,6 +620,7 @@ export function VaultPageContent({ id }: { id: string }) {
   const { data: merklOpportunities } = useMerklOpportunities();
   const rewardOpportunity = merklOpportunities?.find((o) => o.name === "Yld Borrow crvUSD");
   const rewardApr = rewardOpportunity?.apr;
+  const isCampaignLive = rewardOpportunity?.status === "LIVE";
 
   // Fetch cvxCRV price from on-chain oracles
   const { price: cvxCrvPrice } = useCvxCrvPrice();
@@ -1383,7 +1384,7 @@ export function VaultPageContent({ id }: { id: string }) {
                             <p className="mono text-sm font-medium">{display.leverageFormatted}</p>
                             <p className={cn("text-xs mono", display.netApy >= 0 ? "text-green-500" : "text-red-500")}>
                               {display.netApyFormatted} NET
-                              {vault.id === "ycvxcrv" && rewardApr != null && (
+                              {vault.id === "ycvxcrv" && isCampaignLive && rewardApr != null && (
                                 <span className="inline-flex items-center gap-0.5 text-green-400 ml-1">
                                   <Gift size={9} />+{rewardApr.toFixed(1)}%
                                 </span>
@@ -1422,7 +1423,7 @@ export function VaultPageContent({ id }: { id: string }) {
               })()}
 
               {/* Rewards Banner */}
-              {vault.id === "ycvxcrv" && (
+              {vault.id === "ycvxcrv" && (isCampaignLive || totalEarnedUsd > 0) && (
                 <Link
                   href="/rewards"
                   className="block border border-green-400/20 bg-green-400/5 rounded-md px-4 group hover:border-green-400/40 transition-colors"
@@ -1430,8 +1431,8 @@ export function VaultPageContent({ id }: { id: string }) {
                 >
                   <div className="flex items-center gap-2 h-full">
                     <Image src="/tokens/crvusd.png" alt="crvUSD" width={16} height={16} className="rounded-full" />
-                    {rewardApr != null && <span className="text-sm font-bold text-green-400 mono">{rewardApr.toFixed(1)}% APR</span>}
-                    {rewardApr != null && <span className="text-green-400/40">·</span>}
+                    {isCampaignLive && rewardApr != null && <span className="text-sm font-bold text-green-400 mono">{rewardApr.toFixed(1)}% APR</span>}
+                    {isCampaignLive && rewardApr != null && <span className="text-green-400/40">·</span>}
                     <span className="text-sm font-medium text-green-400">crvUSD Rewards</span>
                     <span className="text-xs text-[var(--muted-foreground)]">
                       {totalEarnedUsd > 0 ? `Earning ${formatUsd(totalEarnedUsd)}` : `Earn crvUSD by borrowing against ${vault.symbol}`}
