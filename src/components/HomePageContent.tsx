@@ -158,6 +158,7 @@ export function HomePageContent() {
   const { data: merklOpportunities } = useMerklOpportunities();
   const rewardOpportunity = merklOpportunities?.find((o) => o.name === "Yld Borrow crvUSD");
   const rewardApr = rewardOpportunity?.apr;
+  const isCampaignLive = rewardOpportunity?.status === "LIVE";
 
   // Fetch price per share from on-chain
   const { prices: pricePerShareData } = useMultiplePricePerShare([
@@ -513,7 +514,7 @@ export function HomePageContent() {
                           </span>
                         )
                       ))}
-                      {vault.hasRewards && (
+                      {vault.hasRewards && (isCampaignLive || totalEarnedUsd > 0) && (
                         <button
                           onClick={(e) => { e.preventDefault(); e.stopPropagation(); trackCtaClick("rewards_banner", "home"); router.push("/rewards"); }}
                           className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium bg-green-400/10 text-green-400 border border-green-400/20 rounded whitespace-nowrap hover:bg-green-400/20 transition-colors"
@@ -594,7 +595,7 @@ export function HomePageContent() {
                               </span>
                             )
                           ))}
-                          {vault.hasRewards && (
+                          {vault.hasRewards && (isCampaignLive || totalEarnedUsd > 0) && (
                             <button
                               onClick={(e) => { e.preventDefault(); e.stopPropagation(); trackCtaClick("rewards_banner", "home"); router.push("/rewards"); }}
                               className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium bg-green-400/10 text-green-400 border border-green-400/20 rounded whitespace-nowrap hover:bg-green-400/20 transition-colors"

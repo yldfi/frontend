@@ -63,6 +63,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
   const { data: merklOpportunities } = useMerklOpportunities();
   const rewardOpportunity = merklOpportunities?.find((o) => o.name === "Yld Borrow crvUSD");
   const rewardApr = rewardOpportunity?.apr;
+  const isCampaignLive = rewardOpportunity?.status === "LIVE";
 
   const [vpPeriod, setVpPeriod] = useState<VolumeProfilePeriod>("all");
 
@@ -226,15 +227,15 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
               )}
 
               {/* Rewards Banner */}
-              {vault.id === "ycvxcrv" && (
+              {vault.id === "ycvxcrv" && (isCampaignLive || totalEarnedUsd > 0) && (
                 <Link
                   href="/rewards"
                   className="block border border-green-400/20 bg-green-400/5 rounded-lg px-4 py-3 group hover:border-green-400/40 transition-colors"
                 >
                   <div className="flex items-center gap-2">
                     <Image src="/tokens/crvusd.png" alt="crvUSD" width={16} height={16} className="rounded-full" />
-                    {rewardApr != null && <span className="text-sm font-bold text-green-400 mono">{rewardApr.toFixed(1)}% APR</span>}
-                    {rewardApr != null && <span className="text-green-400/40">·</span>}
+                    {isCampaignLive && rewardApr != null && <span className="text-sm font-bold text-green-400 mono">{rewardApr.toFixed(1)}% APR</span>}
+                    {isCampaignLive && rewardApr != null && <span className="text-green-400/40">·</span>}
                     <span className="text-sm font-medium text-green-400">crvUSD Rewards</span>
                     <span className="text-xs text-[var(--muted-foreground)]">
                       {totalEarnedUsd > 0 ? `Earning ${formatUsd(totalEarnedUsd)}` : `Earn crvUSD by borrowing against ${vault.symbol}`}
@@ -369,7 +370,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                   controllerAddress={controllerAddress}
                   onTransactionSuccess={() => refetchPosition()}
                   onPreviewLiqPrices={handlePreviewLiqPrices}
-                  rewardApr={rewardApr}
+                  rewardApr={isCampaignLive ? rewardApr : undefined}
                 />
               </div>
             </div>
