@@ -77,6 +77,7 @@ import { getMaxEthAmount } from "@/lib/eth-gas";
 import { CHAINLINK_ETH_USD } from "@/config/addresses";
 import { getVault, getVaultByAddress, TOKENS, VAULT_UNDERLYING_TOKENS, VAULTS, EXTERNAL_VAULT_TOKENS, CURVE_CONTROLLERS, CURVE_SAVINGS } from "@/config/vaults";
 import { CollateralModal, LendingInterface } from "@/components/lending";
+import { VaultInfoCard } from "@/components/VaultInfoCard";
 import type { EnsoToken, ZapDirection, SimulationAssetChange } from "@/types/enso";
 import {
   trackVaultView,
@@ -1485,68 +1486,68 @@ export function VaultPageContent({ id }: { id: string }) {
                 </div>
               </div>
 
-              {/* Details */}
-              <div className="rounded-xl border border-[var(--border)] overflow-hidden">
-                <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--border)] bg-[var(--muted)]/20">
-                  <Info size={14} className="text-[var(--muted-foreground)]" />
-                  <h3 className="text-sm font-medium text-[var(--foreground)]">{vault.type === "vault" ? "Vault" : "Strategy"} Details</h3>
-                </div>
-                <table className="w-full text-xs">
-                  <tbody>
-                    {vault.type === "vault" && (
+              {/* Details + Performance + TVL tabs */}
+              <VaultInfoCard
+                address={vault.address}
+                title={`${vault.type === "vault" ? "Vault" : "Strategy"} Details`}
+                detailsContent={
+                  <table className="w-full text-xs">
+                    <tbody>
+                      {vault.type === "vault" && (
+                        <tr className="border-b border-[var(--border)]/50">
+                          <td className="px-3 sm:px-4 py-2.5 text-[var(--muted-foreground)] font-medium whitespace-nowrap">Vault</td>
+                          <td className="px-3 sm:px-4 py-2.5 text-right mono font-medium">{vault.name}</td>
+                        </tr>
+                      )}
                       <tr className="border-b border-[var(--border)]/50">
-                        <td className="px-3 sm:px-4 py-2.5 text-[var(--muted-foreground)] font-medium whitespace-nowrap">Vault</td>
-                        <td className="px-3 sm:px-4 py-2.5 text-right mono font-medium">{vault.name}</td>
-                      </tr>
-                    )}
-                    <tr className="border-b border-[var(--border)]/50">
-                      <td className="px-3 sm:px-4 py-2.5 text-[var(--muted-foreground)] font-medium whitespace-nowrap">
-                        {vault.type === "vault" ? (<><span className="hidden sm:inline">Underlying Strategy</span><span className="sm:hidden">Strategy</span></>) : "Strategy"}
-                      </td>
-                      <td className="px-3 sm:px-4 py-2.5 text-right mono font-medium">{vault.strategy}</td>
-                    </tr>
-                    <tr className="border-b border-[var(--border)]/50">
-                      <td className="px-3 sm:px-4 py-2.5 text-[var(--muted-foreground)] font-medium whitespace-nowrap">
-                        <span className="hidden sm:inline">Performance Fee</span><span className="sm:hidden">Fee</span>
-                      </td>
-                      <td className="px-3 sm:px-4 py-2.5 text-right mono font-medium">
-                        {vault.type === "vault" ? "15% Vault + 5% Strategy" : `${vaultData.performanceFee ? formatFee(vaultData.performanceFee) : vault.fees.performance}%`}
-                      </td>
-                    </tr>
-                    <tr className={vault.underlyingStrategy && vault.type === "vault" ? "border-b border-[var(--border)]/50" : ""}>
-                      <td className="px-3 sm:px-4 py-2.5 text-[var(--muted-foreground)] font-medium whitespace-nowrap">
-                        <span className="hidden sm:inline">{vault.type === "strategy" ? "Strategy Contract" : "Vault Contract"}</span>
-                        <span className="sm:hidden">{vault.type === "strategy" ? "Contract" : "Vault"}</span>
-                      </td>
-                      <td className="px-3 sm:px-4 py-2.5 text-right">
-                        <div className="flex items-center justify-end gap-1.5 sm:gap-2 flex-wrap">
-                          <a href={vault.links?.etherscan || `https://etherscan.io/address/${vault.address}`} target="_blank" rel="noopener noreferrer" className="mono text-xs flex items-center gap-1 hover:text-[var(--accent)] transition-colors">
-                            {vault.address.slice(0, 6)}...{vault.address.slice(-4)}<ExternalLink size={10} className="opacity-50" />
-                          </a>
-                          <button onClick={() => { navigator.clipboard.writeText(vault.address); toast.success("Address copied", { id: "copy-address" }); }} className="hover:text-[var(--accent)] text-[var(--muted-foreground)] transition-colors" aria-label="Copy vault address"><Copy size={11} /></button>
-                          <button onClick={() => openExplorer(vault.address, vault.name, vault.logo, vault.type === "strategy")} className="text-[10px] px-1.5 py-0.5 bg-[var(--muted)] hover:bg-[var(--accent)] hover:text-white rounded flex items-center gap-1 transition-colors"><Search size={9} /><span className="hidden sm:inline">Explore</span></button>
-                        </div>
-                      </td>
-                    </tr>
-                    {vault.underlyingStrategy && vault.type === "vault" && (
-                      <tr>
                         <td className="px-3 sm:px-4 py-2.5 text-[var(--muted-foreground)] font-medium whitespace-nowrap">
-                          <span className="hidden sm:inline">Strategy Contract</span><span className="sm:hidden">Strategy</span>
+                          {vault.type === "vault" ? (<><span className="hidden sm:inline">Underlying Strategy</span><span className="sm:hidden">Strategy</span></>) : "Strategy"}
+                        </td>
+                        <td className="px-3 sm:px-4 py-2.5 text-right mono font-medium">{vault.strategy}</td>
+                      </tr>
+                      <tr className="border-b border-[var(--border)]/50">
+                        <td className="px-3 sm:px-4 py-2.5 text-[var(--muted-foreground)] font-medium whitespace-nowrap">
+                          <span className="hidden sm:inline">Performance Fee</span><span className="sm:hidden">Fee</span>
+                        </td>
+                        <td className="px-3 sm:px-4 py-2.5 text-right mono font-medium">
+                          {vault.type === "vault" ? "15% Vault + 5% Strategy" : `${vaultData.performanceFee ? formatFee(vaultData.performanceFee) : vault.fees.performance}%`}
+                        </td>
+                      </tr>
+                      <tr className={vault.underlyingStrategy && vault.type === "vault" ? "border-b border-[var(--border)]/50" : ""}>
+                        <td className="px-3 sm:px-4 py-2.5 text-[var(--muted-foreground)] font-medium whitespace-nowrap">
+                          <span className="hidden sm:inline">{vault.type === "strategy" ? "Strategy Contract" : "Vault Contract"}</span>
+                          <span className="sm:hidden">{vault.type === "strategy" ? "Contract" : "Vault"}</span>
                         </td>
                         <td className="px-3 sm:px-4 py-2.5 text-right">
                           <div className="flex items-center justify-end gap-1.5 sm:gap-2 flex-wrap">
-                            <a href={`https://etherscan.io/address/${vault.underlyingStrategy}`} target="_blank" rel="noopener noreferrer" className="mono text-xs flex items-center gap-1 hover:text-[var(--accent)] transition-colors">
-                              {vault.underlyingStrategy.slice(0, 6)}...{vault.underlyingStrategy.slice(-4)}<ExternalLink size={10} className="opacity-50" />
+                            <a href={vault.links?.etherscan || `https://etherscan.io/address/${vault.address}`} target="_blank" rel="noopener noreferrer" className="mono text-xs flex items-center gap-1 hover:text-[var(--accent)] transition-colors">
+                              {vault.address.slice(0, 6)}...{vault.address.slice(-4)}<ExternalLink size={10} className="opacity-50" />
                             </a>
-                            <button onClick={() => { navigator.clipboard.writeText(vault.underlyingStrategy!); toast.success("Address copied", { id: "copy-address" }); }} className="hover:text-[var(--accent)] text-[var(--muted-foreground)] transition-colors" aria-label="Copy strategy address"><Copy size={11} /></button>
-                            <button onClick={() => { const sc = getVaultByAddress(vault.underlyingStrategy!); openExplorer(vault.underlyingStrategy!, sc?.name || `${vault.name} Strategy`, sc?.logo, true); }} className="text-[10px] px-1.5 py-0.5 bg-[var(--muted)] hover:bg-[var(--accent)] hover:text-white rounded flex items-center gap-1 transition-colors"><Search size={9} /><span className="hidden sm:inline">Explore</span></button>
+                            <button onClick={() => { navigator.clipboard.writeText(vault.address); toast.success("Address copied", { id: "copy-address" }); }} className="hover:text-[var(--accent)] text-[var(--muted-foreground)] transition-colors" aria-label="Copy vault address"><Copy size={11} /></button>
+                            <button onClick={() => openExplorer(vault.address, vault.name, vault.logo, vault.type === "strategy")} className="text-[10px] px-1.5 py-0.5 bg-[var(--muted)] hover:bg-[var(--accent)] hover:text-white rounded flex items-center gap-1 transition-colors"><Search size={9} /><span className="hidden sm:inline">Explore</span></button>
                           </div>
                         </td>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                      {vault.underlyingStrategy && vault.type === "vault" && (
+                        <tr>
+                          <td className="px-3 sm:px-4 py-2.5 text-[var(--muted-foreground)] font-medium whitespace-nowrap">
+                            <span className="hidden sm:inline">Strategy Contract</span><span className="sm:hidden">Strategy</span>
+                          </td>
+                          <td className="px-3 sm:px-4 py-2.5 text-right">
+                            <div className="flex items-center justify-end gap-1.5 sm:gap-2 flex-wrap">
+                              <a href={`https://etherscan.io/address/${vault.underlyingStrategy}`} target="_blank" rel="noopener noreferrer" className="mono text-xs flex items-center gap-1 hover:text-[var(--accent)] transition-colors">
+                                {vault.underlyingStrategy.slice(0, 6)}...{vault.underlyingStrategy.slice(-4)}<ExternalLink size={10} className="opacity-50" />
+                              </a>
+                              <button onClick={() => { navigator.clipboard.writeText(vault.underlyingStrategy!); toast.success("Address copied", { id: "copy-address" }); }} className="hover:text-[var(--accent)] text-[var(--muted-foreground)] transition-colors" aria-label="Copy strategy address"><Copy size={11} /></button>
+                              <button onClick={() => { const sc = getVaultByAddress(vault.underlyingStrategy!); openExplorer(vault.underlyingStrategy!, sc?.name || `${vault.name} Strategy`, sc?.logo, true); }} className="text-[10px] px-1.5 py-0.5 bg-[var(--muted)] hover:bg-[var(--accent)] hover:text-white rounded flex items-center gap-1 transition-colors"><Search size={9} /><span className="hidden sm:inline">Explore</span></button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                }
+              />
 
               {/* LlamaLend Market Stats */}
               {curveData && (

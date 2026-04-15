@@ -58,65 +58,12 @@ interface YearnVaultResponse {
   };
 }
 
-const KONG_API_URL = "https://kong.yearn.farm/api/gql";
-
-const VAULT_QUERY = `
-query Query($chainId: Int, $address: String) {
-  vault(chainId: $chainId, address: $address) {
-    chainId
-    address
-    name
-    symbol
-    asset {
-      address
-      name
-      symbol
-      decimals
-    }
-    accountant
-    pricePerShare
-    totalAssets
-    totalDebt
-    fees {
-      managementFee
-      performanceFee
-    }
-    tvl {
-      close
-    }
-    apy {
-      close: net
-      grossApr
-      weeklyNet
-      monthlyNet
-      inceptionNet
-    }
-    debts {
-      strategy
-      currentDebt
-      currentDebtUsd
-      targetDebtRatio
-    }
-  }
-  vaultStrategies(chainId: $chainId, vault: $address) {
-    chainId
-    address
-    name
-  }
-}
-`;
-
+// Route through Next.js GET proxy so Cloudflare can cache at the edge —
+// Kong's direct endpoint intermittently rejects browser CORS preflights with
+// 403, and POST requests aren't cacheable by Cloudflare anyway.
 async function fetchYearnVault(chainId: number, address: string): Promise<YearnVaultResponse["data"]> {
-  const response = await fetch(KONG_API_URL, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      query: VAULT_QUERY,
-      variables: { chainId, address },
-    }),
-  });
+  const qs = new URLSearchParams({ chainId: String(chainId), address });
+  const response = await fetch(`/api/kong/vault?${qs.toString()}`);
 
   if (!response.ok) {
     throw new Error("Failed to fetch Yearn vault data");
