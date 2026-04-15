@@ -67,13 +67,30 @@ function dedupeByTime(points: HistoryPoint[]): HistoryPoint[] {
   );
 }
 
+// Kong occasionally emits a zero TVL on a single day (indexer hiccup, missed
+// block) even though on-chain TVL was unchanged. Forward-fill those zeros
+// from the last known non-zero value so the chart doesn't flash empty bars.
+// Leading zeros (before the vault had any deposits) are left as-is.
+function forwardFillZeros(points: HistoryPoint[]): HistoryPoint[] {
+  let lastNonZero = 0;
+  return points.map((p) => {
+    if (p.value > 0) {
+      lastNonZero = p.value;
+      return p;
+    }
+    return lastNonZero > 0 ? { ...p, value: lastNonZero } : p;
+  });
+}
+
 export function useVaultTvlHistory(address: string, chainId = 1, limit = 365) {
   const enabled = isQueryable(address);
   return useQuery({
     queryKey: ["yearn-history", "tvl", chainId, address, limit],
     queryFn: async (): Promise<HistoryPoint[]> => {
       const points = await fetchTimeseries("tvl", { chainId, address, limit });
-      return dedupeByTime(points.map((p) => ({ time: Number(p.time), value: p.value })));
+      return forwardFillZeros(
+        dedupeByTime(points.map((p) => ({ time: Number(p.time), value: p.value }))),
+      );
     },
     ...HISTORY_CACHE,
     enabled,
