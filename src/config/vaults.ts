@@ -264,7 +264,8 @@ export const VAULT_ADDRESSES = {
   // cvxCRV vaults
   YCVXCRV: "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86" as const,
   YSCVXCRV: "0xCa960E6DF1150100586c51382f619efCCcF72706" as const,
-  // cvgCVX vault
+  // cvgCVX vaults
+  YCVGCVX: "0x0849b046292293f78dF3002F8461f8A7e2eC2b82" as const,
   YSCVGCVX: "0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359" as const,
   // pxCVX vault
   YSPXCVX: "0xB246DB2A73EEE3ee026153660c74657C123f8E42" as const,
@@ -441,6 +442,34 @@ export const VAULTS: Record<string, VaultConfig> = {
     },
     chain: "Ethereum",
     version: "v3",
+  },
+  ycvgcvx: {
+    id: "ycvgcvx",
+    name: "ycvgCVX",
+    symbol: "ycvgCVX",
+    address: VAULT_ADDRESSES.YCVGCVX,
+    type: "vault",
+    underlyingStrategy: VAULT_ADDRESSES.YSCVGCVX,
+    asset: "cvgCVX",
+    assetSymbol: "cvgCVX",
+    assetAddress: TOKENS.CVGCVX,
+    decimals: 18,
+    assetDecimals: 18,
+    description: "Auto-compounding cvgCVX staking rewards via Tangent LiquidBoost",
+    longDescription:
+      "Meta-vault over the yscvgCVX strategy. Holders retain cvgCVX-denominated exposure with the meta-vault reallocating between compatible strategies as needed.",
+    strategy: "cvgCVX Compounder",
+    badges: ["Tangent", "cvgCVX", "Compounder"],
+    logo: "/logo-128.png",
+    logoSmall: "/logo-64.png",
+    fees: { management: 0, performance: 5 },
+    feeBreakdown: "5% strategy",
+    links: {
+      etherscan: `https://etherscan.io/address/${VAULT_ADDRESSES.YCVGCVX}`,
+    },
+    chain: "Ethereum",
+    version: "v3",
+    hidden: true, // Not listed on yldfi.co — universal-zap support only
   },
   yscvgcvx: {
     id: "yscvgcvx",

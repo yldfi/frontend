@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BookOpen, Github, Send } from "lucide-react";
+import { BookOpen, Github, Send, Zap } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { trackExternalLinkClick } from "@/lib/analytics";
 
@@ -19,6 +19,13 @@ export function Footer() {
           </div>
 
           <div className="flex items-center gap-4">
+            <Link
+              href="/zap"
+              className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+              aria-label="Zap"
+            >
+              <Zap size={18} aria-hidden="true" />
+            </Link>
             <a
               href="https://yldfi.gitbook.io/docs"
               target="_blank"

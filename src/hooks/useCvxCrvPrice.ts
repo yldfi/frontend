@@ -1,7 +1,11 @@
 "use client";
 
-import { useReadContracts, useAccount } from "wagmi";
+import { useReadContracts } from "wagmi";
 import { formatUnits } from "viem";
+
+// Pin on-chain oracle reads to mainnet so dev configs with Anvil/VNet pointing
+// elsewhere don't silently return 0.
+const MAINNET_ID = 1 as const;
 
 // LlamaLend price oracle for cvxCRV/crvUSD
 // Returns cvxCRV price in crvUSD (18 decimals)
@@ -32,21 +36,19 @@ const CHAINLINK_ABI = [
 ] as const;
 
 export function useCvxCrvPrice() {
-  const { chainId } = useAccount();
-
   const { data, isLoading, error } = useReadContracts({
     contracts: [
       {
         address: CVXCRV_CRVUSD_ORACLE,
         abi: LLAMALEND_ORACLE_ABI,
         functionName: "price",
-        chainId, // Use connected chain
+        chainId: MAINNET_ID,
       },
       {
         address: CRVUSD_USD_CHAINLINK,
         abi: CHAINLINK_ABI,
         functionName: "latestAnswer",
-        chainId, // Use connected chain
+        chainId: MAINNET_ID,
       },
     ],
     query: {

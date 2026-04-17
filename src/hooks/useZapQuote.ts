@@ -4,11 +4,12 @@ import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAccount, usePublicClient } from "wagmi";
 import { parseUnits, formatUnits } from "viem";
-import { fetchZapInRoute, fetchZapOutRoute, fetchVaultToVaultRoute, fetchCvgCvxZapInRoute, fetchCvgCvxZapOutRoute, fetchPxCvxZapInRoute, fetchPxCvxZapOutRoute, fetchExternalVaultZapInRoute, fetchLpxCvxZapInRoute, fetchPxCvxTokenZapInRoute, isPxCvxToken, isLpxCvxToken, fetchTokenPrices, CVXCRV_ADDRESS, isYldfiVault, getTokenSymbol } from "@/lib/enso";
+import { fetchZapInRoute, fetchZapOutRoute, fetchVaultToVaultRoute, fetchCvgCvxZapInRoute, fetchCvgCvxZapOutRoute, fetchPxCvxZapInRoute, fetchPxCvxZapOutRoute, fetchExternalVaultZapInRoute, fetchLpxCvxZapInRoute, fetchPxCvxTokenZapInRoute, isPxCvxToken, isLpxCvxToken, fetchTokenPrices, getCvgCvxReverseSwapRate, getLpxCvxToCvxSwapRate, CVXCRV_ADDRESS, isYldfiVault, getTokenSymbol } from "@/lib/enso";
 import { TOKENS, getVaultByAddress, isExternalVaultToken, getExternalVaultConfig } from "@/config/vaults";
 import { useTestNetwork } from "@/contexts/TestNetworkContext";
 import type { EnsoToken, ZapQuote, ZapDirection, RouteInfo, RouteStep } from "@/types/enso";
 import { ERC4626_ABI } from "@/lib/abis";
+import { PUBLIC_RPC_URLS } from "@/config/rpc";
 
 /**
  * Build route info for vault-to-vault zaps
@@ -259,23 +260,55 @@ async function getTokenPrices(addresses: string[]): Promise<Map<string, number |
  * Get vault's assets per share (exchange rate)
  * Returns how many underlying tokens (cvxCRV) each share is worth
  */
+// convertToAssets(uint256) selector + uint256(1e18) padded to 32 bytes
+const CONVERT_TO_ASSETS_1E18_CALLDATA =
+  "0x07a2d13a0000000000000000000000000000000000000000000000000de0b6b3a7640000";
+
+async function readPpsViaRpc(vaultAddress: string): Promise<number | null> {
+  const rpcUrls = [PUBLIC_RPC_URLS.drpc, PUBLIC_RPC_URLS.publicnode, PUBLIC_RPC_URLS.onerpc].filter(Boolean);
+  for (const url of rpcUrls) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_call",
+          params: [{ to: vaultAddress, data: CONVERT_TO_ASSETS_1E18_CALLDATA }, "latest"],
+        }),
+      });
+      if (!res.ok) continue;
+      const json = (await res.json()) as { result?: string };
+      if (json.result && json.result !== "0x") {
+        return Number(BigInt(json.result)) / 1e18;
+      }
+    } catch {
+      // try next RPC
+    }
+  }
+  return null;
+}
+
 async function getVaultAssetsPerShare(
   publicClient: ReturnType<typeof usePublicClient>,
   vaultAddress: `0x${string}`
 ): Promise<number | null> {
-  if (!publicClient) return null;
-  try {
-    const oneShare = BigInt(10 ** 18);
-    const assets = await publicClient.readContract({
-      address: vaultAddress,
-      abi: ERC4626_ABI,
-      functionName: "convertToAssets",
-      args: [oneShare],
-    });
-    return Number(assets) / 1e18;
-  } catch {
-    return null;
+  if (publicClient) {
+    try {
+      const oneShare = BigInt(10 ** 18);
+      const assets = await publicClient.readContract({
+        address: vaultAddress,
+        abi: ERC4626_ABI,
+        functionName: "convertToAssets",
+        args: [oneShare],
+      });
+      return Number(assets) / 1e18;
+    } catch {
+      // fall through to direct RPC
+    }
   }
+  return readPpsViaRpc(vaultAddress);
 }
 
 export function useZapQuote({
@@ -781,6 +814,17 @@ export function useZapQuote({
           const outputUsdValue = outputTokenPrice !== null ? outputNum * outputTokenPrice : null;
           const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
 
+          // Intermediate amounts for the route display
+          const cvgCvxAmountFmt = inputCvgCvxValue.toFixed(4);
+          let cvxAmountFmt: string | undefined;
+          try {
+            const cvgCvxWei = parseUnits(inputCvgCvxValue.toFixed(18), 18).toString();
+            const cvxOut = await getCvgCvxReverseSwapRate(cvgCvxWei);
+            if (cvxOut > 0n) cvxAmountFmt = (Number(cvxOut) / 1e18).toFixed(4);
+          } catch {
+            // leave undefined
+          }
+
           return {
             inputToken: {
               address: vaultAddress,
@@ -807,8 +851,8 @@ export function useZapQuote({
             routeInfo: {
               steps: [
                 { tokenSymbol: vaultSymbol, action: "Redeem", description: `${vaultSymbol} for cvgCVX`, protocol: "yld" },
-                { tokenSymbol: "cvgCVX", action: "Swap", description: "cvgCVX → CVX1 → CVX", protocol: "LiquidBoost" },
-                { tokenSymbol: "CVX", action: "Swap", description: `CVX for ${outputToken.symbol}`, protocol: "Enso" },
+                { tokenSymbol: "cvgCVX", amount: cvgCvxAmountFmt, action: "Swap", description: "cvgCVX → CVX1 → CVX", protocol: "LiquidBoost" },
+                { tokenSymbol: "CVX", amount: cvxAmountFmt, action: "Swap", description: `CVX for ${outputToken.symbol}`, protocol: "Enso" },
                 { tokenSymbol: outputToken.symbol, action: "Receive", description: "tokens", protocol: "Enso" },
               ],
             },
@@ -903,6 +947,16 @@ export function useZapQuote({
           const outputUsdValue = outputTokenPrice !== null ? outputNum * outputTokenPrice : null;
           const priceImpact = calculatePriceImpact(inputUsdValue, outputUsdValue);
 
+          const pxCvxAmountFmt = inputPxCvxValue.toFixed(4);
+          let cvxAmountFmt: string | undefined;
+          try {
+            const pxCvxWei = parseUnits(inputPxCvxValue.toFixed(18), 18).toString();
+            const cvxOut = await getLpxCvxToCvxSwapRate(pxCvxWei);
+            if (cvxOut > 0n) cvxAmountFmt = (Number(cvxOut) / 1e18).toFixed(4);
+          } catch {
+            // leave undefined
+          }
+
           return {
             inputToken: {
               address: vaultAddress,
@@ -929,8 +983,8 @@ export function useZapQuote({
             routeInfo: {
               steps: [
                 { tokenSymbol: vaultSymbol, action: "Redeem", description: `${vaultSymbol} for pxCVX`, protocol: "yld" },
-                { tokenSymbol: "pxCVX", action: "Swap", description: "pxCVX for CVX", protocol: "Curve" },
-                { tokenSymbol: "CVX", action: "Swap", description: `CVX for ${outputToken.symbol}`, protocol: "Enso" },
+                { tokenSymbol: "pxCVX", amount: pxCvxAmountFmt, action: "Swap", description: "pxCVX for CVX", protocol: "Curve" },
+                { tokenSymbol: "CVX", amount: cvxAmountFmt, action: "Swap", description: `CVX for ${outputToken.symbol}`, protocol: "Enso" },
                 { tokenSymbol: outputToken.symbol, action: "Receive", description: "tokens", protocol: "Enso" },
               ],
             },

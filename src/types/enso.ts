@@ -119,6 +119,7 @@ export interface RouteStep {
   bonus?: number;           // Optional: bonus % for this step (e.g., +2.5% from Curve swap)
   bonusAmount?: string;     // Optional: bonus amount (e.g., "2.5" extra tokens vs 1:1 mint)
   bonusSymbol?: string;     // Optional: token symbol for bonus (e.g., "cvgCVX")
+  slippage?: number;        // Optional: price-impact % for this step (e.g., 8.03 for 8.03% loss vs market mid-price)
 }
 
 // Route info for display
