@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useState, useEffect, useMemo } from "react";
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContracts } from "wagmi";
 import { formatUnits } from "viem";
 import Link from "next/link";
 import Image from "next/image";
@@ -33,7 +33,60 @@ const MERKL_DISTRIBUTOR_ABI = [
     ],
     outputs: [],
   },
+  {
+    name: "claimed",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "user", type: "address" },
+      { name: "token", type: "address" },
+    ],
+    outputs: [
+      { name: "amount", type: "uint208" },
+      { name: "timestamp", type: "uint40" },
+      { name: "merkleRoot", type: "bytes32" },
+    ],
+  },
 ] as const;
+
+/**
+ * Merkl's off-chain API sometimes lags the on-chain claim state by hours — the
+ * distributor's `claimed(user, token)` mapping is authoritative. Read it for
+ * every reward token and override the API's `claimed` if it's lower, so the
+ * UI doesn't keep offering a claim that's already been executed.
+ */
+function useOnChainClaimed(
+  address: `0x${string}` | undefined,
+  tokens: { token: `0x${string}`; chainId: number }[],
+) {
+  const contracts = address
+    ? tokens.map((t) => ({
+        address: MERKL_DISTRIBUTOR,
+        abi: MERKL_DISTRIBUTOR_ABI,
+        functionName: "claimed" as const,
+        args: [address, t.token] as const,
+        chainId: t.chainId,
+      }))
+    : [];
+
+  const { data } = useReadContracts({
+    contracts,
+    query: {
+      enabled: !!address && tokens.length > 0,
+      staleTime: 30 * 1000,
+      refetchInterval: 60 * 1000,
+    },
+  });
+
+  return useMemo(() => {
+    const map = new Map<string, bigint>();
+    tokens.forEach((t, i) => {
+      const result = data?.[i]?.result as readonly [bigint, number, `0x${string}`] | undefined;
+      if (result) map.set(`${t.chainId}:${t.token.toLowerCase()}`, result[0]);
+    });
+    return map;
+  }, [data, tokens]);
+}
 
 function Countdown({ target }: { target: number }) {
   const [remaining, setRemaining] = useState(() => target - Math.floor(Date.now() / 1000));
@@ -213,7 +266,31 @@ export function RewardsPageContent() {
   }, [isConnected, isLoading, hasYcvxcrv, hasBorrowPosition]);
 
   // Flatten all rewards across chains
-  const rewards: MerklReward[] = data?.flatMap((d) => d.rewards) ?? [];
+  const rawRewards: MerklReward[] = data?.flatMap((d) => d.rewards) ?? [];
+
+  // Read authoritative on-chain claimed amounts (Merkl API lags by hours).
+  const rewardTokens = useMemo(
+    () =>
+      rawRewards.map((r) => ({
+        token: r.token.address as `0x${string}`,
+        chainId: r.token.chainId,
+      })),
+    [rawRewards],
+  );
+  const onChainClaimedMap = useOnChainClaimed(address, rewardTokens);
+
+  // Override Merkl's `claimed` with the on-chain value when it's higher.
+  const rewards: MerklReward[] = useMemo(
+    () =>
+      rawRewards.map((r) => {
+        const key = `${r.token.chainId}:${r.token.address.toLowerCase()}`;
+        const onChain = onChainClaimedMap.get(key);
+        if (onChain === undefined) return r;
+        const apiClaimed = BigInt(r.claimed);
+        return onChain > apiClaimed ? { ...r, claimed: onChain.toString() } : r;
+      }),
+    [rawRewards, onChainClaimedMap],
+  );
 
   // Use price from API, fallback to $1 for stablecoins
   const getPrice = (r: MerklReward) => r.token.price ?? (r.token.symbol === "crvUSD" ? 1 : 0);
