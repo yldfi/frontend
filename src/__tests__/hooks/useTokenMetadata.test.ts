@@ -446,7 +446,10 @@ describe("useTokenMetadata", () => {
   });
 
   describe("chainId handling", () => {
-    it("uses connected chainId for token", () => {
+    it("always pins token chainId to mainnet, even when wallet is on another chain", () => {
+      // useTokenMetadata is intentionally pinned to chainId 1 — yld vaults only
+      // live on Ethereum, and reading the wallet's current chain would return
+      // "No token found" when the user is on Arbitrum / any other network.
       mockUseAccount.mockReturnValue({
         address: "0x1234567890123456789012345678901234567890" as `0x${string}`,
         isConnected: true,
@@ -495,7 +498,7 @@ describe("useTokenMetadata", () => {
         useTokenMetadata("0x912ce59144191c1204e64559fe8253a0e49e6548")
       );
 
-      expect(result.current.token?.chainId).toBe(42161);
+      expect(result.current.token?.chainId).toBe(1);
     });
 
     it("defaults to chainId 1 when undefined", () => {
