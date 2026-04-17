@@ -1,26 +1,28 @@
 "use client";
 
-import { useReadContracts, useAccount } from "wagmi";
+import { useReadContracts } from "wagmi";
 import { formatUnits } from "viem";
 import { ERC4626_ABI } from "@/lib/abis";
 
-export function usePricePerShare(vaultAddress: `0x${string}`) {
-  const { chainId } = useAccount();
+// Pin to mainnet — yld vaults only live on Ethereum, and reading useAccount's
+// chainId silently fails when the user's wallet is on a different network.
+const MAINNET_ID = 1 as const;
 
+export function usePricePerShare(vaultAddress: `0x${string}`) {
   const { data, isLoading, error } = useReadContracts({
     contracts: [
       {
         address: vaultAddress,
         abi: ERC4626_ABI,
         functionName: "decimals",
-        chainId, // Use connected chain
+        chainId: MAINNET_ID,
       },
       {
         address: vaultAddress,
         abi: ERC4626_ABI,
         functionName: "convertToAssets",
         args: [BigInt(10 ** 18)], // 1 share with 18 decimals
-        chainId, // Use connected chain
+        chainId: MAINNET_ID,
       },
     ],
     query: {
@@ -49,22 +51,20 @@ export function usePricePerShare(vaultAddress: `0x${string}`) {
 
 // Hook to fetch price per share for multiple vaults at once
 export function useMultiplePricePerShare(vaultAddresses: `0x${string}`[]) {
-  const { chainId } = useAccount();
-
   // Build contracts array: for each vault, we need decimals and convertToAssets
   const contracts = vaultAddresses.flatMap((address) => [
     {
       address,
       abi: ERC4626_ABI,
       functionName: "decimals" as const,
-      chainId, // Use connected chain
+      chainId: MAINNET_ID,
     },
     {
       address,
       abi: ERC4626_ABI,
       functionName: "convertToAssets" as const,
       args: [BigInt(10 ** 18)] as const,
-      chainId, // Use connected chain
+      chainId: MAINNET_ID,
     },
   ]);
 

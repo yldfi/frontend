@@ -1,6 +1,6 @@
 "use client";
 
-import { useReadContracts, useAccount } from "wagmi";
+import { useReadContracts } from "wagmi";
 import { useMemo, useEffect, useState } from "react";
 import { isAddress, getAddress } from "viem";
 import { ERC20_METADATA_ABI } from "@/lib/abis";
@@ -55,7 +55,9 @@ async function fetchTokenLogo(
  * Used for importing custom tokens not in the token list
  */
 export function useTokenMetadata(address: string | undefined) {
-  const { chainId } = useAccount();
+  // App is mainnet-only; hardcode chainId: 1 so imports work even when the
+  // wallet is on a test network/different chain.
+  const chainId = 1 as const;
   const isValidAddress = address && isAddress(address);
   const tokenAddress = isValidAddress ? (address as `0x${string}`) : undefined;
   const [logoState, setLogoState] = useState<{ address: string; uri?: string } | null>(null);
@@ -116,14 +118,14 @@ export function useTokenMetadata(address: string | undefined) {
 
     return {
       address: tokenAddress,
-      chainId: chainId ?? 1,
+      chainId,
       name: nameResult.result as string,
       symbol: symbolResult.result as string,
       decimals: decimalsResult.result as number,
       logoURI,
       type: "base",
     };
-  }, [tokenAddress, data, chainId, logoURI]);
+  }, [tokenAddress, data, logoURI]);
 
   return {
     token,

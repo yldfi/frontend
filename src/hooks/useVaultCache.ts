@@ -15,11 +15,12 @@ interface VaultCacheData {
 interface CacheResponse {
   ycvxcrv: VaultCacheData;
   yscvxcrv: VaultCacheData;
+  ycvgcvx: VaultCacheData;
   yscvgcvx: VaultCacheData;
   // yspxcvx: VaultCacheData; // uncomment when vault is live
   cvxCrvPrice: number;
   cvgCvxPrice: number;
-  // pxCvxPrice: number; // uncomment when vault is live
+  pxCvxPrice: number;
   lastUpdated: string;
 }
 

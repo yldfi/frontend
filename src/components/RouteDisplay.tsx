@@ -463,6 +463,14 @@ function RouteStepRow({ step, isLast }: { step: RouteStep; isLast: boolean }) {
                 {step.bonus > 0 ? "+" : ""}{step.bonusAmount} {step.bonusSymbol} vs mint
               </span>
             )}
+            {step.slippage !== undefined && step.slippage > 0.05 && (
+              <span
+                className="ml-1 text-[var(--warning)]"
+                title="Price impact on this hop — output is below the current market mid-price for this pair. Caused by trade size vs available DEX liquidity."
+              >
+                −{step.slippage.toFixed(2)}% price impact
+              </span>
+            )}
           </div>
         )}
       </div>

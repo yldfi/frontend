@@ -640,7 +640,7 @@ export function VaultPageContent({ id }: { id: string }) {
       case "cvgCVX":
         return vaultCache?.cvgCvxPrice ?? 0;
       case "pxCVX":
-        return 0; // TODO: uncomment when yspxcvx is live — vaultCache?.pxCvxPrice ?? 0
+        return vaultCache?.pxCvxPrice ?? 0;
       case "cvxCRV":
       default:
         return cvxCrvPrice;
@@ -1740,9 +1740,11 @@ export function VaultPageContent({ id }: { id: string }) {
                           {pendingTxDetails && (
                             <div className="flex items-center gap-1.5 text-sm text-[var(--muted-foreground)]">
                               <span>Deposit</span>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img src={pendingTxDetails.fromLogo} alt={pendingTxDetails.fromSymbol} className="w-4 h-4 rounded-full" />
                               <span className="mono">{pendingTxDetails.fromAmount} {pendingTxDetails.fromSymbol}</span>
                               <span>→</span>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img src={pendingTxDetails.toLogo} alt={pendingTxDetails.toSymbol} className="w-4 h-4 rounded-full" />
                               <span className="mono">{pendingTxDetails.toAmount} {pendingTxDetails.toSymbol}</span>
                             </div>
@@ -1781,9 +1783,11 @@ export function VaultPageContent({ id }: { id: string }) {
                             </div>
                             <div className="flex items-center gap-1.5 text-sm">
                               <span>Deposit</span>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img src={pendingTxDetails.fromLogo} alt={pendingTxDetails.fromSymbol} className="w-4 h-4 rounded-full" />
                               <span className="mono">{pendingTxDetails.fromAmount} {pendingTxDetails.fromSymbol}</span>
                               <span>→</span>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img src={pendingTxDetails.toLogo} alt={pendingTxDetails.toSymbol} className="w-4 h-4 rounded-full" />
                               <span className="mono">{pendingTxDetails.toAmount} {pendingTxDetails.toSymbol}</span>
                             </div>
@@ -1795,11 +1799,13 @@ export function VaultPageContent({ id }: { id: string }) {
                         const details = (isDebugDeposit || isDebugWithdraw) ? debugTxDetails : pendingTxDetails;
                         return details && (
                           <div className="flex items-center gap-2 mb-3 px-4 py-2 bg-[var(--muted)] rounded-lg">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img src={details.fromLogo} alt={details.fromSymbol} className="w-5 h-5 rounded-full" />
                             <span className="mono text-sm">{details.fromAmount} {details.fromSymbol}</span>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[var(--muted-foreground)]">
                               <path d="M5 12h14M12 5l7 7-7 7" />
                             </svg>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img src={details.toLogo} alt={details.toSymbol} className="w-5 h-5 rounded-full" />
                             <span className="mono text-sm">{details.toAmount} {details.toSymbol}</span>
                           </div>
@@ -2091,11 +2097,13 @@ export function VaultPageContent({ id }: { id: string }) {
                         const details = isDebugZap ? debugTxDetails : pendingTxDetails;
                         return details && (
                           <div className="flex items-center gap-2 mb-3 px-4 py-2 bg-[var(--muted)] rounded-lg">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img src={details.fromLogo} alt={details.fromSymbol} className="w-5 h-5 rounded-full" />
                             <span className="mono text-sm">{details.fromAmount} {details.fromSymbol}</span>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[var(--muted-foreground)]">
                               <path d="M5 12h14M12 5l7 7-7 7" />
                             </svg>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img src={details.toLogo} alt={details.toSymbol} className="w-5 h-5 rounded-full" />
                             <span className="mono text-sm">{details.toAmount} {details.toSymbol}</span>
                           </div>
