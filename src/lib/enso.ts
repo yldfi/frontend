@@ -8414,3 +8414,415 @@ export async function fetchAnyToBeefyRoute(params: {
   };
 }
 
+// ============================================================================
+// YLD Vault → External Vault (universal-zap: case-2 extension)
+// ============================================================================
+
+/**
+ * Yld vault → external vault (uCVX / aCVX / afCVX / uCRV / aCRV / mooCvxCRV
+ * / mooCvxCVX / scrvUSD).
+ *
+ * Case-2's generic yld-to-token flow tries to Enso-route its CVX output to the
+ * external vault directly, but Enso has no liquidity for those tokens, so it
+ * falls back to "no route" / 99% price impact. This function builds the full
+ * path inline instead:
+ *
+ *   1. Redeem the yld vault to its underlying (cvxCRV / cvgCVX / pxCVX).
+ *   2. Convert cvgCVX → CVX (via CVX1 Curve pool) or pxCVX → CVX (via lpxCVX
+ *      Curve pool). For cvxCRV sources this step is skipped.
+ *   3. If the target external vault's underlying differs from the intermediate,
+ *      route through Enso using the routeMulti([], innerSwapData) pattern.
+ *      For pxCVX targets (uCVX) we use the Curve hybrid mint/swap instead.
+ *   4. Deposit into the target via the vault's specific interface (erc4626,
+ *      uCRV's non-standard deposit, or Beefy's deposit+transfer pattern).
+ *
+ * All steps execute atomically in one Enso weiroll bundle.
+ */
+export async function fetchYldVaultToExternalVaultRoute(params: {
+  fromAddress: string;
+  sourceVault: string;
+  sourceUnderlying: string;
+  targetVault: string;
+  targetUnderlying: string;
+  targetInterface: "erc4626" | "ucrv" | "beefy";
+  targetSymbol: string;
+  targetProtocol: string;
+  amountIn: string;
+  slippage?: string;
+}): Promise<CustomBundleResponse> {
+  const { PIREX, LLAMA_AIRFORCE, TANGENT } = await import("@/config/vaults");
+  const slippageBps = validateSlippage(params.slippage);
+  const totalSlippageBps = getBufferedSlippageBps(slippageBps);
+  const sourceUnderlyingLower = params.sourceUnderlying.toLowerCase();
+  const targetUnderlyingLower = params.targetUnderlying.toLowerCase();
+  const amountIn = await clampAmountIn(params.sourceVault, params.amountIn);
+
+  const sourceIsCvxCrv = sourceUnderlyingLower === TOKENS.CVXCRV.toLowerCase();
+  const sourceIsCvgCvx = sourceUnderlyingLower === TOKENS.CVGCVX.toLowerCase();
+  const sourceIsPxCvx = sourceUnderlyingLower === TOKENS.PXCVX.toLowerCase();
+
+  if (!sourceIsCvxCrv && !sourceIsCvgCvx && !sourceIsPxCvx) {
+    throw new Error(`Unsupported yld vault underlying ${params.sourceUnderlying} for external-vault zap`);
+  }
+
+  // ── Step 1: Estimate intermediate amount (the token we'll have after the
+  //    yld-vault redeem + any required unwrap to CVX/cvxCRV).
+  // ──────────────────────────────────────────────────────────────────────
+  const expectedUnderlying = await previewRedeem(params.sourceVault, amountIn);
+  let intermediateToken: string;
+  let estimatedIntermediate: bigint;
+  if (sourceIsCvxCrv) {
+    intermediateToken = TOKENS.CVXCRV;
+    estimatedIntermediate = BigInt(expectedUnderlying);
+  } else if (sourceIsCvgCvx) {
+    intermediateToken = TOKENS.CVX;
+    const cvx1Out = await getCurveGetDy(TANGENT.CVX1_CVGCVX_POOL, 1, 0, expectedUnderlying);
+    estimatedIntermediate = cvx1Out ?? 0n;
+  } else {
+    // pxCVX → wrap to lpxCVX (1:1) → swap to CVX
+    intermediateToken = TOKENS.CVX;
+    const cvxOut = await getCurveGetDy(
+      PIREX.LPXCVX_CVX_POOL,
+      PIREX.POOL_INDEX.LPXCVX,
+      PIREX.POOL_INDEX.CVX,
+      expectedUnderlying,
+    );
+    estimatedIntermediate = cvxOut ?? 0n;
+  }
+
+  if (estimatedIntermediate === 0n) {
+    throw new Error(`Failed to estimate ${sourceIsCvxCrv ? "cvxCRV" : "CVX"} output from ${params.sourceVault}`);
+  }
+
+  // Apply user slippage buffer so min_dy / expected amounts are safe.
+  const intermediateForSplit = BigInt(applySlippageBuffer(estimatedIntermediate, slippageBps));
+
+  const actions: EnsoBundleAction[] = [];
+
+  // ── Step 2: Redeem yld vault to its underlying (land at ENSO_SHORTCUTS).
+  // ──────────────────────────────────────────────────────────────────────
+  actions.push({
+    protocol: "erc4626",
+    action: "redeem",
+    args: {
+      tokenIn: params.sourceVault,
+      tokenOut: params.sourceUnderlying,
+      amountIn,
+      primaryAddress: params.sourceVault,
+    },
+  });
+  const redeemIdx = actions.length - 1;
+
+  // ── Step 3: Convert underlying → intermediate token (CVX for cvgCVX/pxCVX).
+  // ──────────────────────────────────────────────────────────────────────
+  if (sourceIsCvgCvx) {
+    const cvx1MinDy = calculateMinDy(estimatedIntermediate, totalSlippageBps);
+    actions.push(
+      { protocol: "erc20", action: "approve", args: { token: TOKENS.CVGCVX, spender: TANGENT.CVX1_CVGCVX_POOL, amount: { useOutputOfCallAt: redeemIdx } } },
+      {
+        protocol: "enso",
+        action: "call",
+        args: {
+          address: TANGENT.CVX1_CVGCVX_POOL,
+          method: "exchange",
+          abi: "function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) returns (uint256)",
+          args: [1, 0, { useOutputOfCallAt: redeemIdx }, cvx1MinDy],
+        },
+      },
+    );
+    const exchangeIdx = actions.length - 1;
+    // CVX1.withdraw is void — burns CVX1, sends CVX to `to`. Send to ENSO_SHORTCUTS.
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: TOKENS.CVX1,
+        method: "withdraw",
+        abi: "function withdraw(uint256 amount, address to)",
+        args: [{ useOutputOfCallAt: exchangeIdx }, ENSO_SHORTCUTS],
+      },
+    });
+  } else if (sourceIsPxCvx) {
+    const cvxMinDy = calculateMinDy(estimatedIntermediate, totalSlippageBps);
+    // Wrap pxCVX → lpxCVX (1:1), then Curve swap → CVX.
+    actions.push(
+      { protocol: "erc20", action: "approve", args: { token: TOKENS.PXCVX, spender: PIREX.LPXCVX, amount: { useOutputOfCallAt: redeemIdx } } },
+      {
+        protocol: "enso",
+        action: "call",
+        args: {
+          address: PIREX.LPXCVX,
+          method: "wrap",
+          abi: "function wrap(uint256 amount)",
+          args: [{ useOutputOfCallAt: redeemIdx }],
+        },
+      },
+      { protocol: "erc20", action: "approve", args: { token: PIREX.LPXCVX, spender: PIREX.LPXCVX_CVX_POOL, amount: { useOutputOfCallAt: redeemIdx } } },
+      {
+        protocol: "enso",
+        action: "call",
+        args: {
+          address: PIREX.LPXCVX_CVX_POOL,
+          method: "exchange",
+          abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)",
+          args: [
+            String(PIREX.POOL_INDEX.LPXCVX),
+            String(PIREX.POOL_INDEX.CVX),
+            { useOutputOfCallAt: redeemIdx },
+            cvxMinDy,
+          ],
+        },
+      },
+    );
+  }
+
+  // After step 3 the intermediate token (CVX or cvxCRV) sits at ENSO_SHORTCUTS.
+  // Its balance = intermediateForSplit (conservative estimate).
+
+  // ── Step 4: Convert intermediate → target underlying if different.
+  // ──────────────────────────────────────────────────────────────────────
+  const sameUnderlying = intermediateToken.toLowerCase() === targetUnderlyingLower;
+  const targetIsPxCvx = targetUnderlyingLower === TOKENS.PXCVX.toLowerCase();
+  let totalExpectedTargetUnderlying = intermediateForSplit;
+
+  if (!sameUnderlying && targetIsPxCvx) {
+    // CVX → pxCVX via hybrid Curve swap + Pirex mint.
+    if (intermediateToken.toLowerCase() !== TOKENS.CVX.toLowerCase()) {
+      throw new Error("pxCVX target requires CVX intermediate");
+    }
+    const { swapAmount, mintAmount } = await getOptimalPxCvxSwapAmount(intermediateForSplit.toString());
+    let expectedSwapPxCvx = 0n;
+    let swapMinDy = "0";
+    if (swapAmount > 0n) {
+      const swapOut = await getPxCvxSwapRate(swapAmount.toString());
+      if (!swapOut || swapOut === 0n) throw new Error("CVX→lpxCVX estimate failed");
+      expectedSwapPxCvx = swapOut;
+      swapMinDy = calculateMinDy(swapOut, totalSlippageBps);
+    }
+    totalExpectedTargetUnderlying = expectedSwapPxCvx + mintAmount;
+
+    if (swapAmount > 0n) {
+      actions.push(
+        { protocol: "erc20", action: "approve", args: { token: TOKENS.CVX, spender: PIREX.LPXCVX_CVX_POOL, amount: swapAmount.toString() } },
+        {
+          protocol: "enso",
+          action: "call",
+          args: {
+            address: PIREX.LPXCVX_CVX_POOL,
+            method: "exchange",
+            abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)",
+            args: [String(PIREX.POOL_INDEX.CVX), String(PIREX.POOL_INDEX.LPXCVX), swapAmount.toString(), swapMinDy],
+          },
+        },
+      );
+      const swapIdx = actions.length - 1;
+      actions.push(
+        { protocol: "erc20", action: "approve", args: { token: PIREX.LPXCVX, spender: PIREX.LPXCVX, amount: { useOutputOfCallAt: swapIdx } } },
+        {
+          protocol: "enso",
+          action: "call",
+          args: {
+            address: PIREX.LPXCVX,
+            method: "unwrap",
+            abi: "function unwrap(uint256 amount)",
+            args: [{ useOutputOfCallAt: swapIdx }],
+          },
+        },
+      );
+    }
+    if (mintAmount > 0n) {
+      actions.push(
+        { protocol: "erc20", action: "approve", args: { token: TOKENS.CVX, spender: PIREX.PIREX_CVX, amount: mintAmount.toString() } },
+        {
+          protocol: "enso",
+          action: "call",
+          args: {
+            address: PIREX.PIREX_CVX,
+            method: "deposit",
+            abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
+            args: [mintAmount.toString(), ENSO_SHORTCUTS, "false", "0x0000000000000000000000000000000000000000"],
+          },
+        },
+      );
+    }
+  } else if (!sameUnderlying) {
+    // Generic Enso routeMulti — intermediate is CVX or cvxCRV, target is some
+    // other token (crvUSD, cvxCRV, CVX, etc.).
+    const { extractInnerSwapData } = await import("@/lib/zapper");
+    const standaloneRoute = await fetchRoute({
+      fromAddress: params.fromAddress,
+      tokenIn: intermediateToken,
+      tokenOut: params.targetUnderlying,
+      amountIn: intermediateForSplit.toString(),
+      slippage: params.slippage ?? "100",
+    });
+    totalExpectedTargetUnderlying = BigInt(standaloneRoute.amountOut);
+    const innerSwapData = extractInnerSwapData(standaloneRoute.tx.data);
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: ENSO_ROUTER_EXECUTOR.toLowerCase(),
+        method: "routeMulti",
+        abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)",
+        args: [[], innerSwapData],
+      },
+    });
+  }
+
+  // ── Step 5: Read target-underlying balance at ENSO_SHORTCUTS.
+  // ──────────────────────────────────────────────────────────────────────
+  actions.push({
+    protocol: "enso",
+    action: "balance",
+    args: { token: params.targetUnderlying },
+  });
+  const balanceIdx = actions.length - 1;
+
+  // ── Step 6: Deposit into target external vault using its specific interface.
+  // ──────────────────────────────────────────────────────────────────────
+  if (params.targetInterface === "erc4626") {
+    actions.push({
+      protocol: "erc4626",
+      action: "deposit",
+      args: {
+        tokenIn: params.targetUnderlying,
+        tokenOut: params.targetVault,
+        amountIn: { useOutputOfCallAt: balanceIdx },
+        primaryAddress: params.targetVault,
+      },
+    });
+  } else if (params.targetInterface === "ucrv") {
+    actions.push(
+      { protocol: "erc20", action: "approve", args: { token: params.targetUnderlying, spender: params.targetVault, amount: { useOutputOfCallAt: balanceIdx } } },
+      {
+        protocol: "enso",
+        action: "call",
+        args: {
+          address: params.targetVault,
+          method: "deposit",
+          abi: "function deposit(uint256 _amount, address _to) returns (uint256)",
+          args: [{ useOutputOfCallAt: balanceIdx }, params.fromAddress],
+        },
+      },
+    );
+  } else {
+    // beefy — deposit(uint256) is void, so read share balance after and transfer.
+    actions.push(
+      { protocol: "erc20", action: "approve", args: { token: params.targetUnderlying, spender: params.targetVault, amount: { useOutputOfCallAt: balanceIdx } } },
+      {
+        protocol: "enso",
+        action: "call",
+        args: {
+          address: params.targetVault,
+          method: "deposit",
+          abi: "function deposit(uint256 _amount)",
+          args: [{ useOutputOfCallAt: balanceIdx }],
+        },
+      },
+    );
+    actions.push({ protocol: "enso", action: "balance", args: { token: params.targetVault } });
+    const shareBalanceIdx = actions.length - 1;
+    actions.push({
+      protocol: "erc20",
+      action: "transfer",
+      args: { token: params.targetVault, amount: { useOutputOfCallAt: shareBalanceIdx }, receiver: params.fromAddress },
+    });
+  }
+
+  const bundleResult = await fetchBundle({
+    fromAddress: params.fromAddress,
+    actions,
+    receiver: params.fromAddress,
+    routingStrategy: "router",
+    skipQuote: true,
+  });
+
+  // ── Step 7: Populate amountsOut manually (skipQuote=true returns empty).
+  // ──────────────────────────────────────────────────────────────────────
+  let expectedShares = totalExpectedTargetUnderlying.toString();
+  try {
+    if (params.targetInterface === "erc4626") {
+      const selector = "0xef8b30f7"; // previewDeposit(uint256)
+      const data = selector + totalExpectedTargetUnderlying.toString(16).padStart(64, "0");
+      const res = await rpcWithFallback<{ result?: string }>({
+        jsonrpc: "2.0", id: 1, method: "eth_call",
+        params: [{ to: params.targetVault, data }, "latest"],
+      });
+      if (res.result && res.result !== "0x") expectedShares = BigInt(res.result).toString();
+    } else if (params.targetInterface === "beefy") {
+      const res = await rpcWithFallback<{ result?: string }>({
+        jsonrpc: "2.0", id: 1, method: "eth_call",
+        params: [{ to: params.targetVault, data: "0x77c7b8fc" }, "latest"], // getPricePerFullShare
+      });
+      const pps = BigInt(res.result || "0");
+      if (pps > 0n) {
+        expectedShares = ((totalExpectedTargetUnderlying * BigInt(10 ** 18)) / pps).toString();
+      }
+    } else {
+      // ucrv: shares = amount × totalSupply / totalUnderlying
+      const [uRes, tsRes] = await Promise.all([
+        rpcWithFallback<{ result?: string }>({ jsonrpc: "2.0", id: 0, method: "eth_call", params: [{ to: params.targetVault, data: "0xc70920bc" }, "latest"] }),
+        rpcWithFallback<{ result?: string }>({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: params.targetVault, data: "0x18160ddd" }, "latest"] }),
+      ]);
+      const totalUnderlying = BigInt(uRes.result || "0");
+      const totalSupply = BigInt(tsRes.result || "0");
+      if (totalUnderlying > 0n && totalSupply > 0n) {
+        expectedShares = ((totalExpectedTargetUnderlying * totalSupply) / totalUnderlying).toString();
+      }
+    }
+  } catch { /* keep estimate */ }
+
+  bundleResult.amountsOut = {
+    ...bundleResult.amountsOut,
+    [params.targetVault.toLowerCase()]: expectedShares,
+    [params.targetUnderlying.toLowerCase()]: totalExpectedTargetUnderlying.toString(),
+    [intermediateToken.toLowerCase()]: intermediateForSplit.toString(),
+    [params.sourceUnderlying.toLowerCase()]: expectedUnderlying,
+  };
+
+  // ── Step 8: Build route steps.
+  // ──────────────────────────────────────────────────────────────────────
+  const sourceSymbol = getTokenSymbol(params.sourceVault);
+  const sourceUnderlyingSymbol = getTokenSymbol(params.sourceUnderlying);
+  const intermediateSymbol = getTokenSymbol(intermediateToken);
+  const targetUnderlyingSymbol = getTokenSymbol(params.targetUnderlying);
+  const fmt = (x: bigint | string) => (Number(x) / 1e18).toFixed(4);
+
+  const steps: RouteStep[] = [
+    { tokenSymbol: sourceSymbol, amount: fmt(amountIn), action: "Redeem", description: `${sourceSymbol} for ${sourceUnderlyingSymbol}`, protocol: "yld" },
+  ];
+
+  if (!sourceIsCvxCrv) {
+    // cvgCVX or pxCVX → CVX swap step
+    const protocol = sourceIsCvgCvx ? "LiquidBoost" : "Pirex";
+    const desc = sourceIsCvgCvx ? `${sourceUnderlyingSymbol} → CVX1 → CVX` : `${sourceUnderlyingSymbol} → lpxCVX → CVX`;
+    steps.push({ tokenSymbol: sourceUnderlyingSymbol, amount: fmt(expectedUnderlying), action: "Swap", description: desc, protocol });
+  }
+
+  if (!sameUnderlying) {
+    if (targetIsPxCvx) {
+      steps.push({ tokenSymbol: "CVX", amount: fmt(intermediateForSplit), action: "Swap", description: "CVX for pxCVX (hybrid)", protocol: "Curve/Pirex" });
+    } else {
+      steps.push({ tokenSymbol: intermediateSymbol, amount: fmt(intermediateForSplit), action: "Swap", description: `${intermediateSymbol} for ${targetUnderlyingSymbol}`, protocol: "Enso" });
+    }
+  }
+
+  steps.push(
+    { tokenSymbol: targetUnderlyingSymbol, amount: fmt(totalExpectedTargetUnderlying), action: "Deposit", description: `${targetUnderlyingSymbol} into ${params.targetSymbol}`, protocol: params.targetProtocol },
+    { tokenSymbol: params.targetSymbol, amount: fmt(expectedShares), action: "Receive", description: "vault shares", protocol: params.targetProtocol },
+  );
+
+  // Silence unused-var warning; LLAMA_AIRFORCE may be useful for future refinements.
+  void LLAMA_AIRFORCE;
+
+  return {
+    ...bundleResult,
+    routeInfo: {
+      steps,
+      tokens: [sourceSymbol, sourceUnderlyingSymbol, intermediateSymbol, targetUnderlyingSymbol, params.targetSymbol],
+      protocols: ["yld", sourceIsCvgCvx ? "LiquidBoost" : sourceIsPxCvx ? "Pirex" : "yld", "Enso", params.targetProtocol],
+    },
+  };
+}
+

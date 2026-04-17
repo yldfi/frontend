@@ -10,6 +10,7 @@ import {
   fetchVaultToVaultRoute,
   fetchCvgCvxZapInRoute,
   fetchCvgCvxZapOutRoute,
+  fetchYldVaultToExternalVaultRoute,
   fetchPxCvxZapInRoute,
   fetchPxCvxZapOutRoute,
   fetchExternalVaultZapInRoute,
@@ -338,6 +339,78 @@ export function useUniversalZap({
         const underlying = inputVault!.assetAddress;
         const isCvg = underlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase();
         const isPx = underlying.toLowerCase() === TOKENS.PXCVX.toLowerCase();
+
+        // yld vault → external vault: Enso can't route CVX/cvxCRV directly to
+        // tokens like uCVX/aCVX, so the standard zap-out path would fall to a
+        // bad "no route" quote. Use a dedicated builder that redeems, converts
+        // to the external vault's underlying, then runs the vault-specific
+        // deposit — all atomic.
+        const outputExternalConfig = isExternalVaultToken(outputToken.address)
+          ? getExternalVaultConfigFn(outputToken.address)
+          : undefined;
+        if (outputExternalConfig) {
+          const bundle = await fetchYldVaultToExternalVaultRoute({
+            fromAddress: userAddress,
+            sourceVault: inputToken.address,
+            sourceUnderlying: underlying,
+            targetVault: outputToken.address,
+            targetUnderlying: outputExternalConfig.underlying,
+            targetInterface: outputExternalConfig.interface,
+            targetSymbol: outputExternalConfig.symbol,
+            targetProtocol: outputExternalConfig.protocol,
+            amountIn: amountInWei,
+            slippage,
+          });
+
+          const outRaw =
+            bundle.amountsOut[outputToken.address.toLowerCase()] ||
+            bundle.amountsOut[outputToken.address] ||
+            "0";
+          const outFmt = formatUnits(BigInt(outRaw), outputDecimals);
+          const inNum = Number(inputAmount);
+          const outNum = Number(outFmt);
+
+          const inputCachePps =
+            (vaultCache as Record<string, { pps?: number }> | undefined)?.[inputVault!.id]?.pps;
+          const isUcvxTarget =
+            outputExternalConfig.interface === "erc4626" &&
+            outputExternalConfig.underlying.toLowerCase() === TOKENS.PXCVX.toLowerCase();
+          const priceAddrs = [underlying, outputExternalConfig.underlying, TOKENS.CVX];
+          if (isUcvxTarget) priceAddrs.push(TOKENS.PXCVX);
+          const [priceMap, sourceAps, targetSharePrice] = await Promise.all([
+            getPrices(priceAddrs),
+            getAssetsPerShare(publicClient, inputToken.address as `0x${string}`, inputCachePps),
+            getAssetsPerShare(publicClient, outputToken.address as `0x${string}`),
+          ]);
+          const underPx =
+            priceMap.get(underlying.toLowerCase()) ??
+            priceMap.get(TOKENS.CVX.toLowerCase()) ??
+            null;
+          const targetUnderPx = isUcvxTarget
+            ? priceMap.get(TOKENS.PXCVX.toLowerCase()) ?? null
+            : priceMap.get(outputExternalConfig.underlying.toLowerCase()) ?? null;
+          const inUsd =
+            underPx !== null && sourceAps !== null ? inNum * sourceAps * underPx : null;
+          const outUsd =
+            targetUnderPx !== null && targetSharePrice !== null
+              ? outNum * targetSharePrice * targetUnderPx
+              : null;
+
+          return {
+            inputToken,
+            inputAmount,
+            outputAmount: outRaw,
+            outputAmountFormatted: outFmt,
+            exchangeRate: inNum > 0 ? outNum / inNum : 0,
+            inputUsdValue: inUsd,
+            outputUsdValue: outUsd,
+            priceImpact: calculatePriceImpact(inUsd, outUsd),
+            gasEstimate: bundle.gas,
+            tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
+            route: [],
+            routeInfo: bundle.routeInfo,
+          };
+        }
 
         const bundle = isCvg
           ? await fetchCvgCvxZapOutRoute({
