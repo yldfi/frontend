@@ -852,8 +852,12 @@ export function useZapQuote({
               steps: [
                 { tokenSymbol: vaultSymbol, action: "Redeem", description: `${vaultSymbol} for cvgCVX`, protocol: "yld" },
                 { tokenSymbol: "cvgCVX", amount: cvgCvxAmountFmt, action: "Swap", description: "cvgCVX → CVX1 → CVX", protocol: "LiquidBoost" },
-                { tokenSymbol: "CVX", amount: cvxAmountFmt, action: "Swap", description: `CVX for ${outputToken.symbol}`, protocol: "Enso" },
-                { tokenSymbol: outputToken.symbol, action: "Receive", description: "tokens", protocol: "Enso" },
+                ...(outputToken.address.toLowerCase() === TOKENS.CVX.toLowerCase()
+                  ? [{ tokenSymbol: "CVX", amount: cvxAmountFmt, action: "Receive", description: "tokens", protocol: "LiquidBoost" } as RouteStep]
+                  : [
+                      { tokenSymbol: "CVX", amount: cvxAmountFmt, action: "Swap", description: `CVX for ${outputToken.symbol}`, protocol: "Enso" } as RouteStep,
+                      { tokenSymbol: outputToken.symbol, action: "Receive", description: "tokens", protocol: "Enso" } as RouteStep,
+                    ]),
               ],
             },
           };
@@ -984,8 +988,12 @@ export function useZapQuote({
               steps: [
                 { tokenSymbol: vaultSymbol, action: "Redeem", description: `${vaultSymbol} for pxCVX`, protocol: "yld" },
                 { tokenSymbol: "pxCVX", amount: pxCvxAmountFmt, action: "Swap", description: "pxCVX for CVX", protocol: "Curve" },
-                { tokenSymbol: "CVX", amount: cvxAmountFmt, action: "Swap", description: `CVX for ${outputToken.symbol}`, protocol: "Enso" },
-                { tokenSymbol: outputToken.symbol, action: "Receive", description: "tokens", protocol: "Enso" },
+                ...(outputToken.address.toLowerCase() === TOKENS.CVX.toLowerCase()
+                  ? [{ tokenSymbol: "CVX", amount: cvxAmountFmt, action: "Receive", description: "tokens", protocol: "Curve" } as RouteStep]
+                  : [
+                      { tokenSymbol: "CVX", amount: cvxAmountFmt, action: "Swap", description: `CVX for ${outputToken.symbol}`, protocol: "Enso" } as RouteStep,
+                      { tokenSymbol: outputToken.symbol, action: "Receive", description: "tokens", protocol: "Enso" } as RouteStep,
+                    ]),
               ],
             },
           };
