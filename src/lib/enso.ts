@@ -4074,12 +4074,24 @@ export async function fetchCvgCvxZapOutRoute(params: {
       },
     ];
 
-    return fetchBundle({
+    const bundleResult = await fetchBundle({
       fromAddress: params.fromAddress,
       actions,
       routingStrategy: "router",
       skipQuote: process.env.ENSO_SKIP_ROUTE_QUOTE === "true",
     });
+
+    // Enso can't track CVX1.withdraw output (void function), so populate
+    // amountsOut ourselves from the Curve get_dy estimate (CVX1 → CVX is 1:1).
+    const cvxKey = TOKENS.CVX.toLowerCase();
+    if (expectedCvx1Output && !bundleResult.amountsOut[cvxKey]) {
+      bundleResult.amountsOut = {
+        ...bundleResult.amountsOut,
+        [cvxKey]: expectedCvx1Output.toString(),
+      };
+    }
+
+    return bundleResult;
   }
 
   // Standard path: route CVX → output token (works for ETH, USDC, etc.)

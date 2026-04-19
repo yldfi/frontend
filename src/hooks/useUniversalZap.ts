@@ -50,7 +50,7 @@ import {
 import { useVaultCache } from "@/hooks/useVaultCache";
 import { PUBLIC_RPC_URLS } from "@/config/rpc";
 import { ERC4626_ABI } from "@/lib/abis";
-import type { EnsoToken, ZapQuote, RouteInfo } from "@/types/enso";
+import type { EnsoToken, ZapQuote, RouteInfo, RouteStep } from "@/types/enso";
 
 interface UseUniversalZapParams {
   inputToken: EnsoToken | null;
@@ -505,6 +505,12 @@ export function useUniversalZap({
           }
         }
 
+        // When the output IS CVX, the CVX → output swap step is redundant.
+        // The bundle produces CVX directly; skip the extra "Swap CVX for CVX"
+        // hop and let the previous step flow into the final receive row.
+        const outputIsCvx =
+          outputToken.address.toLowerCase() === TOKENS.CVX.toLowerCase();
+
         let fallbackRouteInfo: RouteInfo;
         if (isCvgCvxUnderlying) {
           fallbackRouteInfo = {
@@ -522,19 +528,31 @@ export function useUniversalZap({
                 description: "cvgCVX → CVX1 → CVX",
                 protocol: "LiquidBoost",
               },
-              {
-                tokenSymbol: "CVX",
-                amount: cvxIntermediateAmount,
-                action: "Swap",
-                description: `CVX for ${outputToken.symbol}`,
-                protocol: "Enso",
-              },
-              {
-                tokenSymbol: outputToken.symbol,
-                action: "Receive",
-                description: "tokens",
-                protocol: "Enso",
-              },
+              ...(outputIsCvx
+                ? [
+                    {
+                      tokenSymbol: "CVX",
+                      amount: cvxIntermediateAmount,
+                      action: "Receive",
+                      description: "tokens",
+                      protocol: "LiquidBoost",
+                    } satisfies RouteStep,
+                  ]
+                : [
+                    {
+                      tokenSymbol: "CVX",
+                      amount: cvxIntermediateAmount,
+                      action: "Swap",
+                      description: `CVX for ${outputToken.symbol}`,
+                      protocol: "Enso",
+                    } satisfies RouteStep,
+                    {
+                      tokenSymbol: outputToken.symbol,
+                      action: "Receive",
+                      description: "tokens",
+                      protocol: "Enso",
+                    } satisfies RouteStep,
+                  ]),
             ],
           };
         } else if (isPxCvxUnderlying) {
@@ -553,19 +571,31 @@ export function useUniversalZap({
                 description: "pxCVX → lpxCVX → CVX",
                 protocol: "Pirex",
               },
-              {
-                tokenSymbol: "CVX",
-                amount: cvxIntermediateAmount,
-                action: "Swap",
-                description: `CVX for ${outputToken.symbol}`,
-                protocol: "Enso",
-              },
-              {
-                tokenSymbol: outputToken.symbol,
-                action: "Receive",
-                description: "tokens",
-                protocol: "Enso",
-              },
+              ...(outputIsCvx
+                ? [
+                    {
+                      tokenSymbol: "CVX",
+                      amount: cvxIntermediateAmount,
+                      action: "Receive",
+                      description: "tokens",
+                      protocol: "Pirex",
+                    } satisfies RouteStep,
+                  ]
+                : [
+                    {
+                      tokenSymbol: "CVX",
+                      amount: cvxIntermediateAmount,
+                      action: "Swap",
+                      description: `CVX for ${outputToken.symbol}`,
+                      protocol: "Enso",
+                    } satisfies RouteStep,
+                    {
+                      tokenSymbol: outputToken.symbol,
+                      action: "Receive",
+                      description: "tokens",
+                      protocol: "Enso",
+                    } satisfies RouteStep,
+                  ]),
             ],
           };
         } else {
