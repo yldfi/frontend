@@ -106,6 +106,7 @@ export interface EnsoBundleResponse {
   amountsOut: Record<string, string>;
   route?: Hop[];  // Route steps from SDK BundleData.route
   priceImpact?: number | null;
+  routeInfo?: RouteInfo;
 }
 
 // Individual route step for detailed display

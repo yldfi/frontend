@@ -56,6 +56,7 @@ import {
   fetchLpxCvxZapInRoute,
   fetchSpecialTokenToExternalVaultRoute,
   fetchSpecialTokenToIlliquidRoute,
+  fetchVaultToVaultRoute,
   fetchYldVaultToIlliquidRoute,
 } from "@/lib/enso";
 import { LLAMA_AIRFORCE, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
@@ -188,6 +189,25 @@ describe("route step amounts", () => {
       { token: "cvxCRV", amount: "4.0000" },
       { token: "CVX", amount: "2.0000" },
       { token: "pxCVX", amount: "2.1780" },
+    ]);
+  });
+
+  it("shows same-underlying vault-to-vault intermediate amounts", async () => {
+    const result = await fetchVaultToVaultRoute({
+      fromAddress: TEST_WALLET,
+      sourceVault: VAULT_ADDRESSES.YSCVXCRV,
+      targetVault: VAULT_ADDRESSES.YCVXCRV,
+      amountIn: "1000000000000000000",
+      slippage: "100",
+    });
+
+    expect((result as { routeInfo?: { steps: Array<{ tokenSymbol: string; amount?: string }> } }).routeInfo?.steps.map((step) => ({
+      token: step.tokenSymbol,
+      amount: step.amount,
+    }))).toEqual([
+      { token: "yscvxCRV", amount: "1.0000" },
+      { token: "cvxCRV", amount: "1.0000" },
+      { token: "ycvxCRV", amount: undefined },
     ]);
   });
 
