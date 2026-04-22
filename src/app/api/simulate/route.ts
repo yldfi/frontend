@@ -30,6 +30,14 @@ const CVX_BALANCE_SLOT = 0n;
 const CVX_ALLOWANCE_SLOT = 1n;
 const MAX_UINT256 = (1n << 256n) - 1n;
 const MAX_REQUESTS_PER_MINUTE = 8;
+const SIMULATE_TOTAL_TIMEOUT_MS = 12_000;
+const TENDERLY_FETCH_TIMEOUT_MS = 9_000;
+const TENDERLY_JSON_TIMEOUT_MS = 1_500;
+const ETH_CALL_TIMEOUT_MS = 2_500;
+const ENRICH_TIMEOUT_MS = 1_500;
+const VAULT_DISCOVERY_TIMEOUT_MS = 1_500;
+const CONVERT_TO_ASSETS_TIMEOUT_MS = 1_500;
+const PRICE_FETCH_TIMEOUT_MS = 1_500;
 
 // Create public client for RPC calls
 const publicClient = createPublicClient({
@@ -131,6 +139,32 @@ function computeERC20AllowanceSlot(
 
 function toStorageValue(value: bigint): `0x${string}` {
   return pad(toHex(value), { size: 32 });
+}
+
+function formatSimulateError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return String(error);
+}
+
+function shortAddress(address?: string): string | undefined {
+  if (!address) return undefined;
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const guardedTimeout = new Promise<T>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  try {
+    return await Promise.race([
+      promise,
+      guardedTimeout,
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 // Asset change from Tenderly response
@@ -356,14 +390,16 @@ async function enrichVaultTokenPrices(assetChanges: AssetChange[]): Promise<Asse
         const addr = change.address.toLowerCase();
         try {
           const [underlying, decimals] = await Promise.all([
-            Promise.race([
+            withTimeout(
               publicClient.readContract({ address: addr as `0x${string}`, abi: ERC4626_ABI, functionName: "asset" }),
-              new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2_000)),
-            ]),
-            Promise.race([
+              VAULT_DISCOVERY_TIMEOUT_MS,
+              "vault_asset_lookup",
+            ),
+            withTimeout(
               publicClient.readContract({ address: addr as `0x${string}`, abi: ERC4626_ABI, functionName: "decimals" }),
-              new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2_000)),
-            ]),
+              VAULT_DISCOVERY_TIMEOUT_MS,
+              "vault_decimals_lookup",
+            ),
           ]);
           const info = { underlying: (underlying as string).toLowerCase(), underlyingDecimals: Number(decimals) };
           discoveredVaultCache.set(addr, info);
@@ -381,16 +417,24 @@ async function enrichVaultTokenPrices(assetChanges: AssetChange[]): Promise<Asse
 
     // Fetch prices + convertToAssets in parallel
     const [priceData, ...convertResults] = await Promise.all([
-      fetchTokenPricesDirect(underlyingAddresses),
+      withTimeout(
+        fetchTokenPricesDirect(underlyingAddresses),
+        PRICE_FETCH_TIMEOUT_MS,
+        "underlying_price_fetch",
+      ),
       ...assetChanges
         .filter(c => vaultInfoMap.has(c.address.toLowerCase()))
         .map(c =>
-          publicClient.readContract({
-            address: c.address as `0x${string}`,
-            abi: ERC4626_ABI,
-            functionName: "convertToAssets",
-            args: [BigInt(c.rawAmount)],
-          }).then(r => ({ address: c.address.toLowerCase(), underlyingAmount: r as bigint }))
+          withTimeout(
+            publicClient.readContract({
+              address: c.address as `0x${string}`,
+              abi: ERC4626_ABI,
+              functionName: "convertToAssets",
+              args: [BigInt(c.rawAmount)],
+            }),
+            CONVERT_TO_ASSETS_TIMEOUT_MS,
+            "convert_to_assets",
+          ).then(r => ({ address: c.address.toLowerCase(), underlyingAmount: r as bigint }))
             .catch(() => null)
         ),
     ]);
@@ -427,7 +471,11 @@ async function enrichTokenPricesFallback(assetChanges: AssetChange[]): Promise<A
 
     // Deduplicate addresses
     const addresses = [...new Set(unpriced.map(c => c.address.toLowerCase()))];
-    const priceData = await fetchTokenPricesDirect(addresses);
+    const priceData = await withTimeout(
+      fetchTokenPricesDirect(addresses),
+      PRICE_FETCH_TIMEOUT_MS,
+      "fallback_price_fetch",
+    );
     const priceMap = new Map(priceData.map(p => [p.address.toLowerCase(), p.price]));
 
     return assetChanges.map(change => {
@@ -562,6 +610,50 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const requestId = crypto.randomUUID().slice(0, 8);
+  const requestStartedAt = Date.now();
+  const totalDeadline = requestStartedAt + SIMULATE_TOTAL_TIMEOUT_MS;
+  const logSimulate = (event: string, extra: Record<string, unknown> = {}) => {
+    console.log("[Simulate]", JSON.stringify({
+      requestId,
+      event,
+      elapsedMs: Date.now() - requestStartedAt,
+      ...extra,
+    }));
+  };
+  const getStageBudget = (maxMs: number): number => {
+    const remaining = totalDeadline - Date.now();
+    if (remaining <= 0) {
+      throw new Error(`simulate_total timed out after ${SIMULATE_TOTAL_TIMEOUT_MS}ms`);
+    }
+    return Math.min(maxMs, remaining);
+  };
+  const runStage = async <T>(
+    stage: string,
+    maxMs: number,
+    work: (budgetMs: number) => Promise<T>,
+  ): Promise<T> => {
+    const budgetMs = getStageBudget(maxMs);
+    const stageStartedAt = Date.now();
+    try {
+      const result = await withTimeout(work(budgetMs), budgetMs, stage);
+      logSimulate("stage_ok", {
+        stage,
+        durationMs: Date.now() - stageStartedAt,
+        budgetMs,
+      });
+      return result;
+    } catch (error) {
+      logSimulate("stage_error", {
+        stage,
+        durationMs: Date.now() - stageStartedAt,
+        budgetMs,
+        error: formatSimulateError(error),
+      });
+      throw error;
+    }
+  };
+
   const inputToken = body.inputToken?.toLowerCase();
   const shouldOverrideCvx = inputToken === TOKENS.CVX.toLowerCase();
   const overrides = shouldOverrideCvx
@@ -575,8 +667,6 @@ export async function POST(request: NextRequest) {
       }
     : undefined;
 
-  const isDev = process.env.NODE_ENV === "development";
-  console.log("[Tenderly] NODE_ENV:", process.env.NODE_ENV, "isDev:", isDev, "save:", isDev);
   const tenderlyRequest = {
     network_id: body.networkId?.toString() ?? "1",
     from: body.from,
@@ -586,19 +676,31 @@ export async function POST(request: NextRequest) {
     gas: body.gas,
     save: true,            // Save simulations so users can view traces
     save_if_fails: true,   // Always save failures for debugging
-    simulation_type: "full",
+    // The UI only needs gas usage and asset/balance changes, not decoded traces.
+    simulation_type: "quick",
     overrides,
   };
+  logSimulate("start", {
+    from: shortAddress(body.from),
+    to: shortAddress(body.to),
+    inputToken: shortAddress(body.inputToken),
+    networkId: tenderlyRequest.network_id,
+    simulationType: tenderlyRequest.simulation_type,
+    gas: body.gas ?? null,
+    hasOverrides: Boolean(overrides),
+  });
 
   // Helper to try eth_call as fallback
   async function tryEthCall(): Promise<{ success: boolean; error?: string }> {
     try {
-      await publicClient.call({
-        account: body.from as `0x${string}`,
-        to: body.to as `0x${string}`,
-        data: body.data as `0x${string}`,
-        value: body.value ? BigInt(body.value) : 0n,
-      });
+      await runStage("eth_call", ETH_CALL_TIMEOUT_MS, () =>
+        publicClient.call({
+          account: body.from as `0x${string}`,
+          to: body.to as `0x${string}`,
+          data: body.data as `0x${string}`,
+          value: body.value ? BigInt(body.value) : 0n,
+        })
+      );
       return { success: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : "eth_call failed";
@@ -608,31 +710,37 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const t0 = Date.now();
   let response: Response;
   try {
-    response = await fetch(
-      `https://api.tenderly.co/api/v1/account/${accountSlug}/project/${projectSlug}/simulate`,
-      {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          "X-Access-Key": accessKey,
-        },
-        body: JSON.stringify(tenderlyRequest),
-        signal: AbortSignal.timeout(15_000), // 15s timeout — prevent hanging forever
-      }
+    response = await runStage("tenderly_fetch", TENDERLY_FETCH_TIMEOUT_MS, (budgetMs) =>
+      fetch(
+        `https://api.tenderly.co/api/v1/account/${accountSlug}/project/${projectSlug}/simulate`,
+        {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            "X-Access-Key": accessKey,
+          },
+          body: JSON.stringify(tenderlyRequest),
+          signal: AbortSignal.timeout(budgetMs),
+        }
+      )
     );
   } catch (error) {
     // Tenderly request failed (network error) - try eth_call fallback
     const ethCallResult = await tryEthCall();
     if (ethCallResult.success) {
+      const reason = formatSimulateError(error);
+      logSimulate("fallback_unavailable", {
+        reason,
+        path: "tenderly_fetch",
+      });
       return NextResponse.json(
         {
           success: true,
           simulationUnavailable: true,
-          simulationUnavailableReason: error instanceof Error ? error.message : "Tenderly request failed",
+          simulationUnavailableReason: reason,
           gasUsed: null,
           errorMessage: null,
           retryable: false,
@@ -643,6 +751,10 @@ export async function POST(request: NextRequest) {
         { status: 200, headers: corsHeaders }
       );
     }
+    logSimulate("failure", {
+      path: "tenderly_fetch",
+      error: ethCallResult.error ?? "Transaction would fail",
+    });
     return NextResponse.json(
       {
         success: false,
@@ -653,7 +765,47 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+  let payload: Record<string, unknown>;
+  try {
+    payload = await runStage("tenderly_json", TENDERLY_JSON_TIMEOUT_MS, async () => (
+      await response.json().catch(() => ({}))
+    )) as Record<string, unknown>;
+  } catch (error) {
+    const ethCallResult = await tryEthCall();
+    if (ethCallResult.success) {
+      const reason = formatSimulateError(error);
+      logSimulate("fallback_unavailable", {
+        path: "tenderly_json",
+        reason,
+      });
+      return NextResponse.json(
+        {
+          success: true,
+          simulationUnavailable: true,
+          simulationUnavailableReason: reason,
+          gasUsed: null,
+          errorMessage: null,
+          retryable: false,
+          simulationId: null,
+          tenderlyUrl: null,
+          assetChanges: [],
+        },
+        { status: 200, headers: corsHeaders }
+      );
+    }
+    logSimulate("failure", {
+      path: "tenderly_json",
+      error: ethCallResult.error ?? "Transaction would fail",
+    });
+    return NextResponse.json(
+      {
+        success: false,
+        errorMessage: ethCallResult.error ?? "Transaction would fail",
+        retryable: false,
+      },
+      { status: 400, headers: corsHeaders }
+    );
+  }
 
   // Check for Tenderly API-level errors (quota, auth, etc.) vs transaction failures
   const payloadError = payload?.error as Record<string, unknown> | undefined;
@@ -662,12 +814,14 @@ export async function POST(request: NextRequest) {
 
   if (isApiError) {
     // Tenderly API error - try eth_call fallback
-    console.log("[Tenderly] API error detected, slug:", errorSlug, "response.ok:", response.ok);
     const ethCallResult = await tryEthCall();
-    console.log("[Tenderly] eth_call fallback result:", ethCallResult);
     if (ethCallResult.success) {
       const apiErrorMessage = payloadError?.message ?? "Tenderly simulation unavailable";
-      console.log("[Tenderly] Falling back to eth_call success, reason:", apiErrorMessage);
+      logSimulate("fallback_unavailable", {
+        path: "tenderly_api_error",
+        errorSlug: errorSlug ?? null,
+        reason: apiErrorMessage,
+      });
       return NextResponse.json(
         {
           success: true,
@@ -684,6 +838,11 @@ export async function POST(request: NextRequest) {
       );
     }
     // eth_call also failed - return the actual error
+    logSimulate("failure", {
+      path: "tenderly_api_error",
+      errorSlug: errorSlug ?? null,
+      error: ethCallResult.error ?? "Transaction would fail",
+    });
     return NextResponse.json(
       {
         success: false,
@@ -693,9 +852,6 @@ export async function POST(request: NextRequest) {
       { status: 400, headers: corsHeaders }
     );
   }
-
-  const t1 = Date.now();
-  if (isDev) console.log(`[Tenderly] API call took ${t1 - t0}ms`);
 
   const simulation = (payload?.simulation ?? payload?.transaction ?? payload ?? {}) as Record<string, unknown>;
   const status = simulation?.status !== false;
@@ -723,21 +879,27 @@ export async function POST(request: NextRequest) {
   const processedChanges = processAssetChanges(rawAssetChanges, body.from);
 
   // Enrich vault token prices (Tenderly doesn't have prices for our vault tokens)
-  const t2 = Date.now();
-  const assetChanges = await enrichVaultTokenPrices(processedChanges);
-  if (isDev) console.log(`[Tenderly] enrichVaultTokenPrices took ${Date.now() - t2}ms, total ${Date.now() - t0}ms`);
-
-  // Log for debugging (dev only)
-  if (isDev) {
-    console.log("[Tenderly Simulation]", {
-      success: Boolean(response.ok && status),
-      simulationId,
-      tenderlyUrl,
-      gasUsed,
-      errorMessage,
-      assetChangesCount: assetChanges.length,
+  let assetChanges = processedChanges;
+  try {
+    assetChanges = await runStage("asset_enrich", ENRICH_TIMEOUT_MS, () =>
+      enrichVaultTokenPrices(processedChanges)
+    );
+  } catch (error) {
+    logSimulate("asset_enrich_fallback", {
+      reason: formatSimulateError(error),
+      processedChanges: processedChanges.length,
     });
   }
+
+  logSimulate("finish", {
+    success: Boolean(response.ok && status),
+    simulationId,
+    gasUsed,
+    assetChangesCount: assetChanges.length,
+    rawAssetChangesCount: rawAssetChanges?.length ?? 0,
+    tenderlyUrl: tenderlyUrl ?? null,
+    errorMessage: errorMessage ?? null,
+  });
 
   return NextResponse.json(
     {
