@@ -9840,7 +9840,7 @@ export async function fetchComposableZapInRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
-  const { getVaultByAddress, isExternalVaultToken, getExternalVaultConfig } = await import("@/config/vaults");
+  const { getVaultByAddress } = await import("@/config/vaults");
   const targetVault = getVaultByAddress(params.vaultAddress);
   if (!targetVault) {
     throw new Error(`Unknown target vault: ${params.vaultAddress}`);
@@ -9891,11 +9891,7 @@ export async function fetchComposableZapInRoute(params: {
     [targetVault.assetAddress.toLowerCase()]: finalState.expectedAmount.toString(),
   };
 
-  const inputSymbol = getTokenSymbol(params.inputToken);
   const targetUnderlyingSymbol = getTokenSymbol(targetVault.assetAddress);
-  const inputExternalConfig = isExternalVaultToken(params.inputToken)
-    ? getExternalVaultConfig(params.inputToken)
-    : undefined;
 
   return {
     ...bundleResult,
@@ -9991,7 +9987,6 @@ export async function fetchSpecialTokenToIlliquidRoute(params: {
     [params.outputToken.toLowerCase()]: finalState.expectedAmount.toString(),
   };
 
-  const inputSymbol = getTokenSymbol(params.inputToken);
   const outputSymbol = getTokenSymbol(params.outputToken);
   const inputExternalConfig = isExternalVaultToken(params.inputToken)
     ? getExternalVaultConfig(params.inputToken)
@@ -10036,7 +10031,7 @@ export async function fetchSpecialTokenToExternalVaultRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
-  const { getExternalVaultConfig, isExternalVaultToken } = await import("@/config/vaults");
+  const { getExternalVaultConfig } = await import("@/config/vaults");
   const outputConfig = getExternalVaultConfig(params.outputVault);
   if (!outputConfig) {
     throw new Error(`Unknown external vault: ${params.outputVault}`);
@@ -10149,10 +10144,6 @@ export async function fetchSpecialTokenToExternalVaultRoute(params: {
     [outputConfig.underlying.toLowerCase()]: finalState.expectedAmount.toString(),
   };
 
-  const inputSymbol = getTokenSymbol(params.inputToken);
-  const inputExternalConfig = isExternalVaultToken(params.inputToken)
-    ? getExternalVaultConfig(params.inputToken)
-    : undefined;
   const underlyingSymbol = getTokenSymbol(outputConfig.underlying);
 
   return {
