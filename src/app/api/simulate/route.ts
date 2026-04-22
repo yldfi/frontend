@@ -6,6 +6,7 @@ import { fetchTokenPricesDirect, ENSO_ROUTER, ENSO_ROUTER_EXECUTOR } from "@/lib
 import { CRVUSD_ADDRESS, USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
 import { ZAPPER_ADDRESS } from "@/lib/zapper";
 import { ERC4626_ABI } from "@/lib/abis";
+import { getSimulationPriceLookupAddresses, resolveSimulationTokenPrice } from "@/lib/simulation-pricing";
 
 export const dynamic = "force-dynamic";
 
@@ -420,7 +421,9 @@ async function enrichVaultTokenPrices(assetChanges: AssetChange[]): Promise<Asse
     if (vaultInfoMap.size === 0) return assetChanges;
 
     // Collect unique underlying addresses we need prices for
-    const underlyingAddresses = [...new Set([...vaultInfoMap.values()].map(v => v.underlying))];
+    const underlyingAddresses = getSimulationPriceLookupAddresses(
+      [...vaultInfoMap.values()].map(v => v.underlying),
+    );
 
     // Fetch prices + convertToAssets in parallel
     const [priceData, ...convertResults] = await Promise.all([
@@ -454,7 +457,7 @@ async function enrichVaultTokenPrices(assetChanges: AssetChange[]): Promise<Asse
       if (!info) return change;
 
       const underlyingAmount = convertMap.get(change.address.toLowerCase());
-      const underlyingPrice = priceMap.get(info.underlying);
+      const underlyingPrice = resolveSimulationTokenPrice(info.underlying, priceMap);
       if (underlyingAmount === undefined || underlyingPrice === undefined) return change;
 
       const underlyingValue = Number(underlyingAmount) / 10 ** info.underlyingDecimals;
@@ -477,7 +480,7 @@ async function enrichTokenPricesFallback(assetChanges: AssetChange[]): Promise<A
     if (unpriced.length === 0) return assetChanges;
 
     // Deduplicate addresses
-    const addresses = [...new Set(unpriced.map(c => c.address.toLowerCase()))];
+    const addresses = getSimulationPriceLookupAddresses(unpriced.map(c => c.address.toLowerCase()));
     const priceData = await withTimeout(
       fetchTokenPricesDirect(addresses),
       PRICE_FETCH_TIMEOUT_MS,
@@ -487,7 +490,7 @@ async function enrichTokenPricesFallback(assetChanges: AssetChange[]): Promise<A
 
     return assetChanges.map(change => {
       if (change.dollarValue && change.dollarValue !== "0" && parseFloat(change.dollarValue) !== 0) return change;
-      const price = priceMap.get(change.address.toLowerCase());
+      const price = resolveSimulationTokenPrice(change.address, priceMap);
       if (price === undefined || price === 0) return change;
       const amount = Number(change.rawAmount) / 10 ** change.decimals;
       return { ...change, dollarValue: (amount * price).toString() };
