@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 /**
  * Live Enso API Integration Tests
  *
