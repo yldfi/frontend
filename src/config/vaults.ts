@@ -8,6 +8,8 @@
  * bundling constraints. Keep addresses there in sync manually.
  */
 
+import { USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
+
 // Token addresses
 export const TOKENS = {
   CVX: "0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B" as const,
@@ -119,6 +121,12 @@ export const CURVE_SAVINGS = {
   SCRVUSD_UNDERLYING: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E" as const, // crvUSD
 } as const;
 
+// Yearn V3 vaults - ERC4626 vaults users may zap from/to
+export const YEARN = {
+  YVUSDC1: YVUSDC1_ADDRESS,
+  YVUSDC1_UNDERLYING: USDC_ADDRESS,
+} as const;
+
 // Asymmetry Finance vaults - ERC4626 compliant with withdrawal fee
 export const ASYMMETRY = {
   // afCVX - ERC4626 vault for CVX (has 3% withdrawal fee)
@@ -141,6 +149,8 @@ export const EXTERNAL_VAULT_TOKENS = [
   ASYMMETRY.AFCVX,
   // Curve Savings
   CURVE_SAVINGS.SCRVUSD,
+  // Yearn V3
+  YEARN.YVUSDC1,
   // Pirex (lpxCVX is a liquidity wrapper, not useful as zap out target)
   PIREX.LPXCVX,
 ] as const;
@@ -237,6 +247,16 @@ export const EXTERNAL_VAULT_CONFIG: Record<string, ExternalVaultConfig> = {
     symbol: "scrvUSD",
     name: "Savings crvUSD",
     protocol: "Curve",
+  },
+  // Yearn V3
+  [YEARN.YVUSDC1.toLowerCase()]: {
+    address: YEARN.YVUSDC1,
+    underlying: YEARN.YVUSDC1_UNDERLYING,
+    underlyingSymbol: "USDC",
+    interface: "erc4626",
+    symbol: "yvUSDC-1",
+    name: "USDC-1 yVault",
+    protocol: "Yearn",
   },
 };
 

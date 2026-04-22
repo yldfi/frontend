@@ -7,7 +7,7 @@ import { useTokenMetadata } from "@/hooks/useTokenMetadata";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
 import { formatUnits, isAddress } from "viem";
 import { cn } from "@/lib/utils";
-import { VAULTS, CURVE_SAVINGS } from "@/config/vaults";
+import { VAULTS, CURVE_SAVINGS, YEARN } from "@/config/vaults";
 import type { EnsoToken } from "@/types/enso";
 import { LoadingDots } from "@/components/LoadingDots";
 import { ExternalLink, Copy, Check } from "lucide-react";
@@ -48,7 +48,7 @@ const FEATURED_VAULT_TOKENS: EnsoToken[] = Object.values(VAULTS)
 const ALWAYS_AVAILABLE_ADDRESSES = new Set([
   ...FEATURED_VAULT_TOKENS.map((t) => t.address.toLowerCase()),
   CURVE_SAVINGS.SCRVUSD.toLowerCase(),
-  "0xbe53a109b494e5c9f97b9cd39fe969be68bf6204", // yvUSDC-1 (Yearn V3)
+  YEARN.YVUSDC1.toLowerCase(),
 ]);
 
 interface TokenSelectorProps {

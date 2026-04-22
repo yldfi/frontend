@@ -29,6 +29,10 @@ import {
   fetchAnyToErc4626ExternalVaultRoute,
   fetchAnyToUCrvRoute,
   fetchAnyToBeefyRoute,
+  fetchComposableZapInRoute,
+  fetchSpecialTokenToIlliquidRoute,
+  fetchSpecialTokenToExternalVaultRoute,
+  fetchYldVaultToIlliquidRoute,
   previewUCrvWithdraw,
   previewBeefyWithdraw,
   fetchTokenPrices,
@@ -412,6 +416,58 @@ export function useUniversalZap({
           };
         }
 
+        const outputIsIlliquid =
+          outputToken.address.toLowerCase() === TOKENS.PXCVX.toLowerCase() ||
+          outputToken.address.toLowerCase() === TOKENS.CVGCVX.toLowerCase() ||
+          outputToken.address.toLowerCase() === TOKENS.LPXCVX.toLowerCase();
+        if (outputIsIlliquid) {
+          const bundle = await fetchYldVaultToIlliquidRoute({
+            fromAddress: userAddress,
+            sourceVault: inputToken.address,
+            sourceUnderlying: underlying,
+            outputToken: outputToken.address,
+            amountIn: amountInWei,
+            slippage,
+          });
+
+          const outRaw =
+            bundle.amountsOut[outputToken.address.toLowerCase()] ||
+            bundle.amountsOut[outputToken.address] ||
+            "0";
+          const outFmt = formatUnits(BigInt(outRaw), outputDecimals);
+          const inNum = Number(inputAmount);
+          const outNum = Number(outFmt);
+          const inputCachePps =
+            (vaultCache as Record<string, { pps?: number }> | undefined)?.[inputVault!.id]?.pps;
+          const [priceMap, aps] = await Promise.all([
+            getPrices([underlying, outputToken.address, TOKENS.CVX]),
+            getAssetsPerShare(publicClient, inputToken.address as `0x${string}`, inputCachePps),
+          ]);
+          const underPx =
+            priceMap.get(underlying.toLowerCase()) ??
+            priceMap.get(TOKENS.CVX.toLowerCase()) ??
+            null;
+          const outPx = priceMap.get(outputToken.address.toLowerCase()) ?? null;
+          const inUsd =
+            underPx !== null && aps !== null ? inNum * aps * underPx : null;
+          const outUsd = outPx !== null ? outNum * outPx : null;
+
+          return {
+            inputToken,
+            inputAmount,
+            outputAmount: outRaw,
+            outputAmountFormatted: outFmt,
+            exchangeRate: inNum > 0 ? outNum / inNum : 0,
+            inputUsdValue: inUsd,
+            outputUsdValue: outUsd,
+            priceImpact: calculatePriceImpact(inUsd, outUsd),
+            gasEstimate: bundle.gas,
+            tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
+            route: [],
+            routeInfo: bundle.routeInfo,
+          };
+        }
+
         const bundle = isCvg
           ? await fetchCvgCvxZapOutRoute({
               fromAddress: userAddress,
@@ -649,7 +705,23 @@ export function useUniversalZap({
         const targetIsPx = underlying.toLowerCase() === TOKENS.PXCVX.toLowerCase();
 
         let bundle;
-        if (inputIsExternal) {
+        if (inputIsExternal && targetIsPx) {
+          bundle = await fetchComposableZapInRoute({
+            fromAddress: userAddress,
+            inputToken: inputToken.address,
+            vaultAddress: outputToken.address,
+            amountIn: amountInWei,
+            slippage,
+          });
+        } else if (inputToken.address.toLowerCase() === TOKENS.CVGCVX.toLowerCase() && !targetIsCvg) {
+          bundle = await fetchComposableZapInRoute({
+            fromAddress: userAddress,
+            inputToken: inputToken.address,
+            vaultAddress: outputToken.address,
+            amountIn: amountInWei,
+            slippage,
+          });
+        } else if (inputIsExternal) {
           bundle = await fetchExternalVaultZapInRoute({
             fromAddress: userAddress,
             vaultAddress: outputToken.address,
@@ -784,6 +856,11 @@ export function useUniversalZap({
       const outputIsPxCvx = outAddr === TOKENS.PXCVX.toLowerCase();
       const outputIsCvgCvx = outAddr === TOKENS.CVGCVX.toLowerCase();
       const outputIsLpxCvx = outAddr === TOKENS.LPXCVX.toLowerCase();
+      const inputExternalConfig = isExternalVaultToken(inputToken.address)
+        ? getExternalVaultConfigFn(inputToken.address)
+        : undefined;
+      const inputIsSpecialInput =
+        !!inputExternalConfig || inputIsPxCvx || inputIsCvgCvx || inputIsLpxCvx;
 
       // External vaults as output (uCVX / aCVX / aCRV / afCVX / mooCvxCRV /
       // mooCvxCVX / uCRV / scrvUSD). Enso's aggregator can't build routes to
@@ -792,6 +869,178 @@ export function useUniversalZap({
       const outputExternalConfig = isExternalVaultToken(outputToken.address)
         ? getExternalVaultConfigFn(outputToken.address)
         : undefined;
+      if (inputIsSpecialInput && outputExternalConfig) {
+        const bundle = await fetchSpecialTokenToExternalVaultRoute({
+          fromAddress: userAddress,
+          inputToken: inputToken.address,
+          outputVault: outputToken.address,
+          amountIn: amountInWei,
+          slippage,
+        });
+
+        const outRaw =
+          bundle.amountsOut[outAddr] || bundle.amountsOut[outputToken.address] || "0";
+        const outFmt = formatUnits(BigInt(outRaw), outputDecimals);
+        const inNum = Number(inputAmount);
+        const outNum = Number(outFmt);
+
+        const [priceMap, underlyingAmount, targetSharePrice] = await Promise.all([
+          getPrices([
+            outputExternalConfig.underlying,
+            TOKENS.CVX,
+            TOKENS.PXCVX,
+          ]),
+          (async (): Promise<number> => {
+            if (!inputExternalConfig) return Number(inputAmount);
+            try {
+              if (inputExternalConfig.interface === "ucrv") {
+                const raw = await previewUCrvWithdraw(amountInWei);
+                return Number(raw) / 1e18;
+              }
+              if (inputExternalConfig.interface === "beefy") {
+                const raw = await previewBeefyWithdraw(inputToken.address, amountInWei);
+                return Number(raw) / 1e18;
+              }
+              const aps = await getAssetsPerShare(
+                publicClient,
+                inputToken.address as `0x${string}`,
+              );
+              if (aps !== null) return Number(inputAmount) * aps;
+            } catch {
+              // fall through
+            }
+            return 0;
+          })(),
+          (async (): Promise<number | null> => {
+            try {
+              if (outputExternalConfig.interface === "erc4626") {
+                return getAssetsPerShare(
+                  publicClient,
+                  outputToken.address as `0x${string}`,
+                );
+              }
+              if (outputExternalConfig.interface === "ucrv") {
+                const raw = await previewUCrvWithdraw((10n ** 18n).toString());
+                return Number(raw) / 1e18;
+              }
+              const raw = await previewBeefyWithdraw(
+                outputToken.address,
+                (10n ** 18n).toString(),
+              );
+              return Number(raw) / 1e18;
+            } catch {
+              return null;
+            }
+          })(),
+        ]);
+
+        const underPx =
+          priceMap.get(outputExternalConfig.underlying.toLowerCase()) ??
+          priceMap.get(TOKENS.PXCVX.toLowerCase()) ??
+          priceMap.get(TOKENS.CVX.toLowerCase()) ??
+          null;
+        const cvxPx = priceMap.get(TOKENS.CVX.toLowerCase()) ?? null;
+        const inUsd = inputExternalConfig
+          ? underPx !== null && underlyingAmount > 0
+            ? underlyingAmount * underPx
+            : null
+          : cvxPx !== null
+            ? inNum * cvxPx
+            : null;
+        const outUsd =
+          underPx !== null && targetSharePrice !== null
+            ? outNum * targetSharePrice * underPx
+            : null;
+
+        return {
+          inputToken,
+          inputAmount,
+          outputAmount: outRaw,
+          outputAmountFormatted: outFmt,
+          exchangeRate: inNum > 0 ? outNum / inNum : 0,
+          inputUsdValue: inUsd,
+          outputUsdValue: outUsd,
+          priceImpact: calculatePriceImpact(inUsd, outUsd),
+          gasEstimate: bundle.gas,
+          tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
+          route: [],
+          routeInfo: bundle.routeInfo,
+        };
+      }
+
+      if (inputIsSpecialInput && (outputIsPxCvx || outputIsCvgCvx || outputIsLpxCvx)) {
+        const bundle = await fetchSpecialTokenToIlliquidRoute({
+          fromAddress: userAddress,
+          inputToken: inputToken.address,
+          outputToken: outputToken.address,
+          amountIn: amountInWei,
+          slippage,
+        });
+
+        const outRaw =
+          bundle.amountsOut[outAddr] || bundle.amountsOut[outputToken.address] || "0";
+        const outFmt = formatUnits(BigInt(outRaw), outputDecimals);
+        const inNum = Number(inputAmount);
+        const outNum = Number(outFmt);
+
+        const [priceMap, underlyingAmount] = await Promise.all([
+          getPrices([
+            outputToken.address,
+            TOKENS.CVX,
+            ...(inputExternalConfig ? [inputExternalConfig.underlying] : []),
+          ]),
+          (async (): Promise<number> => {
+            if (!inputExternalConfig) return Number(inputAmount);
+            try {
+              if (inputExternalConfig.interface === "ucrv") {
+                const raw = await previewUCrvWithdraw(amountInWei);
+                return Number(raw) / 1e18;
+              }
+              if (inputExternalConfig.interface === "beefy") {
+                const raw = await previewBeefyWithdraw(inputToken.address, amountInWei);
+                return Number(raw) / 1e18;
+              }
+              const aps = await getAssetsPerShare(
+                publicClient,
+                inputToken.address as `0x${string}`,
+              );
+              if (aps !== null) return Number(inputAmount) * aps;
+            } catch {
+              // fall through
+            }
+            return 0;
+          })(),
+        ]);
+        const cvxPx = priceMap.get(TOKENS.CVX.toLowerCase()) ?? null;
+        const underPx = inputExternalConfig
+          ? priceMap.get(inputExternalConfig.underlying.toLowerCase()) ?? cvxPx
+          : cvxPx;
+        const outPx = priceMap.get(outputToken.address.toLowerCase()) ?? null;
+        const inUsd = inputExternalConfig
+          ? underPx !== null && underlyingAmount > 0
+            ? underlyingAmount * underPx
+            : null
+          : cvxPx !== null
+            ? inNum * cvxPx
+            : null;
+        const outUsd = outPx !== null ? outNum * outPx : null;
+
+        return {
+          inputToken,
+          inputAmount,
+          outputAmount: outRaw,
+          outputAmountFormatted: outFmt,
+          exchangeRate: inNum > 0 ? outNum / inNum : 0,
+          inputUsdValue: inUsd,
+          outputUsdValue: outUsd,
+          priceImpact: calculatePriceImpact(inUsd, outUsd),
+          gasEstimate: bundle.gas,
+          tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
+          route: [],
+          routeInfo: bundle.routeInfo,
+        };
+      }
+
       if (outputExternalConfig) {
         const extUnderlying = outputExternalConfig.underlying.toLowerCase();
         const isUcvxOutput =
@@ -930,9 +1179,6 @@ export function useUniversalZap({
       // Custom routes for external vault inputs (uCVX, aCVX, aCRV, afCVX, scrvUSD)
       // Enso's aggregator can't route arbitrary external-vault tokens, so we
       // redeem them to their underlying first and then route to the output.
-      const inputExternalConfig = isExternalVaultToken(inputToken.address)
-        ? getExternalVaultConfigFn(inputToken.address)
-        : undefined;
       if (
         inputExternalConfig &&
         !(outputIsPxCvx || outputIsCvgCvx || outputIsLpxCvx) &&
