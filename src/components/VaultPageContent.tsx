@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { notFound, useRouter } from "next/navigation";
 import { useAccount, useBalance, useBlockNumber, useGasPrice, usePublicClient } from "wagmi";
 import { parseUnits, formatUnits } from "viem";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { MaxButton } from "@/components/MaxButton";
-import { ArrowUpRight, ExternalLink, Search, Route, RouteOff, Copy, ChevronDown, ChevronRight, Check, X, Clock, ArrowRightLeft, Wallet, Banknote, TrendingUp, Info, Coins, Gift } from "lucide-react";
+import { ArrowUpRight, ExternalLink, Search, Route, RouteOff, Copy, ChevronDown, ChevronRight, Check, X, Clock, ArrowRightLeft, Wallet, Banknote, TrendingUp, Coins, Gift } from "lucide-react";
 import { RouteDisplay } from "@/components/RouteDisplay";
 import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
@@ -52,7 +52,6 @@ import { useMerklRewards, useMerklOpportunities } from "@/hooks/useMerklRewards"
 import { formatUsd } from "@/lib/utils";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
-import { Logo } from "@/components/Logo";
 import { useCurveLendingVault, formatCurveVaultData } from "@/hooks/useCurveLendingData";
 import { useCurveLendingPosition, formatHealth } from "@/hooks/useCurveLendingPosition";
 import { useCurveMarketRates } from "@/hooks/useCurveMarketRates";
@@ -75,7 +74,6 @@ import { ETH_ADDRESS } from "@/lib/enso";
 import { getMaxEthAmount } from "@/lib/eth-gas";
 import { CHAINLINK_ETH_USD } from "@/config/addresses";
 import { getVault, getVaultByAddress, TOKENS, VAULT_UNDERLYING_TOKENS, VAULTS, EXTERNAL_VAULT_TOKENS, CURVE_CONTROLLERS, CURVE_SAVINGS } from "@/config/vaults";
-import { CollateralModal, LendingInterface } from "@/components/lending";
 import { VaultInfoCard } from "@/components/VaultInfoCard";
 import type { EnsoToken, ZapDirection, SimulationAssetChange } from "@/types/enso";
 import {
@@ -263,9 +261,9 @@ export function VaultPageContent({ id }: { id: string }) {
   // DEBUG: Auto-cycle through states
   const [debugAutoCycle, setDebugAutoCycle] = useState(false);
   const [debugCycleSpeed, setDebugCycleSpeed] = useState(1500); // ms between transitions
-  const debugAllStates: DebugTxState[] = ["none", "deposit-pending", "deposit-success", "deposit-reverted", "withdraw-pending", "withdraw-success", "withdraw-reverted", "zap-in-pending", "zap-in-success", "zap-in-reverted", "zap-out-pending", "zap-out-success", "zap-out-reverted"];
   useEffect(() => {
     if (!debugAutoCycle) return;
+    const debugAllStates: DebugTxState[] = ["none", "deposit-pending", "deposit-success", "deposit-reverted", "withdraw-pending", "withdraw-success", "withdraw-reverted", "zap-in-pending", "zap-in-success", "zap-in-reverted", "zap-out-pending", "zap-out-success", "zap-out-reverted"];
     const interval = setInterval(() => {
       setDebugTxState(prev => {
         const currentIndex = debugAllStates.indexOf(prev);
@@ -276,7 +274,7 @@ export function VaultPageContent({ id }: { id: string }) {
     return () => clearInterval(interval);
   }, [debugAutoCycle, debugCycleSpeed]);
 
-  const { isConnected, address: userAddress, chainId } = useAccount();
+  const { isConnected, address: userAddress, chainId: _chainId } = useAccount();
   const { openConnectModal } = useConnectModal();
   // Active tab with localStorage persistence
   const [activeTab, setActiveTabState] = useState<"deposit" | "withdraw" | "zap">(() => {
@@ -320,7 +318,7 @@ export function VaultPageContent({ id }: { id: string }) {
     };
     window.addEventListener("tenderly-network-change", handleNetworkChange);
     return () => window.removeEventListener("tenderly-network-change", handleNetworkChange);
-  }, []);
+  }, [setAmount]);
 
   // Track previous vault id to detect navigation vs refresh
   const prevIdRef = useRef<string | null>(null);
@@ -417,7 +415,7 @@ export function VaultPageContent({ id }: { id: string }) {
       setZapAmountState("");
     }
     prevIdRef.current = id;
-  }, [id]);
+  }, [id, setAmount]);
 
   // Guard: reset zap input/output tokens if they match the vault or underlying tokens
   // (can happen from stale localStorage values)
@@ -453,7 +451,7 @@ export function VaultPageContent({ id }: { id: string }) {
   const debouncedZapAmount = useDebouncedValue(zapAmount, 500);
   const {
     slippage: zapSlippage, updateSlippage, showSlippageModal, setShowSlippageModal,
-    showSimulationPreview, setShowSimulationPreview, refreshSimulationPreview,
+    showSimulationPreview, refreshSimulationPreview,
     showSimulationModal, setShowSimulationModal,
   } = useSettings();
   const [showPriceImpactModal, setShowPriceImpactModal] = useState(false);
@@ -485,9 +483,6 @@ export function VaultPageContent({ id }: { id: string }) {
   const simulationBlock = useRef<bigint>(0n);
 
   // Lending interface modal state (kept for backwards compatibility, but page is preferred)
-  const [showCollateralModal, setShowCollateralModal] = useState(false);
-  const [showLendingInterface, setShowLendingInterface] = useState(false);
-
   // Handle "Use as Collateral" button click - navigate to lending page
   const handleCollateralClick = () => {
     if (vault) {
@@ -733,9 +728,9 @@ export function VaultPageContent({ id }: { id: string }) {
     pendingApproval: zapPendingApproval,
     approvalProgress: zapApprovalProgress,
     isApproving: zapIsApproving,
-    isFlashbotsEnabled,
-    isFlashbotsSupported,
-    toggleFlashbots,
+    isFlashbotsEnabled: _isFlashbotsEnabled,
+    isFlashbotsSupported: _isFlashbotsSupported,
+    toggleFlashbots: _toggleFlashbots,
     simulationResult,
   } = useZapActions(zapQuote);
 
@@ -764,7 +759,7 @@ export function VaultPageContent({ id }: { id: string }) {
       }
     }
     prevZapSimResult.current = simulationResult;
-  }, [simulationResult, zapStatus, showSimulationPreview, showSimulationModal, activeTab, publicClient, CHAINLINK_ETH_USD, currentBlock]);
+  }, [simulationResult, zapStatus, showSimulationPreview, showSimulationModal, activeTab, publicClient, currentBlock, setShowSimulationModal]);
 
   // Run simulation for preview mode and show modal with result
   const runSimulationPreview = useCallback(async () => {
@@ -804,7 +799,7 @@ export function VaultPageContent({ id }: { id: string }) {
     } finally {
       setIsSimulatingPreview(false);
     }
-  }, [zapQuote, executeZap, publicClient, CHAINLINK_ETH_USD]);
+  }, [zapQuote, executeZap, publicClient, currentBlock, setShowSimulationModal]);
 
   const inputAmount = parseFloat(amount) || 0;
   const outputAmount = activeTab === "deposit"
@@ -879,7 +874,7 @@ export function VaultPageContent({ id }: { id: string }) {
     } finally {
       setIsSimulatingPreview(false);
     }
-  }, [vault, amount, activeTab, deposit, withdraw, publicClient, CHAINLINK_ETH_USD, currentBlock]);
+  }, [vault, amount, activeTab, deposit, withdraw, publicClient, currentBlock, setShowSimulationModal]);
 
   // Use debug simulation result as fallback for testing
   // For deposit/withdraw tabs, use vaultSimulationResult; for zap tab, use zapActions simulationResult
@@ -1082,7 +1077,7 @@ export function VaultPageContent({ id }: { id: string }) {
         }
       }, 0);
     }
-  }, [isSuccess, isReverted, depositHash, withdrawHash, refetchTokenBalance, refetchVaultBalance, resetVaultActions]);
+  }, [isSuccess, isReverted, depositHash, withdrawHash, refetchTokenBalance, refetchVaultBalance, resetVaultActions, setAmount, setZapAmount]);
 
   // Auto-execute deposit after vault approval succeeds (for multi-step transactions)
   const prevTxStatusRef = useRef<string | null>(null);
@@ -1185,7 +1180,7 @@ export function VaultPageContent({ id }: { id: string }) {
         }
       }, 0);
     }
-  }, [zapIsSuccess, zapIsReverted, zapHash, refetchTokenBalance, refetchVaultBalance, refetchZapInputBalance, resetZapActions, setZapAmount]);
+  }, [zapIsSuccess, zapIsReverted, zapHash, refetchTokenBalance, refetchVaultBalance, refetchZapInputBalance, resetZapActions, setZapAmount, setAmount, vault, zapDirection, zapInputToken?.symbol, zapOutputToken?.symbol, zapAmount, zapQuote?.outputAmountFormatted]);
 
   // Reset stale zap approval state when user changes inputs
   useEffect(() => {

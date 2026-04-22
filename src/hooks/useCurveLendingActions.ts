@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { useState, useCallback, useMemo, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAccount, usePublicClient, useWaitForTransactionReceipt } from "wagmi";
 import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
@@ -252,25 +252,20 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
   });
 
   // Wait for main transaction receipt
+  const effectiveStatus: LendingStatus =
+    isApproveError && status === "approving" ? "needsApproval" : status;
+
   useWaitForTransactionReceipt({
     hash: txHash ?? undefined,
     query: {
-      enabled: !!txHash && status === "waitingTx",
+      enabled: !!txHash && effectiveStatus === "waitingTx",
     },
   });
 
   // Derive isApproving from status and approval pending state
   const isApproving = useMemo(() => {
-    return status === "approving" || isApprovalPending;
-  }, [status, isApprovalPending]);
-
-  // Reset to needsApproval if user rejects wallet approval
-  useEffect(() => {
-    if (isApproveError && status === "approving") {
-      setStatus("needsApproval");
-      resetApprove();
-    }
-  }, [isApproveError, status, resetApprove]);
+    return effectiveStatus === "approving" || isApprovalPending;
+  }, [effectiveStatus, isApprovalPending]);
 
   const reset = useCallback(() => {
     setStatus("idle");
@@ -521,7 +516,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setError(parseErrorMessage(err));
       setStatus("error");
     }
-  }, [pendingBundle, publicClient, address, pendingInputToken, sendTx, testNetworkType, chainId, pendingController, approvalQueue, approvalProgress, resetApprove]);
+  }, [pendingBundle, publicClient, address, pendingInputToken, sendTx, testNetworkType, chainId, pendingController, approvalQueue, approvalProgress, resetApprove, invalidateBalances]);
 
   // Execute a pending bundle after preview confirmation
   const executeAfterPreview = useCallback(async () => {
@@ -574,7 +569,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setError(parseErrorMessage(err));
       setStatus("error");
     }
-  }, [pendingBundle, publicClient, sendTx, address, pendingController, pendingInputToken]);
+  }, [pendingBundle, publicClient, sendTx, address, pendingController, pendingInputToken, invalidateBalances]);
 
   const executeBundle = useCallback(async (
     bundleFn: () => Promise<EnsoBundleResponse>,
@@ -763,7 +758,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult, pendingController]);
+  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult, pendingController, invalidateBalances]);
 
   // Direct controller call for create_loan (no Enso bundle needed)
   const createLoan = useCallback(async (
@@ -947,7 +942,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult]);
+  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult, invalidateBalances]);
 
   // Create loan with swap: tokenIn → collateral → create_loan via Zapper (createLoanFromToken)
   const createLoanWithSwap = useCallback(async (
@@ -1484,7 +1479,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult]);
+  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult, invalidateBalances]);
 
   // Direct controller call for remove_collateral (no Enso bundle needed)
   const removeCollateral = useCallback(async (
@@ -1649,7 +1644,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult]);
+  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult, invalidateBalances]);
 
   // Add collateral with swap: tokenIn → collateral via Zapper (addCollateralFromToken)
   const addCollateralWithSwap = useCallback(async (
@@ -2082,7 +2077,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult]);
+  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult, invalidateBalances]);
 
   // Swap any token to vault collateral + borrow_more via Zapper (borrowMoreFromToken).
   // User provides tokenIn (e.g., ETH, USDC) which gets swapped to collateral, then
@@ -2438,7 +2433,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult]);
+  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult, invalidateBalances]);
 
   // Repay crvUSD debt + withdraw collateral via RepayZapper.
   // If withdrawTokenOut is set, swaps collateral to target token via repayAndConvert.
@@ -2850,7 +2845,6 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
     const [controllerApproved, vaultTokenAllowance] = await Promise.all(approvalChecks);
 
-    const tokenSymbol = options?.tokenSymbol ?? "token";
     const allApprovals: { approval: PendingApproval; needed: boolean; label: string; description: string; spender: string }[] = [
       {
         approval: {
@@ -3127,7 +3121,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setStatus("error");
       return null;
     }
-  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult]);
+  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult, invalidateBalances]);
 
   return {
     createLoan,
@@ -3156,7 +3150,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     // Use after an action with previewOnly returns null to distinguish "needs approval" from "no simulation data"
     wasApprovalRequested: () => pendingPreviewRef.current,
     // State
-    status,
+    status: effectiveStatus,
     txHash,
     error,
     simulationResult,

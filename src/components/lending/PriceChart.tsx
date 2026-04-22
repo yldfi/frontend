@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import {
   createChart,
   ColorType,
@@ -22,7 +22,6 @@ import {
 } from "lightweight-charts";
 import { cn } from "@/lib/utils";
 import { Maximize2, Minimize2, RefreshCcw, AlignJustify, TrendingUp } from "lucide-react";
-import Image from "next/image";
 import { formatUnits } from "viem";
 import type { BandData } from "@/hooks/useOraclePriceHistory";
 import type { VolumeProfileBin, VolumeProfilePeriod } from "@/hooks/useVolumeProfile";
@@ -499,8 +498,8 @@ interface PriceChartProps {
 }
 
 export function PriceChart({
-  vaultName,
-  vaultLogo,
+  vaultName: _vaultName,
+  vaultLogo: _vaultLogo,
   symbol,
   priceData,
   priceSymbol,
@@ -514,7 +513,7 @@ export function PriceChart({
   showLiquidationZone = true,
   previewLiqUpper,
   previewLiqLower,
-  height = 320,
+  height: _height = 320,
   pricePerShareData,
   volumeProfileBins,
   volumeProfilePoc,

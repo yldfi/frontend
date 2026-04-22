@@ -164,7 +164,7 @@ function detectCustomAuction(source: string, _contractBody: string): boolean {
 /**
  * Extract yield source information from contract
  */
-function extractYieldSource(source: string, contractBody: string): YieldSourceInfo {
+function extractYieldSource(source: string, _contractBody: string): YieldSourceInfo {
   // Look for constant declarations that are likely yield sources
   // Patterns match: TYPE public constant NAME = TYPE(0x...)
   const constantPatterns = [
@@ -462,8 +462,6 @@ function determineCompounding(
     // Extract auction address if present
     const auctionMatch = source.match(/auction\s*=\s*(0x[a-fA-F0-9]{40})/);
     // Also check for factory-deployed auction
-    const factoryMatch = source.match(/auction\s*=\s*\w+Factory[^;]+\.create\w+Auction/);
-
     return {
       mechanism: "auction",
       auction: {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useWalletClient, usePublicClient, useAccount } from "wagmi";
 import type { Hash, TransactionRequest } from "viem";
 import { FLASHBOTS_RPC_URL } from "@/config/rpc";
@@ -36,7 +36,11 @@ export function useFlashbotsProtect() {
   const { connector } = useAccount();
 
   // Load preference from localStorage
-  const [isEnabled, setIsEnabled] = useState<boolean>(true);
+  const [isEnabled, setIsEnabled] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    const saved = localStorage.getItem(FLASHBOTS_STORAGE_KEY);
+    return saved !== "false";
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
@@ -59,15 +63,6 @@ export function useFlashbotsProtect() {
 
     return !isUnsupported;
   }, [connector]);
-
-  // Load saved preference on mount
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem(FLASHBOTS_STORAGE_KEY);
-      // Default to true (enabled) if not set
-      setIsEnabled(saved !== "false");
-    }
-  }, []);
 
   // Toggle Flashbots protection
   const toggleFlashbots = useCallback((enabled: boolean) => {

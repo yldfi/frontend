@@ -32,9 +32,10 @@ interface ContractSourceViewerProps {
 }
 
 export function ContractSourceViewer({ address }: ContractSourceViewerProps) {
+  const isValidAddress = address.length === 42;
   const [sourceFiles, setSourceFiles] = useState<SourceFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(isValidAddress);
   const [error, setError] = useState<string | null>(null);
   const [fileSelectorOpen, setFileSelectorOpen] = useState(false);
   const [isProxy, setIsProxy] = useState(false);
@@ -113,15 +114,13 @@ export function ContractSourceViewer({ address }: ContractSourceViewerProps) {
       }
     }
 
-    if (address && address.length === 42) {
+    if (isValidAddress) {
       fetchSource();
-    } else {
-      setLoading(false);
-      setError("Invalid contract address");
     }
-  }, [address]);
+  }, [address, isValidAddress]);
 
   const currentFile = sourceFiles.find((f) => f.name === selectedFile);
+  const displayError = !isValidAddress ? "Invalid contract address" : error;
 
   const handleCopy = () => {
     if (currentFile) {
@@ -138,11 +137,11 @@ export function ContractSourceViewer({ address }: ContractSourceViewerProps) {
     );
   }
 
-  if (error) {
+  if (displayError) {
     return (
       <div className="flex flex-col items-center justify-center h-48 text-center">
         <FileCode className="w-10 h-10 text-[var(--muted-foreground)] mb-3" />
-        <p className="text-[var(--muted-foreground)] text-sm">{error}</p>
+        <p className="text-[var(--muted-foreground)] text-sm">{displayError}</p>
         <a
           href={`https://etherscan.io/address/${address}#code`}
           target="_blank"

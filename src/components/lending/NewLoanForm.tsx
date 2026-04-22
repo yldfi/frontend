@@ -289,14 +289,17 @@ export function NewLoanForm({
 
   // Smooth bands animation (YOLO snaps to 4, RESET back to 10)
   const bandsAnimRef = useRef<number | null>(null);
+  const [isBandsAnimating, setIsBandsAnimating] = useState(false);
   const cancelBandsAnim = useCallback(() => {
     if (bandsAnimRef.current !== null) {
       cancelAnimationFrame(bandsAnimRef.current);
       bandsAnimRef.current = null;
+      setIsBandsAnimating(false);
     }
   }, []);
   const animateBands = useCallback((from: number, to: number, duration: number, onComplete?: () => void) => {
     cancelBandsAnim();
+    setIsBandsAnimating(true);
     const startTime = performance.now();
     function tick(now: number) {
       const elapsed = now - startTime;
@@ -308,6 +311,7 @@ export function NewLoanForm({
         bandsAnimRef.current = requestAnimationFrame(tick);
       } else {
         bandsAnimRef.current = null;
+        setIsBandsAnimating(false);
         onComplete?.();
       }
     }
@@ -322,22 +326,30 @@ export function NewLoanForm({
   const leverageInputFocused = useRef(false);
   const leverageDebounce = useRef<ReturnType<typeof setTimeout>>(undefined);
   const leverageFollowsBase = useRef(true); // true = leverage tracks 1.0 (no debt); false = user explicitly set it
+  const [followsBaseLeverage, setFollowsBaseLeverage] = useState(true);
   const leverageAnimRef = useRef<number | null>(null);
+  const [isLeverageAnimating, setIsLeverageAnimating] = useState(false);
   const [pendingYolo, setPendingYolo] = useState(false);
   const [calcMaxSeq, setCalcMaxSeq] = useState(0);
   const yoloWaitSeq = useRef(0);
   const [forceCalcMax, setForceCalcMax] = useState(0);
   const [maxBorrowableLoaded, setMaxBorrowableLoaded] = useState(false);
+  const setLeverageFollowsBase = useCallback((value: boolean) => {
+    leverageFollowsBase.current = value;
+    setFollowsBaseLeverage(value);
+  }, []);
 
   // Smooth leverage animation (YOLO ramp up, RESET ramp down)
   const cancelLeverageAnim = useCallback(() => {
     if (leverageAnimRef.current !== null) {
       cancelAnimationFrame(leverageAnimRef.current);
       leverageAnimRef.current = null;
+      setIsLeverageAnimating(false);
     }
   }, []);
   const animateLeverage = useCallback((from: number, to: number, duration: number, onComplete?: () => void) => {
     cancelLeverageAnim();
+    setIsLeverageAnimating(true);
     const startTime = performance.now();
     function tick(now: number) {
       const elapsed = now - startTime;
@@ -350,6 +362,7 @@ export function NewLoanForm({
         leverageAnimRef.current = requestAnimationFrame(tick);
       } else {
         leverageAnimRef.current = null;
+        setIsLeverageAnimating(false);
         onComplete?.();
       }
     }
@@ -359,7 +372,7 @@ export function NewLoanForm({
 
   const {
     slippage, updateSlippage, showSlippageModal, setShowSlippageModal,
-    showSimulationPreview, setShowSimulationPreview, refreshSimulationPreview,
+    showSimulationPreview, refreshSimulationPreview,
     showSimulationModal, setShowSimulationModal,
     showRoute, toggleRoute,
     zappersEnabled,
@@ -368,11 +381,14 @@ export function NewLoanForm({
   // Reset tokens and tab to defaults when zappers are disabled
   useEffect(() => {
     if (!zappersEnabled) {
-      setSelectedTokenState(vaultToken);
-      setOutputTokenState(crvUsdToken);
-      setLoanTab("loan");
+      const timer = setTimeout(() => {
+        setSelectedTokenState(vaultToken);
+        setOutputToken(crvUsdToken);
+        setLoanTab("loan");
+      }, 0);
+      return () => clearTimeout(timer);
     }
-  }, [zappersEnabled, vaultToken, crvUsdToken]);
+  }, [zappersEnabled, vaultToken, crvUsdToken, setOutputToken]);
 
   const [rateInverted, setRateInverted] = useState(false);
   const [ethPrice, setEthPrice] = useState<number | null>(null);
@@ -440,9 +456,6 @@ export function NewLoanForm({
   const isApproving = isLeveraged ? zapperIsApproving : lendingIsApproving;
   const reset = isLeveraged ? zapperReset : lendingReset;
 
-  // Preserve last approval data so content stays in DOM during close animation
-  const lastApprovalRef = useRef(pendingApproval);
-  if (pendingApproval) lastApprovalRef.current = pendingApproval;
   const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
 
   // Switch between Loan and Leverage tabs
@@ -454,14 +467,14 @@ export function NewLoanForm({
     setShowSimulationModal(false);
     if (tab === "loan") {
       cancelLeverageAnim();
-      leverageFollowsBase.current = true;
+      setLeverageFollowsBase(true);
       setLeverage(1.0);
       setPendingYolo(false);
     } else {
       setDebtInputState("");
       setOutputToken(crvUsdToken); // Reset output token when switching to leverage
     }
-  }, [lendingReset, zapperReset, cancelLeverageAnim]);
+  }, [lendingReset, zapperReset, setShowSimulationModal, cancelLeverageAnim, setOutputToken, crvUsdToken, setLeverageFollowsBase]);
 
   // Read selected token balance
   const isEth = selectedToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
@@ -793,27 +806,39 @@ export function NewLoanForm({
   // "Fully resolved" means the quote is fresh AND all async dependencies (including underlyingEquivalent
   // for price impact) have loaded. This prevents momentary disappearance of price impact when
   // the swap quote arrives but underlyingEquivalent hasn't loaded yet for the new amountOut.
-  const swapDisplaySnapshot = useRef<{ amountOut: string; exchangeRate: number; priceImpact: number | null } | null>(null);
+  const [swapDisplaySnapshot, setSwapDisplaySnapshot] = useState<{ amountOut: string; exchangeRate: number; priceImpact: number | null } | null>(null);
   const isFreshQuote = !swapQuoteStale && !swapQuoteIsPlaceholder && !!swapQuote?.amountOut;
   const isFullyResolved = isFreshQuote && exchangeRateLive !== null && priceImpactLive !== null;
-  if (isFullyResolved) {
-    swapDisplaySnapshot.current = {
-      amountOut: swapQuote.amountOut,
-      exchangeRate: exchangeRateLive,
-      priceImpact: priceImpactLive,
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    if (isFullyResolved) {
+      timer = setTimeout(() => {
+        setSwapDisplaySnapshot({
+          amountOut: swapQuote.amountOut,
+          exchangeRate: exchangeRateLive,
+          priceImpact: priceImpactLive,
+        });
+      }, 0);
+    } else if (!needsSwap) {
+      timer = setTimeout(() => {
+        setSwapDisplaySnapshot(null);
+      }, 0);
+    }
+    return () => {
+      if (timer) clearTimeout(timer);
     };
-  }
-  if (!needsSwap) swapDisplaySnapshot.current = null;
+  }, [isFullyResolved, needsSwap, swapQuote, exchangeRateLive, priceImpactLive]);
 
   // Use live values only when fully resolved; otherwise fall back to snapshot
-  const displayAmountOut = isFullyResolved ? swapQuote.amountOut : swapDisplaySnapshot.current?.amountOut ?? swapQuote?.amountOut;
-  const exchangeRate = isFullyResolved ? exchangeRateLive : (swapDisplaySnapshot.current?.exchangeRate ?? exchangeRateLive);
-  const priceImpact = isFullyResolved ? priceImpactLive : (swapDisplaySnapshot.current?.priceImpact ?? priceImpactLive);
+  const displayAmountOut = isFullyResolved ? swapQuote.amountOut : swapDisplaySnapshot?.amountOut ?? swapQuote?.amountOut;
+  const exchangeRate = isFullyResolved ? exchangeRateLive : (swapDisplaySnapshot?.exchangeRate ?? exchangeRateLive);
+  const priceImpact = isFullyResolved ? priceImpactLive : (swapDisplaySnapshot?.priceImpact ?? priceImpactLive);
 
   // Max borrowable for the estimated collateral
   const [maxBorrowable, setMaxBorrowable] = useState<bigint>(0n);
   const [maxBorrowableFetching, setMaxBorrowableFetching] = useState(false);
   const maxBorrowableBandsRef = useRef<number>(10); // tracks which debouncedBands produced current maxBorrowable
+  const [maxBorrowableBandsSnapshot, setMaxBorrowableBandsSnapshot] = useState(10);
 
   useEffect(() => {
     let stale = false;
@@ -847,6 +872,7 @@ export function NewLoanForm({
       setMaxBorrowable(max);
       setMaxBorrowableFetching(false);
       maxBorrowableBandsRef.current = debouncedBands;
+      setTimeout(() => setMaxBorrowableBandsSnapshot(debouncedBands), 0);
       const isApprovalInProgress = status === "needsApproval" || status === "approving";
       if (max > 0n && debtRatio.current !== null && loanTab === "loan" && !hasOutputSwap && !isApprovalInProgress) {
         const ratio = Math.min(debtRatio.current, 1.0);
@@ -887,11 +913,15 @@ export function NewLoanForm({
     const threshold = controllerCrvUsdBalance * 105n / 100n;
     return maxBorrowable <= threshold;
   }, [controllerCrvUsdBalance, maxBorrowable]);
-  const isLiquidityConstrainedRef = useRef(false);
-  if (isLiquidityConstrainedLive !== null) {
-    isLiquidityConstrainedRef.current = isLiquidityConstrainedLive;
-  }
-  const isLiquidityConstrained = isLiquidityConstrainedLive ?? isLiquidityConstrainedRef.current;
+  const [isLiquidityConstrainedSnapshot, setIsLiquidityConstrainedSnapshot] = useState(false);
+  useEffect(() => {
+    if (isLiquidityConstrainedLive === null) return;
+    const timer = setTimeout(() => {
+      setIsLiquidityConstrainedSnapshot(isLiquidityConstrainedLive);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [isLiquidityConstrainedLive]);
+  const isLiquidityConstrained = isLiquidityConstrainedLive ?? isLiquidityConstrainedSnapshot;
 
   // Max receivable in output token terms (forward quote: maxBorrowable crvUSD → outputToken)
   const maxBorrowableStr = useMemo(
@@ -1071,32 +1101,35 @@ export function NewLoanForm({
   }, [estimatedVaultTokenAmount, maxBorrowable, vault.decimals, oraclePrice]);
 
   // effectiveLeverage: when user hasn't touched slider → 1.0 (no leverage)
-  const effectiveLeverage = leverageFollowsBase.current ? 1.0 : leverage;
+  const effectiveLeverage = followsBaseLeverage ? 1.0 : leverage;
 
   // Anti-flash: stable maxLeverage for slider rendering
-  const isAnimating = leverageAnimRef.current !== null;
-  const shouldFreezeMax = (isAnimating && !pendingYolo) || bandsAnimRef.current !== null;
-  const stableMaxLevRef = useRef(maxLeverage);
-  if (maxBorrowableLoaded && !shouldFreezeMax) {
-    // Only allow max to decrease naturally (safer bands = less leverage available).
-    // Max increases only on explicit user interaction (MAX button, YOLO, slider drag)
-    // to prevent bands changes from visually shifting the leverage thumb position.
-    if (maxLeverage <= stableMaxLevRef.current) {
-      stableMaxLevRef.current = maxLeverage;
-    }
-  }
-  const renderMaxLeverage = stableMaxLevRef.current;
+  const shouldFreezeMax = (isLeverageAnimating && !pendingYolo) || isBandsAnimating;
+  const [renderMaxLeverage, setRenderMaxLeverage] = useState(maxLeverage);
+  useEffect(() => {
+    if (!maxBorrowableLoaded || shouldFreezeMax || maxLeverage > renderMaxLeverage) return;
+    const timer = setTimeout(() => {
+      setRenderMaxLeverage(maxLeverage);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [maxBorrowableLoaded, shouldFreezeMax, maxLeverage, renderMaxLeverage]);
 
   // Slider visibility: show as soon as user enters collateral (even before maxBorrowable loads)
   const sliderMin = 100; // 1.0x always for new loans
-  const sliderVisibleRef = useRef(false);
+  const [showSliderSnapshot, setShowSliderSnapshot] = useState(false);
   const hasCollateral = !!estimatedVaultTokenAmount;
   const sliderCondition = maxBorrowable > 0n && Math.floor(renderMaxLeverage * 100) > sliderMin;
-  const showSlider = pendingYolo || isAnimating || (maxBorrowableLoaded ? sliderCondition : (sliderVisibleRef.current || hasCollateral));
-  if (maxBorrowableLoaded && !isAnimating) sliderVisibleRef.current = sliderCondition;
+  const _showSlider = pendingYolo || isLeverageAnimating || (maxBorrowableLoaded ? sliderCondition : (showSliderSnapshot || hasCollateral));
+  useEffect(() => {
+    if (!maxBorrowableLoaded || isLeverageAnimating) return;
+    const timer = setTimeout(() => {
+      setShowSliderSnapshot(sliderCondition);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [maxBorrowableLoaded, isLeverageAnimating, sliderCondition]);
 
   // Debt amount (wei)
-  const debtAmount = useMemo(() => {
+  const debtAmount = (() => {
     if (loanTab === "leverage") {
       // Leverage tab: calculate debt from leverage ratio
       // debt = collateralValue_in_crvUSD * (leverage - 1)
@@ -1126,13 +1159,13 @@ export function NewLoanForm({
     } catch {
       return 0n;
     }
-  }, [loanTab, estimatedVaultTokenAmount, effectiveLeverage, maxBorrowable, debtInput, hasOutputSwap, estimatedCrvUsdDebt, oraclePrice, vault.decimals]);
+  })();
 
   // Leverage swap quote: crvUSD → vaultToken (for route display amount)
   const debouncedDebtAmount = useDebouncedValue(debtAmount > 0n ? formatUnits(debtAmount, 18) : "", 500);
   const {
     data: leverageSwapQuote,
-    isPending: leverageSwapPending,
+    isPending: _leverageSwapPending,
     isFetching: leverageSwapFetching,
     isPlaceholderData: leverageSwapIsPlaceholder,
   } = useQuery({
@@ -1175,28 +1208,81 @@ export function NewLoanForm({
   // bands drags the leverage slider down. The slider max attribute naturally
   // prevents dragging past the limit on subsequent interactions.
   useEffect(() => {
-    if (pendingYolo || !maxBorrowableLoaded || leverageAnimRef.current !== null) return;
-    if (leverageFollowsBase.current) {
-      if (Math.abs(leverage - 1.0) > 0.001) setLeverage(1.0);
+    if (pendingYolo || !maxBorrowableLoaded || isLeverageAnimating) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    if (followsBaseLeverage) {
+      if (Math.abs(leverage - 1.0) > 0.001) {
+        timer = setTimeout(() => setLeverage(1.0), 0);
+      }
+      return () => {
+        if (timer) clearTimeout(timer);
+      };
+    }
+    if (leverage < 1.0) {
+      timer = setTimeout(() => setLeverage(1.0), 0);
+    }
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [maxLeverage, pendingYolo, maxBorrowableLoaded, isLeverageAnimating, followsBaseLeverage, leverage]);
+
+  const commitLeverageValue = useCallback((value: number) => {
+    setLeverageFollowsBase(false);
+    const clamped = Math.min(Math.max(value, 1.0), maxLeverage);
+    setLeverage(clamped);
+    setLeverageInput(clamped.toFixed(2));
+    return clamped;
+  }, [maxLeverage, setLeverageFollowsBase]);
+
+  const handleLeverageInputChange = useCallback((value: string) => {
+    setLeverageInput(value);
+    clearTimeout(leverageDebounce.current);
+    leverageDebounce.current = setTimeout(() => {
+      const parsed = parseFloat(value);
+      if (!Number.isNaN(parsed)) {
+        commitLeverageValue(parsed);
+      }
+    }, 500);
+  }, [commitLeverageValue]);
+
+  const handleLeverageInputFocus = useCallback(() => {
+    cancelLeverageAnim();
+    leverageInputFocused.current = true;
+    setRenderMaxLeverage(maxLeverage);
+  }, [cancelLeverageAnim, maxLeverage]);
+
+  const handleLeverageInputBlur = useCallback(() => {
+    leverageInputFocused.current = false;
+    const parsed = parseFloat(leverageInput);
+    if (!Number.isNaN(parsed)) {
+      commitLeverageValue(parsed);
       return;
     }
-    if (leverage < 1.0) setLeverage(1.0);
-  }, [maxLeverage, pendingYolo, maxBorrowableLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+    setLeverageInput(effectiveLeverage.toFixed(2));
+  }, [commitLeverageValue, leverageInput, effectiveLeverage]);
 
   // YOLO: re-target animation once calcMax completes with real maxLeverage
   useEffect(() => {
     if (!pendingYolo) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     if (calcMaxSeq > yoloWaitSeq.current && maxBorrowableLoaded) {
       if (maxBorrowable > 0n) {
-        leverageFollowsBase.current = false;
-        stableMaxLevRef.current = maxLeverage; // expand slider range for YOLO
-        animateLeverage(leverage, maxLeverage, 200, () => setPendingYolo(false));
+        timer = setTimeout(() => {
+          setLeverageFollowsBase(false);
+          setRenderMaxLeverage(maxLeverage); // expand slider range for YOLO
+          animateLeverage(leverage, maxLeverage, 200, () => setPendingYolo(false));
+        }, 0);
       } else {
-        cancelLeverageAnim();
-        setPendingYolo(false);
+        timer = setTimeout(() => {
+          cancelLeverageAnim();
+          setPendingYolo(false);
+        }, 0);
       }
     }
-  }, [pendingYolo, calcMaxSeq, maxBorrowable, maxBorrowableLoaded, maxLeverage]); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [pendingYolo, calcMaxSeq, maxBorrowable, maxBorrowableLoaded, maxLeverage, animateLeverage, leverage, cancelLeverageAnim, setLeverageFollowsBase]);
 
   // Sync text input when effective leverage changes (not while user is typing)
   useEffect(() => {
@@ -1209,7 +1295,7 @@ export function NewLoanForm({
   // (slider moving → calcMax → forward quote → debtInput debounce → reverse quote)
   // Also covers collateral input swap quote when both swaps are active
   const outputSwapIsSettling = hasOutputSwap && (
-    bands !== debouncedBands || debouncedBands !== maxBorrowableBandsRef.current || maxOutputTokenFetching || debtInput !== debouncedDebtInput || outputSwapQuoteLoading
+    bands !== debouncedBands || debouncedBands !== maxBorrowableBandsSnapshot || maxOutputTokenFetching || debtInput !== debouncedDebtInput || outputSwapQuoteLoading
   );
   // Don't include swapQuoteFetching — it fires during periodic 30s background refetches
   // which shouldn't trigger "Getting quote". quoteLoading covers initial fetch,
@@ -1221,9 +1307,46 @@ export function NewLoanForm({
   const debtAmountStr = debtAmount > 0n ? formatUnits(debtAmount, 18) : "";
   const leverageIsSettling = loanTab === "leverage" && (
     pendingYolo ||
-    leverageAnimRef.current !== null ||
+    isLeverageAnimating ||
     (effectiveLeverage > 1.005 && (debtAmountStr !== debouncedDebtAmount || leverageSwapFetching))
   );
+
+  const handleLeverageMax = useCallback(() => {
+    cancelLeverageAnim();
+    setLeverageFollowsBase(false);
+    setRenderMaxLeverage(maxLeverage);
+    animateLeverage(effectiveLeverage, maxLeverage, 300);
+  }, [cancelLeverageAnim, setLeverageFollowsBase, maxLeverage, animateLeverage, effectiveLeverage]);
+
+  const handleLeverageMaxAll = useCallback(() => {
+    cancelLeverageAnim();
+    setLeverageFollowsBase(false);
+    setAmount(maxBalance);
+    animateBands(bands, 4, 300);
+    yoloWaitSeq.current = calcMaxSeq;
+    setForceCalcMax((current) => current + 1);
+    setPendingYolo(true);
+    animateLeverage(effectiveLeverage, maxLeverage > 1.15 ? maxLeverage : 3.0, 600);
+  }, [cancelLeverageAnim, setLeverageFollowsBase, setAmount, maxBalance, animateBands, bands, calcMaxSeq, animateLeverage, effectiveLeverage, maxLeverage]);
+
+  const handleLeverageReset = useCallback(() => {
+    const from = effectiveLeverage;
+    setPendingYolo(false);
+    setLeverageFollowsBase(false);
+    animateBands(bands, 10, 300);
+    animateLeverage(from, 1.0, 300, () => {
+      setLeverageFollowsBase(true);
+      setRenderMaxLeverage(10);
+      setAmount("");
+    });
+  }, [effectiveLeverage, setLeverageFollowsBase, animateBands, bands, animateLeverage, setAmount]);
+
+  const handleLeverageSliderChange = useCallback((value: string) => {
+    cancelLeverageAnim();
+    setLeverageFollowsBase(false);
+    setRenderMaxLeverage(maxLeverage);
+    setLeverage(parseFloat(value));
+  }, [cancelLeverageAnim, setLeverageFollowsBase, maxLeverage]);
 
   // Memoize route steps — only update when all data is settled
   const routeSteps = useMemo(() => [
@@ -1266,11 +1389,11 @@ export function NewLoanForm({
       description: "from crvUSD",
       protocol: "Enso Router",
     }] : []),
-  ], [needsSwap, swapQuote, selectedToken.symbol, amount, vault.symbol, vault.decimals, estimatedVaultTokenAmount, debtAmount, loanTab, effectiveLeverage, leverageSwapQuote, hasOutputSwap, outputToken?.symbol, debtInput]);
+  ], [needsSwap, swapQuote, selectedToken.symbol, amount, vault.symbol, vault.decimals, estimatedVaultTokenAmount, debtAmount, loanTab, effectiveLeverage, leverageSwapQuote, hasOutputSwap, outputToken.symbol, debtInput]);
 
   // Lock route display during settling — avoid showing partial/mismatched values
   // Initialize empty so the route panel doesn't open until all data is ready
-  const settledRouteRef = useRef<typeof routeSteps>([]);
+  const [settledRouteSteps, setSettledRouteSteps] = useState<typeof routeSteps>([]);
   const anySettling = isQuoteSettling || leverageIsSettling;
 
   // Report settling state to parent (for health bar animation)
@@ -1282,12 +1405,16 @@ export function NewLoanForm({
     }
   }, [anySettling, onSettlingChange]);
 
-  if (!anySettling && routeSteps.length > 0) {
-    settledRouteRef.current = routeSteps;
-  }
+  useEffect(() => {
+    if (anySettling || routeSteps.length === 0) return;
+    const timer = setTimeout(() => {
+      setSettledRouteSteps(routeSteps);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [anySettling, routeSteps]);
   // During settling: show previous settled route (or nothing if no previous)
   const displayRouteSteps = anySettling
-    ? settledRouteRef.current
+    ? settledRouteSteps
     : routeSteps;
 
   // Estimate health — skip during settling to avoid stale intermediate values
@@ -1463,7 +1590,31 @@ export function NewLoanForm({
       const mapped = status === "waitingTx" ? "pending" : status;
       onTxStateChange?.({ status: mapped as "pending" | "success" | "reverted", action: "Create Loan", hash: txHash, details });
     }
-  }, [status, txHash, onTxStateChange, amount, selectedToken, debtAmount, hasOutputSwap, outputToken, outputSwapQuote]);
+  }, [status, txHash, onTxStateChange, amount, selectedToken, debtAmount, hasOutputSwap, outputToken, debtInput]);
+
+  async function fetchEthPrice() {
+    if (!publicClient) return;
+    try {
+      const data = await publicClient.readContract({
+        address: CHAINLINK_ETH_USD,
+        abi: [{
+          name: "latestRoundData",
+          type: "function",
+          stateMutability: "view",
+          inputs: [],
+          outputs: [
+            { name: "roundId", type: "uint80" },
+            { name: "answer", type: "int256" },
+            { name: "startedAt", type: "uint256" },
+            { name: "updatedAt", type: "uint256" },
+            { name: "answeredInRound", type: "uint80" },
+          ],
+        }],
+        functionName: "latestRoundData",
+      });
+      setEthPrice(Number(data[1] as bigint) / 1e8);
+    } catch { /* ignore */ }
+  }
 
   // Handle transaction success — clear all inputs and reset to idle
   useEffect(() => {
@@ -1473,12 +1624,14 @@ export function NewLoanForm({
       } else {
         trackLendingBorrowSuccess(vault.id, debtInput || "0", "crvUSD");
       }
-      setAmountState("");
-      setDebtInputState("");
-      debtRatio.current = null;
-      leverageFollowsBase.current = true;
-      setLeverage(1.0);
-      setLeverageInput("1.00");
+      const timer = setTimeout(() => {
+        setAmountState("");
+        setDebtInputState("");
+        debtRatio.current = null;
+        setLeverageFollowsBase(true);
+        setLeverage(1.0);
+        setLeverageInput("1.00");
+      }, 0);
       try { sessionStorage.removeItem(amountStorageKey); } catch { /* */ }
       try { sessionStorage.removeItem(debtStorageKey); } catch { /* */ }
       try { sessionStorage.removeItem(tokenStorageKey); } catch { /* */ }
@@ -1492,8 +1645,9 @@ export function NewLoanForm({
       onTransactionSuccess();
       refetchBalance();
       reset();
+      return () => clearTimeout(timer);
     }
-  }, [status, txHash, onTransactionSuccess, reset, refetchBalance, amountStorageKey, debtStorageKey, tokenStorageKey, outputTokenStorageKey, isLeveraged, vault.id, amount, effectiveLeverage, debtInput]);
+  }, [status, txHash, onTransactionSuccess, reset, refetchBalance, amountStorageKey, debtStorageKey, tokenStorageKey, outputTokenStorageKey, isLeveraged, vault.id, amount, effectiveLeverage, debtInput, setLeverageFollowsBase]);
 
   useEffect(() => {
     if ((status === "error" || status === "reverted") && error) {
@@ -1571,36 +1725,15 @@ export function NewLoanForm({
   useEffect(() => {
     if (!amount || Number(amount) <= 0) {
       cancelLeverageAnim();
-      leverageFollowsBase.current = true;
-      setLeverage(1.0);
-      setLeverageInput("1.00");
-      setPendingYolo(false);
+      const timer = setTimeout(() => {
+        setLeverageFollowsBase(true);
+        setLeverage(1.0);
+        setLeverageInput("1.00");
+        setPendingYolo(false);
+      }, 0);
+      return () => clearTimeout(timer);
     }
-  }, [amount, cancelLeverageAnim]);
-
-  const fetchEthPrice = useCallback(async () => {
-    if (!publicClient) return;
-    try {
-      const data = await publicClient.readContract({
-        address: CHAINLINK_ETH_USD,
-        abi: [{
-          name: "latestRoundData",
-          type: "function",
-          stateMutability: "view",
-          inputs: [],
-          outputs: [
-            { name: "roundId", type: "uint80" },
-            { name: "answer", type: "int256" },
-            { name: "startedAt", type: "uint256" },
-            { name: "updatedAt", type: "uint256" },
-            { name: "answeredInRound", type: "uint80" },
-          ],
-        }],
-        functionName: "latestRoundData",
-      });
-      setEthPrice(Number(data[1] as bigint) / 1e8);
-    } catch { /* ignore */ }
-  }, [publicClient]);
+  }, [amount, cancelLeverageAnim, setLeverageFollowsBase]);
 
   const handleSubmit = async () => {
     if (!address || !controllerAddress || !amount || Number(amount) <= 0 || debtAmount === 0n) return;
@@ -1916,63 +2049,16 @@ export function NewLoanForm({
                 type="text"
                 value={leverageDisabled ? "1.00" : leverageInput}
                 disabled={leverageDisabled}
-                onChange={(e) => {
-                  setLeverageInput(e.target.value);
-                  clearTimeout(leverageDebounce.current);
-                  leverageDebounce.current = setTimeout(() => {
-                    const v = parseFloat(e.target.value);
-                    if (!isNaN(v)) {
-                      leverageFollowsBase.current = false;
-                      const clamped = Math.min(Math.max(v, 1.0), maxLeverage);
-                      setLeverage(clamped);
-                      setLeverageInput(clamped.toFixed(2));
-                    }
-                  }, 500);
-                }}
-                onFocus={() => { cancelLeverageAnim(); leverageInputFocused.current = true; stableMaxLevRef.current = maxLeverage; }}
-                onBlur={() => {
-                  leverageInputFocused.current = false;
-                  const v = parseFloat(leverageInput);
-                  if (!isNaN(v)) {
-                    leverageFollowsBase.current = false;
-                    const clamped = Math.min(Math.max(v, 1.0), maxLeverage);
-                    setLeverage(clamped);
-                    setLeverageInput(clamped.toFixed(2));
-                  } else {
-                    setLeverageInput(effectiveLeverage.toFixed(2));
-                  }
-                }}
+                onChange={(e) => handleLeverageInputChange(e.target.value)}
+                onFocus={handleLeverageInputFocus}
+                onBlur={handleLeverageInputBlur}
                 className="w-[3rem] bg-transparent text-right mono text-sm outline-none"
               />
               <span className="text-sm text-[var(--muted-foreground)] pointer-events-none">x</span>
               <LeverageMaxButton
-                onMax={() => {
-                  cancelLeverageAnim();
-                  leverageFollowsBase.current = false;
-                  stableMaxLevRef.current = maxLeverage; // expand slider range
-                  animateLeverage(effectiveLeverage, maxLeverage, 300);
-                }}
-                onMaxAll={currentTokenBalance > 0n ? () => {
-                  cancelLeverageAnim();
-                  leverageFollowsBase.current = false;
-                  setAmount(maxBalance);
-                  animateBands(bands, 4, 300);
-                  yoloWaitSeq.current = calcMaxSeq;
-                  setForceCalcMax(c => c + 1);
-                  setPendingYolo(true);
-                  animateLeverage(effectiveLeverage, maxLeverage > 1.15 ? maxLeverage : 3.0, 600);
-                } : undefined}
-                onReset={effectiveLeverage > 1.005 || (amount !== "" && Number(amount) > 0) ? () => {
-                  const from = effectiveLeverage;
-                  setPendingYolo(false);
-                  leverageFollowsBase.current = false;
-                  animateBands(bands, 10, 300);
-                  animateLeverage(from, 1.0, 300, () => {
-                    leverageFollowsBase.current = true;
-                    stableMaxLevRef.current = 10;
-                    setAmount("");
-                  });
-                } : undefined}
+                onMax={handleLeverageMax}
+                onMaxAll={currentTokenBalance > 0n ? handleLeverageMaxAll : undefined}
+                onReset={effectiveLeverage > 1.005 || (amount !== "" && Number(amount) > 0) ? handleLeverageReset : undefined}
               />
             </div>
           </div>
@@ -1983,7 +2069,7 @@ export function NewLoanForm({
             step="any"
             value={leverageDisabled ? 1.0 : effectiveLeverage}
             disabled={leverageDisabled}
-            onChange={(e) => { cancelLeverageAnim(); leverageFollowsBase.current = false; stableMaxLevRef.current = maxLeverage; setLeverage(parseFloat(e.target.value)); }}
+            onChange={(e) => handleLeverageSliderChange(e.target.value)}
             className="w-full"
           />
         </div>
@@ -2093,7 +2179,7 @@ export function NewLoanForm({
       {/* Approval Flow */}
       <ApprovalCard
         show={showApprovalCard}
-        pendingApproval={lastApprovalRef.current}
+        pendingApproval={pendingApproval}
         approvalProgress={approvalProgress}
         isApproving={isApproving}
         onApprove={(exact) => (isLeveraged ? zapperApprove : lendingApprove)(exact)}

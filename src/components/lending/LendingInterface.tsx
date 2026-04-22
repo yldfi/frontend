@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import Image from "next/image";
 import { formatUnits } from "viem";
 import { useQuery } from "@tanstack/react-query";
-import { useAccount, usePublicClient } from "wagmi";
+import { usePublicClient } from "wagmi";
 import type { VaultConfig } from "@/config/vaults";
 import type { LendingPosition } from "@/hooks/useCurveLendingPosition";
 import { LeverageTab } from "./LeverageTab";
@@ -77,92 +77,6 @@ function LtvIndicator({ ltv }: { ltv: number; thresholds?: { soft: number; hard:
   );
 }
 
-// Health bar: visual bar at top of panel, red→green
-function HealthBar({
-  currentHealth,
-  estimatedHealth,
-  alwaysShow,
-  title = "Position",
-  titlePrefix,
-}: {
-  currentHealth?: number;
-  estimatedHealth: number | null;
-  alwaysShow?: boolean;
-  title?: string;
-  titlePrefix?: React.ReactNode;
-}) {
-  const isFlashing = estimatedHealth !== null &&
-    (currentHealth === undefined || Math.round(estimatedHealth) !== Math.round(currentHealth)) &&
-    !(estimatedHealth >= 100 && (currentHealth === undefined || currentHealth >= 100));
-
-  const getColor = (h: number): string => {
-    if (h <= 0) return "#ef4444";
-    if (h < 5) return "#ef4444";
-    if (h < 10) return "#f97316";
-    if (h < 20) return "#eab308";
-    if (h < 40) return "#84cc16";
-    return "#22c55e";
-  };
-
-  const displayHealth = estimatedHealth ?? currentHealth ?? 0;
-  const percent = Math.min(Math.max(displayHealth, 0), 100);
-  const color = getColor(displayHealth);
-
-  const currentPercent = currentHealth !== undefined
-    ? Math.min(Math.max(currentHealth, 0), 100)
-    : 0;
-  const hasEstimate = estimatedHealth !== null && currentHealth !== undefined;
-
-  if (currentHealth === undefined && estimatedHealth === null && !alwaysShow) return null;
-
-  const isEmpty = currentHealth === undefined && estimatedHealth === null;
-
-  return (
-    <div>
-      <div className="px-4 pt-3 pb-1 flex items-center gap-2">
-        {titlePrefix}
-        <span className="text-sm font-medium">{title}</span>
-      </div>
-      <div className="flex items-center gap-2 px-4 pb-1 h-8">
-      <div className="relative flex-1 h-2 rounded-full bg-[var(--muted)] overflow-hidden">
-        {/* Ghost bar: shows current health at reduced opacity, same color as estimate */}
-        {hasEstimate && currentPercent !== percent && (
-          <div
-            className="absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out"
-            style={{
-              width: `${currentPercent}%`,
-              backgroundColor: color,
-              opacity: 0.25,
-            }}
-          />
-        )}
-        {/* Main bar: shows estimated (or current if no estimate) */}
-        <div
-          className="absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out"
-          style={{
-            width: `${percent}%`,
-            backgroundColor: color,
-            animation: isFlashing
-              ? "health-pulse 1.2s ease-in-out infinite"
-              : "none",
-          }}
-        />
-      </div>
-      {!isEmpty && (
-        <span
-          className="text-sm font-medium mono leading-none select-none min-w-[2ch] text-right"
-          style={{ color }}
-        >
-          {displayHealth > 999
-            ? <span className="text-xl leading-none" style={{ position: "relative", top: "1px" }}>∞</span>
-            : `${Math.round(displayHealth)}%`}
-        </span>
-      )}
-      </div>
-    </div>
-  );
-}
-
 export function LendingInterface({
   vault,
   userBalance,
@@ -173,7 +87,6 @@ export function LendingInterface({
   onPreviewLiqPrices,
   rewardApr,
 }: LendingPanelProps) {
-  const { address } = useAccount();
   const publicClient = usePublicClient();
   const { zappersEnabled } = useSettings();
 
@@ -297,97 +210,113 @@ export function LendingInterface({
     }
     return "borrow";
   });
-  const setActiveTab = (tab: Tab) => {
+  // Child tab estimated health (all tabs now report via callback)
+  // Debounce null (reset) values so health bar doesn't jump during animations
+  const [childEstimatedHealth, setChildEstimatedHealth] = useState<number | null>(null);
+  // Child tab settling state (for health bar animation)
+  const [childSettling, setChildSettling] = useState(false);
+
+  // Child tab estimated leverage
+  const [childEstimatedLeverage, setChildEstimatedLeverage] = useState<number | null>(null);
+
+  // Child tab bands (from NewLoanForm)
+  const [childBands, setChildBands] = useState(10);
+
+  // Child tab estimated debt delta (positive = borrowing more, negative = repaying)
+  const [childDebtDelta, setChildDebtDelta] = useState<bigint | null>(null);
+
+  // Child tab collateral amount (new loan form)
+  const [childCollateralAmount, setChildCollateralAmount] = useState<bigint | null>(null);
+
+  // Child tab collateral delta (existing position: positive = add, negative = remove)
+  const [childCollateralDelta, setChildCollateralDelta] = useState<bigint | null>(null);
+
+  // Fade in/out for position summary
+  const [positionVisible, setPositionVisible] = useState(false);
+  const [positionOpaque, setPositionOpaque] = useState(false);
+  const positionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [positionSnapshot, setPositionSnapshot] = useState({
+    collateralAmount: 0n,
+    debtDelta: 0n,
+    leverage: 1,
+    health: null as number | null,
+  });
+  const handleEstimatedHealthChange = useCallback((health: number | null) => {
+    setChildEstimatedHealth(health);
+    if (health !== null) {
+      setPositionSnapshot((prev) => ({ ...prev, health }));
+    }
+  }, []);
+  const handleSettlingChange = useCallback((settling: boolean) => {
+    setChildSettling(settling);
+  }, []);
+  const handleEstimatedLeverageChange = useCallback((lev: number | null) => {
+    setChildEstimatedLeverage(lev);
+    if (lev !== null) {
+      setPositionSnapshot((prev) => ({ ...prev, leverage: lev }));
+    }
+  }, []);
+  const handleBandsChange = useCallback((b: number) => { setChildBands(b); }, []);
+  const handleDebtDeltaChange = useCallback((delta: bigint | null) => {
+    setChildDebtDelta(delta);
+    if (delta !== null && delta > 0n) {
+      setPositionSnapshot((prev) => ({ ...prev, debtDelta: delta }));
+    }
+  }, []);
+  const handleCollateralAmountChange = useCallback((amount: bigint | null) => {
+    setChildCollateralAmount(amount);
+    if (amount !== null && amount > 0n) {
+      setPositionSnapshot((prev) => ({ ...prev, collateralAmount: amount }));
+    }
+  }, []);
+  const handleCollateralDeltaChange = useCallback((delta: bigint | null) => {
+    setChildCollateralDelta(delta);
+  }, []);
+  const clearChildTabState = useCallback(() => {
+    setChildEstimatedHealth(null);
+    setChildEstimatedLeverage(null);
+    setChildDebtDelta(null);
+    setChildCollateralDelta(null);
+    setChildSettling(false);
+  }, []);
+  const setActiveTab = useCallback((tab: Tab) => {
     setActiveTabState(tab);
+    clearChildTabState();
     trackLendingTabSwitch(tab);
     try {
       localStorage.setItem("yldfi-lending-tab", tab);
     } catch {
       // localStorage unavailable
     }
-  };
-
-  // Child tab estimated health (all tabs now report via callback)
-  // Debounce null (reset) values so health bar doesn't jump during animations
-  const [childEstimatedHealth, setChildEstimatedHealth] = useState<number | null>(null);
-  const handleEstimatedHealthChange = useCallback((health: number | null) => {
-    setChildEstimatedHealth(health);
-  }, []);
-
-  // Child tab settling state (for health bar animation)
-  const [childSettling, setChildSettling] = useState(false);
-  const handleSettlingChange = useCallback((settling: boolean) => {
-    setChildSettling(settling);
-  }, []);
-
-  // Child tab estimated leverage
-  const [childEstimatedLeverage, setChildEstimatedLeverage] = useState<number | null>(null);
-  const handleEstimatedLeverageChange = useCallback((lev: number | null) => {
-    setChildEstimatedLeverage(lev);
-  }, []);
-
-  // Child tab bands (from NewLoanForm)
-  const [childBands, setChildBands] = useState(10);
-  const handleBandsChange = useCallback((b: number) => { setChildBands(b); }, []);
-
-  // Child tab estimated debt delta (positive = borrowing more, negative = repaying)
-  const [childDebtDelta, setChildDebtDelta] = useState<bigint | null>(null);
-  const handleDebtDeltaChange = useCallback((delta: bigint | null) => {
-    setChildDebtDelta(delta);
-  }, []);
-
-  // Child tab collateral amount (new loan form)
-  const [childCollateralAmount, setChildCollateralAmount] = useState<bigint | null>(null);
-  const handleCollateralAmountChange = useCallback((amount: bigint | null) => {
-    setChildCollateralAmount(amount);
-  }, []);
-
-  // Fade in/out for position summary
-  const [positionVisible, setPositionVisible] = useState(false);
-  const [positionOpaque, setPositionOpaque] = useState(false);
-  const positionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastCollateralAmount = useRef<bigint>(0n);
-  const lastDebtDelta = useRef<bigint>(0n);
-  const lastLeverage = useRef<number>(1);
-  const lastHealth = useRef<number | null>(null);
-  if (childCollateralAmount !== null && childCollateralAmount > 0n) {
-    lastCollateralAmount.current = childCollateralAmount;
-  }
-  if (childDebtDelta !== null && childDebtDelta > 0n) {
-    lastDebtDelta.current = childDebtDelta;
-  }
-  if (childEstimatedLeverage !== null) {
-    lastLeverage.current = childEstimatedLeverage;
-  }
-  if (childEstimatedHealth !== null) {
-    lastHealth.current = childEstimatedHealth;
-  }
-  const displayCollateralAmount = childCollateralAmount ?? lastCollateralAmount.current;
-  const displayDebtDelta = childDebtDelta ?? lastDebtDelta.current;
-  const displayLeverage = childEstimatedLeverage ?? lastLeverage.current;
-  const newPositionHealth = childEstimatedHealth ?? lastHealth.current;
+  }, [clearChildTabState]);
+  const displayCollateralAmount = childCollateralAmount ?? positionSnapshot.collateralAmount;
+  const displayDebtDelta = childDebtDelta ?? positionSnapshot.debtDelta;
+  const displayLeverage = childEstimatedLeverage ?? positionSnapshot.leverage;
+  const newPositionHealth = childEstimatedHealth ?? positionSnapshot.health;
   const hasCollateral = childCollateralAmount !== null && childCollateralAmount > 0n;
   useEffect(() => {
+    let showTimer: ReturnType<typeof setTimeout> | null = null;
     if (positionTimer.current) { clearTimeout(positionTimer.current); positionTimer.current = null; }
     if (hasCollateral) {
       // Fade in: mount at opacity-0, then flip to opacity-1 next frame
-      setPositionVisible(true);
+      showTimer = setTimeout(() => {
+        setPositionVisible(true);
+      }, 0);
       requestAnimationFrame(() => requestAnimationFrame(() => setPositionOpaque(true)));
     } else if (positionVisible) {
       // Fade out: set opacity-0, then unmount after transition
-      setPositionOpaque(false);
+      showTimer = setTimeout(() => {
+        setPositionOpaque(false);
+      }, 0);
       positionTimer.current = setTimeout(() => {
         setPositionVisible(false);
         positionTimer.current = null;
       }, 300);
     }
+    return () => {
+      if (showTimer) clearTimeout(showTimer);
+    };
   }, [hasCollateral]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Child tab collateral delta (existing position: positive = add, negative = remove)
-  const [childCollateralDelta, setChildCollateralDelta] = useState<bigint | null>(null);
-  const handleCollateralDeltaChange = useCallback((delta: bigint | null) => {
-    setChildCollateralDelta(delta);
-  }, []);
 
   // Transaction state from child tabs (for full-screen overlays)
   const [activeTxState, setActiveTxState] = useState<LendingTxState>(null);
@@ -396,15 +325,14 @@ export function LendingInterface({
     if (state?.status === "success") {
       // After loan creation, switch to "borrow" tab once position refetches
       if (state.action === "Create Loan") {
-        setActiveTabState("borrow");
-        try { localStorage.setItem("yldfi-lending-tab", "borrow"); } catch {}
+        setActiveTab("borrow");
       }
       setTimeout(() => setActiveTxState(null), 2000);
     }
     if (state?.status === "reverted") {
       setTimeout(() => setActiveTxState(null), 3000);
     }
-  }, []);
+  }, [setActiveTab]);
 
   // Debug tx state (dev only)
   type DebugLendingTxState = "none" | "borrow-pending" | "borrow-success" | "borrow-reverted" | "repay-pending" | "repay-success" | "repay-reverted" | "collateral-pending" | "collateral-success" | "collateral-reverted" | "leverage-pending" | "leverage-success" | "leverage-reverted" | "newloan-pending" | "newloan-success" | "newloan-reverted";
@@ -495,9 +423,7 @@ export function LendingInterface({
 
   // Track which debug approval button was clicked (spinner only on that button)
   const [debugApprovingType, setDebugApprovingType] = useState<"exact" | "unlimited" | "single" | null>(null);
-  useEffect(() => {
-    if (!debugApprovalData?.isApproving) setDebugApprovingType(null);
-  }, [debugApprovalData?.isApproving]);
+  const effectiveDebugApprovingType = debugApprovalData?.isApproving ? debugApprovingType : null;
 
   // DEBUG: Draggable panel position (persisted to localStorage)
   const [debugPanelPos, setDebugPanelPos] = useState<{ x: number; y: number } | null>(() => {
@@ -651,15 +577,6 @@ export function LendingInterface({
     return () => { cancelled = true; };
   }, [publicClient, controllerAddress, ammAddress, position, childDebtDelta, childCollateralDelta, childCollateralAmount, childBands, onPreviewLiqPrices]);
 
-  // Clear child estimates when switching tabs
-  useEffect(() => {
-    setChildEstimatedHealth(null);
-    setChildEstimatedLeverage(null);
-    setChildDebtDelta(null);
-    setChildCollateralDelta(null);
-    setChildSettling(false);
-  }, [activeTab]);
-
   const effectiveEstimatedHealth = childEstimatedHealth;
 
   // Position summary values
@@ -751,9 +668,10 @@ export function LendingInterface({
   // Reset off leverage tab when zappers are disabled (unless in soft-liq, where it becomes "liquidate")
   useEffect(() => {
     if (!zappersEnabled && activeTab === "leverage" && !effectivePosition?.inSoftLiquidation) {
-      setActiveTab("borrow");
+      const timer = setTimeout(() => setActiveTab("borrow"), 0);
+      return () => clearTimeout(timer);
     }
-  }, [zappersEnabled, activeTab, effectivePosition?.inSoftLiquidation]);
+  }, [zappersEnabled, activeTab, effectivePosition?.inSoftLiquidation, setActiveTab]);
 
   // Reset to "borrow" tab when a loan is first created
   // Tracks hasLoan transitions: false→true triggers tab switch to "borrow"
@@ -769,7 +687,7 @@ export function LendingInterface({
       setTimeout(() => setActiveTxState(null), 2000);
     }
     prevHasLoan.current = hasLoan;
-  }, [hasLoan, activeTxState]);
+  }, [hasLoan, activeTxState, setActiveTab]);
 
   // New loan source choice (Curve vs yld)
   const [loanSource, setLoanSourceState] = useState<"choice" | "yldfi">(() => {
@@ -785,10 +703,9 @@ export function LendingInterface({
     try { sessionStorage.setItem("yldfi-loan-source", v); } catch { /* */ }
     // Reset child state when going back to choice screen
     if (v === "choice") {
+      clearChildTabState();
       setChildCollateralAmount(null);
-      setChildDebtDelta(null);
-      setChildEstimatedLeverage(null);
-      lastCollateralAmount.current = 0n;
+      setPositionSnapshot((prev) => ({ ...prev, collateralAmount: 0n, debtDelta: 0n, leverage: 1 }));
       try {
         sessionStorage.removeItem(`yldfi-lending-newloan-amount-${vault.address}`);
         sessionStorage.removeItem(`yldfi-lending-newloan-debt-${vault.address}`);
@@ -796,7 +713,7 @@ export function LendingInterface({
         sessionStorage.removeItem(`yldfi-lending-newloan-output-${vault.address}`);
       } catch { /* */ }
     }
-  }, [vault.address]);
+  }, [clearChildTabState, vault.address]);
 
   // --- Loading: show skeleton while position data loads ---
   if (positionLoading) {
@@ -827,13 +744,13 @@ export function LendingInterface({
                 <div className="flex items-center flex-wrap justify-center gap-1 text-sm text-[var(--muted-foreground)] mb-3 px-4">
                   <span>Repaying</span>
                   <span className="mono">{d.toAmount}</span>
-                  <img src={d.toLogo} alt={d.toSymbol} className="w-4 h-4 rounded-full" />
+                  <Image src={d.toLogo} alt={d.toSymbol} width={16} height={16} className="w-4 h-4 rounded-full" />
                   <span className="mono">{d.toSymbol}</span>
                   {!isSameToken && (
                     <>
                       <span>with</span>
                       <span className="mono">{d.fromAmount}</span>
-                      <img src={d.fromLogo} alt={d.fromSymbol} className="w-4 h-4 rounded-full" />
+                      <Image src={d.fromLogo} alt={d.fromSymbol} width={16} height={16} className="w-4 h-4 rounded-full" />
                       <span className="mono">{d.fromSymbol}</span>
                     </>
                   )}
@@ -847,12 +764,12 @@ export function LendingInterface({
               </p>
             ) : (
               <div className="flex items-center gap-2 mb-3 px-4 py-2 bg-[var(--muted)] rounded-lg">
-                <img src={d.fromLogo} alt={d.fromSymbol} className="w-5 h-5 rounded-full" />
+                <Image src={d.fromLogo} alt={d.fromSymbol} width={20} height={20} className="w-5 h-5 rounded-full" />
                 <span className="mono text-sm">{d.fromAmount} {d.fromSymbol}</span>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[var(--muted-foreground)]">
                   <path d="M5 12h14M12 5l7 7-7 7"/>
                 </svg>
-                <img src={d.toLogo} alt={d.toSymbol} className="w-5 h-5 rounded-full" />
+                <Image src={d.toLogo} alt={d.toSymbol} width={20} height={20} className="w-5 h-5 rounded-full" />
                 <span className="mono text-sm">{d.toAmount} {d.toSymbol}</span>
               </div>
             );
@@ -1310,7 +1227,7 @@ export function LendingInterface({
                         : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
                     )}
                   >
-                    {debugApprovalData.isApproving && debugApprovingType === "exact" ? <>Approving<LoadingDots /></> : `${Number(formatUnits(debugApprovalData.amount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${debugApprovalData.tokenSymbol}`}
+                    {debugApprovalData.isApproving && effectiveDebugApprovingType === "exact" ? <>Approving<LoadingDots /></> : `${Number(formatUnits(debugApprovalData.amount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${debugApprovalData.tokenSymbol}`}
                   </button>
                   <button
                     onClick={() => setDebugApprovingType("unlimited")}
@@ -1322,7 +1239,7 @@ export function LendingInterface({
                         : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
                     )}
                   >
-                    {debugApprovalData.isApproving && debugApprovingType === "unlimited" ? <>Approving<LoadingDots /></> : "Max"}
+                    {debugApprovalData.isApproving && effectiveDebugApprovingType === "unlimited" ? <>Approving<LoadingDots /></> : "Max"}
                   </button>
                 </div>
               ) : (
@@ -1694,7 +1611,7 @@ export function LendingInterface({
                       : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
                   )}
                 >
-                  {debugApprovalData.isApproving && debugApprovingType === "exact" ? <>Approving<LoadingDots /></> : `${Number(formatUnits(debugApprovalData.amount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${debugApprovalData.tokenSymbol}`}
+                  {debugApprovalData.isApproving && effectiveDebugApprovingType === "exact" ? <>Approving<LoadingDots /></> : `${Number(formatUnits(debugApprovalData.amount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${debugApprovalData.tokenSymbol}`}
                 </button>
                 <button
                   onClick={() => setDebugApprovingType("unlimited")}
@@ -1706,7 +1623,7 @@ export function LendingInterface({
                       : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
                   )}
                 >
-                  {debugApprovalData.isApproving && debugApprovingType === "unlimited" ? <>Approving<LoadingDots /></> : "Max"}
+                  {debugApprovalData.isApproving && effectiveDebugApprovingType === "unlimited" ? <>Approving<LoadingDots /></> : "Max"}
                 </button>
               </div>
             ) : (

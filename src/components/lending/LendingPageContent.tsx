@@ -21,8 +21,6 @@ import { useVolumeProfile, type VolumeProfilePeriod } from "@/hooks/useVolumePro
 import { useCurveMarketRates } from "@/hooks/useCurveMarketRates";
 import { LendingInterface } from "./LendingInterface";
 import { PriceChart } from "./PriceChart";
-import { Logo } from "@/components/Logo";
-import { CustomConnectButton } from "@/components/CustomConnectButton";
 import { useClearOnNavigation } from "@/hooks/useClearOnNavigation";
 
 export function LendingPageContent({ vaultId }: { vaultId: string }) {
@@ -381,4 +379,3 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
     </div >
   );
 }
-

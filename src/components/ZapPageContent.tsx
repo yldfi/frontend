@@ -187,9 +187,6 @@ export function ZapPageContent() {
     isApproving,
   } = useZapActions(quote ?? null);
 
-  // Preserve last approval data so content stays in DOM during close animation
-  const lastApprovalRef = useRef(pendingApproval);
-  if (pendingApproval) lastApprovalRef.current = pendingApproval;
   const showApprovalCard = !!(
     pendingApproval &&
     (status === "needsApproval" || status === "approving" || status === "waitingApproval")
@@ -224,7 +221,7 @@ export function ZapPageContent() {
           onClick: () => window.open(`https://etherscan.io/tx/${zapHash}`, "_blank"),
         },
       });
-      setAmount("");
+      setTimeout(() => setAmount(""), 0);
     } else if (isReverted) {
       toast.error("Zap failed — transaction reverted", {
         action: {
@@ -378,7 +375,7 @@ export function ZapPageContent() {
             {/* Approval */}
             <ApprovalCard
               show={showApprovalCard}
-              pendingApproval={lastApprovalRef.current}
+              pendingApproval={pendingApproval}
               approvalProgress={approvalProgress}
               decimals={inputToken.decimals ?? 18}
               isApproving={isApproving}

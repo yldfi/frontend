@@ -18,12 +18,11 @@ import {
 } from "@/lib/analytics";
 import { formatUnits, parseUnits } from "viem";
 import type { VaultConfig } from "@/config/vaults";
-import { CURVE_CONTROLLERS, TOKENS, TANGENT } from "@/config/vaults";
+import { TOKENS, TANGENT } from "@/config/vaults";
 import { getVaultInfo } from "@/lib/curve-lending";
 import type { LendingPosition } from "@/hooks/useCurveLendingPosition";
 import { useZapperActions } from "@/hooks/useZapperActions";
 import { CRVUSD_ADDRESS, CHAINLINK_ETH_USD } from "@/config/addresses";
-import { ZAPPER_ABI, ZAPPER_ADDRESS } from "@/lib/zapper";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS, fetchRoute } from "@/lib/enso";
 import { getMaxEthAmount } from "@/lib/eth-gas";
@@ -279,6 +278,7 @@ export function LeverageTab({
 
   // Form state — persisted across refresh
   const leverageStorageKey = `yldfi-lending-leverage-${vault.address}`;
+  const [maxBorrowableLoaded, setMaxBorrowableLoaded] = useState(false);
   const [collateralAmount, setCollateralAmountRaw] = useState(() => {
     if (typeof window === "undefined") return "";
     try { return sanitizeAmount(sessionStorage.getItem(leverageStorageKey) ?? ""); } catch { return ""; }
@@ -301,21 +301,29 @@ export function LeverageTab({
   const leverageInputFocused = useRef(false);
   const leverageDebounce = useRef<ReturnType<typeof setTimeout>>(undefined);
   const leverageFollowsBase = useRef(true); // true = leverage tracks baseLeverage; false = user explicitly set it
+  const [followsBaseLeverage, setFollowsBaseLeverage] = useState(true);
   const leverageAnimRef = useRef<number | null>(null);
+  const [isLeverageAnimating, setIsLeverageAnimating] = useState(false);
   const [pendingYolo, setPendingYolo] = useState(false);
   const [calcMaxSeq, setCalcMaxSeq] = useState(0);
   const yoloWaitSeq = useRef(0);
   const [forceCalcMax, setForceCalcMax] = useState(0);
+  const setLeverageFollowsBase = useCallback((value: boolean) => {
+    leverageFollowsBase.current = value;
+    setFollowsBaseLeverage(value);
+  }, []);
 
   // Smooth leverage animation (YOLO ramp up, RESET ramp down)
   const cancelLeverageAnim = useCallback(() => {
     if (leverageAnimRef.current !== null) {
       cancelAnimationFrame(leverageAnimRef.current);
       leverageAnimRef.current = null;
+      setIsLeverageAnimating(false);
     }
   }, []);
   const animateLeverage = useCallback((from: number, to: number, duration: number, onComplete?: () => void) => {
     cancelLeverageAnim();
+    setIsLeverageAnimating(true);
     const startTime = performance.now();
     function tick(now: number) {
       const elapsed = now - startTime;
@@ -328,6 +336,7 @@ export function LeverageTab({
         leverageAnimRef.current = requestAnimationFrame(tick);
       } else {
         leverageAnimRef.current = null;
+        setIsLeverageAnimating(false);
         onComplete?.();
       }
     }
@@ -339,6 +348,7 @@ export function LeverageTab({
   const [deleverageTarget, setDeleverageTarget] = useState(1.0);
   const [deleverageInput, setDeleverageInput] = useState("1.00");
   const deleverageInitialized = useRef(false);
+  const [deleverageReady, setDeleverageReady] = useState(false);
   const deleverageInputFocused = useRef(false);
   const deleverageAnimRef = useRef<number | null>(null);
   const cancelDeleverageAnim = useCallback(() => {
@@ -380,11 +390,11 @@ export function LeverageTab({
   const [withdrawRate, setWithdrawRate] = useState<number>(0);
   useEffect(() => {
     if (!isWithdrawToOtherToken || !address) {
-      setWithdrawRate(0);
-      return;
+      const timer = setTimeout(() => setWithdrawRate(0), 0);
+      return () => clearTimeout(timer);
     }
     // Immediately clear stale rate from previous token so Max/MAX don't show wrong values
-    setWithdrawRate(0);
+    const resetTimer = setTimeout(() => setWithdrawRate(0), 0);
     let stale = false;
     const timer = setTimeout(async () => {
       try {
@@ -404,7 +414,7 @@ export function LeverageTab({
         if (!stale) setWithdrawRate(0);
       }
     }, 300);
-    return () => { stale = true; clearTimeout(timer); };
+    return () => { stale = true; clearTimeout(timer); clearTimeout(resetTimer); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isWithdrawToOtherToken, withdrawToken?.address, vault.address, address, withdrawTokenDecimals, vault.decimals]);
 
@@ -418,7 +428,7 @@ export function LeverageTab({
 
   const {
     slippage, updateSlippage, showSlippageModal, setShowSlippageModal,
-    showSimulationPreview, setShowSimulationPreview, refreshSimulationPreview,
+    showSimulationPreview, refreshSimulationPreview,
     showSimulationModal, setShowSimulationModal,
     showRoute, toggleRoute,
     zappersEnabled,
@@ -433,16 +443,12 @@ export function LeverageTab({
 
   // Calculated values
   const [maxBorrowable, setMaxBorrowable] = useState<bigint>(0n); // max total debt for totalCollateral
-  const [maxBorrowableLoaded, setMaxBorrowableLoaded] = useState(false);
   const [controllerCrvUsdBalance, setControllerCrvUsdBalance] = useState<bigint | null>(null);
   const [oraclePrice, setOraclePrice] = useState<bigint>(0n); // collateral price in crvUSD (1e18)
   const [estimatedHealth, setEstimatedHealth] = useState<number | null>(null);
-  const [swapQuote, setSwapQuote] = useState<{ expectedOut: string } | null>(null);
-  const [isQuoting, setIsQuoting] = useState(false);
 
   // Zapper actions
   const {
-    createLeveragedLoan,
     createLeveragedLoanFromToken: createLeveragedLoanFromTokenAction,
     leverageUp: leverageUpAction,
     leverageUpFromToken: leverageUpFromTokenAction,
@@ -467,9 +473,6 @@ export function LeverageTab({
     executeAfterPreview,
   } = useZapperActions();
 
-  // Preserve last approval data so content stays in DOM during close animation
-  const lastApprovalRef = useRef(pendingApproval);
-  if (pendingApproval) lastApprovalRef.current = pendingApproval;
   const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
 
   // Collateral token is the vault address
@@ -495,9 +498,12 @@ export function LeverageTab({
   // Reset tokens to defaults when zappers are disabled
   useEffect(() => {
     if (!zappersEnabled) {
-      setSelectedToken(vaultToken);
-      setWithdrawToken(null);
-      setSelfLiqMethod("direct");
+      const timer = setTimeout(() => {
+        setSelectedToken(vaultToken);
+        setWithdrawToken(null);
+        setSelfLiqMethod("direct");
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [zappersEnabled, vaultToken]);
 
@@ -537,14 +543,18 @@ export function LeverageTab({
   const [swapQuoteLoading, setSwapQuoteLoading] = useState(false);
   useEffect(() => {
     if (isCollateralToken || !collateralAmount || Number(collateralAmount) <= 0 || !address) {
-      setEstimatedCollateralFromSwap(0n);
-      setSwapRouteInfo(undefined);
-      setSwapQuoteLoading(false);
-      return;
+      const timer = setTimeout(() => {
+        setEstimatedCollateralFromSwap(0n);
+        setSwapRouteInfo(undefined);
+        setSwapQuoteLoading(false);
+      }, 0);
+      return () => clearTimeout(timer);
     }
     let stale = false;
-    setMaxBorrowableLoaded(false); // hide stale "at max leverage" while quote fetches
-    setSwapQuoteLoading(true);
+    const startTimer = setTimeout(() => {
+      setMaxBorrowableLoaded(false); // hide stale "at max leverage" while quote fetches
+      setSwapQuoteLoading(true);
+    }, 0);
     const timer = setTimeout(async () => {
       try {
         const inputAmount = parseUnits(collateralAmount, effectiveDecimals);
@@ -645,7 +655,7 @@ export function LeverageTab({
         if (!stale) setSwapQuoteLoading(false);
       }
     }, 500); // debounce
-    return () => { stale = true; clearTimeout(timer); };
+    return () => { stale = true; clearTimeout(timer); clearTimeout(startTimer); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCollateralToken, collateralAmount, effectiveDecimals, selectedToken.address, vault.address, address, inputVaultInfo]);
 
@@ -810,58 +820,83 @@ export function LeverageTab({
   // prevents slider max from dropping mid-animation (which clamps the thumb to min).
   // Exception: during YOLO animations, DON'T freeze — let the range narrow in real-time
   // so the thumb stays at 100% (animated value above new max gets clamped to right end).
-  const isAnimating = leverageAnimRef.current !== null;
-  const shouldFreezeMax = isAnimating && !pendingYolo;
-  const stableMaxLevRef = useRef(maxLeverage);
-  if (maxBorrowableLoaded && !shouldFreezeMax) stableMaxLevRef.current = maxLeverage;
-  const renderMaxLeverage = (maxBorrowableLoaded && !shouldFreezeMax) ? maxLeverage : stableMaxLevRef.current;
+  const shouldFreezeMax = isLeverageAnimating && !pendingYolo;
+  const [renderMaxLeverage, setRenderMaxLeverage] = useState(maxLeverage);
+  useEffect(() => {
+    if (!maxBorrowableLoaded || shouldFreezeMax || maxLeverage > renderMaxLeverage) return;
+    const timer = setTimeout(() => {
+      setRenderMaxLeverage(maxLeverage);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [maxBorrowableLoaded, shouldFreezeMax, maxLeverage, renderMaxLeverage]);
 
   // Effective leverage: when tracking baseLeverage, use it directly (no stale state flash)
   // When user has explicitly set leverage, use the leverage state
   const effectiveLeverage = useMemo(() => {
-    return leverageFollowsBase.current ? baseLeverage : leverage;
-  }, [baseLeverage, leverage]);
+    return followsBaseLeverage ? baseLeverage : leverage;
+  }, [baseLeverage, leverage, followsBaseLeverage]);
 
   // Clamp leverage to valid range when maxLeverage/baseLeverage changes
   const sliderMin = Math.max(Math.floor(baseLeverage * 100), 110);
 
   // Preserve slider visibility during stale data transitions and animations
-  const sliderVisibleRef = useRef(false);
+  const [showSliderSnapshot, setShowSliderSnapshot] = useState(false);
   const sliderCondition = maxAdditionalBorrow > 0n && renderMaxLeverage > baseLeverage + 0.005;
   // Show slider greyed out while loading quote/calcMax when user has entered an amount
   const hasInput = collateralAmount !== "" && Number(collateralAmount) > 0;
   const sliderLoading = !maxBorrowableLoaded && hasInput && !pendingYolo;
-  const showSlider = pendingYolo || isAnimating || sliderLoading || (maxBorrowableLoaded ? sliderCondition : sliderVisibleRef.current);
-  if (maxBorrowableLoaded && !isAnimating) sliderVisibleRef.current = sliderCondition;
+  const showSlider = pendingYolo || isLeverageAnimating || sliderLoading || (maxBorrowableLoaded ? sliderCondition : showSliderSnapshot);
+  useEffect(() => {
+    if (!maxBorrowableLoaded || isLeverageAnimating) return;
+    const timer = setTimeout(() => {
+      setShowSliderSnapshot(sliderCondition);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [maxBorrowableLoaded, isLeverageAnimating, sliderCondition]);
 
   useEffect(() => {
-    if (pendingYolo || !maxBorrowableLoaded || leverageAnimRef.current !== null) return; // skip while YOLO pending, calcMax in-flight, or animating
-    if (leverageFollowsBase.current) {
+    if (pendingYolo || !maxBorrowableLoaded || isLeverageAnimating) return; // skip while YOLO pending, calcMax in-flight, or animating
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    if (followsBaseLeverage) {
       // Keep leverage state synced with baseLeverage (for when user later interacts with slider)
-      if (Math.abs(leverage - baseLeverage) > 0.001) setLeverage(baseLeverage);
-      return;
+      if (Math.abs(leverage - baseLeverage) > 0.001) {
+        timer = setTimeout(() => setLeverage(baseLeverage), 0);
+      }
+    } else if (leverage > maxLeverage) {
+      timer = setTimeout(() => setLeverage(Math.max(baseLeverage, 1.1)), 0);
+    } else if (leverage < baseLeverage && baseLeverage > 1) {
+      timer = setTimeout(() => setLeverage(baseLeverage), 0);
     }
-    if (leverage > maxLeverage) setLeverage(Math.max(baseLeverage, 1.1));
-    if (leverage < baseLeverage && baseLeverage > 1) setLeverage(baseLeverage);
-  }, [maxLeverage, baseLeverage, pendingYolo, maxBorrowableLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [maxLeverage, baseLeverage, pendingYolo, maxBorrowableLoaded, isLeverageAnimating, followsBaseLeverage, leverage]);
 
   // YOLO: re-target animation once calcMax completes with real maxLeverage
   // Animation already started in click handler with stale estimate — this adjusts the target.
   // pendingYolo stays true until re-target completes (keeps renderMaxLeverage unfrozen).
   useEffect(() => {
     if (!pendingYolo) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     if (calcMaxSeq > yoloWaitSeq.current && maxBorrowableLoaded) {
       if (maxBorrowable > 0n) {
-        leverageFollowsBase.current = false;
-        // Re-target from current animated position to real maxLeverage
-        animateLeverage(leverage, maxLeverage, 200, () => {
-          setPendingYolo(false);
-        });
+        timer = setTimeout(() => {
+          setLeverageFollowsBase(false);
+          // Re-target from current animated position to real maxLeverage
+          animateLeverage(leverage, maxLeverage, 200, () => {
+            setPendingYolo(false);
+          });
+        }, 0);
       } else {
-        cancelLeverageAnim();
-        setPendingYolo(false);
+        timer = setTimeout(() => {
+          cancelLeverageAnim();
+          setPendingYolo(false);
+        }, 0);
       }
     }
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
   }, [pendingYolo, calcMaxSeq, maxBorrowable, maxBorrowableLoaded, maxLeverage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync text input when effective leverage changes from slider/clamp/base tracking (not while user is typing)
@@ -875,9 +910,13 @@ export function LeverageTab({
   useEffect(() => {
     if (deleverageInitialized.current) return;
     if (activeMode === "deleverage" && currentLeverage > 1) {
-      deleverageInitialized.current = true;
-      setDeleverageTarget(currentLeverage);
-      setDeleverageInput(currentLeverage.toFixed(2));
+      const timer = setTimeout(() => {
+        deleverageInitialized.current = true;
+        setDeleverageReady(true);
+        setDeleverageTarget(currentLeverage);
+        setDeleverageInput(currentLeverage.toFixed(2));
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [activeMode, currentLeverage]);
 
@@ -925,7 +964,7 @@ export function LeverageTab({
   }, [effectiveLeverage, oraclePrice, totalCollateral, vault.decimals, existingDebt, maxAdditionalBorrow, maxBorrowable, controllerCrvUsdBalance]);
 
   // Parse withdrawal amount (convert from withdraw token units to ycvxCRV)
-  const withdrawAmountBn = useMemo(() => {
+  const withdrawAmountBn = (() => {
     if (!withdrawAmount) return 0n;
     try {
       if (isWithdrawToOtherToken) {
@@ -939,11 +978,11 @@ export function LeverageTab({
       }
       return parseUnits(withdrawAmount, vault.decimals);
     } catch { return 0n; }
-  }, [withdrawAmount, vault.decimals, isWithdrawToOtherToken, withdrawRate]);
+  })();
 
   // Calculate collateral to sell for target deleverage
   // S = (C - W_val) - L * (C - W_val - D)
-  const deleverageCollateralToSell = useMemo(() => {
+  const deleverageCollateralToSell = (() => {
     if (!position?.hasLoan || oraclePrice === 0n) return 0n;
     const C = Number(formatUnits(position.collateral * oraclePrice / (10n ** BigInt(vault.decimals)), 18));
     const D = Number(formatUnits(position.debt, 18));
@@ -956,13 +995,13 @@ export function LeverageTab({
     const tokenAmount = sellValue / Number(formatUnits(oraclePrice, 18));
     const decimals = vault.decimals > 6 ? 6 : vault.decimals;
     try { return parseUnits(tokenAmount.toFixed(decimals), vault.decimals); } catch { return 0n; }
-  }, [position, oraclePrice, vault, deleverageTarget, withdrawAmountBn]);
+  })();
 
   // Debt repaid (approximate)
-  const debtToRepay = useMemo(() => {
+  const debtToRepay = (() => {
     if (oraclePrice === 0n || deleverageCollateralToSell === 0n) return 0n;
     return deleverageCollateralToSell * oraclePrice / (10n ** BigInt(vault.decimals));
-  }, [deleverageCollateralToSell, oraclePrice, vault.decimals]);
+  })();
 
   // Close position: sell ALL collateral to fully repay debt.
   // Controller closes loan when stablecoins from swap >= debt (repay_extended).
@@ -975,24 +1014,6 @@ export function LeverageTab({
   // Since min_collateral is linear in debt, scale for remaining debt after deleverage:
   //   minColl_projected = minColl_current × remainingDebt / currentDebt
   //   projectedMaxWithdrawable = remainingCollateral - minColl_projected
-  const projectedMaxWithdrawable = useMemo(() => {
-    if (!position?.hasLoan) return 0n;
-    if (deleverageCollateralToSell === 0n) return position.maxWithdrawable;
-
-    const remainingCollateral = position.collateral > deleverageCollateralToSell
-      ? position.collateral - deleverageCollateralToSell : 0n;
-    const remainingDebt = position.debt > debtToRepay
-      ? position.debt - debtToRepay : 0n;
-
-    if (remainingDebt === 0n) return remainingCollateral;
-    if (position.debt === 0n) return 0n;
-
-    // Derive min_collateral from DeFi Saver's on-chain result, then scale linearly
-    const minCollCurrent = position.collateral - position.maxWithdrawable;
-    const minCollProjected = minCollCurrent * remainingDebt / position.debt;
-    return remainingCollateral > minCollProjected ? remainingCollateral - minCollProjected : 0n;
-  }, [position, deleverageCollateralToSell, debtToRepay]);
-
   // Stable max withdrawable for MaxButton display — computed with W_val=0 to break the
   // circular dependency: withdrawAmountBn → deleverageCollateralToSell → projectedMax → MAX → withdrawAmount
   const stableMaxWithdrawable = useMemo(() => {
@@ -1059,7 +1080,7 @@ export function LeverageTab({
       });
     }
     return { steps };
-  }, [activeMode, deleverageCollateralToSell, withdrawAmountBn, vault, debtToRepay, isWithdrawToOtherToken, withdrawToken]);
+  }, [activeMode, deleverageCollateralToSell, withdrawAmountBn, vault, debtToRepay, isWithdrawToOtherToken, withdrawToken, withdrawAmount]);
 
   // Route info for self-liquidation via zapper (collateral → crvUSD swap)
   const selfLiquidateRouteInfo = useMemo((): RouteInfo | undefined => {
@@ -1086,7 +1107,7 @@ export function LeverageTab({
       amount: Number(formatUnits(debtRepaid, 18)).toLocaleString(undefined, { maximumFractionDigits: 2 }),
     });
     return { steps };
-  }, [activeMode, canDirectLiquidate, effectiveSelfLiqPercent, position, vault]);
+  }, [activeMode, selfLiqMethod, effectiveSelfLiqPercent, position, vault]);
 
   // Estimate health for new positions
   useEffect(() => {
@@ -1253,12 +1274,16 @@ export function LeverageTab({
   const [userCrvUsdBalance, setUserCrvUsdBalance] = useState(0n);
   useEffect(() => {
     if (mode !== "selfLiquidate" || !publicClient || !address) {
-      setCanDirectLiquidate(false);
-      setCrvUsdGap(0n);
-      return;
+      const timer = setTimeout(() => {
+        setCanDirectLiquidate(false);
+        setCrvUsdGap(0n);
+      }, 0);
+      return () => clearTimeout(timer);
     }
     // Reset while fetching to avoid stale enabled state
-    setCanDirectLiquidate(false);
+    const resetTimer = setTimeout(() => {
+      setCanDirectLiquidate(false);
+    }, 0);
     let stale = false;
     async function check() {
       try {
@@ -1291,7 +1316,7 @@ export function LeverageTab({
       }
     }
     check();
-    return () => { stale = true; };
+    return () => { stale = true; clearTimeout(resetTimer); };
   }, [mode, publicClient, address, controllerAddress, effectiveSelfLiqPercent]);
 
   // Handle transaction success — clear all inputs and reset to idle
@@ -1302,15 +1327,18 @@ export function LeverageTab({
       } else {
         trackLendingLeverageSuccess(vault.id, collateralAmount || "0", leverage.toFixed(2));
       }
-      setCollateralAmountRaw("");
-      setWithdrawAmount("");
-      leverageFollowsBase.current = true;
+      const timer = setTimeout(() => {
+        setCollateralAmountRaw("");
+        setWithdrawAmount("");
+        setLeverageFollowsBase(true);
+      }, 0);
       try { sessionStorage.removeItem(leverageStorageKey); } catch { /* */ }
       onTransactionSuccess();
       refetchBalance();
       reset();
+      return () => clearTimeout(timer);
     }
-  }, [status, onTransactionSuccess, reset, refetchBalance, leverageStorageKey, activeMode, vault.id, collateralAmount, leverage]);
+  }, [status, onTransactionSuccess, reset, refetchBalance, leverageStorageKey, activeMode, vault.id, collateralAmount, leverage, setLeverageFollowsBase, setWithdrawAmount]);
 
   // Toast error messages to user
   useEffect(() => {
@@ -1557,7 +1585,7 @@ export function LeverageTab({
           {/* Sub-tabs */}
           <div className="flex items-center gap-1 p-1 rounded-lg bg-[var(--muted)] border border-[var(--border)]">
             <button
-              onClick={() => { cancelLeverageAnim(); setSubTab("leverageUp"); reset(); setCollateralAmount(""); leverageFollowsBase.current = true; setLeverage(baseLeverage); setWithdrawAmount(""); setPendingYolo(false); setEstimatedHealth(null); setSelectedToken(vaultToken); }}
+              onClick={() => { cancelLeverageAnim(); setSubTab("leverageUp"); reset(); setCollateralAmount(""); setLeverageFollowsBase(true); setLeverage(baseLeverage); setWithdrawAmount(""); setPendingYolo(false); setEstimatedHealth(null); setSelectedToken(vaultToken); }}
               className={cn(
                 "flex-1 flex items-center justify-center gap-1.5 py-2 rounded-md text-sm font-medium transition-all",
                 activeMode === "leverageUp"
@@ -1569,7 +1597,7 @@ export function LeverageTab({
               Leverage Up
             </button>
             <button
-              onClick={() => { cancelLeverageAnim(); setSubTab("deleverage"); reset(); setCollateralAmount(""); leverageFollowsBase.current = true; setLeverage(baseLeverage); setWithdrawAmount(""); setWithdrawToken(null); setDeleverageTarget(currentLeverage); setDeleverageInput(currentLeverage.toFixed(2)); setPendingYolo(false); setEstimatedHealth(null); setSelectedToken(vaultToken); }}
+              onClick={() => { cancelLeverageAnim(); setSubTab("deleverage"); reset(); setCollateralAmount(""); setLeverageFollowsBase(true); setLeverage(baseLeverage); setWithdrawAmount(""); setWithdrawToken(null); setDeleverageTarget(currentLeverage); setDeleverageInput(currentLeverage.toFixed(2)); setPendingYolo(false); setEstimatedHealth(null); setSelectedToken(vaultToken); }}
               className={cn(
                 "flex-1 flex items-center justify-center gap-1.5 py-2 rounded-md text-sm font-medium transition-all",
                 activeMode === "deleverage"
@@ -1648,7 +1676,7 @@ export function LeverageTab({
                           leverageDebounce.current = setTimeout(() => {
                             const v = parseFloat(e.target.value);
                             if (!isNaN(v)) {
-                              leverageFollowsBase.current = false;
+                              setLeverageFollowsBase(false);
                               const clamped = Math.min(Math.max(v, baseLeverage), maxLeverage);
                               setLeverage(clamped);
                               setLeverageInput(clamped.toFixed(2));
@@ -1660,7 +1688,7 @@ export function LeverageTab({
                           leverageInputFocused.current = false;
                           const v = parseFloat(leverageInput);
                           if (!isNaN(v)) {
-                            leverageFollowsBase.current = false;
+                            setLeverageFollowsBase(false);
                             const clamped = Math.min(Math.max(v, baseLeverage), maxLeverage);
                             setLeverage(clamped);
                             setLeverageInput(clamped.toFixed(2));
@@ -1674,12 +1702,12 @@ export function LeverageTab({
                       <LeverageMaxButton
                         onMax={() => {
                           cancelLeverageAnim();
-                          leverageFollowsBase.current = false;
+                          setLeverageFollowsBase(false);
                           animateLeverage(effectiveLeverage, maxLeverage, 300);
                         }}
                         onMaxAll={effectiveBalance > 0n ? () => {
                           cancelLeverageAnim();
-                          leverageFollowsBase.current = false;
+                          setLeverageFollowsBase(false);
                           setCollateralAmount(formatUnits(effectiveBalance, effectiveDecimals));
                           yoloWaitSeq.current = calcMaxSeq;
                           setForceCalcMax(c => c + 1);
@@ -1690,14 +1718,14 @@ export function LeverageTab({
                         onReset={Math.round(effectiveLeverage * 100) !== sliderMin || collateralAmount !== "" ? () => {
                           const from = effectiveLeverage;
                           setPendingYolo(false);
-                          leverageFollowsBase.current = false;
+                          setLeverageFollowsBase(false);
                           // Animate within CURRENT range first, then clear collateral after
                           // (clearing collateral shifts the range — slider min can exceed frozen max)
                           animateLeverage(from, baseLeverage, 300, () => {
-                            leverageFollowsBase.current = true;
+                            setLeverageFollowsBase(true);
                             // Temporarily widen frozen max so slider min doesn't exceed max
                             // while calcMax is in-flight for the new collateral amount
-                            stableMaxLevRef.current = 10;
+                            setRenderMaxLeverage(10);
                             setCollateralAmount("");
                           });
                         } : undefined}
@@ -1710,7 +1738,7 @@ export function LeverageTab({
                     max={renderMaxLeverage}
                     step="any"
                     value={effectiveLeverage}
-                    onChange={(e) => { cancelLeverageAnim(); leverageFollowsBase.current = false; setLeverage(parseFloat(e.target.value)); }}
+                    onChange={(e) => { cancelLeverageAnim(); setLeverageFollowsBase(false); setLeverage(parseFloat(e.target.value)); }}
                     className="w-full"
                   />
                 </div>
@@ -2077,7 +2105,7 @@ export function LeverageTab({
       {/* Approval Flow */}
       <ApprovalCard
         show={showApprovalCard}
-        pendingApproval={lastApprovalRef.current}
+        pendingApproval={pendingApproval}
         approvalProgress={approvalProgress}
         decimals={vault.decimals}
         isApproving={isApproving}
@@ -2110,7 +2138,7 @@ export function LeverageTab({
         style={{ gridTemplateRows: !showApprovalCard ? "1fr" : "0fr" }}
       >
         <div className="overflow-hidden">
-          {isClosePosition && activeMode === "deleverage" && deleverageInitialized.current && (
+          {isClosePosition && activeMode === "deleverage" && deleverageReady && (
             <div className="mb-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-500 text-xs flex items-center gap-2">
               <AlertTriangle size={14} className="shrink-0" />
               Sells all collateral, repays debt, returns remainder
