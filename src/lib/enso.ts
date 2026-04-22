@@ -7743,7 +7743,6 @@ export async function fetchAnyToPxCvxRoute(params: {
   const inputIsCvx = params.inputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
   const inputIsEth = params.inputToken.toLowerCase() === ETH_ADDRESS.toLowerCase();
 
-  // Estimate CVX amount we'll have mid-bundle
   let estimatedCvxAmount = params.amountIn;
   if (!inputIsCvx) {
     if (inputIsEth) {
@@ -7789,7 +7788,6 @@ export async function fetchAnyToPxCvxRoute(params: {
   const actions: EnsoBundleAction[] = [];
   let actionIndex = 0;
 
-  // Action 0 (if needed): Route input → CVX
   if (!inputIsCvx) {
     actions.push({
       protocol: "enso",
@@ -7804,15 +7802,14 @@ export async function fetchAnyToPxCvxRoute(params: {
     actionIndex++;
   }
 
-  if (swapAmount > 0n) {
-    // Curve swap: CVX → lpxCVX → unwrap → pxCVX (lands at ENSO_SHORTCUTS)
+  if (swapAmount > 0n && mintAmount > 0n) {
     actions.push({
       protocol: "erc20",
       action: "approve",
       args: {
         token: TOKENS.CVX,
         spender: PIREX.LPXCVX_CVX_POOL,
-        amount: inputIsCvx ? swapAmount.toString() : { useOutputOfCallAt: actionIndex - 1 },
+        amount: swapAmount.toString(),
       },
     });
     actionIndex++;
@@ -7856,10 +7853,7 @@ export async function fetchAnyToPxCvxRoute(params: {
       },
     });
     actionIndex++;
-  }
 
-  if (mintAmount > 0n) {
-    // Pirex mint: CVX → pxCVX 1:1, sent to ENSO_SHORTCUTS so it aggregates with swap portion
     actions.push({
       protocol: "erc20",
       action: "approve",
@@ -7880,7 +7874,86 @@ export async function fetchAnyToPxCvxRoute(params: {
         abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
         args: [
           mintAmount.toString(),
-          ENSO_SHORTCUTS,
+          ENSO_ROUTER_EXECUTOR,
+          "false",
+          "0x0000000000000000000000000000000000000000",
+        ],
+      },
+    });
+    actionIndex++;
+  } else if (swapAmount > 0n) {
+    actions.push({
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: TOKENS.CVX,
+        spender: PIREX.LPXCVX_CVX_POOL,
+        amount: inputIsCvx ? params.amountIn : { useOutputOfCallAt: actionIndex - 1 },
+      },
+    });
+    actionIndex++;
+
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: PIREX.LPXCVX_CVX_POOL,
+        method: "exchange",
+        abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)",
+        args: [
+          String(PIREX.POOL_INDEX.CVX),
+          String(PIREX.POOL_INDEX.LPXCVX),
+          inputIsCvx ? params.amountIn : { useOutputOfCallAt: actionIndex - 2 },
+          swapMinDy,
+        ],
+      },
+    });
+    const swapIdx = actionIndex++;
+
+    actions.push({
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: PIREX.LPXCVX,
+        spender: PIREX.LPXCVX,
+        amount: { useOutputOfCallAt: swapIdx },
+      },
+    });
+    actionIndex++;
+
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: PIREX.LPXCVX,
+        method: "unwrap",
+        abi: "function unwrap(uint256 amount)",
+        args: [{ useOutputOfCallAt: swapIdx }],
+      },
+    });
+    actionIndex++;
+  } else {
+    actions.push({
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: TOKENS.CVX,
+        spender: PIREX.PIREX_CVX,
+        amount: inputIsCvx ? params.amountIn : { useOutputOfCallAt: actionIndex - 1 },
+      },
+    });
+    actionIndex++;
+
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: PIREX.PIREX_CVX,
+        method: "deposit",
+        abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
+        args: [
+          inputIsCvx ? params.amountIn : { useOutputOfCallAt: actionIndex - 2 },
+          ENSO_ROUTER_EXECUTOR,
           "false",
           "0x0000000000000000000000000000000000000000",
         ],
@@ -7889,7 +7962,6 @@ export async function fetchAnyToPxCvxRoute(params: {
     actionIndex++;
   }
 
-  // Read total pxCVX balance at ENSO_SHORTCUTS (both paths land here)
   actions.push({
     protocol: "enso",
     action: "balance",
@@ -7898,7 +7970,6 @@ export async function fetchAnyToPxCvxRoute(params: {
   const pxCvxBalanceIdx = actionIndex++;
 
   if (params.depositIntoVault) {
-    // Deposit pxCVX into a pxCVX-underlying ERC4626 external vault (e.g. uCVX)
     actions.push({
       protocol: "erc4626",
       action: "deposit",
@@ -7910,7 +7981,6 @@ export async function fetchAnyToPxCvxRoute(params: {
       },
     });
   } else {
-    // Transfer pxCVX to user
     actions.push({
       protocol: "erc20",
       action: "transfer",
@@ -7926,31 +7996,37 @@ export async function fetchAnyToPxCvxRoute(params: {
     fromAddress: params.fromAddress,
     actions,
     routingStrategy: "router",
-    skipQuote: true, // multi-token bundles can't be quote-simulated
   });
 
-  // skipQuote=true returns no amountsOut — populate with our estimate so the
-  // UI can display the expected output.
   if (params.depositIntoVault) {
-    // Estimate vault shares from pxCVX amount via previewDeposit
-    let expectedShares = totalExpectedPxCvx.toString();
-    try {
-      const selector = "0xef8b30f7"; // previewDeposit(uint256)
-      const data = selector + totalExpectedPxCvx.toString(16).padStart(64, "0");
-      const res = await rpcWithFallback<{ result?: string }>({
-        jsonrpc: "2.0", id: 1, method: "eth_call",
-        params: [{ to: params.depositIntoVault, data }, "latest"],
-      });
-      if (res.result && res.result !== "0x") {
-        expectedShares = BigInt(res.result).toString();
+    let expectedShares = bundleResult.amountsOut[params.depositIntoVault.toLowerCase()]
+      || bundleResult.amountsOut[params.depositIntoVault];
+    if (!expectedShares || BigInt(expectedShares) === 0n) {
+      try {
+        const selector = "0xef8b30f7"; // previewDeposit(uint256)
+        const data = selector + totalExpectedPxCvx.toString(16).padStart(64, "0");
+        const res = await rpcWithFallback<{ result?: string }>({
+          jsonrpc: "2.0", id: 1, method: "eth_call",
+          params: [{ to: params.depositIntoVault, data }, "latest"],
+        });
+        if (res.result && res.result !== "0x") {
+          expectedShares = BigInt(res.result).toString();
+        }
+      } catch {
+        // leave as-is
       }
-    } catch { /* fall back */ }
+      if (expectedShares) {
+        bundleResult.amountsOut = {
+          ...bundleResult.amountsOut,
+          [params.depositIntoVault.toLowerCase()]: expectedShares,
+        };
+      }
+    }
     bundleResult.amountsOut = {
       ...bundleResult.amountsOut,
-      [params.depositIntoVault.toLowerCase()]: expectedShares,
       [PIREX.PXCVX.toLowerCase()]: totalExpectedPxCvx.toString(),
     };
-  } else {
+  } else if (!bundleResult.amountsOut[PIREX.PXCVX.toLowerCase()] || BigInt(bundleResult.amountsOut[PIREX.PXCVX.toLowerCase()] || "0") === 0n) {
     bundleResult.amountsOut = {
       ...bundleResult.amountsOut,
       [PIREX.PXCVX.toLowerCase()]: totalExpectedPxCvx.toString(),
@@ -7965,9 +8041,6 @@ export async function fetchAnyToPxCvxRoute(params: {
     bonusAmount = (Number(expectedSwapPxCvx - swapAmount) / 1e18).toFixed(4);
   }
 
-  const cvxAmountFmt = (Number(estimatedCvxAmount) / 1e18).toFixed(4);
-  const swapCvxFmt = (Number(swapAmount) / 1e18).toFixed(4);
-  const mintCvxFmt = (Number(mintAmount) / 1e18).toFixed(4);
   const steps: RouteStep[] = [];
   if (!inputIsCvx) {
     steps.push({ tokenSymbol: inputSymbol, action: "Swap", description: "for CVX", protocol: "Enso" });
@@ -7975,7 +8048,7 @@ export async function fetchAnyToPxCvxRoute(params: {
   if (swapAmount > 0n && mintAmount > 0n) {
     steps.push({
       tokenSymbol: "CVX",
-      amount: swapCvxFmt,
+      amount: (Number(swapAmount) / 1e18).toFixed(4),
       action: "Swap",
       description: "CVX for pxCVX",
       protocol: "Curve",
@@ -7985,40 +8058,69 @@ export async function fetchAnyToPxCvxRoute(params: {
     });
     steps.push({
       tokenSymbol: "CVX",
-      amount: mintCvxFmt,
+      amount: (Number(mintAmount) / 1e18).toFixed(4),
       action: "Mint",
       description: "pxCVX with CVX (1:1)",
       protocol: "Pirex",
     });
   } else if (swapAmount > 0n) {
-    steps.push({ tokenSymbol: "CVX", amount: cvxAmountFmt, action: "Swap", description: "CVX for pxCVX", protocol: "Curve", bonus: swapBonus, bonusAmount, bonusSymbol: "pxCVX" });
+    steps.push({
+      tokenSymbol: "CVX",
+      amount: (Number(estimatedCvxAmount) / 1e18).toFixed(4),
+      action: "Swap",
+      description: "CVX for pxCVX",
+      protocol: "Curve",
+      bonus: swapBonus,
+      bonusAmount,
+      bonusSymbol: "pxCVX",
+    });
   } else {
-    steps.push({ tokenSymbol: "CVX", amount: cvxAmountFmt, action: "Mint", description: "pxCVX with CVX (1:1)", protocol: "Pirex" });
+    steps.push({
+      tokenSymbol: "CVX",
+      amount: (Number(estimatedCvxAmount) / 1e18).toFixed(4),
+      action: "Mint",
+      description: "pxCVX with CVX (1:1)",
+      protocol: "Pirex",
+    });
   }
+
+  const outVaultSymbol = params.depositIntoVault ? getTokenSymbol(params.depositIntoVault) : undefined;
   if (params.depositIntoVault) {
-    const outVaultSymbol = getTokenSymbol(params.depositIntoVault);
     const pxCvxTotalFmt = (Number(totalExpectedPxCvx) / 1e18).toFixed(4);
-    steps.push({ tokenSymbol: "pxCVX", amount: pxCvxTotalFmt, action: "Deposit", description: `pxCVX into ${outVaultSymbol}`, protocol: "Llama Airforce" });
-    steps.push({ tokenSymbol: outVaultSymbol, action: "Receive", description: "vault shares", protocol: "Llama Airforce" });
+    steps.push({
+      tokenSymbol: "pxCVX",
+      amount: pxCvxTotalFmt,
+      action: "Deposit",
+      description: `pxCVX into ${outVaultSymbol}`,
+      protocol: "Llama Airforce",
+    });
+    steps.push({
+      tokenSymbol: outVaultSymbol!,
+      action: "Receive",
+      description: "vault shares",
+      protocol: "Llama Airforce",
+    });
   } else {
     steps.push({ tokenSymbol: "pxCVX", action: "Receive", description: "tokens", protocol: "Pirex" });
   }
 
-  const protocols = inputIsCvx
-    ? swapAmount > 0n && mintAmount > 0n
-      ? ["Curve", "Pirex"]
-      : swapAmount > 0n
-        ? ["Curve", "Pirex"]
-        : ["Pirex"]
-    : swapAmount > 0n && mintAmount > 0n
-      ? ["Enso", "Curve", "Pirex"]
-      : swapAmount > 0n
-        ? ["Enso", "Curve", "Pirex"]
-        : ["Enso", "Pirex"];
+  const tokens = params.depositIntoVault
+    ? inputIsCvx
+      ? ["CVX", "pxCVX", outVaultSymbol!]
+      : [inputSymbol, "CVX", "pxCVX", outVaultSymbol!]
+    : inputIsCvx
+      ? ["CVX", "pxCVX"]
+      : [inputSymbol, "CVX", "pxCVX"];
+
+  const protocols = [
+    ...(inputIsCvx ? [] : ["Enso"]),
+    ...(swapAmount > 0n ? ["Curve", "Pirex"] : ["Pirex"]),
+    ...(params.depositIntoVault ? ["Llama Airforce"] : []),
+  ];
 
   const routeInfo: RouteInfo = {
     steps,
-    tokens: inputIsCvx ? ["CVX", "pxCVX"] : [inputSymbol, "CVX", "pxCVX"],
+    tokens,
     protocols,
     hybrid: {
       swapAmount: swapAmount.toString(),
