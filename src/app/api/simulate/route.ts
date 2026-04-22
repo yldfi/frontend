@@ -6,7 +6,10 @@ import { fetchTokenPricesDirect, ENSO_ROUTER, ENSO_ROUTER_EXECUTOR } from "@/lib
 import { CRVUSD_ADDRESS, USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
 import { ZAPPER_ADDRESS } from "@/lib/zapper";
 import { ERC4626_ABI } from "@/lib/abis";
-import { getSimulationPriceLookupAddresses, resolveSimulationTokenPrice } from "@/lib/simulation-pricing";
+import {
+  getSimulationPriceLookupAddresses,
+  resolveSimulationDollarValue,
+} from "@/lib/simulation-pricing";
 
 export const dynamic = "force-dynamic";
 
@@ -456,12 +459,15 @@ async function enrichVaultTokenPrices(assetChanges: AssetChange[]): Promise<Asse
       const info = vaultInfoMap.get(change.address.toLowerCase());
       if (!info) return change;
 
-      const underlyingAmount = convertMap.get(change.address.toLowerCase());
-      const underlyingPrice = resolveSimulationTokenPrice(info.underlying, priceMap);
-      if (underlyingAmount === undefined || underlyingPrice === undefined) return change;
-
-      const underlyingValue = Number(underlyingAmount) / 10 ** info.underlyingDecimals;
-      return { ...change, dollarValue: (underlyingValue * underlyingPrice).toString() };
+      const dollarValue = resolveSimulationDollarValue({
+        address: change.address,
+        rawAmount: change.rawAmount,
+        decimals: change.decimals,
+        priceMap,
+        vaultInfo: info,
+        underlyingAmount: convertMap.get(change.address.toLowerCase()),
+      });
+      return dollarValue ? { ...change, dollarValue } : change;
     });
 
     // Fallback: fetch Enso prices directly for any still-unpriced tokens
@@ -479,21 +485,55 @@ async function enrichTokenPricesFallback(assetChanges: AssetChange[]): Promise<A
     );
     if (unpriced.length === 0) return assetChanges;
 
-    // Deduplicate addresses
-    const addresses = getSimulationPriceLookupAddresses(unpriced.map(c => c.address.toLowerCase()));
-    const priceData = await withTimeout(
-      fetchTokenPricesDirect(addresses),
-      PRICE_FETCH_TIMEOUT_MS,
-      "fallback_price_fetch",
-    );
+    const vaultInfoMap = new Map<string, { underlying: string; underlyingDecimals: number }>();
+    for (const change of unpriced) {
+      const info = lookupVault(change.address);
+      if (info) {
+        vaultInfoMap.set(change.address.toLowerCase(), info);
+      }
+    }
+
+    const addresses = getSimulationPriceLookupAddresses([
+      ...unpriced.map(c => c.address.toLowerCase()),
+      ...[...vaultInfoMap.values()].map(info => info.underlying),
+    ]);
+    const vaultChangesNeedingConvert = unpriced.filter(c => vaultInfoMap.has(c.address.toLowerCase()));
+
+    const [priceData, ...convertResults] = await Promise.all([
+      withTimeout(
+        fetchTokenPricesDirect(addresses),
+        PRICE_FETCH_TIMEOUT_MS,
+        "fallback_price_fetch",
+      ),
+      ...vaultChangesNeedingConvert.map(change =>
+        withTimeout(
+          publicClient.readContract({
+            address: change.address as `0x${string}`,
+            abi: ERC4626_ABI,
+            functionName: "convertToAssets",
+            args: [BigInt(change.rawAmount)],
+          }),
+          CONVERT_TO_ASSETS_TIMEOUT_MS,
+          "fallback_convert_to_assets",
+        ).then(r => ({ address: change.address.toLowerCase(), underlyingAmount: r as bigint }))
+          .catch(() => null)
+      ),
+    ]);
+
     const priceMap = new Map(priceData.map(p => [p.address.toLowerCase(), p.price]));
+    const convertMap = new Map(convertResults.filter(Boolean).map(r => [r!.address, r!.underlyingAmount]));
 
     return assetChanges.map(change => {
       if (change.dollarValue && change.dollarValue !== "0" && parseFloat(change.dollarValue) !== 0) return change;
-      const price = resolveSimulationTokenPrice(change.address, priceMap);
-      if (price === undefined || price === 0) return change;
-      const amount = Number(change.rawAmount) / 10 ** change.decimals;
-      return { ...change, dollarValue: (amount * price).toString() };
+      const dollarValue = resolveSimulationDollarValue({
+        address: change.address,
+        rawAmount: change.rawAmount,
+        decimals: change.decimals,
+        priceMap,
+        vaultInfo: vaultInfoMap.get(change.address.toLowerCase()),
+        underlyingAmount: convertMap.get(change.address.toLowerCase()),
+      });
+      return dollarValue ? { ...change, dollarValue } : change;
     });
   } catch {
     return assetChanges;
@@ -900,6 +940,7 @@ export async function POST(request: NextRequest) {
       reason: formatSimulateError(error),
       processedChanges: processedChanges.length,
     });
+    assetChanges = await enrichTokenPricesFallback(processedChanges);
   }
 
   logSimulate("finish", {
