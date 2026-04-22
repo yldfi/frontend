@@ -22,9 +22,10 @@ const vnetRpc: string | undefined = process.env.NODE_ENV === "development"
 const normalTransport = anvilRpc
   ? http(anvilRpc)
   : fallback([
-      http(PUBLIC_RPC_URLS.drpc),
       http(PUBLIC_RPC_URLS.publicnode),
       http(PUBLIC_RPC_URLS.onerpc),
+      http(PUBLIC_RPC_URLS.payload),
+      http(PUBLIC_RPC_URLS.drpc),
       unstable_connector(injected),
     ]);
 

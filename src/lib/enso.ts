@@ -559,6 +559,19 @@ function formatRouteAmount(amount: bigint | string, tokenAddress: string): strin
   return formatTokenAmount(rawAmount, getTokenDecimals(tokenAddress), 4);
 }
 
+function formatRouteDeltaAmount(
+  amountOut: bigint | string,
+  amountIn: bigint | string,
+  tokenAddress: string,
+): string {
+  const rawAmountOut = typeof amountOut === "bigint" ? amountOut : BigInt(amountOut);
+  const rawAmountIn = typeof amountIn === "bigint" ? amountIn : BigInt(amountIn);
+  const delta = rawAmountOut >= rawAmountIn
+    ? rawAmountOut - rawAmountIn
+    : rawAmountIn - rawAmountOut;
+  return formatRouteAmount(delta, tokenAddress);
+}
+
 function createRouteStep(step: RouteTraceStep): RouteStep {
   return {
     tokenSymbol: step.tokenSymbol ?? getTokenSymbol(step.tokenAddress),
@@ -2640,8 +2653,7 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
 
   // Calculate bonus amount in tokens (cvgCVX received - CVX input)
   // Positive = extra tokens from swap, Negative = fewer tokens than 1:1 mint
-  const bonusAmountWei = expectedCvgCvx - BigInt(estimatedCvx);
-  const bonusAmountFormatted = (Number(bonusAmountWei) / 1e18).toFixed(4);
+  const bonusAmountFormatted = formatRouteDeltaAmount(expectedCvgCvx, estimatedCvx, TOKENS.CVGCVX);
 
   // Calculate min_dy with slippage tolerance (use conservative estimate for safety)
   const minDyCvgCvx = calculateMinDy(conservativeCvgCvx, slippageBps);
@@ -4252,8 +4264,7 @@ export async function fetchCvgCvxZapInRoute(params: {
       expectedCvgCvxOutput = swapOutput.toString();
       swapBonus = (Number(swapOutput) / Number(cvxAmountForSplit) - 1) * 100;
       // Bonus amount = cvgCVX received - CVX input (what you gain vs 1:1 mint)
-      const bonusAmountWei = BigInt(swapOutput) - BigInt(cvxAmountForSplit);
-      bonusAmount = (Number(bonusAmountWei) / 1e18).toFixed(4);
+      bonusAmount = formatRouteDeltaAmount(swapOutput, cvxAmountForSplit, TOKENS.CVGCVX);
     }
   } else if (swapAmount === 0n) {
     // 100% direct mint (pool is below peg, mint at 1:1)
@@ -4318,7 +4329,7 @@ export async function fetchCvgCvxZapInRoute(params: {
         const totalAmount = swapAmount + mintAmount;
         const swapBonusAmount = swapOutput - swapAmount;
         swapBonus = Number(swapBonusAmount) / Number(totalAmount) * 100;
-        bonusAmount = (Number(swapBonusAmount) / 1e18).toFixed(4);
+        bonusAmount = formatRouteDeltaAmount(swapOutput, swapAmount, TOKENS.CVGCVX);
       }
     } else {
       // Other non-CVX inputs (USDC, etc.): fall back to dominant single path
@@ -4348,8 +4359,7 @@ export async function fetchCvgCvxZapInRoute(params: {
         if (swapOutput) {
           expectedCvgCvxOutput = swapOutput.toString();
           swapBonus = (Number(swapOutput) / Number(cvxAmountForSplit) - 1) * 100;
-          const bonusAmountWei = BigInt(swapOutput) - BigInt(cvxAmountForSplit);
-          bonusAmount = (Number(bonusAmountWei) / 1e18).toFixed(4);
+          bonusAmount = formatRouteDeltaAmount(swapOutput, cvxAmountForSplit, TOKENS.CVGCVX);
         }
       } else {
         // Mint is larger - use mint-only (safe 1:1 rate)
@@ -4378,8 +4388,7 @@ export async function fetchCvgCvxZapInRoute(params: {
       if (swapOutput) {
         swapBonus = (Number(swapOutput) / Number(conservativeSwapAmount) - 1) * 100;
         // Bonus amount = cvgCVX received from swap - CVX swapped (gain on swap portion)
-        const bonusAmountWei = BigInt(swapOutput) - conservativeSwapAmount;
-        bonusAmount = (Number(bonusAmountWei) / 1e18).toFixed(4);
+        bonusAmount = formatRouteDeltaAmount(swapOutput, conservativeSwapAmount, TOKENS.CVGCVX);
         // Total cvgCVX = swap output + mint amount (1:1)
         expectedCvgCvxOutput = (BigInt(swapOutput) + mintAmount).toString();
       } else {
@@ -6122,8 +6131,7 @@ export async function fetchPxCvxZapInRoute(params: {
     // So bonus is lpxCVX output / CVX input
     swapBonus = (Number(expectedSwapPxCvx) / Number(swapAmount) - 1) * 100;
     // Bonus amount = pxCVX received - CVX input (what you gain vs 1:1 mint)
-    const bonusAmountWei = expectedSwapPxCvx - swapAmount;
-    bonusAmount = (Number(bonusAmountWei) / 1e18).toFixed(4);
+    bonusAmount = formatRouteDeltaAmount(expectedSwapPxCvx, swapAmount, TOKENS.PXCVX);
   }
 
   // Determine protocols based on strategy
@@ -6140,7 +6148,7 @@ export async function fetchPxCvxZapInRoute(params: {
   const formatWei = (wei: string | bigint) => (Number(wei) / 1e18).toFixed(4);
   const stepAmounts: PxCvxStepAmounts = {
     inputAmount: formatWei(params.amountIn),
-    cvxAmount: formatWei(estimatedCvxAmount),
+    cvxAmount: formatWei(inputIsCvx ? params.amountIn : cvxAmountForSplit),
     swapCvxAmount: swapAmount > 0n ? formatWei(swapAmount) : undefined,
     mintCvxAmount: mintAmount > 0n ? formatWei(mintAmount) : undefined,
     pxCvxAmount: formatWei(totalExpectedPxCvx),
@@ -8036,9 +8044,13 @@ export async function fetchAnyToPxCvxRoute(params: {
   // Bonus % from swap path
   let swapBonus = 0;
   let bonusAmount: string | undefined;
+  const displayedCvxAmount = inputIsCvx ? BigInt(params.amountIn) : BigInt(cvxAmountForSplit);
+  const displayedSwapInput = swapAmount > 0n && mintAmount === 0n
+    ? displayedCvxAmount
+    : swapAmount;
   if (swapAmount > 0n && expectedSwapPxCvx > 0n) {
-    swapBonus = (Number(expectedSwapPxCvx) / Number(swapAmount) - 1) * 100;
-    bonusAmount = (Number(expectedSwapPxCvx - swapAmount) / 1e18).toFixed(4);
+    swapBonus = (Number(expectedSwapPxCvx) / Number(displayedSwapInput) - 1) * 100;
+    bonusAmount = formatRouteDeltaAmount(expectedSwapPxCvx, displayedSwapInput, TOKENS.PXCVX);
   }
 
   const steps: RouteStep[] = [];
@@ -8066,7 +8078,7 @@ export async function fetchAnyToPxCvxRoute(params: {
   } else if (swapAmount > 0n) {
     steps.push({
       tokenSymbol: "CVX",
-      amount: (Number(estimatedCvxAmount) / 1e18).toFixed(4),
+      amount: formatRouteAmount(displayedCvxAmount, TOKENS.CVX),
       action: "Swap",
       description: "CVX for pxCVX",
       protocol: "Curve",
@@ -8077,7 +8089,7 @@ export async function fetchAnyToPxCvxRoute(params: {
   } else {
     steps.push({
       tokenSymbol: "CVX",
-      amount: (Number(estimatedCvxAmount) / 1e18).toFixed(4),
+      amount: formatRouteAmount(displayedCvxAmount, TOKENS.CVX),
       action: "Mint",
       description: "pxCVX with CVX (1:1)",
       protocol: "Pirex",
@@ -8313,12 +8325,16 @@ export async function fetchAnyToCvgCvxRoute(params: {
 
   let swapBonus = 0;
   let bonusAmount: string | undefined;
+  const displayedCvxAmount = inputIsCvx ? BigInt(params.amountIn) : BigInt(cvxAmountForSplit);
+  const displayedSwapInput = swapAmount > 0n && mintAmount === 0n
+    ? displayedCvxAmount
+    : swapAmount;
   if (swapAmount > 0n && expectedSwapCvgCvx > 0n) {
-    swapBonus = (Number(expectedSwapCvgCvx) / Number(swapAmount) - 1) * 100;
-    bonusAmount = (Number(expectedSwapCvgCvx - swapAmount) / 1e18).toFixed(4);
+    swapBonus = (Number(expectedSwapCvgCvx) / Number(displayedSwapInput) - 1) * 100;
+    bonusAmount = formatRouteDeltaAmount(expectedSwapCvgCvx, displayedSwapInput, TOKENS.CVGCVX);
   }
 
-  const cvxAmountFmt = (Number(expectedCvxOutput) / 1e18).toFixed(4);
+  const cvxAmountFmt = formatRouteAmount(displayedCvxAmount, TOKENS.CVX);
   const swapCvxFmt = (Number(swapAmount) / 1e18).toFixed(4);
   const mintCvxFmt = (Number(mintAmount) / 1e18).toFixed(4);
   const steps: RouteStep[] = [];
@@ -8571,12 +8587,16 @@ export async function fetchAnyToLpxCvxRoute(params: {
 
   let swapBonus = 0;
   let bonusAmount: string | undefined;
+  const displayedCvxAmount = inputIsCvx ? BigInt(params.amountIn) : BigInt(cvxAmountForSplit);
+  const displayedSwapInput = swapAmount > 0n && mintAmount === 0n
+    ? displayedCvxAmount
+    : swapAmount;
   if (swapAmount > 0n && expectedSwapLpxCvx > 0n) {
-    swapBonus = (Number(expectedSwapLpxCvx) / Number(swapAmount) - 1) * 100;
-    bonusAmount = (Number(expectedSwapLpxCvx - swapAmount) / 1e18).toFixed(4);
+    swapBonus = (Number(expectedSwapLpxCvx) / Number(displayedSwapInput) - 1) * 100;
+    bonusAmount = formatRouteDeltaAmount(expectedSwapLpxCvx, displayedSwapInput, TOKENS.LPXCVX);
   }
 
-  const cvxAmountFmt = (Number(estimatedCvxAmount) / 1e18).toFixed(4);
+  const cvxAmountFmt = formatRouteAmount(displayedCvxAmount, TOKENS.CVX);
   const swapCvxFmt = (Number(swapAmount) / 1e18).toFixed(4);
   const mintCvxFmt = (Number(mintAmount) / 1e18).toFixed(4);
   const steps: RouteStep[] = [];

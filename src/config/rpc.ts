@@ -3,13 +3,13 @@
 // Source: https://github.com/DefiLlama/chainlist/blob/main/constants/extraRpcs.js
 
 export const PUBLIC_RPC_URLS = {
-  drpc: "https://eth.drpc.org",
   publicnode: "https://ethereum-rpc.publicnode.com",
   onerpc: "https://1rpc.io/eth",
-  mevblocker: "https://rpc.mevblocker.io",
   payload: "https://rpc.payload.de",
+  mevblocker: "https://rpc.mevblocker.io",
   meowrpc: "https://eth.meowrpc.com",
   securerpc: "https://api.securerpc.com/v1",
+  drpc: "https://eth.drpc.org",
 } as const;
 
 // Array format for fallback chains
