@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 /**
  * External Vault Zap Integration Tests
  *
@@ -33,12 +35,10 @@ import {
 } from "@/lib/enso";
 import {
   VAULT_ADDRESSES,
-  TOKENS,
   LLAMA_AIRFORCE,
   CONCENTRATOR,
   BEEFY,
   ASYMMETRY,
-  getExternalVaultConfig,
 } from "@/config/vaults";
 
 // Test wallet address (vitalik.eth - has no special permissions, just for API calls)
@@ -80,8 +80,6 @@ const TEST_SLIPPAGE = "300";
 
 // Test amounts - using small amounts that test wallet might not have
 const TEN_SHARES = "10000000000000000000"; // 10 vault shares (18 decimals)
-const ONE_HUNDRED_SHARES = "100000000000000000000"; // 100 vault shares
-
 // Timeout for API calls
 const API_TIMEOUT = 45000;
 

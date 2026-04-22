@@ -36,7 +36,7 @@ vi.mock("@/lib/curve", () => ({
 }));
 
 import { buildVaultInputSwapBundle, buildExoticOutputSwapData, ZAPPER_ADDRESS } from "@/lib/zapper";
-import { TOKENS, TANGENT, PIREX } from "@/config/vaults";
+import { TOKENS, TANGENT } from "@/config/vaults";
 
 // ============================================================================
 // Shared fixtures
@@ -53,12 +53,6 @@ const MOCK_BUNDLE_RESPONSE = {
   tx: { to: "0xrouter", data: "0xmockbundledata", value: "0", from: "0xuser" },
   gas: "500000",
   amountsOut: { "0xtarget": "900000000000000000" },
-};
-
-const MOCK_ZAP_PARAMS = {
-  swapAmount: 500000000000000000n,
-  minSwapDy: "490000000000000000",
-  minTotalOut: "980000000000000000",
 };
 
 const ENSO_SHORTCUTS = "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003";

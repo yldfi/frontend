@@ -5,9 +5,8 @@ import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagm
 import { formatUnits } from "viem";
 import Link from "next/link";
 import Image from "next/image";
-import { Gift, ExternalLink, Clock, CheckCircle2, ArrowRight, ArrowUpRight, Check, ChevronRight } from "lucide-react";
+import { Gift, Clock, CheckCircle2, ArrowUpRight, Check, ChevronRight } from "lucide-react";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
-import { Logo } from "@/components/Logo";
 import { LoadingDots } from "@/components/LoadingDots";
 import { useMerklRewards, useMerklOpportunities, getMerklOpportunityUrl, type MerklReward } from "@/hooks/useMerklRewards";
 import { useVaultBalance } from "@/hooks/useVaultBalance";
@@ -20,6 +19,8 @@ import { Footer } from "@/components/Footer";
 import { trackRewardsPageView, trackRewardsClaimClick, trackRewardsEligibilityCheck } from "@/lib/analytics";
 
 const MERKL_DISTRIBUTOR = "0x3Ef3D8bA38EBe18DB133cEc108f4D14CE00Dd9Ae" as const;
+const CAMPAIGN_START = 1773619200; // 2026-03-16 00:00:00 UTC
+const CAMPAIGN_END = 1776211200; // 2026-04-15 00:00:00 UTC
 const MERKL_DISTRIBUTOR_ABI = [
   {
     name: "claim",
@@ -179,6 +180,7 @@ function RewardRow({ reward }: { reward: MerklReward }) {
 }
 
 export function RewardsPageContent() {
+  const [currentTimestamp, setCurrentTimestamp] = useState<number | null>(null);
   const { isConnected, address } = useAccount();
   const { data, isLoading, error } = useMerklRewards(1);
   const { data: opportunities } = useMerklOpportunities();
@@ -203,6 +205,13 @@ export function RewardsPageContent() {
   // Track page view on mount
   useEffect(() => {
     trackRewardsPageView();
+  }, []);
+
+  useEffect(() => {
+    const updateTimestamp = () => setCurrentTimestamp(Math.floor(Date.now() / 1000));
+    updateTimestamp();
+    const intervalId = setInterval(updateTimestamp, 1000);
+    return () => clearInterval(intervalId);
   }, []);
 
   // Track eligibility when data is loaded
@@ -284,9 +293,9 @@ export function RewardsPageContent() {
                 </div>
               );
             }
-            const now = Math.floor(Date.now() / 1000);
-            const campaignStart = 1773619200; // 2026-03-16 00:00:00 UTC
-            const campaignEnd = 1776211200;   // 2026-04-15 00:00:00 UTC
+            const now = currentTimestamp ?? CAMPAIGN_START;
+            const campaignStart = CAMPAIGN_START;
+            const campaignEnd = CAMPAIGN_END;
             const isLive = now >= campaignStart && now < campaignEnd;
             const isUpcoming = now < campaignStart;
             const isCountdown = isUpcoming && (campaignStart - now) <= 86400;
