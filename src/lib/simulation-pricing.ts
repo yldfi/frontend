@@ -52,3 +52,44 @@ export function resolveSimulationTokenPrice(
 
   return directPrice;
 }
+
+export interface SimulationVaultPriceInfo {
+  underlying: string;
+  underlyingDecimals: number;
+}
+
+interface ResolveSimulationDollarValueParams {
+  address: string;
+  rawAmount: string | bigint;
+  decimals: number;
+  priceMap: Map<string, number>;
+  vaultInfo?: SimulationVaultPriceInfo | null;
+  underlyingAmount?: string | bigint;
+}
+
+export function resolveSimulationDollarValue({
+  address,
+  rawAmount,
+  decimals,
+  priceMap,
+  vaultInfo,
+  underlyingAmount,
+}: ResolveSimulationDollarValueParams): string | undefined {
+  const directPrice = resolveSimulationTokenPrice(address, priceMap);
+  if (directPrice !== undefined && directPrice !== 0) {
+    const amount = Number(rawAmount) / 10 ** decimals;
+    return (amount * directPrice).toString();
+  }
+
+  if (!vaultInfo || underlyingAmount === undefined) {
+    return undefined;
+  }
+
+  const underlyingPrice = resolveSimulationTokenPrice(vaultInfo.underlying, priceMap);
+  if (underlyingPrice === undefined || underlyingPrice === 0) {
+    return undefined;
+  }
+
+  const underlyingValue = Number(underlyingAmount) / 10 ** vaultInfo.underlyingDecimals;
+  return (underlyingValue * underlyingPrice).toString();
+}

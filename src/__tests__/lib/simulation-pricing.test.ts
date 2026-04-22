@@ -4,6 +4,7 @@ import { TOKENS } from "@/config/vaults";
 import {
   getSimulationPriceLookupAddresses,
   isCvxEquivalentPriceToken,
+  resolveSimulationDollarValue,
   resolveSimulationTokenPrice,
 } from "@/lib/simulation-pricing";
 
@@ -59,5 +60,46 @@ describe("simulation pricing fallbacks", () => {
     ]);
 
     expect(resolveSimulationTokenPrice(TOKENS.CVXCRV, priceMap)).toBeUndefined();
+  });
+
+  it("prices vault shares from their underlying using CVX fallback pricing", () => {
+    const priceMap = new Map<string, number>([
+      [TOKENS.CVX.toLowerCase(), 2.5],
+    ]);
+
+    expect(
+      resolveSimulationDollarValue({
+        address: "0xdeadbeef",
+        rawAmount: "5441668000000000000",
+        decimals: 18,
+        priceMap,
+        vaultInfo: {
+          underlying: TOKENS.PXCVX,
+          underlyingDecimals: 18,
+        },
+        underlyingAmount: "7976000000000000000",
+      }),
+    ).toBe("19.94");
+  });
+
+  it("prefers a direct token price before vault underlying pricing", () => {
+    const priceMap = new Map<string, number>([
+      ["0xdeadbeef", 4],
+      [TOKENS.CVX.toLowerCase(), 2.5],
+    ]);
+
+    expect(
+      resolveSimulationDollarValue({
+        address: "0xdeadbeef",
+        rawAmount: "5000000000000000000",
+        decimals: 18,
+        priceMap,
+        vaultInfo: {
+          underlying: TOKENS.PXCVX,
+          underlyingDecimals: 18,
+        },
+        underlyingAmount: "10000000000000000000",
+      }),
+    ).toBe("20");
   });
 });
