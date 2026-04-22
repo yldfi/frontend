@@ -2387,6 +2387,9 @@ export async function fetchVaultToVaultRoute(params: {
 
   const sourceUnderlying = params.sourceUnderlyingToken ?? sourceVaultConfig?.assetAddress ?? TOKENS.CVXCRV;
   const targetUnderlying = params.targetUnderlyingToken ?? targetVaultConfig?.assetAddress ?? TOKENS.CVXCRV;
+  const sourceVaultSymbol = sourceVaultConfig?.symbol ?? getTokenSymbol(params.sourceVault);
+  const targetVaultSymbol = targetVaultConfig?.symbol ?? getTokenSymbol(params.targetVault);
+  const sourceUnderlyingSymbol = getTokenSymbol(sourceUnderlying);
   const slippage = params.slippage ?? "100";
   const amountIn = await clampAmountIn(params.sourceVault, params.amountIn);
 
@@ -2416,12 +2419,53 @@ export async function fetchVaultToVaultRoute(params: {
       },
     ];
 
-    return fetchBundle({
+    const bundleResult = await fetchBundle({
       fromAddress: params.fromAddress,
       actions,
       receiver: params.fromAddress,
       skipQuote: false, // Standard V2V doesn't depend on account state — need amountsOut
     });
+
+    let redeemedUnderlyingAmount: string | undefined;
+    try {
+      redeemedUnderlyingAmount = await previewRedeem(params.sourceVault, amountIn);
+    } catch {
+      redeemedUnderlyingAmount = undefined;
+    }
+
+    const steps: RouteStep[] = [
+      createRouteStep({
+        tokenAddress: params.sourceVault,
+        tokenSymbol: sourceVaultSymbol,
+        amount: amountIn,
+        action: "Redeem",
+        description: `${sourceVaultSymbol} for ${sourceUnderlyingSymbol}`,
+        protocol: "yld",
+      }),
+      createRouteStep({
+        tokenAddress: sourceUnderlying,
+        tokenSymbol: sourceUnderlyingSymbol,
+        amount: redeemedUnderlyingAmount,
+        action: "Deposit",
+        description: `into ${targetVaultSymbol}`,
+        protocol: "yld",
+      }),
+      createRouteStep({
+        tokenAddress: params.targetVault,
+        tokenSymbol: targetVaultSymbol,
+        action: "Receive",
+        description: `${targetVaultSymbol} shares`,
+        protocol: "yld",
+      }),
+    ];
+
+    return {
+      ...bundleResult,
+      routeInfo: {
+        steps,
+        ...buildRouteMetadataFromSteps(steps),
+      },
+    };
   }
 
   // Check if cvgCVX is involved - requires custom routing via Tangent
