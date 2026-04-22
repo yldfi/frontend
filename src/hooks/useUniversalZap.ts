@@ -92,9 +92,10 @@ const CONVERT_TO_ASSETS_1E18_CALLDATA =
 
 async function readPpsViaRpc(vaultAddress: string): Promise<number | null> {
   const rpcUrls = [
-    PUBLIC_RPC_URLS.drpc,
     PUBLIC_RPC_URLS.publicnode,
     PUBLIC_RPC_URLS.onerpc,
+    PUBLIC_RPC_URLS.payload,
+    PUBLIC_RPC_URLS.drpc,
   ].filter(Boolean);
   for (const url of rpcUrls) {
     try {

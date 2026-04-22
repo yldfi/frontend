@@ -393,9 +393,29 @@ function TokenDisplay({ symbol, amount }: { symbol: string; amount?: string }) {
 /**
  * Route step row component - compact timeline style with stacked layout
  */
-function RouteStepRow({ step, isLast }: { step: RouteStep; isLast: boolean }) {
+function RouteStepRow({
+  step,
+  isLast,
+  previousStep,
+}: {
+  step: RouteStep;
+  isLast: boolean;
+  previousStep?: RouteStep;
+}) {
   const protocolClass = PROTOCOL_STYLES[step.protocol] || "text-[var(--muted-foreground)]";
   const protocolLink = step.protocol ? getProtocolLink(step.protocol) : undefined;
+  const action = step.action?.toLowerCase();
+  const hasDescription = Boolean(step.description);
+  const showProtocol = Boolean(
+    step.protocol
+    && !(
+      action === "receive"
+      && previousStep?.protocol?.toLowerCase() === step.protocol?.toLowerCase()
+      && (step.description === "tokens" || step.description === "vault shares")
+    ),
+  );
+  const protocolJoiner = action === "deposit" && hasDescription ? "via" : action === "deposit" ? "into" : "via";
+  const renderYldVault = action === "deposit" && step.protocol?.toLowerCase() === "yld" && !hasDescription;
 
   return (
     <div className="flex gap-2.5">
@@ -418,37 +438,25 @@ function RouteStepRow({ step, isLast }: { step: RouteStep; isLast: boolean }) {
             {step.description && (
               <span className="opacity-70"> {step.description}</span>
             )}
-            {step.protocol && (
+            {showProtocol && step.protocol && (
               <>
-                {/* For yld deposits with description, use "via" to avoid double "into" */}
-                {step.action?.toLowerCase() === "deposit" && step.protocol?.toLowerCase() === "yld" && step.description ? (
-                  <>
-                    <span className="opacity-70"> via </span>
-                    <span className="font-medium text-[var(--foreground)]">yld</span>
-                  </>
+                <span className="opacity-70"> {protocolJoiner} </span>
+                {renderYldVault ? (
+                  <><span className="font-medium text-[var(--foreground)]">yld</span> vault</>
+                ) : protocolLink ? (
+                  <a
+                    href={protocolLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium hover:text-[var(--accent)] transition-colors inline-flex items-center gap-0.5"
+                  >
+                    {getProtocolDisplayName(step.protocol)}
+                    <ExternalLink size={10} className="opacity-50" />
+                  </a>
                 ) : (
-                  <>
-                    <span className="opacity-70">
-                      {" "}{step.action?.toLowerCase() === "deposit" ? "into" : "via"}{" "}
-                    </span>
-                    {step.action?.toLowerCase() === "deposit" && step.protocol?.toLowerCase() === "yld" ? (
-                      <><span className="font-medium text-[var(--foreground)]">yld</span> vault</>
-                    ) : protocolLink ? (
-                      <a
-                        href={protocolLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="font-medium hover:text-[var(--accent)] transition-colors inline-flex items-center gap-0.5"
-                      >
-                        {getProtocolDisplayName(step.protocol)}
-                        <ExternalLink size={10} className="opacity-50" />
-                      </a>
-                    ) : (
-                      <span className={`font-medium ${protocolClass}`}>
-                        {getProtocolDisplayName(step.protocol)}
-                      </span>
-                    )}
-                  </>
+                  <span className={`font-medium ${protocolClass}`}>
+                    {getProtocolDisplayName(step.protocol)}
+                  </span>
                 )}
               </>
             )}
@@ -640,6 +648,7 @@ export function RouteDisplay({ routeInfo, inputSymbol, outputSymbol, inputAmount
           <RouteStepRow
             key={index}
             step={step}
+            previousStep={index > 0 ? stepsWithAmounts[index - 1] : undefined}
             isLast={!hasClosingLoan && !completionMessage && index === stepsWithAmounts.length - 1}
           />
         ))}
@@ -647,6 +656,7 @@ export function RouteDisplay({ routeInfo, inputSymbol, outputSymbol, inputAmount
           <RouteStepRow
             key={`closing-${index}`}
             step={step}
+            previousStep={index > 0 ? closingLoanSteps[index - 1] : stepsWithAmounts[stepsWithAmounts.length - 1]}
             isLast={index === closingLoanSteps.length - 1}
           />
         ))}

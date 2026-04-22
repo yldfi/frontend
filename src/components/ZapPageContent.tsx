@@ -16,6 +16,7 @@ import { ApprovalCard } from "@/components/ApprovalCard";
 import { LoadingDots } from "@/components/LoadingDots";
 import { RouteDisplay } from "@/components/RouteDisplay";
 import { SlippageModal } from "@/components/SlippageModal";
+import { SimulationModal } from "@/components/SimulationModal";
 
 import { useUniversalZap } from "@/hooks/useUniversalZap";
 import { useZapActions } from "@/hooks/useZapActions";
@@ -76,9 +77,14 @@ export function ZapPageContent() {
     updateSlippage,
     showSlippageModal,
     setShowSlippageModal,
+    showSimulationPreview,
+    refreshSimulationPreview,
+    showSimulationModal,
+    setShowSimulationModal,
     showRoute,
     toggleRoute,
   } = useSettings();
+  const [isSimulatingPreview, setIsSimulatingPreview] = useState(false);
 
   // Token state
   const [inputToken, setInputTokenState] = useState<EnsoToken>(() =>
@@ -156,7 +162,7 @@ export function ZapPageContent() {
     outputToken,
     inputAmount: debouncedAmount,
     slippage,
-    paused: sameToken,
+    paused: sameToken || showSimulationModal,
   });
 
   // Insufficient balance check (bigint precision)
@@ -185,6 +191,7 @@ export function ZapPageContent() {
     pendingApproval,
     approvalProgress,
     isApproving,
+    simulationResult,
   } = useZapActions(quote ?? null);
 
   const showApprovalCard = !!(
@@ -205,6 +212,34 @@ export function ZapPageContent() {
       toast.error(actionError);
     }
   }, [actionError]);
+
+  const prevSimulationResultRef = useRef<typeof simulationResult>(null);
+  useEffect(() => {
+    if (
+      showSimulationPreview &&
+      simulationResult &&
+      !prevSimulationResultRef.current &&
+      status === "idle" &&
+      !showSimulationModal
+    ) {
+      setShowSimulationModal(true);
+    }
+    prevSimulationResultRef.current = simulationResult;
+  }, [showSimulationPreview, simulationResult, status, showSimulationModal, setShowSimulationModal]);
+
+  const runSimulationPreview = useCallback(async () => {
+    if (!quote) return null;
+    setIsSimulatingPreview(true);
+    try {
+      const result = await executeZap({ previewOnly: true });
+      if (result) {
+        setShowSimulationModal(true);
+      }
+      return result;
+    } finally {
+      setIsSimulatingPreview(false);
+    }
+  }, [quote, executeZap, setShowSimulationModal]);
 
   // Completion handling
   const lastHandledHashRef = useRef<string | null>(null);
@@ -385,12 +420,23 @@ export function ZapPageContent() {
             {/* Execute button */}
             {isConnected ? (
               <button
-                onClick={() => executeZap()}
+                onClick={async () => {
+                  if (showSimulationPreview) {
+                    const result = await runSimulationPreview();
+                    if (result) return;
+                    if (needsApproval()) return;
+                    executeZap();
+                    return;
+                  }
+                  executeZap();
+                }}
                 disabled={
                   showApprovalCard ||
                   !quote ||
                   isLoading ||
                   quoteLoading ||
+                  isSimulatingPreview ||
+                  showSimulationModal ||
                   hasInsufficientBalance ||
                   sameToken ||
                   noRoute
@@ -401,6 +447,8 @@ export function ZapPageContent() {
                     !quote ||
                     isLoading ||
                     quoteLoading ||
+                    isSimulatingPreview ||
+                    showSimulationModal ||
                     (amount && hasInsufficientBalance) ||
                     sameToken ||
                     noRoute
@@ -408,7 +456,9 @@ export function ZapPageContent() {
                     : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer",
                 )}
               >
-                {isLoading ? (
+                {isSimulatingPreview || showSimulationModal ? (
+                  <>Simulating<LoadingDots /></>
+                ) : isLoading ? (
                   <>Confirm in wallet<LoadingDots /></>
                 ) : quoteLoading ? (
                   <>Getting quote<LoadingDots /></>
@@ -545,11 +595,36 @@ export function ZapPageContent() {
 
       <SlippageModal
         open={showSlippageModal}
-        onClose={() => setShowSlippageModal(false)}
+        onClose={() => {
+          setShowSlippageModal(false);
+          refreshSimulationPreview();
+        }}
         slippage={slippage}
         onSlippageChange={updateSlippage}
         title="Zap Settings"
       />
+
+      {showSimulationModal && simulationResult && (
+        <SimulationModal
+          isOpen={showSimulationModal}
+          onClose={() => setShowSimulationModal(false)}
+          onConfirm={() => {
+            setShowSimulationModal(false);
+            executeZap({ skipSimulation: true });
+          }}
+          simulationResult={{
+            success: simulationResult.success,
+            gasUsed: simulationResult.gasUsed ?? null,
+            errorMessage: simulationResult.errorMessage ?? null,
+            tenderlyUrl: simulationResult.tenderlyUrl ?? null,
+            assetChanges: simulationResult.assetChanges,
+            simulationUnavailable: simulationResult.simulationUnavailable,
+            simulationUnavailableReason: simulationResult.simulationUnavailableReason,
+          }}
+          gasPrice={gasPrice}
+          confirmText="Confirm Zap"
+        />
+      )}
     </div>
   );
 }
