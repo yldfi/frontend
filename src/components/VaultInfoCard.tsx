@@ -23,8 +23,6 @@ type TimeRange = (typeof TIME_RANGES)[number];
 
 const TAB_KEY = "yldfi-vault-info-tab";
 
-const TVL_COLOR = "#94a3b8";
-
 function filterByRange<T extends { time: number }>(points: T[], range: TimeRange): T[] {
   if (range === "all") return points;
   const days = range === "30d" ? 30 : 90;

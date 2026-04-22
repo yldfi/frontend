@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useEnsoTokens } from "@/hooks/useEnsoTokens";
 import { useTokenMetadata } from "@/hooks/useTokenMetadata";

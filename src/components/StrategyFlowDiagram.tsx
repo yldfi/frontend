@@ -526,7 +526,7 @@ function AuctionNode({ data }: { data: AuctionNodeData }) {
         <div className="mt-2 flex items-center justify-center gap-2">
           {/* Reward tokens (left side) */}
           <div className="flex flex-col gap-1">
-            {data.rewardTokens.map((token, i) => (
+            {data.rewardTokens.map((token) => (
               <div
                 key={token}
                 className="px-2 py-1 rounded text-[10px] font-mono border text-center"
@@ -1083,7 +1083,6 @@ const nodeTypes = {
 
 // Custom edge with multi-line label support
 function MultiLineLabelEdge({
-  id,
   sourceX,
   sourceY,
   targetX,
@@ -1127,7 +1126,6 @@ function MultiLineLabelEdge({
 }
 
 function MultiLineLabelSmoothStepEdge({
-  id,
   sourceX,
   sourceY,
   targetX,
@@ -1489,7 +1487,7 @@ function StrategyFlowDiagramInner({ config }: StrategyFlowDiagramProps) {
     }
 
     return { initialNodes: nodes, initialEdges: edges };
-  }, [config, assetSymbol, vaultName, yieldSourceName, rewardTokens, hasAuction, isDirect, isPassThrough, wrapperContractName]);
+  }, [config, assetSymbol, yieldSourceName, rewardTokens, hasAuction, isDirect, isPassThrough, wrapperContractName]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
