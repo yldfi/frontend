@@ -268,6 +268,13 @@ function getCorsOrigin(origin: string): string {
   return isAllowed ? origin : ALLOWED_ORIGINS[0];
 }
 
+function normalizeTenderlyGas(gas?: string | number): number | undefined {
+  if (gas === undefined) return undefined;
+  const parsed = typeof gas === "string" ? Number(gas) : gas;
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
+
 // ---- Tests ----
 
 describe("Simulate API", () => {
@@ -729,6 +736,29 @@ describe("Simulate API", () => {
 
     it("is case-sensitive", () => {
       expect(getCorsOrigin("https://YLDFI.CO")).toBe("https://yldfi.co");
+    });
+  });
+
+  describe("normalizeTenderlyGas", () => {
+    it("converts decimal gas strings to numbers", () => {
+      expect(normalizeTenderlyGas("60000000")).toBe(60000000);
+    });
+
+    it("passes through numeric gas values", () => {
+      expect(normalizeTenderlyGas(60000000)).toBe(60000000);
+    });
+
+    it("accepts hex gas strings", () => {
+      expect(normalizeTenderlyGas("0x3938700")).toBe(60000000);
+    });
+
+    it("drops invalid gas strings", () => {
+      expect(normalizeTenderlyGas("not-a-number")).toBeUndefined();
+    });
+
+    it("drops zero or negative gas values", () => {
+      expect(normalizeTenderlyGas(0)).toBeUndefined();
+      expect(normalizeTenderlyGas(-1)).toBeUndefined();
     });
   });
 });

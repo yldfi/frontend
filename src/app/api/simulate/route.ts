@@ -152,6 +152,13 @@ function shortAddress(address?: string): string | undefined {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
+function normalizeTenderlyGas(gas?: string | number): number | undefined {
+  if (gas === undefined) return undefined;
+  const parsed = typeof gas === "string" ? Number(gas) : gas;
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
+
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const guardedTimeout = new Promise<T>((_, reject) => {
@@ -656,6 +663,7 @@ export async function POST(request: NextRequest) {
 
   const inputToken = body.inputToken?.toLowerCase();
   const shouldOverrideCvx = inputToken === TOKENS.CVX.toLowerCase();
+  const normalizedGas = normalizeTenderlyGas(body.gas);
   const overrides = shouldOverrideCvx
     ? {
         [TOKENS.CVX]: {
@@ -673,7 +681,7 @@ export async function POST(request: NextRequest) {
     to: body.to,
     input: body.data,
     value: body.value ?? "0",
-    gas: body.gas,
+    gas: normalizedGas,
     save: true,            // Save simulations so users can view traces
     save_if_fails: true,   // Always save failures for debugging
     // The UI only needs gas usage and asset/balance changes, not decoded traces.
@@ -686,7 +694,7 @@ export async function POST(request: NextRequest) {
     inputToken: shortAddress(body.inputToken),
     networkId: tenderlyRequest.network_id,
     simulationType: tenderlyRequest.simulation_type,
-    gas: body.gas ?? null,
+    gas: normalizedGas ?? null,
     hasOverrides: Boolean(overrides),
   });
 
