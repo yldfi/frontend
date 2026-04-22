@@ -3,12 +3,17 @@ import { BookOpen, Github, Send, Zap } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { trackExternalLinkClick } from "@/lib/analytics";
 
+const footerIconLinkClassName =
+  "inline-flex h-[18px] w-[18px] items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors";
+
 function MaskedIcon({
   src,
   className = "",
+  iconClassName = "",
 }: {
   src: string;
   className?: string;
+  iconClassName?: string;
 }) {
   return (
     <span
@@ -16,7 +21,7 @@ function MaskedIcon({
       className={`inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center ${className}`}
     >
       <span
-        className="block h-[15px] w-[15px] bg-current"
+        className={`block h-[15px] w-[15px] bg-current ${iconClassName}`}
         style={{
           WebkitMask: `url(${src}) center / contain no-repeat`,
           mask: `url(${src}) center / contain no-repeat`,
@@ -44,7 +49,7 @@ export function Footer() {
           <div className="flex items-center gap-4">
             <Link
               href="/zap"
-              className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+              className={footerIconLinkClassName}
               aria-label="Zap"
             >
               <Zap size={18} aria-hidden="true" />
@@ -54,17 +59,21 @@ export function Footer() {
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => trackExternalLinkClick("https://defillama.com/protocol/yld", "defillama")}
-              className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+              className={footerIconLinkClassName}
               aria-label="DefiLlama"
             >
-              <MaskedIcon src="/icons/defillama.svg" className="-translate-y-px" />
+              <MaskedIcon
+                src="/icons/defillama.svg"
+                className="-translate-y-px"
+                iconClassName="h-[14px] w-[14px]"
+              />
             </a>
             <a
               href="https://yldfi.gitbook.io/docs"
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => trackExternalLinkClick("https://yldfi.gitbook.io/docs", "docs")}
-              className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+              className={footerIconLinkClassName}
               aria-label="Documentation"
             >
               <BookOpen size={18} aria-hidden="true" />
@@ -74,7 +83,7 @@ export function Footer() {
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => trackExternalLinkClick("https://github.com/yldfi", "github")}
-              className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+              className={footerIconLinkClassName}
               aria-label="GitHub"
             >
               <Github size={18} aria-hidden="true" />
@@ -84,7 +93,7 @@ export function Footer() {
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => trackExternalLinkClick("https://x.com/yld_fi", "twitter")}
-              className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+              className={footerIconLinkClassName}
               aria-label="X (Twitter)"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -96,7 +105,7 @@ export function Footer() {
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => trackExternalLinkClick("https://t.me/yld_official", "telegram")}
-              className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+              className={footerIconLinkClassName}
               aria-label="Telegram"
             >
               <Send size={18} aria-hidden="true" />
