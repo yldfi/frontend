@@ -33,12 +33,6 @@ const eslintConfig = defineConfig([
           caughtErrorsIgnorePattern: "^_",
         },
       ],
-      // The repo is not yet structured for the stricter React Compiler transition
-      // rules, so keep them visible without blocking CI.
-      "react-hooks/refs": "warn",
-      "react-hooks/set-state-in-effect": "warn",
-      "react-hooks/preserve-manual-memoization": "warn",
-      "react-hooks/immutability": "warn",
     },
   },
   // Enforce EIP-55 checksummed or fully lowercase Ethereum addresses

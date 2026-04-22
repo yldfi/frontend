@@ -134,7 +134,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     if (actionState === "simulating") return "zapping";
     if (actionState === "zapping") return "zapping";
     return "idle";
-  }, [approveError, txError, simulationError, isZapReverted, isApprovalReverted, isZapSuccess, isApprovalSuccess, isApprovalPending, isZapPending, actionState]);
+  }, [approveError, txError, simulationError, isZapReverted, isApprovalReverted, isZapSuccess, isApprovalPending, isZapPending, actionState]);
 
   // Derive error message from errors or reverts
   const error = useMemo(() => {
@@ -194,23 +194,11 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   // Ref to hold latest executeZapInternal for use in auto-execute effect
   const executeZapInternalRef = useRef<(options?: { skipSimulation?: boolean; previewOnly?: boolean }) => Promise<SimulationResult | null>>(async () => null);
 
-  // Clear pendingApproval on error
   useEffect(() => {
     if (status === "error" || approveError) {
-      setPendingApproval(null);
       autoExecuteRef.current = false;
-      if (actionState === "needsApproval") setActionState("idle");
     }
-  }, [status, approveError, actionState, resetApprove]);
-
-  // Clear pendingApproval when quote changes (user changed amount/token/direction)
-  useEffect(() => {
-    if (actionState === "needsApproval") {
-      setPendingApproval(null);
-      setActionState("idle");
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quote]);
+  }, [status, approveError]);
 
   // Approve tokens — exact=true uses the quote amount, exact=false uses unlimited
   const approve = useCallback((exact: boolean) => {
@@ -429,7 +417,9 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   }, [quote, userAddress, publicClient, sendTx, chainId, testNetworkType, simulationResult]);
 
   // Keep ref in sync with latest executeZapInternal
-  executeZapInternalRef.current = executeZapInternal;
+  useEffect(() => {
+    executeZapInternalRef.current = executeZapInternal;
+  }, [executeZapInternal]);
 
   // Auto-execute zap after approval succeeds
   // After approval confirms, isApprovalPending goes false but actionState stays "approving",
@@ -441,14 +431,10 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       prevStatus.current === "waitingApproval" &&
       (status === "idle" || status === "needsApproval" || status === "approving")
     ) {
-      // Approval completed — clear approval state and execute zap
+      // Approval completed — preserve original options and continue into execution.
       autoExecuteRef.current = false;
-      setPendingApproval(null);
-      setActionState("idle");
-      // Preserve original options (e.g. previewOnly) from before approval
       const options = pendingOptionsRef.current;
       pendingOptionsRef.current = undefined;
-      // Small delay to ensure allowance is refetched
       setTimeout(() => {
         executeZapInternalRef.current(options);
       }, 100);
@@ -466,6 +452,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     resetApprove();
     setZapHash(undefined);
     setTxError(null);
+    setPendingApproval(null);
 
     // Check if approval is needed
     if (needsApproval()) {

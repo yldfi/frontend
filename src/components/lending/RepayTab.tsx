@@ -83,12 +83,13 @@ export function RepayTab({
     if (typeof window === "undefined") return "";
     try { return sanitizeAmount(sessionStorage.getItem(repayStorageKey) ?? ""); } catch { return ""; }
   });
+  const [hasAutoCapped, setHasAutoCapped] = useState(false);
   const setRepayAmount = useCallback(
     (v: string) => {
       const sanitized = sanitizeAmount(v);
       setRepayAmountState(sanitized);
       setIsClosingLoan(false);
-      hasAutoCapped.current = false;
+      setHasAutoCapped(false);
       try {
         if (sanitized) sessionStorage.setItem(repayStorageKey, sanitized);
         else sessionStorage.removeItem(repayStorageKey);
@@ -133,7 +134,7 @@ export function RepayTab({
 
   const {
     slippage, updateSlippage, showSlippageModal, setShowSlippageModal,
-    showSimulationPreview, setShowSimulationPreview, refreshSimulationPreview,
+    showSimulationPreview, refreshSimulationPreview,
     showSimulationModal, setShowSimulationModal,
     showRoute, toggleRoute,
     zappersEnabled,
@@ -142,7 +143,10 @@ export function RepayTab({
   // Reset withdraw token to default when zappers are disabled (withdrawal requires zapper)
   useEffect(() => {
     if (!zappersEnabled) {
-      setWithdrawToken(defaultWithdrawToken);
+      const timer = setTimeout(() => {
+        setWithdrawToken(defaultWithdrawToken);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [zappersEnabled, defaultWithdrawToken]);
 
@@ -151,10 +155,9 @@ export function RepayTab({
   // Health estimation
   const [estimatedHealth, setEstimatedHealth] = useState<number | null>(null);
   const simulationBlock = useRef<bigint>(0n);
-  const hasAutoCapped = useRef(false);
   // Suppress rate box display while auto-cap is adjusting the amount and re-quoting
   const [suppressQuoteDisplay, setSuppressQuoteDisplay] = useState(false);
-  const [ethPrice, setEthPrice] = useState<number | null>(null);
+  const ethPrice = null;
 
   // Block number + gas price for cached simulation re-open
   const { data: currentBlock } = useBlockNumber({ watch: true });
@@ -182,9 +185,6 @@ export function RepayTab({
     executeAfterPreview,
   } = useCurveLendingActions();
 
-  // Preserve last approval data so content stays in DOM during close animation
-  const lastApprovalRef = useRef(pendingApproval);
-  if (pendingApproval) lastApprovalRef.current = pendingApproval;
   const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
 
 
@@ -207,7 +207,7 @@ export function RepayTab({
   }, [balanceFormatted]);
 
   // Collateral balance for optional withdrawal
-  const formattedCollateral = useMemo(() => {
+  const _formattedCollateral = useMemo(() => {
     if (!position?.collateral) return "0";
     const value = Number(formatUnits(position.collateral, vault.decimals));
     return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
@@ -422,7 +422,7 @@ export function RepayTab({
   });
 
   // Max repay amount that won't close the loan (CLOSE button handles full closure)
-  const maxRepayBalance = useMemo(() => {
+  const maxRepayBalance = (() => {
     if (!position?.hasLoan || !position.debt) return balanceFormatted;
     const balance = parseFloat(balanceFormatted) || 0;
     if (balance === 0) return balanceFormatted;
@@ -442,12 +442,12 @@ export function RepayTab({
     }
 
     return balanceFormatted;
-  }, [balanceFormatted, position?.hasLoan, position?.debt, isCrvUsd, maxRepayTokenEquivalent]);
+  })();
 
   // Amount needed to close the loan with a non-crvUSD token
   // maxRepayTokenEquivalent has a 0.5% haircut for partial repay — add ~1.5% buffer for close
   // (0.5% to undo haircut + 1% for swap spread/slippage), capped at user's balance
-  const closeTokenAmount = useMemo(() => {
+  const closeTokenAmount = (() => {
     if (!maxRepayTokenEquivalent || !position?.debt || position.debt === 0n) return null;
     const base = parseFloat(maxRepayTokenEquivalent);
     if (base <= 0) return null;
@@ -455,7 +455,7 @@ export function RepayTab({
     const balance = parseFloat(balanceFormatted) || 0;
     const capped = Math.min(withBuffer, balance);
     return capped.toFixed(Math.min(repayToken.decimals, 8));
-  }, [maxRepayTokenEquivalent, position?.debt, balanceFormatted, repayToken.decimals]);
+  })();
 
   // Price impact: manual calculation using USD token prices
   // Same pattern as BorrowTab: ((inputUsd - outputUsd) / inputUsd) × 100
@@ -660,7 +660,7 @@ export function RepayTab({
   });
 
   // Collateral amount in wei — for non-collateral tokens, derived from reverse quote
-  const withdrawAmountWei = useMemo(() => {
+  const withdrawAmountWei = (() => {
     if (!debouncedWithdrawAmount || Number(debouncedWithdrawAmount) === 0) return 0n;
     try {
       if (isWithdrawSwap) {
@@ -672,7 +672,7 @@ export function RepayTab({
     } catch {
       return 0n;
     }
-  }, [debouncedWithdrawAmount, vault.decimals, isWithdrawSwap, withdrawReverseQuote]);
+  })();
 
   // Rate: 1 collateral = X withdrawal token (derived from reverse quote)
   const withdrawSwapRate = useMemo(() => {
@@ -892,19 +892,22 @@ export function RepayTab({
       const mapped = status === "waitingTx" ? "pending" : status;
       onTxStateChange?.({ status: mapped as "pending" | "success" | "reverted", action, hash: txHash, details });
     }
-  }, [status, txHash, isClosingLoan, onTxStateChange, repayAmount, repayToken, isCrvUsd, isVaultWithCrvUsdUnderlying, estimatedCrvUsdOut, withdrawAmountWei, debouncedWithdrawAmount, vault.symbol]);
+  }, [status, txHash, isClosingLoan, onTxStateChange, repayAmount, repayToken, isCrvUsd, isVaultWithCrvUsdUnderlying, estimatedCrvUsdOut, withdrawAmountWei, debouncedWithdrawAmount, vault.symbol, vault.decimals]);
 
   // Handle transaction success — clear all inputs and reset to idle
   useEffect(() => {
     if (status === "success") {
       trackLendingRepaySuccess(vault.id, repayAmount);
-      setRepayAmountState("");
-      setWithdrawAmountState("");
-      setIsClosingLoan(false);
+      const timer = setTimeout(() => {
+        setRepayAmountState("");
+        setWithdrawAmountState("");
+        setIsClosingLoan(false);
+      }, 0);
       try { sessionStorage.removeItem(repayStorageKey); } catch { /* */ }
       onTransactionSuccess();
       refetchBalance();
       reset();
+      return () => clearTimeout(timer);
     }
   }, [status, onTransactionSuccess, reset, refetchBalance, repayStorageKey, vault.id, repayAmount]);
 
@@ -947,20 +950,26 @@ export function RepayTab({
 
   // Clear amount and reset action state when switching tokens
   useEffect(() => {
-    setRepayAmountState("");
-    setWithdrawAmountState("");
-    setWithdrawToken(defaultWithdrawToken);
-    setIsClosingLoan(false);
-    hasAutoCapped.current = false;
-    setSuppressQuoteDisplay(false);
-    reset();
+    const timer = setTimeout(() => {
+      setRepayAmountState("");
+      setWithdrawAmountState("");
+      setWithdrawToken(defaultWithdrawToken);
+      setIsClosingLoan(false);
+      setHasAutoCapped(false);
+      setSuppressQuoteDisplay(false);
+      reset();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [repayToken.address]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close withdrawal panel when closing loan (full repay returns all collateral automatically)
   useEffect(() => {
     if (isClosingLoan) {
-      setWithdrawAmountState("");
-      setShowWithdrawInput(false);
+      const timer = setTimeout(() => {
+        setWithdrawAmountState("");
+        setShowWithdrawInput(false);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [isClosingLoan]);
 
@@ -968,31 +977,45 @@ export function RepayTab({
   // Handles the case where MAX is clicked before any exchange rate is known
   // Fires at most once per user action (MAX click / manual input) to prevent oscillation
   useEffect(() => {
-    if (hasAutoCapped.current) return;
+    if (hasAutoCapped) return;
     if (isClosingLoan || isCrvUsd || quoteLoading) return;
     if (!estimatedCrvUsdOut || !position?.debt || !repayAmount || Number(repayAmount) === 0) return;
     if (estimatedCrvUsdOut <= position.debt * 102n / 100n) return;
-    hasAutoCapped.current = true;
-    setSuppressQuoteDisplay(true);
+    const timer = setTimeout(() => {
+      setHasAutoCapped(true);
+      setSuppressQuoteDisplay(true);
+    }, 0);
     // Scale down proportionally: newAmount = currentAmount * (debt / estimatedOutput)
     const ratio = Number(formatUnits(position.debt, 18)) / Number(formatUnits(estimatedCrvUsdOut, 18));
     const adjusted = Number(repayAmount) * ratio;
     const dp = Math.min(repayToken.decimals, 8);
-    setRepayAmountState(adjusted.toFixed(dp));
-  }, [estimatedCrvUsdOut, position?.debt, isClosingLoan, isCrvUsd, quoteLoading, repayAmount, repayToken.decimals]);
+    const amountTimer = setTimeout(() => {
+      setRepayAmountState(adjusted.toFixed(dp));
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(amountTimer);
+    };
+  }, [estimatedCrvUsdOut, position?.debt, isClosingLoan, isCrvUsd, quoteLoading, repayAmount, repayToken.decimals, hasAutoCapped]);
 
   // Clear quote suppression once the adjusted amount's quote has arrived
   useEffect(() => {
     if (!suppressQuoteDisplay) return;
     // Wait until debounce catches up to the auto-capped amount AND quote finishes loading
-    if (!quoteLoading && hasAutoCapped.current && debouncedAmount === repayAmount) {
-      setSuppressQuoteDisplay(false);
+    if (!quoteLoading && hasAutoCapped && debouncedAmount === repayAmount) {
+      const timer = setTimeout(() => {
+        setSuppressQuoteDisplay(false);
+      }, 0);
+      return () => clearTimeout(timer);
     }
-  }, [suppressQuoteDisplay, quoteLoading, debouncedAmount, repayAmount]);
+  }, [suppressQuoteDisplay, quoteLoading, debouncedAmount, repayAmount, hasAutoCapped]);
 
   // Clear withdrawal amount when withdrawal token changes (denomination changes)
   useEffect(() => {
-    setWithdrawAmountState("");
+    const timer = setTimeout(() => {
+      setWithdrawAmountState("");
+    }, 0);
+    return () => clearTimeout(timer);
   }, [withdrawToken.address]);
 
   // Reset action state when withdrawal amount or token changes
@@ -1424,7 +1447,7 @@ export function RepayTab({
       {/* Approval Flow */}
       <ApprovalCard
         show={showApprovalCard}
-        pendingApproval={lastApprovalRef.current}
+        pendingApproval={pendingApproval}
         approvalProgress={approvalProgress}
         isApproving={isApproving}
         onApprove={(exact) => approve(exact)}

@@ -105,7 +105,7 @@ export function CollateralTab({
 
   const {
     slippage, updateSlippage, showSlippageModal, setShowSlippageModal,
-    showSimulationPreview, setShowSimulationPreview, refreshSimulationPreview,
+    showSimulationPreview, refreshSimulationPreview,
     showSimulationModal, setShowSimulationModal,
     showRoute, toggleRoute,
     zappersEnabled,
@@ -113,7 +113,10 @@ export function CollateralTab({
 
   // Reset to vault token when zappers are disabled
   useEffect(() => {
-    if (!zappersEnabled) setSelectedToken(vaultToken);
+    if (!zappersEnabled) {
+      const timer = setTimeout(() => setSelectedToken(vaultToken), 0);
+      return () => clearTimeout(timer);
+    }
   }, [zappersEnabled, vaultToken]);
 
   const [rateInverted, setRateInverted] = useState(false);
@@ -148,9 +151,6 @@ export function CollateralTab({
     executeAfterPreview,
   } = useCurveLendingActions();
 
-  // Preserve last approval data so content stays in DOM during close animation
-  const lastApprovalRef = useRef(pendingApproval);
-  if (pendingApproval) lastApprovalRef.current = pendingApproval;
   const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
 
   // Read selected token balance (native ETH or ERC20)
@@ -537,8 +537,10 @@ export function CollateralTab({
       if (mode === "add") {
         trackLendingCollateralAddSuccess(vault.id, amount, selectedToken.symbol);
       }
-      setAmountState("");
-      setSelectedToken(vaultToken);
+      const timer = setTimeout(() => {
+        setAmountState("");
+        setSelectedToken(vaultToken);
+      }, 0);
       try { sessionStorage.removeItem(storageKey); } catch { /* */ }
       toast.success(mode === "add" ? "Collateral added!" : "Collateral removed!", {
         action: {
@@ -549,8 +551,33 @@ export function CollateralTab({
       onTransactionSuccess();
       refetchBalance();
       reset();
+      return () => clearTimeout(timer);
     }
   }, [status, txHash, mode, onTransactionSuccess, reset, refetchBalance, storageKey, vault.id, amount, selectedToken.symbol]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function fetchEthPrice() {
+    if (!publicClient) return;
+    try {
+      const data = await publicClient.readContract({
+        address: CHAINLINK_ETH_USD,
+        abi: [{
+          name: "latestRoundData",
+          type: "function",
+          stateMutability: "view",
+          inputs: [],
+          outputs: [
+            { name: "roundId", type: "uint80" },
+            { name: "answer", type: "int256" },
+            { name: "startedAt", type: "uint256" },
+            { name: "updatedAt", type: "uint256" },
+            { name: "answeredInRound", type: "uint80" },
+          ],
+        }],
+        functionName: "latestRoundData",
+      });
+      setEthPrice(Number(data[1] as bigint) / 1e8);
+    } catch { /* ignore */ }
+  }
 
   useEffect(() => {
     if ((status === "error" || status === "reverted") && error) {
@@ -584,34 +611,12 @@ export function CollateralTab({
 
   // Clear amount and reset when switching mode or token
   useEffect(() => {
-    setAmountState("");
-    reset();
+    const timer = setTimeout(() => {
+      setAmountState("");
+      reset();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [mode, selectedToken.address, reset]);
-
-  // Fetch ETH price for gas display
-  const fetchEthPrice = useCallback(async () => {
-    if (!publicClient) return;
-    try {
-      const data = await publicClient.readContract({
-        address: CHAINLINK_ETH_USD,
-        abi: [{
-          name: "latestRoundData",
-          type: "function",
-          stateMutability: "view",
-          inputs: [],
-          outputs: [
-            { name: "roundId", type: "uint80" },
-            { name: "answer", type: "int256" },
-            { name: "startedAt", type: "uint256" },
-            { name: "updatedAt", type: "uint256" },
-            { name: "answeredInRound", type: "uint80" },
-          ],
-        }],
-        functionName: "latestRoundData",
-      });
-      setEthPrice(Number(data[1] as bigint) / 1e8);
-    } catch { /* ignore */ }
-  }, [publicClient]);
 
   const handleSubmit = async () => {
     if (!address || !controllerAddress || !amount || Number(amount) <= 0) return;
@@ -956,7 +961,7 @@ export function CollateralTab({
       {/* Approval Flow */}
       <ApprovalCard
         show={showApprovalCard}
-        pendingApproval={lastApprovalRef.current}
+        pendingApproval={pendingApproval}
         approvalProgress={approvalProgress}
         isApproving={isApproving}
         onApprove={(exact) => approve(exact)}

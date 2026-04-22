@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { useState, useCallback, useMemo, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAccount, usePublicClient, useWaitForTransactionReceipt } from "wagmi";
 import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
-import { encodeFunctionData, formatUnits, maxUint256, toFunctionSelector } from "viem";
+import { encodeFunctionData, maxUint256, toFunctionSelector } from "viem";
 import {
   ZAPPER_ADDRESS,
   ZAPPER_ABI,
@@ -248,22 +248,17 @@ export function useZapperActions(): UseZapperActionsResult {
     pollingInterval: 1_000,
   });
 
+  const effectiveStatus: ZapperStatus =
+    isApproveError && status === "approving" ? "needsApproval" : status;
+
   useWaitForTransactionReceipt({
     hash: txHash ?? undefined,
-    query: { enabled: !!txHash && status === "waitingTx" },
+    query: { enabled: !!txHash && effectiveStatus === "waitingTx" },
   });
 
   const isApproving = useMemo(() => {
-    return status === "approving" || isApprovalPending;
-  }, [status, isApprovalPending]);
-
-  // Reset to needsApproval if user rejects wallet approval
-  useEffect(() => {
-    if (isApproveError && status === "approving") {
-      setStatus("needsApproval");
-      resetApprove();
-    }
-  }, [isApproveError, status, resetApprove]);
+    return effectiveStatus === "approving" || isApprovalPending;
+  }, [effectiveStatus, isApprovalPending]);
 
   const reset = useCallback(() => {
     setStatus("idle");
@@ -552,7 +547,7 @@ export function useZapperActions(): UseZapperActionsResult {
     }
 
     return simulationResult;
-  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult, pendingController]);
+  }, [address, publicClient, sendTx, testNetworkType, chainId, simulationResult, pendingController, invalidateBalances]);
 
   const executeAfterApproval = useCallback(async () => {
     if (!pendingTx) {
@@ -1679,7 +1674,7 @@ export function useZapperActions(): UseZapperActionsResult {
     isApprovalSuccess,
     executeAfterApproval,
     wasApprovalRequested: () => pendingPreviewRef.current,
-    status,
+    status: effectiveStatus,
     txHash,
     error,
     simulationResult,

@@ -1196,7 +1196,6 @@ function StrategyFlowDiagramInner({ config }: StrategyFlowDiagramProps) {
   const isPassThrough = config.yieldSource.depositFn === "hold";
 
   const assetSymbol = config.asset.symbol || "ASSET";
-  const vaultName = config.name || `ys${assetSymbol}`;
   const yieldSourceName = config.yieldSource.name || "Yield Source";
   const rewardTokens = config.rewards.tokens.length > 0
     ? config.rewards.tokens.join(" + ")

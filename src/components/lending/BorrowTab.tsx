@@ -107,9 +107,9 @@ export function BorrowTab({
       : collateralToken.address as `0x${string}`,
     query: { enabled: !!address && !isCollateralToken },
   });
-  const userBalanceBn = useMemo(() => {
+  const userBalanceBn = (() => {
     try { return BigInt(userBalance); } catch { return 0n; }
-  }, [userBalance]);
+  })();
   const effectiveCollateralBalance = isCollateralToken ? userBalanceBn : (altTokenBalance?.value ?? 0n);
   const effectiveCollateralDecimals = isCollateralToken ? vault.decimals : (altTokenBalance?.decimals ?? collateralToken.decimals);
 
@@ -136,7 +136,7 @@ export function BorrowTab({
   });
 
   // Effective collateral in vault token terms (for health calc + maxBorrowable)
-  const collateralWei = useMemo(() => {
+  const collateralWei = (() => {
     if (!showCollateralInput || !collateralAmount || Number(collateralAmount) <= 0) return 0n;
     if (isCollateralToken) {
       try { return parseUnits(collateralAmount, vault.decimals); } catch { return 0n; }
@@ -144,7 +144,7 @@ export function BorrowTab({
     // Non-vault token: use swap quote output (vault token amount)
     if (collateralSwapQuote?.amountOut) return BigInt(collateralSwapQuote.amountOut);
     return 0n;
-  }, [showCollateralInput, collateralAmount, vault.decimals, isCollateralToken, collateralSwapQuote]);
+  })();
 
   const formattedCollateralBalance = useMemo(() => {
     try {
@@ -278,7 +278,7 @@ export function BorrowTab({
 
   const {
     slippage, updateSlippage, showSlippageModal, setShowSlippageModal,
-    showSimulationPreview, setShowSimulationPreview, refreshSimulationPreview,
+    showSimulationPreview, refreshSimulationPreview,
     showSimulationModal, setShowSimulationModal,
     showRoute, toggleRoute,
     zappersEnabled,
@@ -287,8 +287,11 @@ export function BorrowTab({
   // Reset tokens to defaults when zappers are disabled
   useEffect(() => {
     if (!zappersEnabled) {
-      setBorrowToken(CRVUSD_TOKEN);
-      setCollateralToken(vaultToken);
+      const timer = setTimeout(() => {
+        setBorrowToken(CRVUSD_TOKEN);
+        setCollateralToken(vaultToken);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [zappersEnabled, vaultToken]);
 
@@ -322,9 +325,6 @@ export function BorrowTab({
     executeAfterPreview,
   } = useCurveLendingActions();
 
-  // Preserve last approval data so content stays in DOM during close animation
-  const lastApprovalRef = useRef(pendingApproval);
-  if (pendingApproval) lastApprovalRef.current = pendingApproval;
   const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
 
 
@@ -778,18 +778,21 @@ export function BorrowTab({
       const mapped = status === "waitingTx" ? "pending" : status;
       onTxStateChange?.({ status: mapped as "pending" | "success" | "reverted", action: "Borrow", hash: txHash, details });
     }
-  }, [status, txHash, onTxStateChange, estimatedCrvUsdBorrow, borrowAmount, borrowToken]);
+  }, [status, txHash, onTxStateChange, estimatedCrvUsdBorrow, borrowAmount, borrowToken, isCrvUsd]);
 
   // Handle transaction success — clear all inputs and reset to idle
   useEffect(() => {
     if (status === "success") {
-      setBorrowAmountState("");
-      setCollateralAmountState("");
-      setCollateralToken(vaultToken);
+      const timer = setTimeout(() => {
+        setBorrowAmountState("");
+        setCollateralAmountState("");
+        setCollateralToken(vaultToken);
+      }, 0);
       try { sessionStorage.removeItem(borrowStorageKey); } catch { /* */ }
       try { sessionStorage.removeItem(collateralStorageKey); } catch { /* */ }
       onTransactionSuccess();
       reset();
+      return () => clearTimeout(timer);
     }
   }, [status, onTransactionSuccess, reset, borrowStorageKey, collateralStorageKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -816,8 +819,11 @@ export function BorrowTab({
 
   // Clear amount and reset validation when switching tokens
   useEffect(() => {
-    setBorrowAmountState("");
-    setDebtTooHigh(false);
+    const timer = setTimeout(() => {
+      setBorrowAmountState("");
+      setDebtTooHigh(false);
+    }, 0);
+    return () => clearTimeout(timer);
   }, [borrowToken.address]);
 
   const handleSubmit = async () => {
@@ -1328,7 +1334,7 @@ export function BorrowTab({
       {/* Approval Flow */}
       <ApprovalCard
         show={showApprovalCard}
-        pendingApproval={lastApprovalRef.current}
+        pendingApproval={pendingApproval}
         approvalProgress={approvalProgress}
         isApproving={isApproving}
         onApprove={(exact) => approve(exact)}

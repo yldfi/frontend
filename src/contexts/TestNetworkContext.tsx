@@ -59,14 +59,12 @@ export function useTestNetwork() {
 
 // Error codes from RPC responses
 const ERROR_ACCESS_FORBIDDEN = -32004; // Tenderly Public RPC
-const ERROR_METHOD_NOT_FOUND = -32601; // Standard mainnet nodes
-
 export function TestNetworkProvider({ children }: { children: ReactNode }) {
   const { isConnected, connector } = useAccount();
   const publicClient = usePublicClient();
   const queryClient = useQueryClient();
   const [testNetworkType, setTestNetworkType] = useState<TestNetworkType>(null);
-  const [isDetecting, setIsDetecting] = useState(true);
+  const [isDetecting, setIsDetecting] = useState(() => typeof window !== "undefined");
   const [detectTrigger, setDetectTrigger] = useState(0);
   const prevTestNetworkRef = useRef<boolean | null>(null);
   const isInitialDetection = useRef(true);
@@ -135,22 +133,21 @@ export function TestNetworkProvider({ children }: { children: ReactNode }) {
 
   // Detect test network by probing evm_snapshot
   useEffect(() => {
-    if (typeof window === "undefined") {
-      setIsDetecting(false);
-      return;
-    }
-
     // Not connected - reset state
     if (!isConnected || !connector) {
-      setTestNetworkType(null);
-      setIsDetecting(false);
-      return;
+      const timer = setTimeout(() => {
+        setTestNetworkType(null);
+        setIsDetecting(false);
+      }, 0);
+      return () => clearTimeout(timer);
     }
 
     // When VNet toggle is on, we force testNetworkType="tenderly" — skip probing
     if (vnetEnabled) {
-      setIsDetecting(false);
-      return;
+      const timer = setTimeout(() => {
+        setIsDetecting(false);
+      }, 0);
+      return () => clearTimeout(timer);
     }
 
     let cancelled = false;
