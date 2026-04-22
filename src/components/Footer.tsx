@@ -3,6 +3,25 @@ import { BookOpen, Github, Send, Zap } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { trackExternalLinkClick } from "@/lib/analytics";
 
+function MaskedIcon({
+  src,
+  className = "",
+}: {
+  src: string;
+  className?: string;
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`inline-block h-[18px] w-[18px] shrink-0 bg-current ${className}`}
+      style={{
+        WebkitMask: `url(${src}) center / contain no-repeat`,
+        mask: `url(${src}) center / contain no-repeat`,
+      }}
+    />
+  );
+}
+
 export function Footer() {
   return (
     <footer className="border-t border-[var(--border)]">
@@ -26,6 +45,16 @@ export function Footer() {
             >
               <Zap size={18} aria-hidden="true" />
             </Link>
+            <a
+              href="https://defillama.com/protocol/yld"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => trackExternalLinkClick("https://defillama.com/protocol/yld", "defillama")}
+              className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+              aria-label="DefiLlama"
+            >
+              <MaskedIcon src="/icons/defillama.svg" />
+            </a>
             <a
               href="https://yldfi.gitbook.io/docs"
               target="_blank"
