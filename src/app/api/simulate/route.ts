@@ -421,7 +421,7 @@ async function enrichVaultTokenPrices(assetChanges: AssetChange[]): Promise<Asse
       }));
     }
 
-    if (vaultInfoMap.size === 0) return assetChanges;
+    if (vaultInfoMap.size === 0) return enrichTokenPricesFallback(assetChanges);
 
     // Collect unique underlying addresses we need prices for
     const underlyingAddresses = getSimulationPriceLookupAddresses(
