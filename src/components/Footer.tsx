@@ -13,12 +13,16 @@ function MaskedIcon({
   return (
     <span
       aria-hidden="true"
-      className={`inline-block h-[18px] w-[18px] shrink-0 bg-current ${className}`}
-      style={{
-        WebkitMask: `url(${src}) center / contain no-repeat`,
-        mask: `url(${src}) center / contain no-repeat`,
-      }}
-    />
+      className={`inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center ${className}`}
+    >
+      <span
+        className="block h-[15px] w-[15px] bg-current"
+        style={{
+          WebkitMask: `url(${src}) center / contain no-repeat`,
+          mask: `url(${src}) center / contain no-repeat`,
+        }}
+      />
+    </span>
   );
 }
 
@@ -53,7 +57,7 @@ export function Footer() {
               className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
               aria-label="DefiLlama"
             >
-              <MaskedIcon src="/icons/defillama.svg" />
+              <MaskedIcon src="/icons/defillama.svg" className="-translate-y-px" />
             </a>
             <a
               href="https://yldfi.gitbook.io/docs"
