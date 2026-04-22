@@ -6,9 +6,8 @@ import { notFound, useRouter } from "next/navigation";
 import { useAccount, useBalance, useBlockNumber, useGasPrice, usePublicClient } from "wagmi";
 import { parseUnits, formatUnits } from "viem";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
-import { CustomConnectButton } from "@/components/CustomConnectButton";
 import { MaxButton } from "@/components/MaxButton";
-import { ArrowUpRight, ExternalLink, Search, Route, RouteOff, Copy, ChevronDown, ChevronRight, Check, X, Clock, ArrowRightLeft, HeartPulse, Shield, Wallet, Banknote, Percent, TrendingUp, Info, Coins, Gift } from "lucide-react";
+import { ArrowUpRight, ExternalLink, Search, Route, RouteOff, Copy, ChevronDown, ChevronRight, Check, X, Clock, ArrowRightLeft, Wallet, Banknote, TrendingUp, Info, Coins, Gift } from "lucide-react";
 import { RouteDisplay } from "@/components/RouteDisplay";
 import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
@@ -145,7 +144,15 @@ export function VaultPageContent({ id }: { id: string }) {
   } | null>(null);
 
   // DEBUG: Draggable panel position (persisted to localStorage)
-  const [debugPanelPos, setDebugPanelPos] = useState<{ x: number; y: number } | null>(null);
+  const [debugPanelPos, setDebugPanelPos] = useState<{ x: number; y: number } | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const saved = localStorage.getItem("yldfi-debug-panel-pos");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
   const [isDragging, setIsDragging] = useState(false);
   const dragOffset = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const [debugMinimized, setDebugMinimized] = useState(() => {
@@ -158,18 +165,6 @@ export function VaultPageContent({ id }: { id: string }) {
       try { localStorage.setItem("yldfi-vault-tx-preview-minimized", String(next)); } catch {}
       return next;
     });
-  }, []);
-
-  // Load saved position on mount
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("yldfi-debug-panel-pos");
-      if (saved) {
-        setDebugPanelPos(JSON.parse(saved));
-      }
-    } catch {
-      // localStorage unavailable
-    }
   }, []);
 
   // Drag handlers for debug panel
@@ -426,20 +421,21 @@ export function VaultPageContent({ id }: { id: string }) {
 
   // Guard: reset zap input/output tokens if they match the vault or underlying tokens
   // (can happen from stale localStorage values)
-  const excludedZapAddresses = useMemo(() => {
-    const set = new Set([...VAULT_UNDERLYING_TOKENS.map(a => a.toLowerCase())]);
-    if (vault?.address) set.add(vault.address.toLowerCase());
-    return set;
-  }, [vault?.address]);
+  const excludedZapAddresses = new Set([
+    ...VAULT_UNDERLYING_TOKENS.map((a) => a.toLowerCase()),
+    ...(vault?.address ? [vault.address.toLowerCase()] : []),
+  ]);
 
   useEffect(() => {
     if (zapInputToken && excludedZapAddresses.has(zapInputToken.address.toLowerCase())) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setZapInputToken(DEFAULT_ETH_TOKEN);
     }
   }, [zapInputToken, excludedZapAddresses]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (zapOutputToken && excludedZapAddresses.has(zapOutputToken.address.toLowerCase())) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setZapOutputToken(DEFAULT_ETH_TOKEN);
     }
   }, [zapOutputToken, excludedZapAddresses]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -743,13 +739,11 @@ export function VaultPageContent({ id }: { id: string }) {
     simulationResult,
   } = useZapActions(zapQuote);
 
-  // Preserve last zap approval data so content stays in DOM during close animation
-  const lastZapApprovalRef = useRef(zapPendingApproval);
-  if (zapPendingApproval) lastZapApprovalRef.current = zapPendingApproval;
   const showZapApprovalCard = !!(zapPendingApproval && (zapStatus === "needsApproval" || zapStatus === "approving" || zapStatus === "waitingApproval"));
 
   // Sync zapInProgress with zapIsLoading to pause quote fetching during transaction
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setZapInProgress(zapIsLoading);
   }, [zapIsLoading]);
 
@@ -1116,7 +1110,9 @@ export function VaultPageContent({ id }: { id: string }) {
   // Clear multi-step state on error or user cancellation (vault actions)
   useEffect(() => {
     if (pendingMultiStep?.type === "deposit" && (txStatus === "error" || txError)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPendingMultiStep(null);
+       
       setPendingTxDetails(null);
     }
   }, [txStatus, txError, pendingMultiStep, activeTab]);
@@ -2369,7 +2365,7 @@ export function VaultPageContent({ id }: { id: string }) {
                       {/* Zap Approval Card */}
                       <ApprovalCard
                         show={showZapApprovalCard}
-                        pendingApproval={lastZapApprovalRef.current}
+                        pendingApproval={zapPendingApproval}
                         approvalProgress={zapApprovalProgress}
                         decimals={zapDirection === "in" ? (zapInputToken?.decimals ?? 18) : 18}
                         isApproving={zapIsApproving}
