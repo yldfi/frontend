@@ -386,6 +386,39 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       setSimulationResult(simResult.result);
     }
 
+    // If Tenderly/VNet is unavailable but the chain-level eth_call passed,
+    // keep preview mode in the modal flow instead of falling through to send.
+    if (!simResult.ok && ethCallResult.ok) {
+      const unavailableReason = typeof simResult.errorMessage === "string"
+        ? simResult.errorMessage
+        : simResult.errorMessage?.message
+          ?? simResult.errorMessage?.slug
+          ?? "Simulation unavailable for this transaction type";
+      const unavailableResult: SimulationResult = simResult.result
+        ? {
+            ...simResult.result,
+            success: true,
+            simulationUnavailable: true,
+            simulationUnavailableReason: unavailableReason,
+            errorMessage: null,
+          }
+        : {
+            success: true,
+            gasUsed: null,
+            simulationId: null,
+            tenderlyUrl: null,
+            assetChanges: [],
+            errorMessage: null,
+            simulationUnavailable: true,
+            simulationUnavailableReason: unavailableReason,
+          };
+      setSimulationResult(unavailableResult);
+      if (options?.previewOnly) {
+        setActionState("idle");
+        return unavailableResult;
+      }
+    }
+
     if (!simResult.ok && !ethCallResult.ok) {
       const rawMsg = (simResult as { retryable?: boolean }).retryable
         ? ethCallResult.errorMessage ?? simResult.errorMessage
