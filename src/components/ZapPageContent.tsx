@@ -198,6 +198,35 @@ export function ZapPageContent() {
     pendingApproval &&
     (status === "needsApproval" || status === "approving" || status === "waitingApproval")
   );
+  const [pendingTxDetails, setPendingTxDetails] = useState<{
+    fromAmount: string;
+    fromSymbol: string;
+    fromLogo?: string;
+    toAmount: string;
+    toSymbol: string;
+    toLogo?: string;
+  } | null>(null);
+  const [showTxSuccess, setShowTxSuccess] = useState<{
+    show: boolean;
+    hash: string;
+  } | null>(null);
+  const [showTxReverted, setShowTxReverted] = useState<{
+    show: boolean;
+    hash: string;
+  } | null>(null);
+
+  const buildPendingTxDetails = useCallback(() => {
+    if (!quote) return null;
+
+    return {
+      fromAmount: amount ? Number(amount).toFixed(4) : "0.0000",
+      fromSymbol: inputToken.symbol,
+      fromLogo: inputToken.logoURI,
+      toAmount: Number(quote.outputAmountFormatted).toFixed(4),
+      toSymbol: outputToken.symbol,
+      toLogo: outputToken.logoURI,
+    };
+  }, [amount, inputToken.logoURI, inputToken.symbol, outputToken.logoURI, outputToken.symbol, quote]);
 
   // Reset stale approval state on input change
   useEffect(() => {
@@ -210,6 +239,7 @@ export function ZapPageContent() {
     if (actionError) {
       console.log("[TOAST ERROR] universal-zap actionError:", actionError);
       toast.error(actionError);
+      setTimeout(() => setPendingTxDetails(null), 0);
     }
   }, [actionError]);
 
@@ -241,6 +271,21 @@ export function ZapPageContent() {
     }
   }, [quote, executeZap, setShowSimulationModal]);
 
+  const handleExecuteZap = useCallback(async () => {
+    const txDetails = buildPendingTxDetails();
+    if (txDetails) {
+      setPendingTxDetails(txDetails);
+      setShowTxSuccess(null);
+      setShowTxReverted(null);
+    }
+    if (showSimulationPreview) {
+      const result = await runSimulationPreview();
+      if (result) return;
+      if (needsApproval()) return;
+    }
+    await executeZap();
+  }, [buildPendingTxDetails, executeZap, needsApproval, runSimulationPreview, showSimulationPreview]);
+
   // Completion handling
   const lastHandledHashRef = useRef<string | null>(null);
   useEffect(() => {
@@ -250,6 +295,10 @@ export function ZapPageContent() {
     refetchInputBalance();
 
     if (isSuccess) {
+      setTimeout(() => {
+        setShowTxSuccess({ show: true, hash: zapHash });
+        setShowTxReverted(null);
+      }, 0);
       toast.success("Zap successful!", {
         action: {
           label: "View",
@@ -258,6 +307,10 @@ export function ZapPageContent() {
       });
       setTimeout(() => setAmount(""), 0);
     } else if (isReverted) {
+      setTimeout(() => {
+        setShowTxReverted({ show: true, hash: zapHash });
+        setShowTxSuccess(null);
+      }, 0);
       toast.error("Zap failed — transaction reverted", {
         action: {
           label: "View",
@@ -266,8 +319,13 @@ export function ZapPageContent() {
       });
     }
 
-    // Clear after short delay so UI shows fresh idle state
-    setTimeout(() => resetActions(), 1500);
+    // Keep completion state visible briefly before returning to idle
+    setTimeout(() => {
+      setShowTxSuccess(null);
+      setShowTxReverted(null);
+      setPendingTxDetails(null);
+      resetActions();
+    }, isSuccess ? 2000 : 3000);
   }, [isSuccess, isReverted, zapHash, refetchInputBalance, resetActions, setAmount]);
 
   // Error display
@@ -417,19 +475,92 @@ export function ZapPageContent() {
               onApprove={(exact) => approve(exact)}
             />
 
+            {status === "waitingTx" && zapHash && pendingTxDetails && (
+              <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--muted)]/40 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium">Transaction pending</div>
+                    <div className="text-xs text-[var(--muted-foreground)]">
+                      Waiting for on-chain confirmation
+                    </div>
+                  </div>
+                  <a
+                    href={`https://etherscan.io/tx/${zapHash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-[var(--accent)] hover:opacity-80"
+                  >
+                    View tx
+                  </a>
+                </div>
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {pendingTxDetails.fromLogo ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={pendingTxDetails.fromLogo} alt={pendingTxDetails.fromSymbol} className="w-5 h-5 rounded-full" />
+                    ) : null}
+                    <span className="mono truncate">
+                      {pendingTxDetails.fromAmount} {pendingTxDetails.fromSymbol}
+                    </span>
+                  </div>
+                  <ArrowRightLeft size={14} className="text-[var(--muted-foreground)] shrink-0" />
+                  <div className="flex items-center gap-2 min-w-0 justify-end">
+                    {pendingTxDetails.toLogo ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={pendingTxDetails.toLogo} alt={pendingTxDetails.toSymbol} className="w-5 h-5 rounded-full" />
+                    ) : null}
+                    <span className="mono truncate">
+                      {pendingTxDetails.toAmount} {pendingTxDetails.toSymbol}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {showTxSuccess?.show && (
+              <div className="border border-emerald-500/30 rounded-lg p-4 bg-emerald-500/10 space-y-2">
+                <div className="text-sm font-medium text-emerald-400">Zap successful</div>
+                {pendingTxDetails && (
+                  <div className="text-sm text-[var(--muted-foreground)]">
+                    {pendingTxDetails.fromAmount} {pendingTxDetails.fromSymbol} to{" "}
+                    {pendingTxDetails.toAmount} {pendingTxDetails.toSymbol}
+                  </div>
+                )}
+                <a
+                  href={`https://etherscan.io/tx/${showTxSuccess.hash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-emerald-300 hover:opacity-80"
+                >
+                  View transaction
+                </a>
+              </div>
+            )}
+
+            {showTxReverted?.show && (
+              <div className="border border-[var(--destructive)]/30 rounded-lg p-4 bg-[var(--destructive)]/10 space-y-2">
+                <div className="text-sm font-medium text-[var(--destructive)]">Zap failed</div>
+                {pendingTxDetails && (
+                  <div className="text-sm text-[var(--muted-foreground)]">
+                    {pendingTxDetails.fromAmount} {pendingTxDetails.fromSymbol} to{" "}
+                    {pendingTxDetails.toAmount} {pendingTxDetails.toSymbol}
+                  </div>
+                )}
+                <a
+                  href={`https://etherscan.io/tx/${showTxReverted.hash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-[var(--destructive)] hover:opacity-80"
+                >
+                  View transaction
+                </a>
+              </div>
+            )}
+
             {/* Execute button */}
             {isConnected ? (
               <button
-                onClick={async () => {
-                  if (showSimulationPreview) {
-                    const result = await runSimulationPreview();
-                    if (result) return;
-                    if (needsApproval()) return;
-                    executeZap();
-                    return;
-                  }
-                  executeZap();
-                }}
+                onClick={handleExecuteZap}
                 disabled={
                   showApprovalCard ||
                   !quote ||
@@ -453,11 +584,15 @@ export function ZapPageContent() {
                     sameToken ||
                     noRoute
                     ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                    : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer",
+                  : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer",
                 )}
               >
                 {isSimulatingPreview || showSimulationModal ? (
                   <>Simulating<LoadingDots /></>
+                ) : status === "waitingTx" ? (
+                  <>Waiting for confirmation<LoadingDots /></>
+                ) : status === "waitingApproval" ? (
+                  <>Waiting for approval<LoadingDots /></>
                 ) : isLoading ? (
                   <>Confirm in wallet<LoadingDots /></>
                 ) : quoteLoading ? (
