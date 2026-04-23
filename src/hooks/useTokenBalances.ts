@@ -43,8 +43,13 @@ export function useTokenBalances(tokens: EnsoToken[]) {
       .map((t) => t.address as `0x${string}`);
   }, [tokens]);
 
+  const erc20BalanceKey = useMemo(
+    () => erc20Addresses.map((address) => address.toLowerCase()),
+    [erc20Addresses],
+  );
+
   const { data: onchainBalances, isLoading: onchainLoading } = useQuery({
-    queryKey: ["onchain-balances", userAddress, erc20Addresses.length],
+    queryKey: ["onchain-balances", userAddress, erc20BalanceKey],
     queryFn: async () => {
       if (!publicClient || !userAddress) return [];
 

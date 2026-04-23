@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useAccount,
   useWaitForTransactionReceipt,
@@ -34,6 +35,7 @@ export type ZapStatus =
 export function useZapActions(quote: ZapQuote | null | undefined) {
   const { address: userAddress, chainId } = useAccount();
   const publicClient = usePublicClient();
+  const queryClient = useQueryClient();
   const { testNetworkType } = useTestNetwork();
   const { isFlashbotsEnabled, isFlashbotsSupported, toggleFlashbots } = useFlashbotsProtect();
   const { sendTx } = useSendTx();
@@ -45,6 +47,11 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const autoExecuteRef = useRef(false);
   const pendingOptionsRef = useRef<{ skipSimulation?: boolean; previewOnly?: boolean } | undefined>(undefined);
+
+  const invalidateBalances = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["onchain-balances"] });
+    queryClient.invalidateQueries({ queryKey: ["enso-wallet-balances"] });
+  }, [queryClient]);
 
   const isEth =
     quote?.inputToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
@@ -190,6 +197,13 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       refetchAllowance();
     }
   }, [isApprovalSuccess, refetchAllowance]);
+
+  useEffect(() => {
+    if (isZapSuccess) {
+      invalidateBalances();
+      refetchAllowance();
+    }
+  }, [invalidateBalances, isZapSuccess, refetchAllowance]);
 
   // Ref to hold latest executeZapInternal for use in auto-execute effect
   const executeZapInternalRef = useRef<(options?: { skipSimulation?: boolean; previewOnly?: boolean }) => Promise<SimulationResult | null>>(async () => null);
