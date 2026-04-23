@@ -383,106 +383,110 @@ export function ZapPageContent() {
 
           <div className="relative">
           <div className="border border-[var(--border)] rounded-xl p-5 space-y-4">
-            {/* Input */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-[var(--muted-foreground)]">From</span>
-                <span className="text-xs mono text-[var(--muted-foreground)]">
-                  {inputBalanceNum.toFixed(4)}
-                </span>
-              </div>
-              <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2 focus-within:ring-2 focus-within:ring-[var(--accent)] transition-shadow">
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  placeholder="0.00"
-                  className="flex-1 min-w-0 bg-transparent mono text-base outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
-                />
-                <TokenSelector
-                  selectedToken={inputToken}
-                  onSelect={setInputToken}
-                  excludeTokens={[outputToken.address]}
-                />
-                <MaxButton balance={inputMaxFormatted} onSelect={setAmount} />
-              </div>
-            </div>
+            {!isTxStateVisible && (
+              <>
+                {/* Input */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm text-[var(--muted-foreground)]">From</span>
+                    <span className="text-xs mono text-[var(--muted-foreground)]">
+                      {inputBalanceNum.toFixed(4)}
+                    </span>
+                  </div>
+                  <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2 focus-within:ring-2 focus-within:ring-[var(--accent)] transition-shadow">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="flex-1 min-w-0 bg-transparent mono text-base outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
+                    />
+                    <TokenSelector
+                      selectedToken={inputToken}
+                      onSelect={setInputToken}
+                      excludeTokens={[outputToken.address]}
+                    />
+                    <MaxButton balance={inputMaxFormatted} onSelect={setAmount} />
+                  </div>
+                </div>
 
-            {/* Swap direction button */}
-            <div className="flex justify-center -my-2">
-              <button
-                onClick={swapTokens}
-                className="w-8 h-8 rounded-full bg-[var(--muted)] border border-[var(--border)] flex items-center justify-center hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
-                aria-label="Swap input and output"
-              >
-                <ArrowUpDown size={14} />
-              </button>
-            </div>
+                {/* Swap direction button */}
+                <div className="flex justify-center -my-2">
+                  <button
+                    onClick={swapTokens}
+                    className="w-8 h-8 rounded-full bg-[var(--muted)] border border-[var(--border)] flex items-center justify-center hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
+                    aria-label="Swap input and output"
+                  >
+                    <ArrowUpDown size={14} />
+                  </button>
+                </div>
 
-            {/* Output */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-[var(--muted-foreground)]">To</span>
-              </div>
-              <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2">
-                <span className="mono text-base text-[var(--foreground)] flex-1">
-                  {quoteLoading
-                    ? "—"
-                    : quote
-                    ? Number(quote.outputAmountFormatted).toFixed(4)
-                    : "0.00"}
-                </span>
-                <TokenSelector
-                  selectedToken={outputToken}
-                  onSelect={setOutputToken}
-                  excludeTokens={[inputToken.address]}
-                />
-              </div>
-            </div>
+                {/* Output */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm text-[var(--muted-foreground)]">To</span>
+                  </div>
+                  <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2">
+                    <span className="mono text-base text-[var(--foreground)] flex-1">
+                      {quoteLoading
+                        ? "—"
+                        : quote
+                        ? Number(quote.outputAmountFormatted).toFixed(4)
+                        : "0.00"}
+                    </span>
+                    <TokenSelector
+                      selectedToken={outputToken}
+                      onSelect={setOutputToken}
+                      excludeTokens={[inputToken.address]}
+                    />
+                  </div>
+                </div>
 
-            {/* Details */}
-            <div className={cn("space-y-2 text-sm", !quote && "invisible")}>
-              <div className="flex items-center justify-between py-1">
-                <span className="text-[var(--muted-foreground)]">Rate</span>
-                {quote ? (
-                  <span className="mono flex items-center gap-1">
-                    1 {inputToken.symbol} = {quote.exchangeRate.toFixed(4)} {outputToken.symbol}
-                    <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
-                  </span>
-                ) : (
-                  <span className="mono">—</span>
-                )}
-              </div>
-              <div className="flex items-center justify-between py-1">
-                <span className="text-[var(--muted-foreground)]">Price Impact</span>
-                <span
-                  className={cn(
-                    "mono",
-                    quote && (quote.priceImpact ?? 0) < 0
-                      ? "text-green-500"
-                      : quote && (quote.priceImpact ?? 0) > 2
-                      ? "text-[var(--destructive)]"
-                      : quote && (quote.priceImpact ?? 0) > 1
-                      ? "text-[var(--warning)]"
-                      : "",
-                  )}
-                >
-                  {quote?.priceImpact != null ? `${quote.priceImpact.toFixed(2)}%` : "—"}
-                </span>
-              </div>
-              <div className="flex items-center justify-between py-1">
-                <span className="text-[var(--muted-foreground)]">Value</span>
-                <span className="mono">
-                  {quote?.outputUsdValue != null
-                    ? `~$${quote.outputUsdValue.toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}`
-                    : "—"}
-                </span>
-              </div>
-            </div>
+                {/* Details */}
+                <div className={cn("space-y-2 text-sm", !quote && "invisible")}>
+                  <div className="flex items-center justify-between py-1">
+                    <span className="text-[var(--muted-foreground)]">Rate</span>
+                    {quote ? (
+                      <span className="mono flex items-center gap-1">
+                        1 {inputToken.symbol} = {quote.exchangeRate.toFixed(4)} {outputToken.symbol}
+                        <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
+                      </span>
+                    ) : (
+                      <span className="mono">—</span>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between py-1">
+                    <span className="text-[var(--muted-foreground)]">Price Impact</span>
+                    <span
+                      className={cn(
+                        "mono",
+                        quote && (quote.priceImpact ?? 0) < 0
+                          ? "text-green-500"
+                          : quote && (quote.priceImpact ?? 0) > 2
+                          ? "text-[var(--destructive)]"
+                          : quote && (quote.priceImpact ?? 0) > 1
+                          ? "text-[var(--warning)]"
+                          : "",
+                      )}
+                    >
+                      {quote?.priceImpact != null ? `${quote.priceImpact.toFixed(2)}%` : "—"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between py-1">
+                    <span className="text-[var(--muted-foreground)]">Value</span>
+                    <span className="mono">
+                      {quote?.outputUsdValue != null
+                        ? `~$${quote.outputUsdValue.toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}`
+                        : "—"}
+                    </span>
+                  </div>
+                </div>
+              </>
+            )}
 
             {isTxStateVisible ? (
               <>
