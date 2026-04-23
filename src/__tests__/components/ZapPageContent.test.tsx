@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useConnectModal } from "@rainbow-me/rainbowkit";
-import { useAccount, useBalance, useGasPrice } from "wagmi";
+import { useAccount, useBalance, useBlockNumber, useGasPrice } from "wagmi";
 
 import { ZapPageContent } from "@/components/ZapPageContent";
 import { useSettings } from "@/hooks/useSettings";
@@ -21,6 +21,7 @@ vi.mock("next/link", () => ({
 vi.mock("wagmi", () => ({
   useAccount: vi.fn(),
   useBalance: vi.fn(),
+  useBlockNumber: vi.fn(),
   useGasPrice: vi.fn(),
 }));
 
@@ -118,6 +119,7 @@ vi.mock("@/components/SimulationModal", () => ({
 
 const mockUseAccount = vi.mocked(useAccount);
 const mockUseBalance = vi.mocked(useBalance);
+const mockUseBlockNumber = vi.mocked(useBlockNumber);
 const mockUseGasPrice = vi.mocked(useGasPrice);
 const mockUseConnectModal = vi.mocked(useConnectModal);
 const mockUseSettings = vi.mocked(useSettings);
@@ -188,6 +190,10 @@ describe("ZapPageContent", () => {
     mockUseGasPrice.mockReturnValue({
       data: 1n,
     } as ReturnType<typeof useGasPrice>);
+
+    mockUseBlockNumber.mockReturnValue({
+      data: 1n,
+    } as ReturnType<typeof useBlockNumber>);
 
     mockUseConnectModal.mockReturnValue({
       connectModalOpen: false,

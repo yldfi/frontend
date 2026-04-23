@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useAccount, useBalance, useGasPrice } from "wagmi";
+import { useAccount, useBalance, useBlockNumber, useGasPrice } from "wagmi";
 import { parseUnits, formatUnits } from "viem";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
-import { ArrowUpDown, ArrowRightLeft, ChevronRight, Route, RouteOff, Zap } from "lucide-react";
+import { ArrowUpDown, ArrowRightLeft, Check, ChevronRight, ExternalLink, Route, RouteOff, X, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 import { Header } from "@/components/Header";
@@ -69,8 +70,10 @@ function saveToken(key: string, token: EnsoToken | null) {
 
 export function ZapPageContent() {
   const { address: userAddress, isConnected } = useAccount();
+  const queryClient = useQueryClient();
   const { openConnectModal } = useConnectModal();
   const { data: gasPrice } = useGasPrice();
+  const { data: currentBlock } = useBlockNumber({ watch: true });
 
   const {
     slippage,
@@ -152,6 +155,18 @@ export function ZapPageContent() {
       : inputBalanceFormatted;
   const inputBalanceNum = parseFloat(inputBalanceFormatted) || 0;
   const refetchInputBalance = refetchEthBalance;
+
+  useEffect(() => {
+    if (!isConnected || !userAddress || !currentBlock) return;
+
+    if (isInputEth) {
+      refetchEthBalance();
+      return;
+    }
+
+    queryClient.invalidateQueries({ queryKey: ["onchain-balances"] });
+    queryClient.invalidateQueries({ queryKey: ["enso-wallet-balances"] });
+  }, [currentBlock, isConnected, isInputEth, queryClient, refetchEthBalance, userAddress]);
 
   // Quote (debounced for rate-limit friendliness)
   const debouncedAmount = useDebouncedValue(amount, 500);
@@ -325,11 +340,15 @@ export function ZapPageContent() {
       setShowTxReverted(null);
       setPendingTxDetails(null);
       resetActions();
-    }, isSuccess ? 2000 : 3000);
+    }, isSuccess ? 4500 : 5000);
   }, [isSuccess, isReverted, zapHash, refetchInputBalance, resetActions, setAmount]);
 
   // Error display
   const noRoute = !quoteLoading && !!quoteError && !!amount && Number(amount) > 0;
+  const isPendingTx = status === "waitingTx" && !!zapHash;
+  const isZapSuccessVisible = !!showTxSuccess?.show;
+  const isZapRevertedVisible = !!showTxReverted?.show;
+  const isTxStateVisible = isPendingTx || isZapSuccessVisible || isZapRevertedVisible;
 
   return (
     <div className="min-h-screen bg-[var(--background)] flex flex-col">
@@ -465,232 +484,236 @@ export function ZapPageContent() {
               </div>
             </div>
 
-            {/* Approval */}
-            <ApprovalCard
-              show={showApprovalCard}
-              pendingApproval={pendingApproval}
-              approvalProgress={approvalProgress}
-              decimals={inputToken.decimals ?? 18}
-              isApproving={isApproving}
-              onApprove={(exact) => approve(exact)}
-            />
-
-            {status === "waitingTx" && zapHash && pendingTxDetails && (
-              <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--muted)]/40 space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-medium">Transaction pending</div>
-                    <div className="text-xs text-[var(--muted-foreground)]">
-                      Waiting for on-chain confirmation
+            {isTxStateVisible ? (
+              <>
+                {isPendingTx && (
+                  <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
+                    <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
+                      <LoadingDots />
                     </div>
+                    <h3 className="text-lg font-medium mb-2">Awaiting Confirmation</h3>
+                    {pendingTxDetails && (
+                      <div className="flex items-center gap-2 mb-3 px-4 py-2 bg-[var(--muted)] rounded-lg max-w-full">
+                        {pendingTxDetails.fromLogo ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={pendingTxDetails.fromLogo} alt={pendingTxDetails.fromSymbol} className="w-5 h-5 rounded-full" />
+                        ) : null}
+                        <span className="mono text-sm truncate">
+                          {pendingTxDetails.fromAmount} {pendingTxDetails.fromSymbol}
+                        </span>
+                        <ArrowRightLeft size={14} className="text-[var(--muted-foreground)] shrink-0" />
+                        {pendingTxDetails.toLogo ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={pendingTxDetails.toLogo} alt={pendingTxDetails.toSymbol} className="w-5 h-5 rounded-full" />
+                        ) : null}
+                        <span className="mono text-sm truncate">
+                          {pendingTxDetails.toAmount} {pendingTxDetails.toSymbol}
+                        </span>
+                      </div>
+                    )}
+                    <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
+                      Your zap transaction is being confirmed on-chain.
+                    </p>
+                    <a
+                      href={`https://etherscan.io/tx/${zapHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
+                    >
+                      View on Etherscan
+                      <ExternalLink size={14} />
+                    </a>
                   </div>
+                )}
+
+                {isZapSuccessVisible && (
+                  <div className="flex flex-col items-center justify-center py-16 text-center animate-in fade-in zoom-in-95 duration-300">
+                    <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center mb-4">
+                      <Check className="w-8 h-8 text-green-500" />
+                    </div>
+                    <h3 className="text-lg font-medium mb-2 text-green-500">Zap Successful</h3>
+                    <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
+                      Your transaction has been confirmed.
+                    </p>
+                    <a
+                      href={`https://etherscan.io/tx/${showTxSuccess?.hash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
+                    >
+                      View on Etherscan
+                      <ExternalLink size={14} />
+                    </a>
+                  </div>
+                )}
+
+                {isZapRevertedVisible && (
+                  <div className="flex flex-col items-center justify-center py-16 text-center animate-in fade-in zoom-in-95 duration-300">
+                    <div className="w-16 h-16 rounded-full bg-[var(--destructive)]/20 flex items-center justify-center mb-4">
+                      <X className="w-8 h-8 text-[var(--destructive)]" />
+                    </div>
+                    <h3 className="text-lg font-medium mb-2 text-[var(--destructive)]">Zap Failed</h3>
+                    <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
+                      Transaction reverted on-chain.
+                    </p>
+                    <a
+                      href={`https://etherscan.io/tx/${showTxReverted?.hash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
+                    >
+                      View on Etherscan
+                      <ExternalLink size={14} />
+                    </a>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                {/* Approval */}
+                <ApprovalCard
+                  show={showApprovalCard}
+                  pendingApproval={pendingApproval}
+                  approvalProgress={approvalProgress}
+                  decimals={inputToken.decimals ?? 18}
+                  isApproving={isApproving}
+                  onApprove={(exact) => approve(exact)}
+                />
+
+                {/* Execute button */}
+                {isConnected ? (
+                  <button
+                    onClick={handleExecuteZap}
+                    disabled={
+                      showApprovalCard ||
+                      !quote ||
+                      isLoading ||
+                      quoteLoading ||
+                      isSimulatingPreview ||
+                      showSimulationModal ||
+                      hasInsufficientBalance ||
+                      sameToken ||
+                      noRoute
+                    }
+                    className={cn(
+                      "w-full py-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-base",
+                      showApprovalCard ||
+                        !quote ||
+                        isLoading ||
+                        quoteLoading ||
+                        isSimulatingPreview ||
+                        showSimulationModal ||
+                        (amount && hasInsufficientBalance) ||
+                        sameToken ||
+                        noRoute
+                        ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
+                      : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer",
+                    )}
+                  >
+                    {isSimulatingPreview || showSimulationModal ? (
+                      <>Simulating<LoadingDots /></>
+                    ) : status === "waitingApproval" ? (
+                      <>Waiting for approval<LoadingDots /></>
+                    ) : isLoading ? (
+                      <>Confirm in wallet<LoadingDots /></>
+                    ) : quoteLoading ? (
+                      <>Getting quote<LoadingDots /></>
+                    ) : sameToken ? (
+                      "Select different tokens"
+                    ) : !amount || Number(amount) === 0 ? (
+                      "Enter amount"
+                    ) : hasInsufficientBalance ? (
+                      "Insufficient balance"
+                    ) : noRoute || !quote ? (
+                      "No route found"
+                    ) : (
+                      needsApproval() ? "Approve & zap" : "Zap"
+                    )}
+                  </button>
+                ) : (
+                  <button
+                    onClick={openConnectModal}
+                    className="w-full py-4 bg-[var(--foreground)] text-[var(--background)] rounded-lg font-medium hover:opacity-90 transition-all cursor-pointer"
+                  >
+                    Connect Wallet
+                  </button>
+                )}
+
+                {/* Attribution + settings */}
+                <div className="flex items-center justify-between pt-2">
                   <a
-                    href={`https://etherscan.io/tx/${zapHash}`}
+                    href="https://www.enso.build"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-xs text-[var(--accent)] hover:opacity-80"
+                    className="flex items-center gap-1.5 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
                   >
-                    View tx
+                    <span>Powered by</span>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src="/enso.png" alt="Enso" width={14} height={14} className="rounded-sm" />
+                    <span className="font-medium">Enso</span>
                   </a>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={toggleRoute}
+                      className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
+                      title={showRoute ? "Hide route" : "Show route"}
+                    >
+                      {showRoute ? <RouteOff size={16} /> : <Route size={16} />}
+                    </button>
+                    <button
+                      onClick={() => setShowSlippageModal(true)}
+                      className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
+                      title="Settings"
+                    >
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <line x1="4" y1="6" x2="20" y2="6" />
+                        <circle cx="8" cy="6" r="2" />
+                        <line x1="4" y1="18" x2="20" y2="18" />
+                        <circle cx="16" cy="18" r="2" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center justify-between gap-3 text-sm">
-                  <div className="flex items-center gap-2 min-w-0">
-                    {pendingTxDetails.fromLogo ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={pendingTxDetails.fromLogo} alt={pendingTxDetails.fromSymbol} className="w-5 h-5 rounded-full" />
-                    ) : null}
-                    <span className="mono truncate">
-                      {pendingTxDetails.fromAmount} {pendingTxDetails.fromSymbol}
-                    </span>
-                  </div>
-                  <ArrowRightLeft size={14} className="text-[var(--muted-foreground)] shrink-0" />
-                  <div className="flex items-center gap-2 min-w-0 justify-end">
-                    {pendingTxDetails.toLogo ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={pendingTxDetails.toLogo} alt={pendingTxDetails.toSymbol} className="w-5 h-5 rounded-full" />
-                    ) : null}
-                    <span className="mono truncate">
-                      {pendingTxDetails.toAmount} {pendingTxDetails.toSymbol}
-                    </span>
+
+                {/* Inline route display — mobile only */}
+                <div
+                  className="lg:hidden grid transition-[grid-template-rows] duration-300 ease-in-out"
+                  style={{
+                    gridTemplateRows:
+                      showRoute && amount && Number(amount) > 0 && (quote || quoteLoading)
+                        ? "1fr"
+                        : "0fr",
+                  }}
+                >
+                  <div className="overflow-hidden">
+                    <div className="pt-3 mt-3 border-t border-[var(--border)]">
+                      <div className="text-xs text-[var(--muted-foreground)] mb-2">Route</div>
+                      <RouteDisplay
+                        routeInfo={quote?.routeInfo}
+                        inputSymbol={inputToken.symbol}
+                        outputSymbol={outputToken.symbol}
+                        inputAmount={amount ? Number(amount).toFixed(4) : undefined}
+                        outputAmount={
+                          quote?.outputAmountFormatted
+                            ? Number(quote.outputAmountFormatted).toFixed(4)
+                            : undefined
+                        }
+                        isLoading={quoteLoading}
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
+              </>
             )}
-
-            {showTxSuccess?.show && (
-              <div className="border border-emerald-500/30 rounded-lg p-4 bg-emerald-500/10 space-y-2">
-                <div className="text-sm font-medium text-emerald-400">Zap successful</div>
-                {pendingTxDetails && (
-                  <div className="text-sm text-[var(--muted-foreground)]">
-                    {pendingTxDetails.fromAmount} {pendingTxDetails.fromSymbol} to{" "}
-                    {pendingTxDetails.toAmount} {pendingTxDetails.toSymbol}
-                  </div>
-                )}
-                <a
-                  href={`https://etherscan.io/tx/${showTxSuccess.hash}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-emerald-300 hover:opacity-80"
-                >
-                  View transaction
-                </a>
-              </div>
-            )}
-
-            {showTxReverted?.show && (
-              <div className="border border-[var(--destructive)]/30 rounded-lg p-4 bg-[var(--destructive)]/10 space-y-2">
-                <div className="text-sm font-medium text-[var(--destructive)]">Zap failed</div>
-                {pendingTxDetails && (
-                  <div className="text-sm text-[var(--muted-foreground)]">
-                    {pendingTxDetails.fromAmount} {pendingTxDetails.fromSymbol} to{" "}
-                    {pendingTxDetails.toAmount} {pendingTxDetails.toSymbol}
-                  </div>
-                )}
-                <a
-                  href={`https://etherscan.io/tx/${showTxReverted.hash}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-[var(--destructive)] hover:opacity-80"
-                >
-                  View transaction
-                </a>
-              </div>
-            )}
-
-            {/* Execute button */}
-            {isConnected ? (
-              <button
-                onClick={handleExecuteZap}
-                disabled={
-                  showApprovalCard ||
-                  !quote ||
-                  isLoading ||
-                  quoteLoading ||
-                  isSimulatingPreview ||
-                  showSimulationModal ||
-                  hasInsufficientBalance ||
-                  sameToken ||
-                  noRoute
-                }
-                className={cn(
-                  "w-full py-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-base",
-                  showApprovalCard ||
-                    !quote ||
-                    isLoading ||
-                    quoteLoading ||
-                    isSimulatingPreview ||
-                    showSimulationModal ||
-                    (amount && hasInsufficientBalance) ||
-                    sameToken ||
-                    noRoute
-                    ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                  : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer",
-                )}
-              >
-                {isSimulatingPreview || showSimulationModal ? (
-                  <>Simulating<LoadingDots /></>
-                ) : status === "waitingTx" ? (
-                  <>Waiting for confirmation<LoadingDots /></>
-                ) : status === "waitingApproval" ? (
-                  <>Waiting for approval<LoadingDots /></>
-                ) : isLoading ? (
-                  <>Confirm in wallet<LoadingDots /></>
-                ) : quoteLoading ? (
-                  <>Getting quote<LoadingDots /></>
-                ) : sameToken ? (
-                  "Select different tokens"
-                ) : !amount || Number(amount) === 0 ? (
-                  "Enter amount"
-                ) : hasInsufficientBalance ? (
-                  "Insufficient balance"
-                ) : noRoute || !quote ? (
-                  "No route found"
-                ) : (
-                  needsApproval() ? "Approve & zap" : "Zap"
-                )}
-              </button>
-            ) : (
-              <button
-                onClick={openConnectModal}
-                className="w-full py-4 bg-[var(--foreground)] text-[var(--background)] rounded-lg font-medium hover:opacity-90 transition-all cursor-pointer"
-              >
-                Connect Wallet
-              </button>
-            )}
-
-            {/* Attribution + settings */}
-            <div className="flex items-center justify-between pt-2">
-              <a
-                href="https://www.enso.build"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
-              >
-                <span>Powered by</span>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/enso.png" alt="Enso" width={14} height={14} className="rounded-sm" />
-                <span className="font-medium">Enso</span>
-              </a>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={toggleRoute}
-                  className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
-                  title={showRoute ? "Hide route" : "Show route"}
-                >
-                  {showRoute ? <RouteOff size={16} /> : <Route size={16} />}
-                </button>
-                <button
-                  onClick={() => setShowSlippageModal(true)}
-                  className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
-                  title="Settings"
-                >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <line x1="4" y1="6" x2="20" y2="6" />
-                    <circle cx="8" cy="6" r="2" />
-                    <line x1="4" y1="18" x2="20" y2="18" />
-                    <circle cx="16" cy="18" r="2" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-
-            {/* Inline route display — mobile only */}
-            <div
-              className="lg:hidden grid transition-[grid-template-rows] duration-300 ease-in-out"
-              style={{
-                gridTemplateRows:
-                  showRoute && amount && Number(amount) > 0 && (quote || quoteLoading)
-                    ? "1fr"
-                    : "0fr",
-              }}
-            >
-              <div className="overflow-hidden">
-                <div className="pt-3 mt-3 border-t border-[var(--border)]">
-                  <div className="text-xs text-[var(--muted-foreground)] mb-2">Route</div>
-                  <RouteDisplay
-                    routeInfo={quote?.routeInfo}
-                    inputSymbol={inputToken.symbol}
-                    outputSymbol={outputToken.symbol}
-                    inputAmount={amount ? Number(amount).toFixed(4) : undefined}
-                    outputAmount={
-                      quote?.outputAmountFormatted
-                        ? Number(quote.outputAmountFormatted).toFixed(4)
-                        : undefined
-                    }
-                    isLoading={quoteLoading}
-                  />
-                </div>
-              </div>
-            </div>
           </div>
 
           {/* Desktop-only route panel — slides out to the right of the main card */}
@@ -698,11 +721,11 @@ export function ZapPageContent() {
             className={cn(
               "hidden lg:block absolute top-0 left-full ml-6 w-[360px]",
               "transition-[opacity,transform] duration-500 ease-out",
-              showRoute && amount && Number(amount) > 0 && (quote || quoteLoading)
+              showRoute && !isTxStateVisible && amount && Number(amount) > 0 && (quote || quoteLoading)
                 ? "opacity-100 translate-x-0"
                 : "opacity-0 -translate-x-4 pointer-events-none",
             )}
-            aria-hidden={!(showRoute && amount && Number(amount) > 0 && (quote || quoteLoading))}
+            aria-hidden={!(showRoute && !isTxStateVisible && amount && Number(amount) > 0 && (quote || quoteLoading))}
           >
             <div className="border border-[var(--border)] rounded-xl p-5">
               <div className="text-xs text-[var(--muted-foreground)] uppercase tracking-wider mb-3">
