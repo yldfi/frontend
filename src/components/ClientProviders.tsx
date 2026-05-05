@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { type ReactNode } from "react";
+import { usePathname } from "next/navigation";
 import { CookieConsent } from "@/components/CookieConsent";
 import { GoogleAnalytics } from "@/components/GoogleAnalytics";
 import { BetaBanner } from "@/components/BetaBanner";
@@ -14,6 +15,11 @@ const Providers = dynamic(
 
 export function ClientProviders({ children }: { children: ReactNode }) {
   const gaId = process.env.NEXT_PUBLIC_GA_ID;
+  const pathname = usePathname();
+
+  if (pathname?.startsWith("/social/")) {
+    return <>{children}</>;
+  }
 
   return (
     <Providers>

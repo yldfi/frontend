@@ -1,0 +1,213 @@
+.card {
+  --background: #09090b;
+  --foreground: #fafafa;
+  --muted: #a1a1aa;
+  --border-strong: #3f3f46;
+  --accent: #f59e0b;
+
+  position: relative;
+  width: 1200px;
+  height: 675px;
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, rgba(9, 9, 11, 0.9), rgba(9, 9, 11, 0.66) 52%, rgba(9, 9, 11, 0.46)),
+    url("/social/hero-network-bg.png"),
+    var(--background);
+  background-position: center;
+  background-size: cover;
+  color: var(--foreground);
+  font-family: var(--font-inter), Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1;
+}
+
+.card::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 5px;
+  background: linear-gradient(90deg, #f59e0b, #ef4444, #22c55e, #06b6d4, #3b82f6);
+}
+
+.topline,
+.bottomline {
+  position: absolute;
+  z-index: 5;
+  right: 64px;
+  left: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.topline {
+  top: 54px;
+}
+
+.bottomline {
+  bottom: 42px;
+  justify-content: flex-end;
+}
+
+.bottomline strong {
+  color: var(--foreground);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.brandLockup {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.brandWord {
+  display: block;
+  color: var(--foreground);
+  font-family: var(--font-jetbrains-mono), "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.brandTagline {
+  display: block;
+  margin-top: 9px;
+  color: var(--muted);
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.date {
+  color: var(--muted);
+  font-family: var(--font-jetbrains-mono), "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.hero {
+  position: absolute;
+  z-index: 2;
+  top: 170px;
+  left: 64px;
+  width: 430px;
+}
+
+.hero h1 {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 88px;
+  font-weight: 500;
+  line-height: 0.98;
+  letter-spacing: 0;
+}
+
+.hero span,
+.hero em {
+  display: block;
+  font-style: normal;
+}
+
+.hero em {
+  color: var(--accent);
+}
+
+.vaultGrid {
+  position: absolute;
+  z-index: 2;
+  top: 160px;
+  right: 64px;
+  display: grid;
+  width: 590px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.vaultGrid article {
+  position: relative;
+  min-height: 328px;
+  padding: 22px 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: linear-gradient(145deg, rgba(24, 24, 27, 0.92), rgba(12, 12, 14, 0.74));
+}
+
+.vaultIcon {
+  display: block;
+  margin-bottom: 34px;
+}
+
+.vaultSymbol {
+  display: block;
+  color: var(--foreground);
+  font-family: var(--font-jetbrains-mono), "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 27px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.vaultSymbol span {
+  display: inline;
+  color: #d4d4d8;
+}
+
+.vaultGrid strong {
+  display: block;
+  margin-top: 22px;
+  color: var(--accent);
+  font-family: var(--font-jetbrains-mono), "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 42px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.vaultGrid em {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 30px;
+  color: var(--muted);
+  font-size: 17px;
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1.18;
+  letter-spacing: 0;
+}
+
+.protocolLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.protocolLabel img {
+  display: block;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border-radius: 999px;
+  flex: 0 0 16px;
+  object-fit: contain;
+}
+
+.tokenSymbol {
+  display: inline;
+  color: var(--foreground);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+}
