@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BookOpen, Github, Send, Zap } from "lucide-react";
+import { BookOpen, Send, Zap } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { trackExternalLinkClick } from "@/lib/analytics";
 
@@ -86,7 +86,7 @@ export function Footer() {
               className={footerIconLinkClassName}
               aria-label="GitHub"
             >
-              <Github size={18} aria-hidden="true" />
+              <MaskedIcon src="/icons/github.svg" iconClassName="h-[18px] w-[18px]" />
             </a>
             <a
               href="https://x.com/yld_fi"
