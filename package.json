@@ -68,11 +68,11 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
     "husky": "^9.1.7",
-    "jsdom": "^27.4.0",
+    "jsdom": "^29.1.1",
     "lint-staged": "^16.4.0",
     "next": "16.2.4",
     "tailwindcss": "^4",
-    "typescript": "^5",
+    "typescript": "^6",
     "vitest": "^4.1.5",
     "wrangler": "^4.87.0"
   }
