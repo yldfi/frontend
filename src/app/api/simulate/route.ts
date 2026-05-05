@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createPublicClient, encodeAbiParameters, http, keccak256, pad, parseAbiParameters, toHex } from "viem";
-import { mainnet } from "viem/chains";
+import { createPublicClient, encodeAbiParameters, http, keccak256, pad, parseAbiParameters, toHex, type Chain } from "viem";
 import { TOKENS, VAULT_ADDRESSES, CURVE_CONTROLLERS, getVaultByAddress, LLAMA_AIRFORCE, CONCENTRATOR, CURVE_SAVINGS, ASYMMETRY } from "@/config/vaults";
 import { fetchTokenPricesDirect, ENSO_ROUTER, ENSO_ROUTER_EXECUTOR } from "@/lib/enso";
 import { CRVUSD_ADDRESS, USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
@@ -42,10 +41,20 @@ const ENRICH_TIMEOUT_MS = 1_500;
 const VAULT_DISCOVERY_TIMEOUT_MS = 1_500;
 const CONVERT_TO_ASSETS_TIMEOUT_MS = 1_500;
 const PRICE_FETCH_TIMEOUT_MS = 1_500;
+const MAINNET_CHAIN = {
+  id: 1,
+  name: "Ethereum",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: {
+    default: {
+      http: ["https://eth.merkle.io"],
+    },
+  },
+} as const satisfies Chain;
 
 // Create public client for RPC calls
 const publicClient = createPublicClient({
-  chain: mainnet,
+  chain: MAINNET_CHAIN,
   transport: http(),
 });
 
