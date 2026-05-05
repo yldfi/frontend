@@ -47,6 +47,17 @@ type SortOption = "holdings" | "apy" | "tvl";
 const SORT_STORAGE_KEY = "yldfi-vault-sort";
 const HERO_COLLAPSED_KEY = "yldfi-hero-collapsed";
 
+function getSortLabel(option: SortOption): string {
+  switch (option) {
+    case "apy":
+      return "24 hr APY";
+    case "tvl":
+      return "TVL";
+    case "holdings":
+      return "Holdings";
+  }
+}
+
 // Get initial sort value from localStorage (called once during component init)
 function getInitialSortValue(): SortOption {
   if (typeof window === "undefined") return "holdings";
@@ -426,7 +437,7 @@ export function HomePageContent() {
                   className="flex items-center gap-2 px-3 py-2 text-sm border border-[var(--border)] rounded-md hover:bg-[var(--muted)] transition-colors"
                 >
                   <span className="text-[var(--muted-foreground)]">Sort by:</span>
-                  <span className="font-medium capitalize">{sortBy}</span>
+                  <span className="font-medium">{getSortLabel(sortBy)}</span>
                   <ChevronDown
                     size={16}
                     className={cn(
@@ -442,11 +453,11 @@ export function HomePageContent() {
                         key={option}
                         onClick={() => handleSortChange(option)}
                         className={cn(
-                          "w-full px-4 py-2 text-left text-sm hover:bg-[var(--muted)] transition-colors capitalize",
+                          "w-full px-4 py-2 text-left text-sm hover:bg-[var(--muted)] transition-colors",
                           sortBy === option && "bg-[var(--muted)] font-medium"
                         )}
                       >
-                        {option === "apy" ? "APY" : option === "tvl" ? "TVL" : "Holdings"}
+                        {getSortLabel(option)}
                       </button>
                     ))}
                   </div>

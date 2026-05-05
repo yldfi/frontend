@@ -1,0 +1,17 @@
+name = "yldfi-x-weekly-apy"
+main = "x-weekly-apy.ts"
+compatibility_date = "2024-09-23"
+
+[vars]
+CLOUDFLARE_ACCOUNT_ID = "7f4f33bd3b9086164518eee1e9b8590a"
+SITE_URL = "https://yldfi.co"
+SOCIAL_RENDER_PATH = "/social/weekly-apy"
+X_WEEKLY_COPY = "Weekly yld vault yields are here\n\nAuto-compounding vaults for $cvxCRV and $cvgCVX.\n\nyldfi.co"
+X_DRY_RUN = "false"
+
+[triggers]
+crons = ["0 10 * * MON"]
+
+[[kv_namespaces]]
+binding = "SOCIAL_CACHE"
+id = "0f7a04f586dc44b5b6c8be46946482d3"

@@ -1,0 +1,26 @@
+# Local development secrets for the weekly X APY poster.
+# Copy values into workers/.dev.vars when running this worker locally, or set
+# production secrets with wrangler secret put --config workers/wrangler.x-weekly-apy.toml <NAME>.
+
+# Shared secret for /run, /screenshot and /oauth/start.
+SOCIAL_RUN_SECRET=
+
+# Cloudflare API token used by Browser Rendering REST API.
+# Needs Browser Rendering permission for the account.
+CLOUDFLARE_ACCOUNT_ID=
+CLOUDFLARE_API_TOKEN=
+
+# X OAuth 2.0 client.
+X_CLIENT_ID=
+X_CLIENT_SECRET=
+X_REDIRECT_URI=
+
+# Optional fallback refresh token. Prefer connecting through /oauth/start so
+# the worker can store rotated refresh tokens in SOCIAL_CACHE.
+X_REFRESH_TOKEN=
+
+# Optional override for manual local tests.
+SITE_URL=https://yldfi.co
+SOCIAL_RENDER_PATH=/social/weekly-apy
+X_WEEKLY_COPY="Weekly vault yields are live.\n\nyldfi.co"
+X_DRY_RUN=true
