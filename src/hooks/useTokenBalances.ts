@@ -9,6 +9,36 @@ import { useTestNetwork } from "@/contexts/TestNetworkContext";
 import type { EnsoToken } from "@/types/enso";
 import { erc20Abi } from "viem";
 
+interface WalletTokenCandidate {
+  token: string;
+  amount: string;
+  decimals: number;
+  price: number;
+  name?: string;
+  symbol?: string;
+}
+
+const SPAM_TOKEN_TEXT_PATTERN =
+  /\b(claim|reward|rewards|bonus|airdrop|gift|urgent|visit|secure your funds)\b|https?:\/\/|www\.|\.com|\.org|\.xyz|\.site/i;
+
+export function shouldAutoIncludeWalletToken(
+  token: WalletTokenCandidate,
+  allowlist?: ReadonlySet<string>,
+): boolean {
+  const address = token.token.toLowerCase();
+  if (!allowlist?.has(address)) return false;
+  if (!Number.isFinite(token.price) || token.price <= 0) return false;
+
+  try {
+    if (BigInt(token.amount) <= 0n) return false;
+  } catch {
+    return false;
+  }
+
+  const displayText = `${token.name ?? ""} ${token.symbol ?? ""}`;
+  return !SPAM_TOKEN_TEXT_PATTERN.test(displayText);
+}
+
 /**
  * Fetch wallet balances and return sorted tokens.
  * - Mainnet: Enso API (efficient, includes prices)
@@ -28,6 +58,12 @@ interface UseTokenBalancesOptions {
    * them in the currently visible slice.
    */
   includeWalletTokens?: boolean;
+  /**
+   * Optional allowlist for wallet-balance tokens that are not already in the
+   * visible token list. This prevents dust/scam airdrops from being auto-added
+   * just because a balance API reports them with a nonzero price.
+   */
+  walletTokenAllowlist?: readonly string[];
 }
 
 export function useTokenBalances(tokens: EnsoToken[], options: UseTokenBalancesOptions = {}) {
@@ -35,6 +71,12 @@ export function useTokenBalances(tokens: EnsoToken[], options: UseTokenBalancesO
   const { isTestNetwork } = useTestNetwork();
   const publicClient = usePublicClient();
   const shouldFetchOnchain = isTestNetwork || options.preferOnchain;
+  const walletTokenAllowlist = useMemo(
+    () => options.walletTokenAllowlist
+      ? new Set(options.walletTokenAllowlist.map((address) => address.toLowerCase()))
+      : undefined,
+    [options.walletTokenAllowlist],
+  );
 
   // Get ETH balance separately (Enso may not include native ETH)
   const { data: ethBalance, refetch: refetchEthBalance } = useBalance({
@@ -142,9 +184,8 @@ export function useTokenBalances(tokens: EnsoToken[], options: UseTokenBalancesO
           }
           if (
             options.includeWalletTokens &&
-            item.price > 0 &&
-            BigInt(item.amount) > 0n &&
-            !tokenMap.has(address)
+            !tokenMap.has(address) &&
+            shouldAutoIncludeWalletToken(item, walletTokenAllowlist)
           ) {
             tokenMap.set(address, {
               address: item.token,
@@ -187,6 +228,7 @@ export function useTokenBalances(tokens: EnsoToken[], options: UseTokenBalancesO
     isTestNetwork,
     shouldFetchOnchain,
     options.includeWalletTokens,
+    walletTokenAllowlist,
   ]);
 
   const refetch = useCallback(() => {

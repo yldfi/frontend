@@ -86,6 +86,33 @@ const enqueueEnsoCall = async <T>(fn: () => Promise<T>): Promise<T> => {
 // ETH placeholder address used by Enso
 export const ETH_ADDRESS = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
+export const LEGACY_MORPHO_ADDRESS = "0x9994E35Db50125E0DF82e4c2dde62496CE330999";
+export const MORPHO_TOKEN_ADDRESS = "0x58D97B57BB95320F9a05dC918Aef65434969c2B2";
+export const MORPHO_WRAPPER_ADDRESS = "0x9D03bb2092270648d7480049d0E58d2FcF0E5123";
+
+const TOKEN_DISPLAY_OVERRIDES: Record<string, { name: string; symbol: string }> = {
+  [LEGACY_MORPHO_ADDRESS.toLowerCase()]: {
+    name: "Legacy Morpho Token",
+    symbol: "Legacy MORPHO",
+  },
+  [MORPHO_TOKEN_ADDRESS.toLowerCase()]: {
+    name: "Morpho",
+    symbol: "MORPHO",
+  },
+};
+
+export function getTokenDisplayOverride(address: string | undefined): { name: string; symbol: string } | undefined {
+  return address ? TOKEN_DISPLAY_OVERRIDES[address.toLowerCase()] : undefined;
+}
+
+export function applyTokenDisplayOverride<T extends { address: string; name?: string; symbol?: string }>(token: T): T {
+  const override = getTokenDisplayOverride(token.address);
+  return override ? { ...token, ...override } : token;
+}
+
+export const isLegacyMorphoToken = (token: string) =>
+  token.toLowerCase() === LEGACY_MORPHO_ADDRESS.toLowerCase();
+
 // cvxCRV token address - exported for backwards compatibility
 export const CVXCRV_ADDRESS = TOKENS.CVXCRV;
 
@@ -1643,6 +1670,8 @@ async function estimateExternalVaultShares(params: {
 // Additional token symbols for route display
 const TOKEN_SYMBOLS: Record<string, string> = {
   [ETH_ADDRESS.toLowerCase()]: "ETH",
+  [LEGACY_MORPHO_ADDRESS.toLowerCase()]: "Legacy MORPHO",
+  [MORPHO_TOKEN_ADDRESS.toLowerCase()]: "MORPHO",
   [TOKENS.CVX.toLowerCase()]: "CVX",
   [TOKENS.CVXCRV.toLowerCase()]: "cvxCRV",
   [TOKENS.CVX1.toLowerCase()]: "CVX1",
@@ -1706,7 +1735,7 @@ export async function fetchEnsoTokenList(): Promise<EnsoToken[]> {
     const tokenData = await res.json() as { data: Array<{ address: string; chainId: number; name?: string; symbol?: string; decimals: number; logosUri?: string[]; type?: EnsoToken["type"] }> };
     return tokenData.data
       .filter((t) => t.address && t.symbol)
-      .map((t) => ({
+      .map((t) => applyTokenDisplayOverride({
         address: t.address,
         chainId: t.chainId,
         name: t.name || t.symbol || "Unknown",
@@ -1725,7 +1754,7 @@ export async function fetchEnsoTokenList(): Promise<EnsoToken[]> {
 
   return tokenData.data
     .filter((t) => t.address && t.symbol)
-    .map((t) => ({
+    .map((t) => applyTokenDisplayOverride({
       address: t.address,
       chainId: t.chainId,
       name: t.name || t.symbol || "Unknown",
@@ -1760,16 +1789,19 @@ export async function fetchWalletBalances(walletAddress: string): Promise<EnsoWa
     });
     if (!res.ok) throw new Error(`Enso balances proxy error: ${res.status}`);
     const balances = await res.json() as Array<{ token: string; amount: unknown; decimals: number; price: unknown; name?: string; symbol?: string; logoUri?: string }>;
-    return balances.map((b) => ({
-      token: b.token,
-      amount: String(b.amount),
-      chainId: CHAIN_ID,
-      decimals: b.decimals,
-      price: Number(b.price),
-      name: b.name,
-      symbol: b.symbol,
-      logoUri: b.logoUri,
-    }));
+    return balances.map((b) => {
+      const override = getTokenDisplayOverride(b.token);
+      return {
+        token: b.token,
+        amount: String(b.amount),
+        chainId: CHAIN_ID,
+        decimals: b.decimals,
+        price: Number(b.price),
+        name: override?.name ?? b.name,
+        symbol: override?.symbol ?? b.symbol,
+        logoUri: b.logoUri,
+      };
+    });
   }
 
   const balances = await enqueueEnsoCall(() => ensoClient.getBalances({
@@ -1778,16 +1810,19 @@ export async function fetchWalletBalances(walletAddress: string): Promise<EnsoWa
     useEoa: true,
   }));
 
-  return balances.map((b) => ({
-    token: b.token,
-    amount: String(b.amount),
-    chainId: CHAIN_ID,
-    decimals: b.decimals,
-    price: Number(b.price),
-    name: b.name,
-    symbol: b.symbol,
-    logoUri: b.logoUri,
-  }));
+  return balances.map((b) => {
+    const override = getTokenDisplayOverride(b.token);
+    return {
+      token: b.token,
+      amount: String(b.amount),
+      chainId: CHAIN_ID,
+      decimals: b.decimals,
+      price: Number(b.price),
+      name: override?.name ?? b.name,
+      symbol: override?.symbol ?? b.symbol,
+      logoUri: b.logoUri,
+    };
+  });
 }
 
 /**
@@ -1813,14 +1848,17 @@ export async function fetchTokenPrices(addresses: string[]): Promise<EnsoTokenPr
     });
     if (!res.ok) throw new Error(`Enso prices proxy error: ${res.status}`);
     const priceData = await res.json() as Array<{ chainId: number; address: string; price: unknown; decimals: number; symbol?: string }>;
-    return priceData.map((p) => ({
-      chainId: p.chainId,
-      address: p.address,
-      price: Number(p.price),
-      decimals: p.decimals,
-      symbol: p.symbol,
-      name: undefined,
-    }));
+    return priceData.map((p) => {
+      const override = getTokenDisplayOverride(p.address);
+      return {
+        chainId: p.chainId,
+        address: p.address,
+        price: Number(p.price),
+        decimals: p.decimals,
+        symbol: override?.symbol ?? p.symbol,
+        name: override?.name,
+      };
+    });
   }
 
   const priceData = await enqueueEnsoCall(() => ensoClient.getMultiplePriceData({
@@ -1828,14 +1866,17 @@ export async function fetchTokenPrices(addresses: string[]): Promise<EnsoTokenPr
     addresses: addresses as `0x${string}`[],
   }));
 
-  return priceData.map((p) => ({
-    chainId: p.chainId,
-    address: p.address,
-    price: Number(p.price),
-    decimals: p.decimals,
-    symbol: p.symbol,
-    name: undefined,
-  }));
+  return priceData.map((p) => {
+    const override = getTokenDisplayOverride(p.address);
+    return {
+      chainId: p.chainId,
+      address: p.address,
+      price: Number(p.price),
+      decimals: p.decimals,
+      symbol: override?.symbol ?? p.symbol,
+      name: override?.name,
+    };
+  });
 }
 
 /**
@@ -1848,14 +1889,17 @@ export async function fetchTokenPricesDirect(addresses: string[]): Promise<EnsoT
     chainId: CHAIN_ID,
     addresses: addresses as `0x${string}`[],
   });
-  return priceData.map((p) => ({
-    chainId: p.chainId,
-    address: p.address,
-    price: Number(p.price),
-    decimals: p.decimals,
-    symbol: p.symbol,
-    name: undefined,
-  }));
+  return priceData.map((p) => {
+    const override = getTokenDisplayOverride(p.address);
+    return {
+      chainId: p.chainId,
+      address: p.address,
+      price: Number(p.price),
+      decimals: p.decimals,
+      symbol: override?.symbol ?? p.symbol,
+      name: override?.name,
+    };
+  });
 }
 
 /**
@@ -1879,7 +1923,7 @@ export async function fetchTokens(params?: {
     if (!res.ok) throw new Error(`Enso tokens proxy error: ${res.status}`);
     const tokenData = await res.json() as { data: Array<{ address: string; chainId: number; name?: string; symbol?: string; decimals: number; logosUri?: string[]; type?: EnsoToken["type"] }>; meta: EnsoTokensResponse["meta"] };
     return {
-      data: tokenData.data.map((t) => ({
+      data: tokenData.data.map((t) => applyTokenDisplayOverride({
         address: t.address,
         chainId: t.chainId,
         name: t.name ?? "",
@@ -1899,7 +1943,7 @@ export async function fetchTokens(params?: {
   }));
 
   return {
-    data: tokenData.data.map((t) => ({
+    data: tokenData.data.map((t) => applyTokenDisplayOverride({
       address: t.address,
       chainId: t.chainId,
       name: t.name ?? "",
@@ -2288,6 +2332,115 @@ export async function fetchBundle(params: {
       : {},
     route: bundleData.route,
     priceImpact: bundleData.priceImpact,
+  };
+}
+
+/**
+ * Legacy MORPHO is not transferable through normal swap routes. Wrap it 1:1
+ * into the current MORPHO token, then execute a pre-built Enso route with
+ * routeMulti so the wrapped tokens already held by ENSO_SHORTCUTS are consumed
+ * atomically. This avoids requiring any new yld contracts.
+ */
+export async function fetchLegacyMorphoWrapRoute(params: {
+  fromAddress: string;
+  outputToken: string;
+  amountIn: string;
+  slippage?: string;
+}): Promise<EnsoBundleResponse> {
+  const outputToken = params.outputToken;
+  const outputLower = outputToken.toLowerCase();
+  const wrapOnly = outputLower === MORPHO_TOKEN_ADDRESS.toLowerCase();
+  const wrapReceiver = wrapOnly ? params.fromAddress : ENSO_SHORTCUTS;
+  const amountIn = params.amountIn;
+  const actions: EnsoBundleAction[] = [
+    erc20ApproveAction(LEGACY_MORPHO_ADDRESS, MORPHO_WRAPPER_ADDRESS, amountIn),
+    {
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: MORPHO_WRAPPER_ADDRESS,
+        method: "depositFor",
+        abi: "function depositFor(address account, uint256 value) returns (bool)",
+        args: [wrapReceiver, amountIn],
+      },
+    },
+  ];
+
+  let expectedOut = amountIn;
+  let routePriceImpact: number | null | undefined = null;
+  let gasFallback = 150000n;
+  const steps: RouteStep[] = [
+    createRouteStep({
+      tokenAddress: LEGACY_MORPHO_ADDRESS,
+      amount: amountIn,
+      action: "Wrap",
+      description: "Legacy MORPHO to MORPHO (1:1)",
+      protocol: "Morpho",
+    }),
+  ];
+
+  if (!wrapOnly) {
+    const { extractInnerSwapData } = await import("@/lib/zapper");
+    const standaloneRoute = await fetchRoute({
+      fromAddress: params.fromAddress,
+      tokenIn: MORPHO_TOKEN_ADDRESS,
+      tokenOut: outputToken,
+      amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+    const innerSwapData = extractInnerSwapData(standaloneRoute.tx.data);
+    expectedOut = standaloneRoute.amountOut;
+    routePriceImpact = standaloneRoute.priceImpact;
+    gasFallback = BigInt(standaloneRoute.gas || "0") + 120000n;
+
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: ENSO_ROUTER_EXECUTOR.toLowerCase(),
+        method: "routeMulti",
+        abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)",
+        args: [[], innerSwapData],
+      },
+    });
+
+    steps.push(createRouteStep({
+      tokenAddress: MORPHO_TOKEN_ADDRESS,
+      amount: amountIn,
+      action: "Swap",
+      description: `MORPHO for ${getTokenSymbol(outputToken)}`,
+      protocol: "Enso",
+      slippage: routePriceImpact != null ? routePriceImpact / 100 : undefined,
+    }));
+  }
+
+  steps.push(createRouteStep({
+    tokenAddress: outputToken,
+    amount: expectedOut,
+    action: "Receive",
+    description: "tokens",
+    protocol: wrapOnly ? "Morpho" : "Enso",
+  }));
+
+  const bundle = await fetchBundle({
+    fromAddress: params.fromAddress,
+    actions,
+    receiver: params.fromAddress,
+    routingStrategy: "router",
+    skipQuote: true,
+  });
+
+  return {
+    ...bundle,
+    gas: bundle.gas && bundle.gas !== "0" ? bundle.gas : gasFallback.toString(),
+    amountsOut: {
+      ...bundle.amountsOut,
+      [outputLower]: expectedOut,
+      ...(isNativeETH(outputToken) ? { [ETH_ADDRESS.toLowerCase()]: expectedOut } : {}),
+    },
+    priceImpact: routePriceImpact ?? bundle.priceImpact ?? null,
+    routeInfo: { steps },
   };
 }
 

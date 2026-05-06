@@ -26,7 +26,7 @@ import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { useSettings } from "@/hooks/useSettings";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
 
-import { ETH_ADDRESS } from "@/lib/enso";
+import { ETH_ADDRESS, applyTokenDisplayOverride } from "@/lib/enso";
 import { cn } from "@/lib/utils";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { getMaxEthAmount } from "@/lib/eth-gas";
@@ -51,7 +51,7 @@ function loadToken(key: string, fallback: EnsoToken): EnsoToken {
   if (typeof window === "undefined") return fallback;
   try {
     const saved = sessionStorage.getItem(`${STORAGE_PREFIX}-${key}`);
-    return saved ? (JSON.parse(saved) as EnsoToken) : fallback;
+    return saved ? applyTokenDisplayOverride(JSON.parse(saved) as EnsoToken) : fallback;
   } catch {
     return fallback;
   }
