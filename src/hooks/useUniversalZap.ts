@@ -1558,8 +1558,8 @@ export function useUniversalZap({
     },
     enabled,
     staleTime: 15 * 1000,
-    refetchInterval: enabled ? 30 * 1000 : false,
-    retry: 1,
+    refetchInterval: enabled ? 60 * 1000 : false,
+    retry: false,
   });
 
   return {

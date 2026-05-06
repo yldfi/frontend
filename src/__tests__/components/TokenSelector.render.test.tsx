@@ -52,11 +52,13 @@ describe("TokenSelector balance refresh", () => {
 
   let currentBlock: bigint | undefined;
   let refetchBalances: ReturnType<typeof vi.fn>;
+  let refetchOnchain: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     currentBlock = 100n;
     refetchBalances = vi.fn();
+    refetchOnchain = vi.fn();
 
     mockUseBlockNumber.mockImplementation(() => ({ data: currentBlock }) as ReturnType<typeof useBlockNumber>);
     mockUseEnsoTokens.mockReturnValue({
@@ -80,6 +82,7 @@ describe("TokenSelector balance refresh", () => {
       balanceMap: new Map([[tokens[0].address.toLowerCase(), 1n * 10n ** 18n]]),
       priceMap: new Map([[tokens[0].address.toLowerCase(), 1]]),
       refetch: refetchBalances,
+      refetchOnchain,
       isLoading: false,
     } as ReturnType<typeof useTokenBalances>);
   });
@@ -110,7 +113,7 @@ describe("TokenSelector balance refresh", () => {
     ]));
   });
 
-  it("refetches balances when opened and on new blocks while open", async () => {
+  it("refetches Enso balances when opened and only on-chain balances on new blocks", async () => {
     const { rerender } = render(
       <TokenSelector
         selectedToken={tokens[0]}
@@ -124,6 +127,7 @@ describe("TokenSelector balance refresh", () => {
     await waitFor(() => {
       expect(refetchBalances).toHaveBeenCalledTimes(1);
     });
+    expect(refetchOnchain).not.toHaveBeenCalled();
 
     currentBlock = 101n;
     rerender(
@@ -135,7 +139,8 @@ describe("TokenSelector balance refresh", () => {
     );
 
     await waitFor(() => {
-      expect(refetchBalances).toHaveBeenCalledTimes(2);
+      expect(refetchOnchain).toHaveBeenCalledTimes(1);
     });
+    expect(refetchBalances).toHaveBeenCalledTimes(1);
   });
 });
