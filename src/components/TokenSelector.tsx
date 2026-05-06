@@ -172,6 +172,7 @@ export function TokenSelector({
   const buttonRef = useRef<HTMLButtonElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const lastBalanceRefetchBlockRef = useRef<bigint | undefined>(undefined);
+  const wasOpenRef = useRef(false);
 
   const { tokens, searchQuery, setSearchQuery, isLoading, importToken } = useEnsoTokens();
   const { data: currentBlock } = useBlockNumber({ watch: isOpen && !!preferOnchainBalances });
@@ -231,14 +232,25 @@ export function TokenSelector({
   }, [priorityTokens]);
 
   // Sort tokens by balance (tokens with balance first), get prices
-  const { sortedTokens, balanceMap, priceMap, refetch: refetchBalances } = useTokenBalances(tokensForBalances, {
+  const {
+    sortedTokens,
+    balanceMap,
+    priceMap,
+    refetch: refetchBalances,
+    refetchOnchain,
+  } = useTokenBalances(tokensForBalances, {
     preferOnchain: preferOnchainBalances,
     includeWalletTokens: !searchQuery.trim() && !excludeDefiTokens,
     walletTokenAllowlist,
   });
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      wasOpenRef.current = false;
+      return;
+    }
+    if (wasOpenRef.current) return;
+    wasOpenRef.current = true;
     refetchBalances();
     lastBalanceRefetchBlockRef.current = currentBlock;
   }, [currentBlock, isOpen, refetchBalances]);
@@ -247,8 +259,8 @@ export function TokenSelector({
     if (!isOpen || !preferOnchainBalances || !currentBlock) return;
     if (lastBalanceRefetchBlockRef.current === currentBlock) return;
     lastBalanceRefetchBlockRef.current = currentBlock;
-    refetchBalances();
-  }, [currentBlock, isOpen, preferOnchainBalances, refetchBalances]);
+    refetchOnchain();
+  }, [currentBlock, isOpen, preferOnchainBalances, refetchOnchain]);
 
   // Close on click outside
   useEffect(() => {

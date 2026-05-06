@@ -141,7 +141,11 @@ export function ZapPageContent() {
   // switching tokens. For the selected input token, prefer an on-chain read so
   // the balance updates immediately after a successful tx receipt.
   const isInputEth = inputToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
-  const { balanceMap, refetch: refetchZapTokenBalances } = useTokenBalances([inputToken, outputToken], {
+  const {
+    balanceMap,
+    refetch: refetchZapTokenBalances,
+    refetchOnchain: refetchZapTokenBalancesOnchain,
+  } = useTokenBalances([inputToken, outputToken], {
     preferOnchain: true,
   });
   const { data: ethBalance, refetch: refetchEthBalance } = useBalance({
@@ -175,8 +179,8 @@ export function ZapPageContent() {
       return;
     }
 
-    refetchZapTokenBalances();
-  }, [currentBlock, isConnected, isInputEth, refetchEthBalance, refetchZapTokenBalances, userAddress]);
+    refetchZapTokenBalancesOnchain();
+  }, [currentBlock, isConnected, isInputEth, refetchEthBalance, refetchZapTokenBalancesOnchain, userAddress]);
 
   // Quote (debounced for rate-limit friendliness)
   const debouncedAmount = useDebouncedValue(amount, 500);

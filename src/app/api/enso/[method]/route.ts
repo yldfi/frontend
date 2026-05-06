@@ -31,7 +31,7 @@ function getCorsHeaders(request: NextRequest): Record<string, string> {
 
 import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
 
-const isRateLimited = createRateLimiter(30);
+const isRateLimited = createRateLimiter(120);
 
 export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, { status: 204, headers: getCorsHeaders(request) });

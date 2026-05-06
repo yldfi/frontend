@@ -95,8 +95,9 @@ export function useTokenBalances(tokens: EnsoToken[], options: UseTokenBalancesO
     queryKey: ["enso-wallet-balances", userAddress],
     queryFn: () => fetchWalletBalances(userAddress!),
     enabled: !!userAddress && isConnected && !isTestNetwork,
-    staleTime: 30 * 1000,
-    refetchInterval: 60 * 1000,
+    staleTime: 60 * 1000,
+    refetchInterval: 2 * 60 * 1000,
+    retry: false,
   });
 
   // --- Test network path: on-chain multicall ---
@@ -148,7 +149,8 @@ export function useTokenBalances(tokens: EnsoToken[], options: UseTokenBalancesO
     queryKey: ["enso-token-prices", popularTokenAddresses],
     queryFn: () => fetchTokenPrices(popularTokenAddresses),
     enabled: popularTokenAddresses.length > 0,
-    staleTime: 60 * 1000,
+    staleTime: 2 * 60 * 1000,
+    retry: false,
   });
 
   // Build balance and price maps, sort tokens
@@ -237,11 +239,17 @@ export function useTokenBalances(tokens: EnsoToken[], options: UseTokenBalancesO
     void refetchOnchainBalances();
   }, [refetchEnsoBalances, refetchEthBalance, refetchOnchainBalances]);
 
+  const refetchOnchain = useCallback(() => {
+    void refetchEthBalance();
+    void refetchOnchainBalances();
+  }, [refetchEthBalance, refetchOnchainBalances]);
+
   return {
     sortedTokens,
     balanceMap,
     priceMap,
     refetch,
+    refetchOnchain,
     isLoading: isTestNetwork
       ? onchainLoading || pricesLoading
       : ensoBalancesLoading || (options.preferOnchain && onchainLoading) || pricesLoading,

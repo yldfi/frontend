@@ -249,6 +249,7 @@ describe("ZapPageContent", () => {
       balanceMap: new Map([[ETH_ADDRESS.toLowerCase(), 10n ** 18n]]),
       priceMap: new Map(),
       refetch: vi.fn(),
+      refetchOnchain: vi.fn(),
       isLoading: false,
     } as ReturnType<typeof useTokenBalances>);
 
