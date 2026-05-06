@@ -62,6 +62,7 @@ import {
   fetchComposableZapInRoute,
   fetchLpxCvxZapInRoute,
   fetchLegacyMorphoWrapRoute,
+  fetchLegacyMorphoZapInRoute,
   fetchSpecialTokenToExternalVaultRoute,
   fetchSpecialTokenToIlliquidRoute,
   fetchVaultToVaultRoute,
@@ -320,6 +321,89 @@ describe("route step amounts", () => {
     expect(result.amountsOut[MORPHO_TOKEN_ADDRESS.toLowerCase()]).toBe("1000000000000000000");
     expect(result.gas).toBe("150000");
     expect(result.routeInfo?.steps.map((step) => step.action)).toEqual(["Wrap", "Receive"]);
+  });
+
+  it("wraps legacy MORPHO before depositing into a yld vault", async () => {
+    mockGetRouteData.mockResolvedValueOnce({
+      amountOut: "27538222472939391973",
+      gas: "411888",
+      priceImpact: 0,
+      tx: { to: "0xroute", data: "0xrouteData", value: "0" },
+      route: [],
+    });
+    mockGetBundleData.mockResolvedValueOnce({
+      ...BUNDLE_RESPONSE,
+      gas: "0",
+      amountsOut: {},
+    });
+    globalThis.fetch = vi.fn(async () =>
+      makeRpcResponse(`0x${BigInt("25000000000000000000").toString(16)}`)
+    ) as unknown as typeof fetch;
+
+    const result = await fetchLegacyMorphoZapInRoute({
+      fromAddress: TEST_WALLET,
+      vaultAddress: VAULT_ADDRESSES.YCVXCRV,
+      amountIn: "1162575544199150998",
+      slippage: "100",
+      underlyingToken: TOKENS.CVXCRV,
+    });
+
+    expect(mockGetRouteData).toHaveBeenCalledWith(expect.objectContaining({
+      fromAddress: TEST_WALLET,
+      tokenIn: [MORPHO_TOKEN_ADDRESS],
+      tokenOut: [TOKENS.CVXCRV],
+      amountIn: ["1162575544199150998"],
+      receiver: ENSO_SHORTCUTS,
+    }));
+
+    const actions = lastBundleActions();
+    expect(actions).toHaveLength(5);
+    expect(actions[0]).toMatchObject({
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: LEGACY_MORPHO_ADDRESS,
+        spender: MORPHO_WRAPPER_ADDRESS,
+        amount: "1162575544199150998",
+      },
+    });
+    expect(actions[1]).toMatchObject({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: MORPHO_WRAPPER_ADDRESS,
+        method: "depositFor",
+        args: [ENSO_SHORTCUTS, "1162575544199150998"],
+      },
+    });
+    expect(actions[2]).toMatchObject({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: ENSO_ROUTER_EXECUTOR.toLowerCase(),
+        method: "routeMulti",
+        args: [[], "0xinner"],
+      },
+    });
+    expect(actions[3]).toMatchObject({
+      protocol: "enso",
+      action: "balance",
+      args: { token: TOKENS.CVXCRV },
+    });
+    expect(actions[4]).toMatchObject({
+      protocol: "erc4626",
+      action: "deposit",
+      args: {
+        tokenIn: TOKENS.CVXCRV,
+        tokenOut: VAULT_ADDRESSES.YCVXCRV,
+        amountIn: { useOutputOfCallAt: 3 },
+        primaryAddress: VAULT_ADDRESSES.YCVXCRV,
+      },
+    });
+    expect(result.amountsOut[TOKENS.CVXCRV.toLowerCase()]).toBe("27538222472939391973");
+    expect(result.amountsOut[VAULT_ADDRESSES.YCVXCRV.toLowerCase()]).toBe("25000000000000000000");
+    expect(result.gas).toBe("671888");
+    expect(result.routeInfo?.steps.map((step) => step.action)).toEqual(["Wrap", "Swap", "Deposit", "Receive"]);
   });
 
   it("shows external -> illiquid intermediate amounts", async () => {
