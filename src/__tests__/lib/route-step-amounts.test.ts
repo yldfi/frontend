@@ -372,7 +372,14 @@ describe("route step amounts", () => {
   it("uses lpxCVX.swap for any token -> pxCVX hybrid routes", async () => {
     mockPxCvxHybridSplit();
 
-    await fetchAnyToPxCvxRoute({
+    mockGetBundleData.mockResolvedValueOnce({
+      ...BUNDLE_RESPONSE,
+      amountsOut: {
+        [PIREX.PXCVX.toLowerCase()]: "1100000000000000000",
+      },
+    });
+
+    const result = await fetchAnyToPxCvxRoute({
       fromAddress: TEST_WALLET,
       inputToken: USDC_ADDRESS,
       amountIn: "10000000",
@@ -390,6 +397,7 @@ describe("route step amounts", () => {
     expect(callActions(actions, PIREX.LPXCVX, "swap")).toHaveLength(1);
     expect(callActions(actions, PIREX.LPXCVX, "unwrap")).toHaveLength(0);
     expect(callActions(actions, PIREX.LPXCVX_CVX_POOL, "exchange")).toHaveLength(0);
+    expect(result.amountsOut[PIREX.PXCVX.toLowerCase()]).toBe("5050000000000000000");
 
     const pxCvxBalanceIdx = balanceIndex(actions, TOKENS.PXCVX);
     expect(pxCvxBalanceIdx).toBeGreaterThan(-1);

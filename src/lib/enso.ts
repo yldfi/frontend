@@ -7738,7 +7738,7 @@ export async function fetchAnyToPxCvxRoute(params: {
       ...bundleResult.amountsOut,
       [PIREX.PXCVX.toLowerCase()]: totalExpectedPxCvx.toString(),
     };
-  } else if (!bundleResult.amountsOut[PIREX.PXCVX.toLowerCase()] || BigInt(bundleResult.amountsOut[PIREX.PXCVX.toLowerCase()] || "0") === 0n) {
+  } else {
     bundleResult.amountsOut = {
       ...bundleResult.amountsOut,
       [PIREX.PXCVX.toLowerCase()]: totalExpectedPxCvx.toString(),
