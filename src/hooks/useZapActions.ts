@@ -11,7 +11,7 @@ import {
 import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
 import { parseUnits, maxUint256 } from "viem";
 import type { Hash } from "viem";
-import { ETH_ADDRESS } from "@/lib/enso";
+import { ENSO_ROUTER_EXECUTOR, ETH_ADDRESS } from "@/lib/enso";
 import { ERC20_APPROVAL_ABI } from "@/lib/abis";
 import { useTestNetwork } from "@/contexts/TestNetworkContext";
 import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
@@ -20,6 +20,8 @@ import type { ZapQuote, SimulationResult } from "@/types/enso";
 import type { PendingApproval, ApprovalProgress } from "@/types/approval";
 import { runVNetSimulation } from "@/lib/vnet-simulation";
 import { parseErrorMessage, anvilCall } from "@/lib/tx-utils";
+
+const ZAP_APPROVAL_SPENDER = ENSO_ROUTER_EXECUTOR as `0x${string}`;
 
 export type ZapStatus =
   | "idle"
@@ -57,18 +59,16 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     quote?.inputToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
   const tokenAddress = quote?.inputToken.address as `0x${string}` | undefined;
 
-  // Get the router address from the quote (Enso may use different routers)
-  const routerAddress = quote?.tx?.to as `0x${string}` | undefined;
-
-  // Check allowance for non-ETH tokens
+  // User ERC20 approvals must target Enso's router executor. quote.tx.to is the
+  // transaction entry point and may differ from the token spender.
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
     address: tokenAddress,
     abi: ERC20_APPROVAL_ABI,
     functionName: "allowance",
-    args: userAddress && routerAddress ? [userAddress, routerAddress] : undefined,
+    args: userAddress ? [userAddress, ZAP_APPROVAL_SPENDER] : undefined,
     chainId, // Use connected chain
     query: {
-      enabled: !!userAddress && !isEth && !!tokenAddress && !!routerAddress,
+      enabled: !!userAddress && !isEth && !!tokenAddress,
     },
   });
 
@@ -184,10 +184,10 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
         label: pendingApproval.tokenSymbol,
         description: `Approve ${pendingApproval.tokenSymbol} for Enso Router`,
         done: false,
-        spender: routerAddress,
+        spender: ZAP_APPROVAL_SPENDER,
       }],
     };
-  }, [pendingApproval, routerAddress]);
+  }, [pendingApproval]);
 
   const isApproving = status === "approving" || status === "waitingApproval";
 
@@ -216,7 +216,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
   // Approve tokens — exact=true uses the quote amount, exact=false uses unlimited
   const approve = useCallback((exact: boolean) => {
-    if (!userAddress || isEth || !tokenAddress || !routerAddress || !quote) return;
+    if (!userAddress || isEth || !tokenAddress || !quote) return;
     setActionState("approving");
     autoExecuteRef.current = true;
 
@@ -234,7 +234,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       console.log("[Approve TX]", {
         type: "erc20",
         token: tokenAddress,
-        spender: routerAddress,
+        spender: ZAP_APPROVAL_SPENDER,
         amount: amount.toString(),
         exact,
       });
@@ -243,9 +243,9 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       address: tokenAddress,
       abi: ERC20_APPROVAL_ABI,
       functionName: "approve",
-      args: [routerAddress, amount],
+      args: [ZAP_APPROVAL_SPENDER, amount],
     });
-  }, [userAddress, isEth, tokenAddress, routerAddress, quote, writeApprove]);
+  }, [userAddress, isEth, tokenAddress, quote, writeApprove]);
 
   // Internal execute — skips approval check, used directly and after auto-approval
   // Options:
@@ -517,7 +517,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
         type: "erc20",
         token: tokenAddress!,
         tokenSymbol,
-        spender: routerAddress!,
+        spender: ZAP_APPROVAL_SPENDER,
         spenderName: "Enso Router",
         amount: amountWei,
       });
@@ -527,7 +527,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
     // No approval needed — execute directly
     return executeZapInternal(options);
-  }, [quote, userAddress, needsApproval, tokenAddress, routerAddress, executeZapInternal, resetApprove]);
+  }, [quote, userAddress, needsApproval, tokenAddress, executeZapInternal, resetApprove]);
 
   // Reset state
   const reset = useCallback(() => {

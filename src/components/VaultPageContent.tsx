@@ -2608,6 +2608,7 @@ export function VaultPageContent({ id }: { id: string }) {
           }}
           gasPrice={gasPrice}
           ethPrice={ethPrice}
+          routePriceImpact={zapQuote?.priceImpact ?? null}
           confirmText="Confirm Zap"
         />
       )}

@@ -608,10 +608,10 @@ export function RouteDisplay({ routeInfo, inputSymbol, outputSymbol, inputAmount
   if (routeInfo.steps && routeInfo.steps.length > 0) {
     // Add amounts to first and last steps
     const stepsWithAmounts = routeInfo.steps.map((step, index) => {
-      if (index === 0 && inputAmount) {
+      if (index === 0 && inputAmount && !step.amount) {
         return { ...step, amount: inputAmount };
       }
-      if (index === routeInfo.steps.length - 1 && outputAmount) {
+      if (index === routeInfo.steps.length - 1 && outputAmount && !step.amount) {
         return { ...step, amount: outputAmount };
       }
       return step;

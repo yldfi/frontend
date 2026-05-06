@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
+import { useBlockNumber } from "wagmi";
 import { useEnsoTokens } from "@/hooks/useEnsoTokens";
 import { useTokenMetadata } from "@/hooks/useTokenMetadata";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
@@ -58,6 +59,7 @@ interface TokenSelectorProps {
   excludeTokens?: string[]; // Addresses to exclude from list
   excludeDefiTokens?: boolean; // Exclude vault/strategy tokens (can't be swapped to)
   priorityTokens?: EnsoToken[]; // Tokens to show at top of list regardless of balance
+  preferOnchainBalances?: boolean; // Overlay direct on-chain balances for displayed tokens
 }
 
 // Token logo with fallback
@@ -161,14 +163,17 @@ export function TokenSelector({
   excludeTokens,
   excludeDefiTokens,
   priorityTokens,
+  preferOnchainBalances,
 }: TokenSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"tokens" | "vaults">("tokens");
   const [confirmImportToken, setConfirmImportToken] = useState<EnsoToken | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+  const lastBalanceRefetchBlockRef = useRef<bigint | undefined>(undefined);
 
   const { tokens, searchQuery, setSearchQuery, isLoading, importToken } = useEnsoTokens();
+  const { data: currentBlock } = useBlockNumber({ watch: isOpen && !!preferOnchainBalances });
 
   // Check if search query is an address and fetch metadata if so
   const isSearchAddress = isAddress(searchQuery);
@@ -215,7 +220,23 @@ export function TokenSelector({
   }, [filteredTokens, priorityTokens, excludeSet]);
 
   // Sort tokens by balance (tokens with balance first), get prices
-  const { sortedTokens, balanceMap, priceMap } = useTokenBalances(tokensForBalances);
+  const { sortedTokens, balanceMap, priceMap, refetch: refetchBalances } = useTokenBalances(tokensForBalances, {
+    preferOnchain: preferOnchainBalances,
+    includeWalletTokens: !searchQuery.trim() && !excludeDefiTokens,
+  });
+
+  useEffect(() => {
+    if (!isOpen) return;
+    refetchBalances();
+    lastBalanceRefetchBlockRef.current = currentBlock;
+  }, [currentBlock, isOpen, refetchBalances]);
+
+  useEffect(() => {
+    if (!isOpen || !preferOnchainBalances || !currentBlock) return;
+    if (lastBalanceRefetchBlockRef.current === currentBlock) return;
+    lastBalanceRefetchBlockRef.current = currentBlock;
+    refetchBalances();
+  }, [currentBlock, isOpen, preferOnchainBalances, refetchBalances]);
 
   // Close on click outside
   useEffect(() => {
@@ -564,6 +585,7 @@ export function TokenSelector({
                       sortedTokens
                         .filter((token) => {
                           if (!token || !token.address || !token.symbol) return false;
+                          if (excludeSet.has(token.address.toLowerCase())) return false;
                           // Exclude priority tokens from regular list to avoid duplicates
                           if (priorityTokens?.some(p => p.address.toLowerCase() === token.address.toLowerCase())) {
                             return false;

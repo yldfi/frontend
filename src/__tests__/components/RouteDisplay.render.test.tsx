@@ -52,4 +52,45 @@ describe("RouteDisplay rendering", () => {
     expect(container.textContent).toContain("Receive vault shares");
     expect(container.textContent?.match(/Llama Airforce/g)).toHaveLength(1);
   });
+
+  it("preserves explicit split amounts on the first hybrid route step", () => {
+    const { container } = render(
+      <RouteDisplay
+        inputAmount="100000.0000"
+        outputAmount="100001.2134"
+        routeInfo={{
+          steps: [
+            {
+              tokenSymbol: "CVX",
+              amount: "18043.2485",
+              action: "Swap",
+              description: "CVX for pxCVX",
+              protocol: "Curve",
+              bonus: 0.0067,
+              bonusAmount: "1.2134",
+              bonusSymbol: "pxCVX",
+            },
+            {
+              tokenSymbol: "CVX",
+              amount: "81956.7515",
+              action: "Mint",
+              description: "pxCVX with CVX (1:1)",
+              protocol: "Pirex",
+            },
+            {
+              tokenSymbol: "pxCVX",
+              action: "Receive",
+              description: "tokens",
+              protocol: "Pirex",
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(container.textContent).toContain("18043.2485CVX");
+    expect(container.textContent).toContain("81956.7515CVX");
+    expect(container.textContent).not.toContain("100000.0000CVXSwap");
+    expect(container.textContent).toContain("100001.2134pxCVX");
+  });
 });

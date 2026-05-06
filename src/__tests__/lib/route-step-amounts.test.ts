@@ -52,6 +52,9 @@ vi.mock("@/lib/curve", () => ({
 }));
 
 import {
+  fetchAnyToCvgCvxRoute,
+  fetchAnyToPxCvxRoute,
+  fetchAnyToLpxCvxRoute,
   fetchComposableZapInRoute,
   fetchLpxCvxZapInRoute,
   fetchSpecialTokenToExternalVaultRoute,
@@ -59,8 +62,10 @@ import {
   fetchVaultToVaultRoute,
   fetchYldVaultToIlliquidRoute,
 } from "@/lib/enso";
-import { LLAMA_AIRFORCE, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
-import { YVUSDC1_ADDRESS } from "@/config/addresses";
+import { cryptoswap, findPegPoint, getCurveGetDy, getStableSwapParams } from "@/lib/curve";
+import { LLAMA_AIRFORCE, PIREX, TANGENT, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
+import { USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
+import type { EnsoBundleAction } from "@/types/enso";
 
 const TEST_WALLET = "0xd8da6bf26964af9d7eed9e03e53415d37aa96045";
 const BUNDLE_RESPONSE = {
@@ -75,6 +80,12 @@ const BUNDLE_RESPONSE = {
   priceImpact: 0,
 };
 
+type TestBundleAction = EnsoBundleAction & {
+  args: Record<string, unknown>;
+};
+
+const ONE_ETHER = 10n ** 18n;
+
 function makeRpcResponse(result: string): Response {
   return {
     ok: true,
@@ -82,9 +93,108 @@ function makeRpcResponse(result: string): Response {
   } as unknown as Response;
 }
 
+function lastBundleActions(): TestBundleAction[] {
+  const calls = mockGetBundleData.mock.calls;
+  const lastCall = calls[calls.length - 1];
+  expect(lastCall, "expected getBundleData to be called").toBeDefined();
+  return lastCall[1] as TestBundleAction[];
+}
+
+function isOutputRef(value: unknown): value is { useOutputOfCallAt: number } {
+  return typeof value === "object" && value !== null && "useOutputOfCallAt" in value;
+}
+
+function fixedErc20Approvals(actions: TestBundleAction[], token: string): TestBundleAction[] {
+  return actions.filter((action) =>
+    action.protocol === "erc20" &&
+    action.action === "approve" &&
+    String(action.args.token).toLowerCase() === token.toLowerCase() &&
+    typeof action.args.amount === "string"
+  );
+}
+
+function rawApproveCalls(actions: TestBundleAction[], token: string): TestBundleAction[] {
+  return actions.filter((action) =>
+    action.protocol === "enso" &&
+    action.action === "call" &&
+    String(action.args.address).toLowerCase() === token.toLowerCase() &&
+    action.args.method === "approve"
+  );
+}
+
+function rawApproveSpender(action: TestBundleAction): string {
+  return String((action.args.args as unknown[])[0]);
+}
+
+function rawApproveAmount(action: TestBundleAction): unknown {
+  return (action.args.args as unknown[])[1];
+}
+
+function callActions(actions: TestBundleAction[], address: string, method: string): TestBundleAction[] {
+  return actions.filter((action) =>
+    action.protocol === "enso" &&
+    action.action === "call" &&
+    String(action.args.address).toLowerCase() === address.toLowerCase() &&
+    action.args.method === method
+  );
+}
+
+function balanceIndex(actions: TestBundleAction[], token: string): number {
+  return actions.findIndex((action) =>
+    action.protocol === "enso" &&
+    action.action === "balance" &&
+    String(action.args.token).toLowerCase() === token.toLowerCase()
+  );
+}
+
+function mockPxCvxHybridSplit(): void {
+  vi.mocked(cryptoswap.getDy).mockImplementation((_params: unknown, i: number, j: number, dx: bigint) => {
+    if (i === 0 && j === 1) return dx > ONE_ETHER ? (dx * 9n) / 10n : (dx * 11n) / 10n;
+    if (i === 1 && j === 0) return dx - (dx / 10n);
+    return dx;
+  });
+  vi.mocked(cryptoswap.findPegPoint).mockReturnValue(ONE_ETHER);
+}
+
+function mockCvgCvxHybridSplit(): void {
+  vi.mocked(getStableSwapParams).mockResolvedValue({
+    balances: [0n, 0n],
+    A: 0n,
+    Ann: 0n,
+    fee: 0n,
+    offpegFeeMultiplier: 0n,
+  });
+  vi.mocked(findPegPoint).mockReturnValue(ONE_ETHER);
+  vi.mocked(getCurveGetDy).mockImplementation(async (_pool: string, i: number, j: number, amount: string) => {
+    const rawAmount = BigInt(amount);
+    if (i === 0 && j === 1) return rawAmount + (rawAmount / 10n);
+    return rawAmount;
+  });
+}
+
 describe("route step amounts", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+
+    vi.mocked(cryptoswap.getDy).mockImplementation((_params: unknown, i: number, j: number, dx: bigint) => {
+      if (i === 0 && j === 1) return dx + (dx / 10n);
+      if (i === 1 && j === 0) return dx - (dx / 10n);
+      return dx;
+    });
+    vi.mocked(cryptoswap.findPegPoint).mockReturnValue(0n);
+    vi.mocked(findPegPoint).mockReturnValue(0n);
+    vi.mocked(getStableSwapParams).mockResolvedValue({
+      balances: [0n, 0n],
+      A: 0n,
+      Ann: 0n,
+      fee: 0n,
+      offpegFeeMultiplier: 0n,
+    });
+    vi.mocked(getCurveGetDy).mockImplementation(async (_pool: string, i: number, j: number, amount: string) => {
+      const rawAmount = BigInt(amount);
+      if (i === 0 && j === 1) return rawAmount + (rawAmount / 10n);
+      return rawAmount;
+    });
 
     mockGetBundleData.mockResolvedValue(BUNDLE_RESPONSE);
     mockGetRouteData.mockImplementation(async ({ tokenIn, tokenOut }: { tokenIn: string[]; tokenOut: string[] }) => {
@@ -223,5 +333,136 @@ describe("route step amounts", () => {
     expect(result.amountsOut[VAULT_ADDRESSES.YCVGCVX.toLowerCase()]).toBeDefined();
     expect(BigInt(result.amountsOut[TOKENS.CVGCVX.toLowerCase()])).toBeGreaterThan(0n);
     expect(BigInt(result.amountsOut[VAULT_ADDRESSES.YCVGCVX.toLowerCase()])).toBeGreaterThan(0n);
+  });
+
+  it("keeps yld vault -> pxCVX hybrid split without classifying intermediate CVX as wallet input", async () => {
+    mockPxCvxHybridSplit();
+
+    await fetchYldVaultToIlliquidRoute({
+      fromAddress: TEST_WALLET,
+      sourceVault: VAULT_ADDRESSES.YCVXCRV,
+      sourceUnderlying: TOKENS.CVXCRV,
+      outputToken: TOKENS.PXCVX,
+      amountIn: "1000000000000000000",
+      slippage: "100",
+    });
+
+    const actions = lastBundleActions();
+    expect(fixedErc20Approvals(actions, TOKENS.CVX)).toEqual([]);
+
+    const cvxApprovals = rawApproveCalls(actions, TOKENS.CVX);
+    expect(cvxApprovals.map(rawApproveSpender)).toEqual(expect.arrayContaining([
+      PIREX.LPXCVX,
+      PIREX.PIREX_CVX,
+    ]));
+    expect(cvxApprovals.map(rawApproveAmount).every((amount) => typeof amount === "string" && BigInt(amount) > 0n)).toBe(true);
+    expect(callActions(actions, PIREX.LPXCVX, "swap")).toHaveLength(1);
+    expect(callActions(actions, PIREX.LPXCVX, "unwrap")).toHaveLength(0);
+    expect(callActions(actions, PIREX.LPXCVX_CVX_POOL, "exchange")).toHaveLength(0);
+
+    const pxCvxBalanceIdx = balanceIndex(actions, TOKENS.PXCVX);
+    expect(pxCvxBalanceIdx).toBeGreaterThan(-1);
+    const finalTransfer = actions[actions.length - 1];
+    expect(finalTransfer.protocol).toBe("erc20");
+    expect(finalTransfer.action).toBe("transfer");
+    expect(finalTransfer.args.token).toBe(TOKENS.PXCVX);
+    expect(finalTransfer.args.amount).toEqual({ useOutputOfCallAt: pxCvxBalanceIdx });
+  });
+
+  it("uses lpxCVX.swap for any token -> pxCVX hybrid routes", async () => {
+    mockPxCvxHybridSplit();
+
+    await fetchAnyToPxCvxRoute({
+      fromAddress: TEST_WALLET,
+      inputToken: USDC_ADDRESS,
+      amountIn: "10000000",
+      slippage: "100",
+    });
+
+    const actions = lastBundleActions();
+    expect(fixedErc20Approvals(actions, TOKENS.CVX)).toEqual([]);
+
+    const cvxApprovals = rawApproveCalls(actions, TOKENS.CVX);
+    expect(cvxApprovals.map(rawApproveSpender)).toEqual(expect.arrayContaining([
+      PIREX.LPXCVX,
+      PIREX.PIREX_CVX,
+    ]));
+    expect(callActions(actions, PIREX.LPXCVX, "swap")).toHaveLength(1);
+    expect(callActions(actions, PIREX.LPXCVX, "unwrap")).toHaveLength(0);
+    expect(callActions(actions, PIREX.LPXCVX_CVX_POOL, "exchange")).toHaveLength(0);
+
+    const pxCvxBalanceIdx = balanceIndex(actions, TOKENS.PXCVX);
+    expect(pxCvxBalanceIdx).toBeGreaterThan(-1);
+    const finalTransfer = actions[actions.length - 1];
+    expect(finalTransfer.protocol).toBe("erc20");
+    expect(finalTransfer.action).toBe("transfer");
+    expect(finalTransfer.args.token).toBe(PIREX.PXCVX);
+    expect(finalTransfer.args.amount).toEqual({ useOutputOfCallAt: pxCvxBalanceIdx });
+  });
+
+  it("keeps any token -> cvgCVX hybrid split without fixed intermediate erc20 approvals", async () => {
+    mockCvgCvxHybridSplit();
+
+    await fetchAnyToCvgCvxRoute({
+      fromAddress: TEST_WALLET,
+      inputToken: USDC_ADDRESS,
+      amountIn: "10000000",
+      slippage: "100",
+    });
+
+    const actions = lastBundleActions();
+    expect(fixedErc20Approvals(actions, TOKENS.CVX)).toEqual([]);
+    expect(fixedErc20Approvals(actions, TOKENS.CVX1)).toEqual([]);
+
+    expect(rawApproveCalls(actions, TOKENS.CVX).map(rawApproveSpender)).toEqual(expect.arrayContaining([
+      TOKENS.CVX1,
+      TANGENT.CVGCVX_CONTRACT,
+    ]));
+    expect(rawApproveCalls(actions, TOKENS.CVX1).map(rawApproveSpender)).toContain(TANGENT.CVX1_CVGCVX_POOL);
+
+    const cvgCvxBalanceIdx = balanceIndex(actions, TOKENS.CVGCVX);
+    expect(cvgCvxBalanceIdx).toBeGreaterThan(-1);
+    const finalTransfer = actions[actions.length - 1];
+    expect(finalTransfer.protocol).toBe("erc20");
+    expect(finalTransfer.action).toBe("transfer");
+    expect(finalTransfer.args.token).toBe(TOKENS.CVGCVX);
+    expect(finalTransfer.args.amount).toEqual({ useOutputOfCallAt: cvgCvxBalanceIdx });
+  });
+
+  it("wraps produced pxCVX through a balance ref for any token -> lpxCVX hybrid routes", async () => {
+    mockPxCvxHybridSplit();
+
+    await fetchAnyToLpxCvxRoute({
+      fromAddress: TEST_WALLET,
+      inputToken: USDC_ADDRESS,
+      amountIn: "10000000",
+      slippage: "100",
+    });
+
+    const actions = lastBundleActions();
+    expect(fixedErc20Approvals(actions, TOKENS.CVX)).toEqual([]);
+
+    const pxCvxApprove = actions.find((action) =>
+      action.protocol === "erc20" &&
+      action.action === "approve" &&
+      String(action.args.token).toLowerCase() === PIREX.PXCVX.toLowerCase() &&
+      action.args.spender === PIREX.LPXCVX
+    );
+    expect(pxCvxApprove).toBeDefined();
+    expect(isOutputRef(pxCvxApprove?.args.amount)).toBe(true);
+    const pxCvxBalanceIdx = (pxCvxApprove!.args.amount as { useOutputOfCallAt: number }).useOutputOfCallAt;
+    expect(actions[pxCvxBalanceIdx]).toMatchObject({
+      protocol: "enso",
+      action: "balance",
+      args: { token: PIREX.PXCVX },
+    });
+
+    const lpxCvxBalanceIdx = balanceIndex(actions, PIREX.LPXCVX);
+    expect(lpxCvxBalanceIdx).toBeGreaterThan(-1);
+    const finalTransfer = actions[actions.length - 1];
+    expect(finalTransfer.protocol).toBe("erc20");
+    expect(finalTransfer.action).toBe("transfer");
+    expect(finalTransfer.args.token).toBe(PIREX.LPXCVX);
+    expect(finalTransfer.args.amount).toEqual({ useOutputOfCallAt: lpxCvxBalanceIdx });
   });
 });
