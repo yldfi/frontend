@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { shouldAutoIncludeWalletToken } from "@/hooks/useTokenBalances";
 
 // Test the useTokenBalances business logic directly
 // We test balance merging, price merging, and token sorting
@@ -33,6 +34,45 @@ describe("useTokenBalances logic", () => {
     symbol,
     decimals: 18,
     type: "base",
+  });
+
+  describe("wallet token auto-include filter", () => {
+    const listedToken = {
+      token: "0x1111111111111111111111111111111111111111",
+      amount: "1000000000000000000",
+      decimals: 18,
+      price: 1,
+      name: "Listed Token",
+      symbol: "LIST",
+    };
+
+    it("accepts positive wallet tokens on the allowlist", () => {
+      const allowlist = new Set([listedToken.token.toLowerCase()]);
+      expect(shouldAutoIncludeWalletToken(listedToken, allowlist)).toBe(true);
+    });
+
+    it("rejects wallet tokens outside the allowlist", () => {
+      expect(shouldAutoIncludeWalletToken(listedToken, new Set())).toBe(false);
+    });
+
+    it("rejects wallet tokens when no allowlist is provided", () => {
+      expect(shouldAutoIncludeWalletToken(listedToken)).toBe(false);
+    });
+
+    it("rejects URL or claim-style spam even when allowlisted", () => {
+      const allowlist = new Set([listedToken.token.toLowerCase()]);
+      expect(shouldAutoIncludeWalletToken({
+        ...listedToken,
+        name: "Visit rewards.example.com to claim",
+        symbol: "CLAIM",
+      }, allowlist)).toBe(false);
+    });
+
+    it("rejects zero-price or zero-balance tokens", () => {
+      const allowlist = new Set([listedToken.token.toLowerCase()]);
+      expect(shouldAutoIncludeWalletToken({ ...listedToken, price: 0 }, allowlist)).toBe(false);
+      expect(shouldAutoIncludeWalletToken({ ...listedToken, amount: "0" }, allowlist)).toBe(false);
+    });
   });
 
   describe("balance map construction", () => {

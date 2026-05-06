@@ -33,6 +33,7 @@ import {
   fetchSpecialTokenToIlliquidRoute,
   fetchSpecialTokenToExternalVaultRoute,
   fetchYldVaultToIlliquidRoute,
+  fetchLegacyMorphoWrapRoute,
   previewUCrvWithdraw,
   previewBeefyWithdraw,
   fetchTokenPrices,
@@ -43,6 +44,8 @@ import {
   isYldfiVault,
   isPxCvxToken,
   isLpxCvxToken,
+  isLegacyMorphoToken,
+  MORPHO_TOKEN_ADDRESS,
   getTokenSymbol,
 } from "@/lib/enso";
 import {
@@ -1471,6 +1474,47 @@ export function useUniversalZap({
           inputUsdValue: inUsd,
           // Market-price value (what pxCVX/cvgCVX/lpxCVX is worth today).
           outputUsdValue: marketOutUsd,
+          priceImpact,
+          gasEstimate: bundle.gas,
+          tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
+          route: [],
+          routeInfo,
+        };
+      }
+
+      if (isLegacyMorphoToken(inputToken.address)) {
+        const bundle = await fetchLegacyMorphoWrapRoute({
+          fromAddress: userAddress,
+          outputToken: outputToken.address,
+          amountIn: amountInWei,
+          slippage,
+        });
+        const outRaw =
+          bundle.amountsOut[outputToken.address.toLowerCase()] ||
+          bundle.amountsOut[outputToken.address] ||
+          "0";
+        const outFmt = formatUnits(BigInt(outRaw), outputDecimals);
+        const inNum = Number(inputAmount);
+        const outNum = Number(outFmt);
+
+        const priceMap = await getPrices([inputToken.address, MORPHO_TOKEN_ADDRESS, outputToken.address]);
+        const morphoPx = priceMap.get(MORPHO_TOKEN_ADDRESS.toLowerCase()) ?? null;
+        const legacyPx = priceMap.get(inputToken.address.toLowerCase()) ?? null;
+        const outPx = priceMap.get(outputToken.address.toLowerCase()) ?? null;
+        const inputPrice = morphoPx ?? legacyPx;
+        const inUsd = inputPrice !== null ? inNum * inputPrice : null;
+        const outUsd = outPx !== null ? outNum * outPx : null;
+        const priceImpact = calculateValueDeltaImpact(inUsd, outUsd, bundle.priceImpact ?? null);
+        const routeInfo = annotateEnsoStepSlippage(bundle.routeInfo, priceImpact);
+
+        return {
+          inputToken,
+          inputAmount,
+          outputAmount: outRaw,
+          outputAmountFormatted: outFmt,
+          exchangeRate: inNum > 0 ? outNum / inNum : 0,
+          inputUsdValue: inUsd,
+          outputUsdValue: outUsd,
           priceImpact,
           gasEstimate: bundle.gas,
           tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },

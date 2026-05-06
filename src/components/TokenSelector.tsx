@@ -8,6 +8,7 @@ import { useTokenMetadata } from "@/hooks/useTokenMetadata";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
 import { formatUnits, isAddress } from "viem";
 import { cn } from "@/lib/utils";
+import { CUSTOM_TOKENS, POPULAR_TOKENS } from "@/lib/enso";
 import { VAULTS, CURVE_SAVINGS, YEARN } from "@/config/vaults";
 import type { EnsoToken } from "@/types/enso";
 import { LoadingDots } from "@/components/LoadingDots";
@@ -219,10 +220,21 @@ export function TokenSelector({
     return uniqueExtra.length > 0 ? [...filteredTokens, ...uniqueExtra] : filteredTokens;
   }, [filteredTokens, priorityTokens, excludeSet]);
 
+  const walletTokenAllowlist = useMemo(() => {
+    const allowed = new Set<string>();
+    for (const token of CUSTOM_TOKENS) allowed.add(token.address.toLowerCase());
+    for (const address of POPULAR_TOKENS) allowed.add(address.toLowerCase());
+    for (const token of priorityTokens || []) allowed.add(token.address.toLowerCase());
+    for (const token of FEATURED_VAULT_TOKENS) allowed.add(token.address.toLowerCase());
+    for (const address of ALWAYS_AVAILABLE_ADDRESSES) allowed.add(address);
+    return Array.from(allowed);
+  }, [priorityTokens]);
+
   // Sort tokens by balance (tokens with balance first), get prices
   const { sortedTokens, balanceMap, priceMap, refetch: refetchBalances } = useTokenBalances(tokensForBalances, {
     preferOnchain: preferOnchainBalances,
     includeWalletTokens: !searchQuery.trim() && !excludeDefiTokens,
+    walletTokenAllowlist,
   });
 
   useEffect(() => {

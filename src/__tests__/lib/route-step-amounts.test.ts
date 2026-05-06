@@ -17,6 +17,10 @@ vi.mock("@ensofinance/sdk", () => ({
   },
 }));
 
+vi.mock("@/lib/zapper", () => ({
+  extractInnerSwapData: vi.fn(() => "0xinner"),
+}));
+
 vi.mock("@/lib/curve", () => ({
   getCurveGetDy: vi.fn(),
   getCurveGetDyFactory: vi.fn(),
@@ -57,10 +61,17 @@ import {
   fetchAnyToLpxCvxRoute,
   fetchComposableZapInRoute,
   fetchLpxCvxZapInRoute,
+  fetchLegacyMorphoWrapRoute,
   fetchSpecialTokenToExternalVaultRoute,
   fetchSpecialTokenToIlliquidRoute,
   fetchVaultToVaultRoute,
   fetchYldVaultToIlliquidRoute,
+  ENSO_ROUTER_EXECUTOR,
+  ENSO_SHORTCUTS,
+  ETH_ADDRESS,
+  LEGACY_MORPHO_ADDRESS,
+  MORPHO_TOKEN_ADDRESS,
+  MORPHO_WRAPPER_ADDRESS,
 } from "@/lib/enso";
 import { cryptoswap, findPegPoint, getCurveGetDy, getStableSwapParams } from "@/lib/curve";
 import { LLAMA_AIRFORCE, PIREX, TANGENT, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
@@ -217,6 +228,98 @@ describe("route step amounts", () => {
       }
       return makeRpcResponse("0x0");
     }) as unknown as typeof fetch;
+  });
+
+  it("wraps legacy MORPHO before routing through current MORPHO", async () => {
+    mockGetRouteData.mockResolvedValueOnce({
+      amountOut: "1110269870387989",
+      gas: "368151",
+      priceImpact: 33,
+      tx: { to: "0xroute", data: "0xrouteData", value: "0" },
+      route: [],
+    });
+    mockGetBundleData.mockResolvedValueOnce({
+      ...BUNDLE_RESPONSE,
+      gas: "0",
+      amountsOut: {},
+    });
+
+    const result = await fetchLegacyMorphoWrapRoute({
+      fromAddress: TEST_WALLET,
+      outputToken: ETH_ADDRESS,
+      amountIn: "1162575544199150998",
+      slippage: "100",
+    });
+
+    expect(mockGetRouteData).toHaveBeenCalledWith(expect.objectContaining({
+      fromAddress: TEST_WALLET,
+      tokenIn: [MORPHO_TOKEN_ADDRESS],
+      tokenOut: [ETH_ADDRESS],
+      amountIn: ["1162575544199150998"],
+    }));
+
+    const actions = lastBundleActions();
+    expect(actions).toHaveLength(3);
+    expect(actions[0]).toMatchObject({
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: LEGACY_MORPHO_ADDRESS,
+        spender: MORPHO_WRAPPER_ADDRESS,
+        amount: "1162575544199150998",
+      },
+    });
+    expect(actions[1]).toMatchObject({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: MORPHO_WRAPPER_ADDRESS,
+        method: "depositFor",
+        args: [ENSO_SHORTCUTS, "1162575544199150998"],
+      },
+    });
+    expect(actions[2]).toMatchObject({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: ENSO_ROUTER_EXECUTOR.toLowerCase(),
+        method: "routeMulti",
+        args: [[], "0xinner"],
+      },
+    });
+    expect(result.amountsOut[ETH_ADDRESS.toLowerCase()]).toBe("1110269870387989");
+    expect(result.priceImpact).toBe(33);
+    expect(result.gas).toBe("488151");
+    expect(result.routeInfo?.steps.map((step) => step.action)).toEqual(["Wrap", "Swap", "Receive"]);
+  });
+
+  it("wraps legacy MORPHO directly when output is current MORPHO", async () => {
+    mockGetBundleData.mockResolvedValueOnce({
+      ...BUNDLE_RESPONSE,
+      gas: "0",
+      amountsOut: {},
+    });
+
+    const result = await fetchLegacyMorphoWrapRoute({
+      fromAddress: TEST_WALLET,
+      outputToken: MORPHO_TOKEN_ADDRESS,
+      amountIn: "1000000000000000000",
+      slippage: "100",
+    });
+
+    expect(mockGetRouteData).not.toHaveBeenCalled();
+    const actions = lastBundleActions();
+    expect(actions).toHaveLength(2);
+    expect(actions[1]).toMatchObject({
+      args: {
+        address: MORPHO_WRAPPER_ADDRESS,
+        method: "depositFor",
+        args: [TEST_WALLET, "1000000000000000000"],
+      },
+    });
+    expect(result.amountsOut[MORPHO_TOKEN_ADDRESS.toLowerCase()]).toBe("1000000000000000000");
+    expect(result.gas).toBe("150000");
+    expect(result.routeInfo?.steps.map((step) => step.action)).toEqual(["Wrap", "Receive"]);
   });
 
   it("shows external -> illiquid intermediate amounts", async () => {

@@ -95,8 +95,19 @@ describe("TokenSelector balance refresh", () => {
 
     expect(mockUseTokenBalances).toHaveBeenCalledWith(
       expect.any(Array),
-      { preferOnchain: true, includeWalletTokens: true },
+      expect.objectContaining({
+        preferOnchain: true,
+        includeWalletTokens: true,
+        walletTokenAllowlist: expect.arrayContaining([
+          "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        ]),
+      }),
     );
+    const options = mockUseTokenBalances.mock.calls.at(-1)?.[1];
+    expect(options?.walletTokenAllowlist).not.toEqual(expect.arrayContaining([
+      tokens[0].address.toLowerCase(),
+      tokens[1].address.toLowerCase(),
+    ]));
   });
 
   it("refetches balances when opened and on new blocks while open", async () => {

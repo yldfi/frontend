@@ -4,6 +4,7 @@ import { useReadContracts } from "wagmi";
 import { useMemo, useEffect, useState } from "react";
 import { isAddress, getAddress } from "viem";
 import { ERC20_METADATA_ABI } from "@/lib/abis";
+import { applyTokenDisplayOverride } from "@/lib/enso";
 import type { EnsoToken } from "@/types/enso";
 
 /**
@@ -116,15 +117,15 @@ export function useTokenMetadata(address: string | undefined) {
       return null;
     }
 
-    return {
+    return applyTokenDisplayOverride({
       address: tokenAddress,
       chainId,
       name: nameResult.result as string,
       symbol: symbolResult.result as string,
       decimals: decimalsResult.result as number,
       logoURI,
-      type: "base",
-    };
+      type: "base" as const,
+    });
   }, [tokenAddress, data, logoURI]);
 
   return {
