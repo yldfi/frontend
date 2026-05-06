@@ -34,6 +34,7 @@ import {
   fetchSpecialTokenToExternalVaultRoute,
   fetchYldVaultToIlliquidRoute,
   fetchLegacyMorphoWrapRoute,
+  fetchLegacyMorphoZapInRoute,
   previewUCrvWithdraw,
   previewBeefyWithdraw,
   fetchTokenPrices,
@@ -736,7 +737,15 @@ export function useUniversalZap({
         const targetIsPx = underlying.toLowerCase() === TOKENS.PXCVX.toLowerCase();
 
         let bundle;
-        if (inputIsExternal && targetIsPx) {
+        if (isLegacyMorphoToken(inputToken.address)) {
+          bundle = await fetchLegacyMorphoZapInRoute({
+            fromAddress: userAddress,
+            vaultAddress: outputToken.address,
+            amountIn: amountInWei,
+            slippage,
+            underlyingToken: underlying,
+          });
+        } else if (inputIsExternal && targetIsPx) {
           bundle = await fetchComposableZapInRoute({
             fromAddress: userAddress,
             inputToken: inputToken.address,
@@ -815,15 +824,20 @@ export function useUniversalZap({
           underlying.toLowerCase() === TOKENS.LPXCVX.toLowerCase();
         const outputCachePps =
           (vaultCache as Record<string, { pps?: number }> | undefined)?.[outputVault!.id]?.pps;
+        const inputIsLegacyMorpho = isLegacyMorphoToken(inputToken.address);
+        const priceAddresses = [
+          inputToken.address,
+          ...(inputIsLegacyMorpho ? [MORPHO_TOKEN_ADDRESS] : []),
+          underlying,
+          ...(underlyingNeedsCvxFallback ? [TOKENS.CVX] : []),
+        ];
         const [priceMap, aps] = await Promise.all([
-          getPrices(
-            underlyingNeedsCvxFallback
-              ? [inputToken.address, underlying, TOKENS.CVX]
-              : [inputToken.address, underlying],
-          ),
+          getPrices(priceAddresses),
           getAssetsPerShare(publicClient, outputToken.address as `0x${string}`, outputCachePps),
         ]);
-        const inPx = priceMap.get(inputToken.address.toLowerCase()) ?? null;
+        const inPx =
+          priceMap.get(inputToken.address.toLowerCase()) ??
+          (inputIsLegacyMorpho ? priceMap.get(MORPHO_TOKEN_ADDRESS.toLowerCase()) ?? null : null);
         const underPxRaw = priceMap.get(underlying.toLowerCase()) ?? null;
         const cvxFallbackPx = underlyingNeedsCvxFallback
           ? priceMap.get(TOKENS.CVX.toLowerCase()) ?? null

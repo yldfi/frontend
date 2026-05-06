@@ -2445,6 +2445,151 @@ export async function fetchLegacyMorphoWrapRoute(params: {
 }
 
 /**
+ * Legacy MORPHO → yld vault zap-in.
+ *
+ * The legacy token cannot be routed directly by Enso. We wrap it into current
+ * MORPHO inside ENSO_SHORTCUTS, execute a pre-built MORPHO → vault-underlying
+ * route with routeMulti so the wrapped MORPHO is consumed atomically, then
+ * deposit the received underlying into the target ERC4626 vault.
+ */
+export async function fetchLegacyMorphoZapInRoute(params: {
+  fromAddress: string;
+  vaultAddress: string;
+  amountIn: string;
+  slippage?: string;
+  underlyingToken?: string;
+}): Promise<EnsoBundleResponse> {
+  const underlying = params.underlyingToken || CVXCRV_ADDRESS;
+  const amountIn = params.amountIn;
+  const vaultConfig = Object.values(VAULTS).find(
+    (vault) => vault.address.toLowerCase() === params.vaultAddress.toLowerCase(),
+  );
+  const vaultSymbol = vaultConfig?.symbol ?? getTokenSymbol(params.vaultAddress);
+  const underlyingSymbol = getTokenSymbol(underlying);
+
+  const { extractInnerSwapData } = await import("@/lib/zapper");
+  const standaloneRoute = await fetchRoute({
+    fromAddress: params.fromAddress,
+    tokenIn: MORPHO_TOKEN_ADDRESS,
+    tokenOut: underlying,
+    amountIn,
+    slippage: params.slippage ?? "100",
+    receiver: ENSO_SHORTCUTS,
+  });
+  const expectedUnderlying = BigInt(standaloneRoute.amountOut);
+  const innerSwapData = extractInnerSwapData(standaloneRoute.tx.data);
+
+  const actions: EnsoBundleAction[] = [
+    erc20ApproveAction(LEGACY_MORPHO_ADDRESS, MORPHO_WRAPPER_ADDRESS, amountIn),
+    {
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: MORPHO_WRAPPER_ADDRESS,
+        method: "depositFor",
+        abi: "function depositFor(address account, uint256 value) returns (bool)",
+        args: [ENSO_SHORTCUTS, amountIn],
+      },
+    },
+    {
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: ENSO_ROUTER_EXECUTOR.toLowerCase(),
+        method: "routeMulti",
+        abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)",
+        args: [[], innerSwapData],
+      },
+    },
+    {
+      protocol: "enso",
+      action: "balance",
+      args: { token: underlying },
+    },
+  ];
+  const balanceIdx = actions.length - 1;
+  actions.push({
+    protocol: "erc4626",
+    action: "deposit",
+    args: {
+      tokenIn: underlying,
+      tokenOut: params.vaultAddress,
+      amountIn: { useOutputOfCallAt: balanceIdx },
+      primaryAddress: params.vaultAddress,
+    },
+  });
+
+  let expectedShares = expectedUnderlying.toString();
+  try {
+    expectedShares = await estimateExternalVaultShares({
+      vaultAddress: params.vaultAddress,
+      vaultInterface: "erc4626",
+      underlyingAmount: expectedUnderlying,
+    });
+  } catch {
+    // Fall back to underlying amount so the UI still has a conservative value.
+  }
+
+  const bundle = await fetchBundle({
+    fromAddress: params.fromAddress,
+    actions,
+    receiver: params.fromAddress,
+    routingStrategy: "router",
+    skipQuote: true,
+  });
+
+  const gasFallback = BigInt(standaloneRoute.gas || "0") + 260000n;
+  const steps: RouteStep[] = [
+    createRouteStep({
+      tokenAddress: LEGACY_MORPHO_ADDRESS,
+      amount: amountIn,
+      action: "Wrap",
+      description: "Legacy MORPHO to MORPHO (1:1)",
+      protocol: "Morpho",
+    }),
+    createRouteStep({
+      tokenAddress: MORPHO_TOKEN_ADDRESS,
+      amount: amountIn,
+      action: "Swap",
+      description: `MORPHO for ${underlyingSymbol}`,
+      protocol: "Enso",
+      slippage: standaloneRoute.priceImpact != null ? standaloneRoute.priceImpact / 100 : undefined,
+    }),
+    createRouteStep({
+      tokenAddress: underlying,
+      tokenSymbol: underlyingSymbol,
+      amount: expectedUnderlying,
+      action: "Deposit",
+      description: `into ${vaultSymbol}`,
+      protocol: "yld",
+    }),
+    createRouteStep({
+      tokenAddress: params.vaultAddress,
+      tokenSymbol: vaultSymbol,
+      amount: expectedShares,
+      action: "Receive",
+      description: `${vaultSymbol} shares`,
+      protocol: "yld",
+    }),
+  ];
+
+  return {
+    ...bundle,
+    gas: bundle.gas && bundle.gas !== "0" ? bundle.gas : gasFallback.toString(),
+    amountsOut: {
+      ...bundle.amountsOut,
+      [underlying.toLowerCase()]: expectedUnderlying.toString(),
+      [params.vaultAddress.toLowerCase()]: expectedShares,
+    },
+    priceImpact: standaloneRoute.priceImpact ?? bundle.priceImpact ?? null,
+    routeInfo: {
+      steps,
+      ...buildRouteMetadataFromSteps(steps),
+    },
+  };
+}
+
+/**
  * Create a Zap Out bundle (redeem from vault + swap to any token)
  * Used when user wants to exit vault directly to ETH, USDC, etc.
  */
