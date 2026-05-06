@@ -383,16 +383,23 @@ function getBufferedSlippageBps(slippageBps: number): number {
  */
 async function buildCvxToCvgCvxDepositActions(params: {
   expectedCvxAmount: bigint;
+  cvxAmountRef?: BundleAmountRef;
   targetVault: string;
   slippageBps: number;
 }): Promise<{ actions: EnsoBundleAction[]; expectedCvgCvx: bigint }> {
   const { TANGENT } = await import("@/config/vaults");
   const totalSlippageBps = getBufferedSlippageBps(params.slippageBps);
   const cvxForSplit = applySlippageBuffer(params.expectedCvxAmount, params.slippageBps);
+  const cvxIsDynamic = params.cvxAmountRef !== undefined && isDynamicAmountRef(params.cvxAmountRef);
   const { swapAmount, mintAmount } = await getOptimalSwapAmount(cvxForSplit);
+  const usesFixedDynamicSplit = cvxIsDynamic && swapAmount > 0n && mintAmount > 0n;
 
   const actions: EnsoBundleAction[] = [];
   let expectedSwapCvgCvx = 0n;
+  const swapCvxInput: BundleAmountRef =
+    cvxIsDynamic && !usesFixedDynamicSplit ? params.cvxAmountRef! : swapAmount.toString();
+  const mintCvxInput: BundleAmountRef =
+    cvxIsDynamic && !usesFixedDynamicSplit ? params.cvxAmountRef! : mintAmount.toString();
 
   if (swapAmount > 0n) {
     const expectedSwapOut = await getCurveGetDy(
@@ -406,11 +413,7 @@ async function buildCvxToCvgCvxDepositActions(params: {
       ? calculateMinDy(expectedSwapOut, totalSlippageBps)
       : "0";
     actions.push(
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: swapAmount.toString() },
-      },
+      intermediateApproveAction(TOKENS.CVX, TOKENS.CVX1, swapCvxInput, usesFixedDynamicSplit),
       {
         protocol: "enso",
         action: "call",
@@ -418,18 +421,15 @@ async function buildCvxToCvgCvxDepositActions(params: {
           address: TOKENS.CVX1,
           method: "mint",
           abi: "function mint(address to, uint256 amount)",
-          args: [ENSO_SHORTCUTS, swapAmount.toString()],
+          args: [ENSO_SHORTCUTS, swapCvxInput],
         },
       },
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: {
-          token: TOKENS.CVX1,
-          spender: TANGENT.CVX1_CVGCVX_POOL,
-          amount: swapAmount.toString(),
-        },
-      },
+      intermediateApproveAction(
+        TOKENS.CVX1,
+        TANGENT.CVX1_CVGCVX_POOL,
+        swapCvxInput,
+        usesFixedDynamicSplit || !isDynamicAmountRef(swapCvxInput),
+      ),
       {
         protocol: "enso",
         action: "call",
@@ -437,7 +437,7 @@ async function buildCvxToCvgCvxDepositActions(params: {
           address: TANGENT.CVX1_CVGCVX_POOL,
           method: "exchange",
           abi: "function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) returns (uint256)",
-          args: [0, 1, swapAmount.toString(), minSwapDy],
+          args: [0, 1, swapCvxInput, minSwapDy],
         },
       },
     );
@@ -445,15 +445,7 @@ async function buildCvxToCvgCvxDepositActions(params: {
 
   if (mintAmount > 0n) {
     actions.push(
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: {
-          token: TOKENS.CVX,
-          spender: TANGENT.CVGCVX_CONTRACT,
-          amount: mintAmount.toString(),
-        },
-      },
+      intermediateApproveAction(TOKENS.CVX, TANGENT.CVGCVX_CONTRACT, mintCvxInput, usesFixedDynamicSplit),
       {
         protocol: "enso",
         action: "call",
@@ -461,7 +453,7 @@ async function buildCvxToCvgCvxDepositActions(params: {
           address: TANGENT.CVGCVX_CONTRACT,
           method: "mint",
           abi: "function mint(address to, uint256 amount, bool isLock) returns (uint256)",
-          args: [ENSO_SHORTCUTS, mintAmount.toString(), true],
+          args: [ENSO_SHORTCUTS, mintCvxInput, true],
         },
       },
     );
@@ -506,6 +498,84 @@ function rebaseCvgCvxHybridRef(actions: EnsoBundleAction[], baseIdx: number): vo
 }
 
 type BundleAmountRef = string | { useOutputOfCallAt: number };
+
+function isDynamicAmountRef(amount: BundleAmountRef): amount is { useOutputOfCallAt: number } {
+  return typeof amount === "object" && amount !== null && "useOutputOfCallAt" in amount;
+}
+
+function erc20ApproveAction(token: string, spender: string, amount: BundleAmountRef): EnsoBundleAction {
+  return {
+    protocol: "erc20",
+    action: "approve",
+    args: { token, spender, amount },
+  };
+}
+
+function rawApproveCallAction(token: string, spender: string, amount: BundleAmountRef): EnsoBundleAction {
+  return {
+    protocol: "enso",
+    action: "call",
+    args: {
+      address: token,
+      method: "approve",
+      abi: "function approve(address spender, uint256 amount) returns (bool)",
+      args: [spender, amount],
+    },
+  };
+}
+
+function intermediateApproveAction(
+  token: string,
+  spender: string,
+  amount: BundleAmountRef,
+  forceRawCall: boolean,
+): EnsoBundleAction {
+  return forceRawCall
+    ? rawApproveCallAction(token, spender, amount)
+    : erc20ApproveAction(token, spender, amount);
+}
+
+type PirexLpxSwapConfig = {
+  readonly LPXCVX: string;
+  readonly TOKEN_ENUM: { readonly CVX: number };
+  readonly POOL_INDEX: { readonly CVX: number; readonly LPXCVX: number };
+};
+
+function lpxCvxSwapCallAction(
+  pirex: PirexLpxSwapConfig,
+  amount: BundleAmountRef,
+  minReceived: string,
+): EnsoBundleAction {
+  return {
+    protocol: "enso",
+    action: "call",
+    args: {
+      address: pirex.LPXCVX,
+      method: "swap",
+      abi: "function swap(uint8 source, uint256 amount, uint256 minReceived, uint256 fromIndex, uint256 toIndex)",
+      args: [
+        String(pirex.TOKEN_ENUM.CVX),
+        amount,
+        minReceived,
+        String(pirex.POOL_INDEX.CVX),
+        String(pirex.POOL_INDEX.LPXCVX),
+      ],
+    },
+  };
+}
+
+function pushCvxToPxCvxSwapActions(
+  actions: EnsoBundleAction[],
+  pirex: PirexLpxSwapConfig,
+  amount: BundleAmountRef,
+  minReceived: string,
+  forceRawApprove: boolean,
+): void {
+  actions.push(
+    intermediateApproveAction(TOKENS.CVX, pirex.LPXCVX, amount, forceRawApprove),
+    lpxCvxSwapCallAction(pirex, amount, minReceived),
+  );
+}
 
 interface ConversionState {
   token: string;
@@ -573,10 +643,17 @@ function formatRouteDeltaAmount(
 }
 
 function createRouteStep(step: RouteTraceStep): RouteStep {
+  const rawAmount =
+    step.amount === undefined
+      ? undefined
+      : typeof step.amount === "bigint"
+        ? step.amount.toString()
+        : step.amount;
   return {
     tokenSymbol: step.tokenSymbol ?? getTokenSymbol(step.tokenAddress),
     tokenAddress: step.tokenAddress,
     amount: step.amount === undefined ? undefined : formatRouteAmount(step.amount, step.tokenAddress),
+    rawAmount,
     action: step.action,
     description: step.description,
     protocol: step.protocol,
@@ -650,7 +727,9 @@ async function appendCvxToPxCvxConversion(
 ): Promise<ConversionState> {
   const { PIREX } = await import("@/config/vaults");
   const conservativeCvxAmount = applySlippageBuffer(state.expectedAmount, ctx.slippageBps);
+  const cvxIsDynamic = isDynamicAmountRef(state.amountRef);
   const { swapAmount, mintAmount } = await getOptimalPxCvxSwapAmount(conservativeCvxAmount);
+  const usesFixedDynamicSplit = cvxIsDynamic && swapAmount > 0n && mintAmount > 0n;
 
   let expectedSwapPxCvx = 0n;
   let swapMinDy = "0";
@@ -663,69 +742,24 @@ async function appendCvxToPxCvxConversion(
     swapMinDy = calculateMinDy(swapOutput, ctx.totalSlippageBps);
   }
 
-  if (swapAmount > 0n) {
-    actions.push(
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: {
-          token: TOKENS.CVX,
-          spender: PIREX.LPXCVX_CVX_POOL,
-          amount: swapAmount.toString(),
-        },
-      },
-      {
-        protocol: "enso",
-        action: "call",
-        args: {
-          address: PIREX.LPXCVX_CVX_POOL,
-          method: "exchange",
-          abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)",
-          args: [
-            String(PIREX.POOL_INDEX.CVX),
-            String(PIREX.POOL_INDEX.LPXCVX),
-            swapAmount.toString(),
-            swapMinDy,
-          ],
-        },
-      },
-    );
-    const swapIdx = actions.length - 1;
+  const swapCvxInput: BundleAmountRef =
+    cvxIsDynamic && !usesFixedDynamicSplit ? state.amountRef : swapAmount.toString();
+  const mintCvxInput: BundleAmountRef =
+    cvxIsDynamic && !usesFixedDynamicSplit ? state.amountRef : mintAmount.toString();
 
-    actions.push(
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: {
-          token: PIREX.LPXCVX,
-          spender: PIREX.LPXCVX,
-          amount: { useOutputOfCallAt: swapIdx },
-        },
-      },
-      {
-        protocol: "enso",
-        action: "call",
-        args: {
-          address: PIREX.LPXCVX,
-          method: "unwrap",
-          abi: "function unwrap(uint256 amount)",
-          args: [{ useOutputOfCallAt: swapIdx }],
-        },
-      },
+  if (swapAmount > 0n) {
+    pushCvxToPxCvxSwapActions(
+      actions,
+      PIREX,
+      swapCvxInput,
+      swapMinDy,
+      usesFixedDynamicSplit,
     );
   }
 
   if (mintAmount > 0n) {
     actions.push(
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: {
-          token: TOKENS.CVX,
-          spender: PIREX.PIREX_CVX,
-          amount: mintAmount.toString(),
-        },
-      },
+      intermediateApproveAction(TOKENS.CVX, PIREX.PIREX_CVX, mintCvxInput, usesFixedDynamicSplit),
       {
         protocol: "enso",
         action: "call",
@@ -734,7 +768,7 @@ async function appendCvxToPxCvxConversion(
           method: "deposit",
           abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
           args: [
-            mintAmount.toString(),
+            mintCvxInput,
             ENSO_SHORTCUTS,
             "false",
             ZERO_ADDRESS,
@@ -807,7 +841,9 @@ async function appendCvxToLpxCvxConversion(
 ): Promise<ConversionState> {
   const { PIREX } = await import("@/config/vaults");
   const conservativeCvxAmount = applySlippageBuffer(state.expectedAmount, ctx.slippageBps);
+  const cvxIsDynamic = isDynamicAmountRef(state.amountRef);
   const { swapAmount, mintAmount } = await getOptimalPxCvxSwapAmount(conservativeCvxAmount);
+  const usesFixedDynamicSplit = cvxIsDynamic && swapAmount > 0n && mintAmount > 0n;
 
   let expectedSwapLpxCvx = 0n;
   let swapMinDy = "0";
@@ -820,17 +856,14 @@ async function appendCvxToLpxCvxConversion(
     swapMinDy = calculateMinDy(swapOutput, ctx.totalSlippageBps);
   }
 
+  const swapCvxInput: BundleAmountRef =
+    cvxIsDynamic && !usesFixedDynamicSplit ? state.amountRef : swapAmount.toString();
+  const mintCvxInput: BundleAmountRef =
+    cvxIsDynamic && !usesFixedDynamicSplit ? state.amountRef : mintAmount.toString();
+
   if (swapAmount > 0n) {
     actions.push(
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: {
-          token: TOKENS.CVX,
-          spender: PIREX.LPXCVX_CVX_POOL,
-          amount: swapAmount.toString(),
-        },
-      },
+      intermediateApproveAction(TOKENS.CVX, PIREX.LPXCVX_CVX_POOL, swapCvxInput, usesFixedDynamicSplit),
       {
         protocol: "enso",
         action: "call",
@@ -841,7 +874,7 @@ async function appendCvxToLpxCvxConversion(
           args: [
             String(PIREX.POOL_INDEX.CVX),
             String(PIREX.POOL_INDEX.LPXCVX),
-            swapAmount.toString(),
+            swapCvxInput,
             swapMinDy,
           ],
         },
@@ -851,15 +884,7 @@ async function appendCvxToLpxCvxConversion(
 
   if (mintAmount > 0n) {
     actions.push(
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: {
-          token: TOKENS.CVX,
-          spender: PIREX.PIREX_CVX,
-          amount: mintAmount.toString(),
-        },
-      },
+      intermediateApproveAction(TOKENS.CVX, PIREX.PIREX_CVX, mintCvxInput, usesFixedDynamicSplit),
       {
         protocol: "enso",
         action: "call",
@@ -868,22 +893,24 @@ async function appendCvxToLpxCvxConversion(
           method: "deposit",
           abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
           args: [
-            mintAmount.toString(),
+            mintCvxInput,
             ENSO_SHORTCUTS,
             "false",
             ZERO_ADDRESS,
           ],
         },
       },
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: {
-          token: PIREX.PXCVX,
-          spender: PIREX.LPXCVX,
-          amount: mintAmount.toString(),
-        },
-      },
+    );
+
+    actions.push({
+      protocol: "enso",
+      action: "balance",
+      args: { token: PIREX.PXCVX },
+    });
+    const pxCvxAmountRef: BundleAmountRef = { useOutputOfCallAt: actions.length - 1 };
+
+    actions.push(
+      intermediateApproveAction(PIREX.PXCVX, PIREX.LPXCVX, pxCvxAmountRef, usesFixedDynamicSplit),
       {
         protocol: "enso",
         action: "call",
@@ -891,7 +918,7 @@ async function appendCvxToLpxCvxConversion(
           address: PIREX.LPXCVX,
           method: "wrap",
           abi: "function wrap(uint256 amount)",
-          args: [mintAmount.toString()],
+          args: [pxCvxAmountRef],
         },
       },
     );
@@ -960,7 +987,9 @@ async function appendCvxToCvgCvxConversion(
 ): Promise<ConversionState> {
   const { TANGENT } = await import("@/config/vaults");
   const conservativeCvxAmount = applySlippageBuffer(state.expectedAmount, ctx.slippageBps);
+  const cvxIsDynamic = isDynamicAmountRef(state.amountRef);
   const { swapAmount, mintAmount } = await getOptimalSwapAmount(conservativeCvxAmount);
+  const usesFixedDynamicSplit = cvxIsDynamic && swapAmount > 0n && mintAmount > 0n;
 
   let expectedSwapCvgCvx = 0n;
   let swapMinDy = "0";
@@ -973,17 +1002,14 @@ async function appendCvxToCvgCvxConversion(
     swapMinDy = calculateMinDy(swapOutput, ctx.totalSlippageBps);
   }
 
+  const swapCvxInput: BundleAmountRef =
+    cvxIsDynamic && !usesFixedDynamicSplit ? state.amountRef : swapAmount.toString();
+  const mintCvxInput: BundleAmountRef =
+    cvxIsDynamic && !usesFixedDynamicSplit ? state.amountRef : mintAmount.toString();
+
   if (swapAmount > 0n) {
     actions.push(
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: {
-          token: TOKENS.CVX,
-          spender: TOKENS.CVX1,
-          amount: swapAmount.toString(),
-        },
-      },
+      intermediateApproveAction(TOKENS.CVX, TOKENS.CVX1, swapCvxInput, usesFixedDynamicSplit),
       {
         protocol: "enso",
         action: "call",
@@ -991,18 +1017,15 @@ async function appendCvxToCvgCvxConversion(
           address: TOKENS.CVX1,
           method: "mint",
           abi: "function mint(address to, uint256 amount)",
-          args: [ENSO_SHORTCUTS, swapAmount.toString()],
+          args: [ENSO_SHORTCUTS, swapCvxInput],
         },
       },
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: {
-          token: TOKENS.CVX1,
-          spender: TANGENT.CVX1_CVGCVX_POOL,
-          amount: swapAmount.toString(),
-        },
-      },
+      intermediateApproveAction(
+        TOKENS.CVX1,
+        TANGENT.CVX1_CVGCVX_POOL,
+        swapCvxInput,
+        usesFixedDynamicSplit || !isDynamicAmountRef(swapCvxInput),
+      ),
       {
         protocol: "enso",
         action: "call",
@@ -1010,7 +1033,7 @@ async function appendCvxToCvgCvxConversion(
           address: TANGENT.CVX1_CVGCVX_POOL,
           method: "exchange",
           abi: "function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) returns (uint256)",
-          args: [0, 1, swapAmount.toString(), swapMinDy],
+          args: [0, 1, swapCvxInput, swapMinDy],
         },
       },
     );
@@ -1018,15 +1041,7 @@ async function appendCvxToCvgCvxConversion(
 
   if (mintAmount > 0n) {
     actions.push(
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: {
-          token: TOKENS.CVX,
-          spender: TANGENT.CVGCVX_CONTRACT,
-          amount: mintAmount.toString(),
-        },
-      },
+      intermediateApproveAction(TOKENS.CVX, TANGENT.CVGCVX_CONTRACT, mintCvxInput, usesFixedDynamicSplit),
       {
         protocol: "enso",
         action: "call",
@@ -1034,7 +1049,7 @@ async function appendCvxToCvgCvxConversion(
           address: TANGENT.CVGCVX_CONTRACT,
           method: "mint",
           abi: "function mint(address to, uint256 amount, bool isLock) returns (uint256)",
-          args: [ENSO_SHORTCUTS, mintAmount.toString(), true],
+          args: [ENSO_SHORTCUTS, mintCvxInput, true],
         },
       },
     );
@@ -1977,7 +1992,7 @@ export async function fetchRoute(params: {
     },
     gas: String(routeData.gas),
     amountOut: String(routeData.amountOut),
-    priceImpact: routeData.priceImpact != null ? Number(routeData.priceImpact) : undefined,
+    priceImpact: routeData.priceImpact != null ? Number(routeData.priceImpact) : null,
     route: routeData.route.map((hop) => ({
       action: hop.action,
       protocol: hop.protocol,
@@ -2820,7 +2835,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
   // Validate slippage parameter
   const slippageBps = validateSlippage(params.slippage);
 
-  // Check if target is pxCVX - needs special routing via Curve swap + unwrap
+  // Check if target is pxCVX - needs special routing through lpxCVX.swap()
   const targetIsPxCvx = params.targetUnderlyingToken.toLowerCase() === TOKENS.PXCVX.toLowerCase();
 
   // OPTIMIZED: Batch previewRedeem + pool params in single RPC call
@@ -2878,7 +2893,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
   ];
 
   if (targetIsPxCvx) {
-    // Target is pxCVX - needs custom routing: CVX1 → CVX → lpxCVX → pxCVX
+    // Target is pxCVX - needs custom routing: CVX1 → CVX → pxCVX through lpxCVX.swap()
     // CVX1 unwraps 1:1 to CVX, so use CVX1 amount for subsequent operations
 
     // Apply slippage buffer to CVX estimate for fixed-amount actions
@@ -2886,7 +2901,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
     // so we use a conservative amount to avoid trying to spend more than we received
     const conservativeCvxStr = applySlippageBuffer(estimatedCvx1, slippageBps);
 
-    // Estimate lpxCVX output from CVX → lpxCVX Curve swap (using conservative CVX amount)
+    // Estimate pxCVX output from the lpxCVX.swap Curve leg (using conservative CVX amount)
     // Use factory-style helper since lpxCVX/CVX pool uses uint256 indices
     const estimatedLpxCvx = await getCurveGetDyFactory(
       PIREX.LPXCVX_CVX_POOL,
@@ -2899,99 +2914,49 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
       throw new Error("Failed to estimate Curve CVX→lpxCVX swap output for slippage protection");
     }
 
-    const estimatedLpxCvxStr = estimatedLpxCvx.toString();
-    // pxCVX wraps 1:1 from lpxCVX (variable kept for documentation)
-    const _estimatedPxCvxStr = estimatedLpxCvxStr;
-    // Calculate min_dy for the CVX → lpxCVX swap with slippage protection
+    // Calculate minReceived for the lpxCVX.swap Curve leg with slippage protection
     const minDyLpxCvx = calculateMinDy(estimatedLpxCvx, slippageBps);
 
-    // Use useOutputOfCallAt for dynamic output chaining
     // Action 2 (Curve cvgCVX→CVX1) output can be referenced by multiple subsequent actions:
     //   - Action 3: withdraw CVX1 → CVX (uses the amount)
-    //   - Action 4: approve CVX (uses the amount for allowance)
-    //   - Action 5: exchange CVX → lpxCVX (uses the amount as swap input)
-    // Action 5 (Curve CVX→lpxCVX) returns lpxCVX amount - referenced by Actions 6-8:
-    //   - Action 6: approve (sets allowance for the lpxCVX amount)
-    //   - Action 7: unwrap lpxCVX → pxCVX (transfers the lpxCVX)
-    //   - Action 8: deposit pxCVX into vault (uses Action 5's output, lpxCVX:pxCVX is 1:1)
+    //   - Action 4: approve CVX to lpxCVX.swap()
+    //   - Action 5: lpxCVX.swap() converts CVX → pxCVX and returns no value.
+    //   - Actions 6-7: read the pxCVX balance, then deposit it into the vault.
+    actions.push({
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: TOKENS.CVX1,
+        method: "withdraw",
+        abi: "function withdraw(uint256 amount, address to)",
+        args: [{ useOutputOfCallAt: 2 }, ENSO_SHORTCUTS],
+      },
+    });
+
+    pushCvxToPxCvxSwapActions(
+      actions,
+      PIREX,
+      { useOutputOfCallAt: 2 },
+      minDyLpxCvx,
+      false,
+    );
+
     actions.push(
-      // Action 3: Unwrap CVX1 → CVX (send to ENSO_SHORTCUTS)
-      // Use output from Action 2 (Curve exchange returns CVX1 amount)
-      // IMPORTANT: CVX must go to ENSO_SHORTCUTS (not ENSO_ROUTER_EXECUTOR) because
-      // Action 5's Curve.exchange does transferFrom(msg.sender, ...) and ENSO_SHORTCUTS
-      // is the caller/executor for Curve calls.
       {
         protocol: "enso",
-        action: "call",
-        args: {
-          address: TOKENS.CVX1,
-          method: "withdraw",
-          abi: "function withdraw(uint256 amount, address to)",
-          args: [{ useOutputOfCallAt: 2 }, ENSO_SHORTCUTS],
-        },
+        action: "balance",
+        args: { token: PIREX.PXCVX },
       },
-      // Action 4: Approve CVX → Curve lpxCVX pool
-      // Use dynamic output from Action 2 (CVX1 unwraps 1:1 to CVX)
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: {
-          token: TOKENS.CVX,
-          spender: PIREX.LPXCVX_CVX_POOL,
-          amount: { useOutputOfCallAt: 2 },
-        },
-      },
-      // Action 5: Swap CVX → lpxCVX via Curve (RETURNS uint256)
-      // Use dynamic output from Action 2 - the actual CVX1/CVX amount received
-      {
-        protocol: "enso",
-        action: "call",
-        args: {
-          address: PIREX.LPXCVX_CVX_POOL,
-          method: "exchange",
-          abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)",
-          args: [
-            String(PIREX.POOL_INDEX.CVX), // i = 0 (CVX)
-            String(PIREX.POOL_INDEX.LPXCVX), // j = 1 (lpxCVX)
-            { useOutputOfCallAt: 2 }, // dx = CVX amount from Action 2 output
-            minDyLpxCvx, // min_dy with slippage protection
-          ],
-        },
-      },
-      // Action 6: Approve lpxCVX for unwrap
-      // Use output from Action 5 (Curve exchange returns lpxCVX amount)
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: {
-          token: PIREX.LPXCVX,
-          spender: PIREX.LPXCVX,
-          amount: { useOutputOfCallAt: 5 },
-        },
-      },
-      // Action 7: Unwrap lpxCVX → pxCVX
-      {
-        protocol: "enso",
-        action: "call",
-        args: {
-          address: PIREX.LPXCVX,
-          method: "unwrap",
-          abi: "function unwrap(uint256 amount)",
-          args: [{ useOutputOfCallAt: 5 }],
-        },
-      },
-      // Action 8: Deposit pxCVX into target vault
-      // lpxCVX unwraps 1:1 to pxCVX, so use Action 5's output
       {
         protocol: "erc4626",
         action: "deposit",
         args: {
           tokenIn: TOKENS.PXCVX,
           tokenOut: params.targetVault,
-          amountIn: { useOutputOfCallAt: 5 },
+          amountIn: { useOutputOfCallAt: actions.length },
           primaryAddress: params.targetVault,
         },
-      }
+      },
     );
 
     return fetchBundle({
@@ -3211,7 +3176,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
  * Route: source vault → source underlying → route to CVX → hybrid swap/mint → pxCVX → deposit
  *
  * Uses the hybrid pxCVX approach:
- * - If Curve pool rate > 1:1: swap CVX → lpxCVX → unwrap → pxCVX
+ * - If Curve pool rate > 1:1: swap CVX → pxCVX through lpxCVX.swap()
  * - If rate < 1:1: deposit CVX to Pirex for 1:1 pxCVX
  * - Optimal: split between swap and mint at peg point
  */
@@ -3260,7 +3225,6 @@ async function fetchVaultToPxCvxVaultRoute(params: {
   // Step 5: Calculate expected pxCVX output and min_dy for slippage protection
   // For hybrid path: use swapAmount
   // For swap-only path: use full estimatedCvxAmount
-  let expectedSwapPxCvx = 0n;
   let swapMinDy = "0";
   let fullSwapMinDy = "0"; // For swap-only path
 
@@ -3272,7 +3236,6 @@ async function fetchVaultToPxCvxVaultRoute(params: {
     if (!swapOutput || swapOutput === 0n) {
       throw new Error("Failed to estimate Curve CVX→lpxCVX swap output for slippage protection");
     }
-    expectedSwapPxCvx = swapOutput;
     swapMinDy = calculateMinDy(swapOutput, slippageBps);
   }
 
@@ -3286,8 +3249,6 @@ async function fetchVaultToPxCvxVaultRoute(params: {
     }
     fullSwapMinDy = calculateMinDy(fullSwapOutput, slippageBps);
   }
-
-  const totalExpectedPxCvx = expectedSwapPxCvx + mintAmount;
 
   // Build actions
   const actions: EnsoBundleAction[] = [];
@@ -3325,72 +3286,28 @@ async function fetchVaultToPxCvxVaultRoute(params: {
   // Now we have CVX - apply hybrid pxCVX logic
   // Reference the CVX source (either redeem or route output)
   const cvxSourceIdx = sourceIsCvx ? redeemIdx : actionIndex - 1;
+  const usesFixedDynamicSplit = swapAmount > 0n && mintAmount > 0n;
 
   if (swapAmount > 0n && mintAmount > 0n) {
     // Hybrid: swap portion via Curve, mint portion via Pirex
     // NOTE: We use literal amounts for the hybrid split, not useOutputOfCallAt
     // because we need to split the CVX between two paths
 
-    // Approve CVX to Curve pool for swap portion
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: TOKENS.CVX,
-        spender: PIREX.LPXCVX_CVX_POOL,
-        amount: swapAmount.toString(),
-      },
-    });
-    actionIndex++;
+    pushCvxToPxCvxSwapActions(
+      actions,
+      PIREX,
+      swapAmount.toString(),
+      swapMinDy,
+      usesFixedDynamicSplit,
+    );
+    actionIndex += 2;
 
-    // Swap CVX → lpxCVX via Curve (with slippage protection)
-    actions.push({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: PIREX.LPXCVX_CVX_POOL,
-        method: "exchange",
-        abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)",
-        args: [String(PIREX.POOL_INDEX.CVX), String(PIREX.POOL_INDEX.LPXCVX), swapAmount.toString(), swapMinDy],
-      },
-    });
-    const swapIdx = actionIndex++;
-
-    // Approve lpxCVX for unwrap
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: PIREX.LPXCVX,
-        spender: PIREX.LPXCVX,
-        amount: { useOutputOfCallAt: swapIdx },
-      },
-    });
-    actionIndex++;
-
-    // Unwrap lpxCVX → pxCVX
-    actions.push({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: PIREX.LPXCVX,
-        method: "unwrap",
-        abi: "function unwrap(uint256 amount)",
-        args: [{ useOutputOfCallAt: swapIdx }],
-      },
-    });
-    actionIndex++;
-
-    // Approve CVX to Pirex for mint portion
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: TOKENS.CVX,
-        spender: PIREX.PIREX_CVX,
-        amount: mintAmount.toString(),
-      },
-    });
+    actions.push(intermediateApproveAction(
+      TOKENS.CVX,
+      PIREX.PIREX_CVX,
+      mintAmount.toString(),
+      usesFixedDynamicSplit,
+    ));
     actionIndex++;
 
     // Deposit CVX to Pirex → pxCVX
@@ -3401,59 +3318,21 @@ async function fetchVaultToPxCvxVaultRoute(params: {
         address: PIREX.PIREX_CVX,
         method: "deposit",
         abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
-        args: [mintAmount.toString(), params.fromAddress, "false", "0x0000000000000000000000000000000000000000"],
+        args: [mintAmount.toString(), ENSO_SHORTCUTS, "false", "0x0000000000000000000000000000000000000000"],
       },
     });
     actionIndex++;
 
   } else if (swapAmount > 0n) {
     // Swap-only path (all CVX goes through Curve swap)
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: TOKENS.CVX,
-        spender: PIREX.LPXCVX_CVX_POOL,
-        amount: { useOutputOfCallAt: cvxSourceIdx },
-      },
-    });
-    actionIndex++;
-
-    // Swap CVX → lpxCVX via Curve with calculated min_dy for MEV protection
-    actions.push({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: PIREX.LPXCVX_CVX_POOL,
-        method: "exchange",
-        abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)",
-        args: [String(PIREX.POOL_INDEX.CVX), String(PIREX.POOL_INDEX.LPXCVX), { useOutputOfCallAt: cvxSourceIdx }, fullSwapMinDy],
-      },
-    });
-    const swapIdx = actionIndex++;
-
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: PIREX.LPXCVX,
-        spender: PIREX.LPXCVX,
-        amount: { useOutputOfCallAt: swapIdx },
-      },
-    });
-    actionIndex++;
-
-    actions.push({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: PIREX.LPXCVX,
-        method: "unwrap",
-        abi: "function unwrap(uint256 amount)",
-        args: [{ useOutputOfCallAt: swapIdx }],
-      },
-    });
-    actionIndex++;
+    pushCvxToPxCvxSwapActions(
+      actions,
+      PIREX,
+      { useOutputOfCallAt: cvxSourceIdx },
+      fullSwapMinDy,
+      false,
+    );
+    actionIndex += 2;
 
   } else {
     // Mint-only path
@@ -3475,21 +3354,26 @@ async function fetchVaultToPxCvxVaultRoute(params: {
         address: PIREX.PIREX_CVX,
         method: "deposit",
         abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
-        args: [{ useOutputOfCallAt: cvxSourceIdx }, params.fromAddress, "false", "0x0000000000000000000000000000000000000000"],
+        args: [{ useOutputOfCallAt: cvxSourceIdx }, ENSO_SHORTCUTS, "false", "0x0000000000000000000000000000000000000000"],
       },
     });
     actionIndex++;
   }
 
-  // Final: Deposit pxCVX into target vault
-  // Use erc4626 action so amountsOut tracks the vault shares
+  actions.push({
+    protocol: "enso",
+    action: "balance",
+    args: { token: PIREX.PXCVX },
+  });
+  const pxCvxBalanceIdx = actionIndex++;
+
   actions.push({
     protocol: "erc4626",
     action: "deposit",
     args: {
       tokenIn: PIREX.PXCVX,
       tokenOut: params.targetVault,
-      amountIn: totalExpectedPxCvx.toString(),
+      amountIn: { useOutputOfCallAt: pxCvxBalanceIdx },
       primaryAddress: params.targetVault,
     },
   });
@@ -5709,12 +5593,12 @@ export async function getOptimalPxCvxSwapAmount(totalCvxAmount: string): Promise
  * Route: input token → CVX → (hybrid swap/mint) → pxCVX → vault
  *
  * Hybrid strategy:
- * - If Curve pool rate > 1:1: swap CVX → lpxCVX → unwrap → pxCVX
+ * - If Curve pool rate > 1:1: swap CVX → pxCVX through lpxCVX.swap()
  * - If rate < 1:1: deposit CVX to Pirex for 1:1 pxCVX
  * - Optimal: split between swap and mint at peg point
  *
- * NOTE: lpxCVX.unwrap() and PirexCVX.deposit() don't return values,
- * so we calculate expected pxCVX amounts upfront for the vault deposit.
+ * NOTE: lpxCVX.swap() and PirexCVX.deposit() don't return values, so we
+ * read the produced pxCVX balance before the vault deposit.
  */
 export async function fetchPxCvxZapInRoute(params: {
   fromAddress: string;
@@ -5842,7 +5726,7 @@ export async function fetchPxCvxZapInRoute(params: {
   const { swapAmount, mintAmount } = await getOptimalPxCvxSwapAmount(cvxAmountForSplit);
 
   // Step 4: Calculate expected pxCVX output for each path
-  // - Swap path: CVX → lpxCVX (via Curve) → pxCVX (1:1 unwrap)
+  // - Swap path: CVX → pxCVX through lpxCVX.swap()
   // - Mint path: CVX → pxCVX (1:1 via Pirex)
   let expectedSwapPxCvx = 0n;
   let swapMinDy = "0";
@@ -5879,76 +5763,26 @@ export async function fetchPxCvxZapInRoute(params: {
 
   if (swapAmount > 0n && mintAmount > 0n) {
     // Hybrid strategy: split CVX between swap and mint
+    const fixedIntermediateSplit = !inputIsCvx;
 
-    // Action: Approve CVX to Curve pool for swap portion
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: TOKENS.CVX,
-        spender: PIREX.LPXCVX_CVX_POOL,
-        amount: swapAmount.toString(),
-      },
-    });
+    pushCvxToPxCvxSwapActions(
+      actions,
+      PIREX,
+      swapAmount.toString(),
+      swapMinDy,
+      fixedIntermediateSplit,
+    );
+    actionIndex += 2;
+
+    actions.push(intermediateApproveAction(
+      TOKENS.CVX,
+      PIREX.PIREX_CVX,
+      mintAmount.toString(),
+      fixedIntermediateSplit,
+    ));
     actionIndex++;
 
-    // Action: Swap CVX → lpxCVX via Curve pool
-    // exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy)
-    actions.push({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: PIREX.LPXCVX_CVX_POOL,
-        method: "exchange",
-        abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)",
-        args: [
-          String(PIREX.POOL_INDEX.CVX), // i = 0 (CVX)
-          String(PIREX.POOL_INDEX.LPXCVX), // j = 1 (lpxCVX)
-          swapAmount.toString(), // dx
-          swapMinDy, // min_dy with slippage protection
-        ],
-      },
-    });
-    const swapIdx = actionIndex++;
-
-    // Action: Approve lpxCVX to itself for unwrap
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: PIREX.LPXCVX,
-        spender: PIREX.LPXCVX,
-        amount: { useOutputOfCallAt: swapIdx },
-      },
-    });
-    actionIndex++;
-
-    // Action: Unwrap lpxCVX → pxCVX
-    actions.push({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: PIREX.LPXCVX,
-        method: "unwrap",
-        abi: "function unwrap(uint256 amount)",
-        args: [{ useOutputOfCallAt: swapIdx }],
-      },
-    });
-    actionIndex++;
-
-    // Action: Approve CVX to Pirex for mint portion
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: TOKENS.CVX,
-        spender: PIREX.PIREX_CVX,
-        amount: mintAmount.toString(),
-      },
-    });
-    actionIndex++;
-
-    // Action: Deposit CVX to Pirex → pxCVX (mint to router for subsequent vault deposit)
+    // Action: Deposit CVX to Pirex → pxCVX (mint to the bundle execution context)
     // deposit(uint256 assets, address receiver, bool shouldCompound, address developer)
     actions.push({
       protocol: "enso",
@@ -5959,7 +5793,7 @@ export async function fetchPxCvxZapInRoute(params: {
         abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
         args: [
           mintAmount.toString(),
-          ENSO_ROUTER_EXECUTOR, // Send to router so it can deposit into vault
+          ENSO_SHORTCUTS,
           "false", // shouldCompound (boolean as string for Enso API)
           "0x0000000000000000000000000000000000000000", // developer
         ],
@@ -5969,61 +5803,12 @@ export async function fetchPxCvxZapInRoute(params: {
 
   } else if (swapAmount > 0n) {
     // Swap-only strategy: rate > 1:1 for full amount
+    const swapCvxInput: BundleAmountRef = inputIsCvx
+      ? params.amountIn
+      : { useOutputOfCallAt: actionIndex - 1 };
 
-    // Action: Approve CVX to Curve pool
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: TOKENS.CVX,
-        spender: PIREX.LPXCVX_CVX_POOL,
-        amount: inputIsCvx ? params.amountIn : { useOutputOfCallAt: actionIndex - 1 },
-      },
-    });
-    actionIndex++;
-
-    // Action: Swap CVX → lpxCVX via Curve pool
-    actions.push({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: PIREX.LPXCVX_CVX_POOL,
-        method: "exchange",
-        abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)",
-        args: [
-          String(PIREX.POOL_INDEX.CVX),
-          String(PIREX.POOL_INDEX.LPXCVX),
-          inputIsCvx ? params.amountIn : { useOutputOfCallAt: actionIndex - 2 },
-          swapMinDy, // Use calculated min_dy for MEV protection
-        ],
-      },
-    });
-    const swapIdx = actionIndex++;
-
-    // Action: Approve lpxCVX for unwrap
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: PIREX.LPXCVX,
-        spender: PIREX.LPXCVX,
-        amount: { useOutputOfCallAt: swapIdx },
-      },
-    });
-    actionIndex++;
-
-    // Action: Unwrap lpxCVX → pxCVX
-    actions.push({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: PIREX.LPXCVX,
-        method: "unwrap",
-        abi: "function unwrap(uint256 amount)",
-        args: [{ useOutputOfCallAt: swapIdx }],
-      },
-    });
-    actionIndex++;
+    pushCvxToPxCvxSwapActions(actions, PIREX, swapCvxInput, swapMinDy, false);
+    actionIndex += 2;
 
   } else {
     // Mint-only strategy: rate < 1:1, deposit to Pirex for 1:1
@@ -6040,7 +5825,7 @@ export async function fetchPxCvxZapInRoute(params: {
     });
     actionIndex++;
 
-    // Action: Deposit CVX to Pirex → pxCVX (mint to router for subsequent vault deposit)
+    // Action: Deposit CVX to Pirex → pxCVX (mint to the bundle execution context)
     actions.push({
       protocol: "enso",
       action: "call",
@@ -6050,7 +5835,7 @@ export async function fetchPxCvxZapInRoute(params: {
         abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
         args: [
           inputIsCvx ? params.amountIn : { useOutputOfCallAt: actionIndex - 2 },
-          ENSO_ROUTER_EXECUTOR, // Send to router so it can deposit into vault
+          ENSO_SHORTCUTS,
           "false", // shouldCompound (boolean as string for Enso API)
           "0x0000000000000000000000000000000000000000",
         ],
@@ -6060,7 +5845,7 @@ export async function fetchPxCvxZapInRoute(params: {
   }
 
   // Action: Get actual pxCVX balance in router to avoid pre-funding
-  // lpxCVX.unwrap() and PirexCVX.deposit() don't return values, so we read balance.
+  // lpxCVX.swap() and PirexCVX.deposit() don't return values, so we read balance.
   actions.push({
     protocol: "enso",
     action: "balance",
@@ -6127,8 +5912,8 @@ export async function fetchPxCvxZapInRoute(params: {
   let swapBonus = 0;
   let bonusAmount: string | undefined;
   if (swapAmount > 0n && expectedSwapPxCvx > 0n) {
-    // For pxCVX swap: CVX → lpxCVX (via Curve), lpxCVX unwraps 1:1 to pxCVX
-    // So bonus is lpxCVX output / CVX input
+    // lpxCVX.swap() uses the Curve CVX/lpxCVX rate and delivers pxCVX 1:1
+    // with the lpxCVX output, so bonus is pxCVX output / CVX input.
     swapBonus = (Number(expectedSwapPxCvx) / Number(swapAmount) - 1) * 100;
     // Bonus amount = pxCVX received - CVX input (what you gain vs 1:1 mint)
     bonusAmount = formatRouteDeltaAmount(expectedSwapPxCvx, swapAmount, TOKENS.PXCVX);
@@ -6290,6 +6075,7 @@ export async function fetchUCrvZapInRoute(params: {
         slippage: params.slippage ?? "100",
       },
     });
+    const cvxRouteIdx = actions.length - 1;
     let cvxEstimate: bigint;
     try {
       const rq = await fetchRoute({
@@ -6306,6 +6092,7 @@ export async function fetchUCrvZapInRoute(params: {
     expectedIntermediateCvx = cvxEstimate;
     const { actions: cvgCvxActions, expectedCvgCvx } = await buildCvxToCvgCvxDepositActions({
       expectedCvxAmount: cvxEstimate,
+      cvxAmountRef: { useOutputOfCallAt: cvxRouteIdx },
       targetVault: params.vaultAddress,
       slippageBps,
     });
@@ -6568,6 +6355,7 @@ export async function fetchUCvxZapInRoute(params: {
       const { actions: cvgCvxActions, expectedCvgCvx: cvgCvxTotal } =
         await buildCvxToCvgCvxDepositActions({
           expectedCvxAmount: expectedCvxOutput,
+          cvxAmountRef: { useOutputOfCallAt: 4 },
           targetVault: params.vaultAddress,
           slippageBps,
         });
@@ -6840,10 +6628,9 @@ export async function fetchErc4626ExternalVaultZapInRoute(params: {
       }
     }
     expectedIntermediateCvx = cvxEstimate;
-    // Unused amountRef suppressed — hybrid helper uses literal amounts
-    void cvxInputAmountRef;
     const { actions: cvgCvxActions, expectedCvgCvx } = await buildCvxToCvgCvxDepositActions({
       expectedCvxAmount: cvxEstimate,
+      cvxAmountRef: cvxInputAmountRef,
       targetVault: params.vaultAddress,
       slippageBps,
     });
@@ -7047,6 +6834,7 @@ export async function fetchBeefyZapInRoute(params: {
   } else if (targetIsCvgCvx) {
     // cvgCVX has no Enso route — route to CVX first (if needed), then hybrid
     let cvxEstimate: bigint;
+    let cvxAmountRef: BundleAmountRef;
     if (!beefyIsCvx) {
       actions.push({
         protocol: "enso",
@@ -7058,6 +6846,7 @@ export async function fetchBeefyZapInRoute(params: {
           slippage: params.slippage ?? "100",
         },
       });
+      cvxAmountRef = { useOutputOfCallAt: actions.length - 1 };
       try {
         const rq = await fetchRoute({
           fromAddress: params.fromAddress,
@@ -7072,10 +6861,12 @@ export async function fetchBeefyZapInRoute(params: {
       }
     } else {
       cvxEstimate = BigInt(expectedUnderlyingOutput);
+      cvxAmountRef = { useOutputOfCallAt: 1 };
     }
     expectedIntermediateCvx = cvxEstimate;
     const { actions: cvgCvxActions, expectedCvgCvx } = await buildCvxToCvgCvxDepositActions({
       expectedCvxAmount: cvxEstimate,
+      cvxAmountRef,
       targetVault: params.vaultAddress,
       slippageBps,
     });
@@ -7411,6 +7202,7 @@ export async function fetchLpxCvxZapInRoute(params: {
   } else if (targetIsCvgCvx) {
     const { actions: cvgCvxDepositActions, expectedCvgCvx } = await buildCvxToCvgCvxDepositActions({
       expectedCvxAmount: expectedCvxOutput,
+      cvxAmountRef: { useOutputOfCallAt: 1 },
       targetVault: params.vaultAddress,
       slippageBps,
     });
@@ -7623,6 +7415,7 @@ export async function fetchPxCvxTokenZapInRoute(params: {
     // CVX → cvgCVX hybrid (Curve + Convex). No liquid Enso route.
     const { actions: cvgCvxActions, expectedCvgCvx } = await buildCvxToCvgCvxDepositActions({
       expectedCvxAmount: expectedCvxOutput,
+      cvxAmountRef: { useOutputOfCallAt: 3 },
       targetVault: params.vaultAddress,
       slippageBps,
     });
@@ -7734,7 +7527,7 @@ export async function fetchPxCvxTokenZapInRoute(params: {
 
 /**
  * Zap any input token to pxCVX delivered to the user.
- * Hybrid split: Curve lpxCVX pool swap (if > 1:1) + Pirex 1:1 mint.
+ * Hybrid split: lpxCVX.swap() Curve leg (if > 1:1) + Pirex 1:1 mint.
  */
 export async function fetchAnyToPxCvxRoute(params: {
   fromAddress: string;
@@ -7811,66 +7604,22 @@ export async function fetchAnyToPxCvxRoute(params: {
   }
 
   if (swapAmount > 0n && mintAmount > 0n) {
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: TOKENS.CVX,
-        spender: PIREX.LPXCVX_CVX_POOL,
-        amount: swapAmount.toString(),
-      },
-    });
-    actionIndex++;
+    const fixedIntermediateSplit = !inputIsCvx;
+    pushCvxToPxCvxSwapActions(
+      actions,
+      PIREX,
+      swapAmount.toString(),
+      swapMinDy,
+      fixedIntermediateSplit,
+    );
+    actionIndex += 2;
 
-    actions.push({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: PIREX.LPXCVX_CVX_POOL,
-        method: "exchange",
-        abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)",
-        args: [
-          String(PIREX.POOL_INDEX.CVX),
-          String(PIREX.POOL_INDEX.LPXCVX),
-          swapAmount.toString(),
-          swapMinDy,
-        ],
-      },
-    });
-    const swapIdx = actionIndex++;
-
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: PIREX.LPXCVX,
-        spender: PIREX.LPXCVX,
-        amount: { useOutputOfCallAt: swapIdx },
-      },
-    });
-    actionIndex++;
-
-    actions.push({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: PIREX.LPXCVX,
-        method: "unwrap",
-        abi: "function unwrap(uint256 amount)",
-        args: [{ useOutputOfCallAt: swapIdx }],
-      },
-    });
-    actionIndex++;
-
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: TOKENS.CVX,
-        spender: PIREX.PIREX_CVX,
-        amount: mintAmount.toString(),
-      },
-    });
+    actions.push(intermediateApproveAction(
+      TOKENS.CVX,
+      PIREX.PIREX_CVX,
+      mintAmount.toString(),
+      fixedIntermediateSplit,
+    ));
     actionIndex++;
 
     actions.push({
@@ -7882,7 +7631,7 @@ export async function fetchAnyToPxCvxRoute(params: {
         abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
         args: [
           mintAmount.toString(),
-          ENSO_ROUTER_EXECUTOR,
+          ENSO_SHORTCUTS,
           "false",
           "0x0000000000000000000000000000000000000000",
         ],
@@ -7890,56 +7639,11 @@ export async function fetchAnyToPxCvxRoute(params: {
     });
     actionIndex++;
   } else if (swapAmount > 0n) {
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: TOKENS.CVX,
-        spender: PIREX.LPXCVX_CVX_POOL,
-        amount: inputIsCvx ? params.amountIn : { useOutputOfCallAt: actionIndex - 1 },
-      },
-    });
-    actionIndex++;
-
-    actions.push({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: PIREX.LPXCVX_CVX_POOL,
-        method: "exchange",
-        abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)",
-        args: [
-          String(PIREX.POOL_INDEX.CVX),
-          String(PIREX.POOL_INDEX.LPXCVX),
-          inputIsCvx ? params.amountIn : { useOutputOfCallAt: actionIndex - 2 },
-          swapMinDy,
-        ],
-      },
-    });
-    const swapIdx = actionIndex++;
-
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: PIREX.LPXCVX,
-        spender: PIREX.LPXCVX,
-        amount: { useOutputOfCallAt: swapIdx },
-      },
-    });
-    actionIndex++;
-
-    actions.push({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: PIREX.LPXCVX,
-        method: "unwrap",
-        abi: "function unwrap(uint256 amount)",
-        args: [{ useOutputOfCallAt: swapIdx }],
-      },
-    });
-    actionIndex++;
+    const swapCvxInput: BundleAmountRef = inputIsCvx
+      ? params.amountIn
+      : { useOutputOfCallAt: actionIndex - 1 };
+    pushCvxToPxCvxSwapActions(actions, PIREX, swapCvxInput, swapMinDy, false);
+    actionIndex += 2;
   } else {
     actions.push({
       protocol: "erc20",
@@ -7961,7 +7665,7 @@ export async function fetchAnyToPxCvxRoute(params: {
         abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
         args: [
           inputIsCvx ? params.amountIn : { useOutputOfCallAt: actionIndex - 2 },
-          ENSO_ROUTER_EXECUTOR,
+          ENSO_SHORTCUTS,
           "false",
           "0x0000000000000000000000000000000000000000",
         ],
@@ -8222,14 +7926,16 @@ export async function fetchAnyToCvgCvxRoute(params: {
     });
     actionIndex++;
   }
+  const usesFixedDynamicSplit = !inputIsCvx && swapAmount > 0n && mintAmount > 0n;
+  const cvxRouteRef: BundleAmountRef = { useOutputOfCallAt: 0 };
+  const swapCvxInput: BundleAmountRef =
+    !inputIsCvx && !usesFixedDynamicSplit ? cvxRouteRef : swapAmount.toString();
+  const mintCvxInput: BundleAmountRef =
+    !inputIsCvx && !usesFixedDynamicSplit ? cvxRouteRef : mintAmount.toString();
 
   if (swapAmount > 0n) {
     // Swap path: CVX → CVX1 (1:1 wrap) → Curve exchange → cvgCVX (lands at ENSO_SHORTCUTS)
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: swapAmount.toString() },
-    });
+    actions.push(intermediateApproveAction(TOKENS.CVX, TOKENS.CVX1, swapCvxInput, usesFixedDynamicSplit));
     actionIndex++;
 
     actions.push({
@@ -8239,20 +7945,17 @@ export async function fetchAnyToCvgCvxRoute(params: {
         address: TOKENS.CVX1,
         method: "mint",
         abi: "function mint(address to, uint256 amount)",
-        args: [ENSO_SHORTCUTS, swapAmount.toString()],
+        args: [ENSO_SHORTCUTS, swapCvxInput],
       },
     });
     actionIndex++;
 
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: TOKENS.CVX1,
-        spender: TANGENT.CVX1_CVGCVX_POOL,
-        amount: swapAmount.toString(),
-      },
-    });
+    actions.push(intermediateApproveAction(
+      TOKENS.CVX1,
+      TANGENT.CVX1_CVGCVX_POOL,
+      swapCvxInput,
+      usesFixedDynamicSplit || !isDynamicAmountRef(swapCvxInput),
+    ));
     actionIndex++;
 
     actions.push({
@@ -8262,7 +7965,7 @@ export async function fetchAnyToCvgCvxRoute(params: {
         address: TANGENT.CVX1_CVGCVX_POOL,
         method: "exchange",
         abi: "function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) returns (uint256)",
-        args: [0, 1, swapAmount.toString(), swapMinDy],
+        args: [0, 1, swapCvxInput, swapMinDy],
       },
     });
     actionIndex++;
@@ -8270,15 +7973,7 @@ export async function fetchAnyToCvgCvxRoute(params: {
 
   if (mintAmount > 0n) {
     // Mint path: CVX → cvgCVX 1:1 via Convex mint (sent to ENSO_SHORTCUTS for aggregation)
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: TOKENS.CVX,
-        spender: TANGENT.CVGCVX_CONTRACT,
-        amount: mintAmount.toString(),
-      },
-    });
+    actions.push(intermediateApproveAction(TOKENS.CVX, TANGENT.CVGCVX_CONTRACT, mintCvxInput, usesFixedDynamicSplit));
     actionIndex++;
 
     actions.push({
@@ -8288,7 +7983,7 @@ export async function fetchAnyToCvgCvxRoute(params: {
         address: TANGENT.CVGCVX_CONTRACT,
         method: "mint",
         abi: "function mint(address to, uint256 amount, bool isLock) returns (uint256)",
-        args: [ENSO_SHORTCUTS, mintAmount.toString(), true],
+        args: [ENSO_SHORTCUTS, mintCvxInput, true],
       },
     });
     actionIndex++;
@@ -8470,18 +8165,21 @@ export async function fetchAnyToLpxCvxRoute(params: {
     });
     actionIndex++;
   }
+  const usesFixedDynamicSplit = !inputIsCvx && swapAmount > 0n && mintAmount > 0n;
+  const cvxRouteRef: BundleAmountRef = { useOutputOfCallAt: 0 };
+  const swapCvxInput: BundleAmountRef =
+    !inputIsCvx && !usesFixedDynamicSplit ? cvxRouteRef : swapAmount.toString();
+  const mintCvxInput: BundleAmountRef =
+    !inputIsCvx && !usesFixedDynamicSplit ? cvxRouteRef : mintAmount.toString();
 
   if (swapAmount > 0n) {
     // Curve swap path: CVX → lpxCVX (lands at ENSO_SHORTCUTS)
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: TOKENS.CVX,
-        spender: PIREX.LPXCVX_CVX_POOL,
-        amount: swapAmount.toString(),
-      },
-    });
+    actions.push(intermediateApproveAction(
+      TOKENS.CVX,
+      PIREX.LPXCVX_CVX_POOL,
+      swapCvxInput,
+      usesFixedDynamicSplit,
+    ));
     actionIndex++;
 
     actions.push({
@@ -8494,7 +8192,7 @@ export async function fetchAnyToLpxCvxRoute(params: {
         args: [
           String(PIREX.POOL_INDEX.CVX),
           String(PIREX.POOL_INDEX.LPXCVX),
-          swapAmount.toString(),
+          swapCvxInput,
           swapMinDy,
         ],
       },
@@ -8504,15 +8202,12 @@ export async function fetchAnyToLpxCvxRoute(params: {
 
   if (mintAmount > 0n) {
     // Pirex mint + wrap path: CVX → pxCVX (1:1) → wrap → lpxCVX (1:1)
-    actions.push({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: TOKENS.CVX,
-        spender: PIREX.PIREX_CVX,
-        amount: mintAmount.toString(),
-      },
-    });
+    actions.push(intermediateApproveAction(
+      TOKENS.CVX,
+      PIREX.PIREX_CVX,
+      mintCvxInput,
+      usesFixedDynamicSplit,
+    ));
     actionIndex++;
 
     actions.push({
@@ -8523,7 +8218,7 @@ export async function fetchAnyToLpxCvxRoute(params: {
         method: "deposit",
         abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
         args: [
-          mintAmount.toString(),
+          mintCvxInput,
           ENSO_SHORTCUTS,
           "false",
           "0x0000000000000000000000000000000000000000",
@@ -8533,12 +8228,19 @@ export async function fetchAnyToLpxCvxRoute(params: {
     actionIndex++;
 
     actions.push({
+      protocol: "enso",
+      action: "balance",
+      args: { token: PIREX.PXCVX },
+    });
+    const pxCvxBalanceIdx = actionIndex++;
+
+    actions.push({
       protocol: "erc20",
       action: "approve",
       args: {
         token: PIREX.PXCVX,
         spender: PIREX.LPXCVX,
-        amount: mintAmount.toString(),
+        amount: { useOutputOfCallAt: pxCvxBalanceIdx },
       },
     });
     actionIndex++;
@@ -8550,7 +8252,7 @@ export async function fetchAnyToLpxCvxRoute(params: {
         address: PIREX.LPXCVX,
         method: "wrap",
         abi: "function wrap(uint256 amount)",
-        args: [mintAmount.toString()],
+        args: [{ useOutputOfCallAt: pxCvxBalanceIdx }],
       },
     });
     actionIndex++;
@@ -10485,37 +10187,11 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
     totalExpectedTargetUnderlying = expectedSwapPxCvx + mintAmount;
 
     if (swapAmount > 0n) {
-      actions.push(
-        { protocol: "erc20", action: "approve", args: { token: TOKENS.CVX, spender: PIREX.LPXCVX_CVX_POOL, amount: swapAmount.toString() } },
-        {
-          protocol: "enso",
-          action: "call",
-          args: {
-            address: PIREX.LPXCVX_CVX_POOL,
-            method: "exchange",
-            abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)",
-            args: [String(PIREX.POOL_INDEX.CVX), String(PIREX.POOL_INDEX.LPXCVX), swapAmount.toString(), swapMinDy],
-          },
-        },
-      );
-      const swapIdx = actions.length - 1;
-      actions.push(
-        { protocol: "erc20", action: "approve", args: { token: PIREX.LPXCVX, spender: PIREX.LPXCVX, amount: { useOutputOfCallAt: swapIdx } } },
-        {
-          protocol: "enso",
-          action: "call",
-          args: {
-            address: PIREX.LPXCVX,
-            method: "unwrap",
-            abi: "function unwrap(uint256 amount)",
-            args: [{ useOutputOfCallAt: swapIdx }],
-          },
-        },
-      );
+      pushCvxToPxCvxSwapActions(actions, PIREX, swapAmount.toString(), swapMinDy, true);
     }
     if (mintAmount > 0n) {
       actions.push(
-        { protocol: "erc20", action: "approve", args: { token: TOKENS.CVX, spender: PIREX.PIREX_CVX, amount: mintAmount.toString() } },
+        rawApproveCallAction(TOKENS.CVX, PIREX.PIREX_CVX, mintAmount.toString()),
         {
           protocol: "enso",
           action: "call",

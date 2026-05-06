@@ -138,9 +138,12 @@ export function ZapPageContent() {
 
   // Input balance — same source as TokenSelector (Enso API on mainnet, on-chain
   // multicall on test network) so the displayed balance stays consistent when
-  // switching tokens. Fall back to native useBalance for ETH only.
+  // switching tokens. For the selected input token, prefer an on-chain read so
+  // the balance updates immediately after a successful tx receipt.
   const isInputEth = inputToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
-  const { balanceMap } = useTokenBalances([inputToken]);
+  const { balanceMap, refetch: refetchZapTokenBalances } = useTokenBalances([inputToken, outputToken], {
+    preferOnchain: true,
+  });
   const { data: ethBalance, refetch: refetchEthBalance } = useBalance({
     address: userAddress,
     query: { enabled: !!userAddress && isInputEth },
@@ -154,7 +157,15 @@ export function ZapPageContent() {
       ? getMaxEthAmount(ethBalance.value, gasPrice)
       : inputBalanceFormatted;
   const inputBalanceNum = parseFloat(inputBalanceFormatted) || 0;
-  const refetchInputBalance = refetchEthBalance;
+  const refetchInputBalance = useCallback(() => {
+    if (isInputEth) {
+      void refetchEthBalance();
+      return;
+    }
+    refetchZapTokenBalances();
+    queryClient.invalidateQueries({ queryKey: ["onchain-balances"] });
+    queryClient.invalidateQueries({ queryKey: ["enso-wallet-balances"] });
+  }, [isInputEth, queryClient, refetchEthBalance, refetchZapTokenBalances]);
 
   useEffect(() => {
     if (!isConnected || !userAddress || !currentBlock) return;
@@ -164,9 +175,8 @@ export function ZapPageContent() {
       return;
     }
 
-    queryClient.invalidateQueries({ queryKey: ["onchain-balances"] });
-    queryClient.invalidateQueries({ queryKey: ["enso-wallet-balances"] });
-  }, [currentBlock, isConnected, isInputEth, queryClient, refetchEthBalance, userAddress]);
+    refetchZapTokenBalances();
+  }, [currentBlock, isConnected, isInputEth, refetchEthBalance, refetchZapTokenBalances, userAddress]);
 
   // Quote (debounced for rate-limit friendliness)
   const debouncedAmount = useDebouncedValue(amount, 500);
@@ -406,6 +416,7 @@ export function ZapPageContent() {
                       selectedToken={inputToken}
                       onSelect={setInputToken}
                       excludeTokens={[outputToken.address]}
+                      preferOnchainBalances
                     />
                     <MaxButton balance={inputMaxFormatted} onSelect={setAmount} />
                   </div>
@@ -439,6 +450,7 @@ export function ZapPageContent() {
                       selectedToken={outputToken}
                       onSelect={setOutputToken}
                       excludeTokens={[inputToken.address]}
+                      preferOnchainBalances
                     />
                   </div>
                 </div>
@@ -784,6 +796,7 @@ export function ZapPageContent() {
             simulationUnavailableReason: simulationResult.simulationUnavailableReason,
           }}
           gasPrice={gasPrice}
+          routePriceImpact={quote?.priceImpact ?? null}
           confirmText="Confirm Zap"
         />
       )}

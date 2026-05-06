@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useBalance, usePublicClient } from "wagmi";
 import { useAccount } from "wagmi";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { fetchWalletBalances, fetchTokenPrices, ETH_ADDRESS } from "@/lib/enso";
 import { useTestNetwork } from "@/contexts/TestNetworkContext";
 import type { EnsoToken } from "@/types/enso";
@@ -14,13 +14,30 @@ import { erc20Abi } from "viem";
  * - Mainnet: Enso API (efficient, includes prices)
  * - Test networks (Anvil/Tenderly): on-chain multicall balanceOf
  */
-export function useTokenBalances(tokens: EnsoToken[]) {
+interface UseTokenBalancesOptions {
+  /**
+   * Read the requested token balances on-chain even on mainnet. This is useful
+   * for selected-input balances that must update immediately after a tx receipt,
+   * while the broader token selector can still use Enso's indexed wallet list.
+   */
+  preferOnchain?: boolean;
+  /**
+   * Include priced wallet-balance tokens returned by Enso even when they are
+   * not present in the provided token list. This keeps the selector from
+   * hiding wallet assets simply because the token-list query did not include
+   * them in the currently visible slice.
+   */
+  includeWalletTokens?: boolean;
+}
+
+export function useTokenBalances(tokens: EnsoToken[], options: UseTokenBalancesOptions = {}) {
   const { address: userAddress, isConnected } = useAccount();
   const { isTestNetwork } = useTestNetwork();
   const publicClient = usePublicClient();
+  const shouldFetchOnchain = isTestNetwork || options.preferOnchain;
 
   // Get ETH balance separately (Enso may not include native ETH)
-  const { data: ethBalance } = useBalance({
+  const { data: ethBalance, refetch: refetchEthBalance } = useBalance({
     address: userAddress,
     query: {
       enabled: isConnected,
@@ -28,7 +45,11 @@ export function useTokenBalances(tokens: EnsoToken[]) {
   });
 
   // --- Mainnet path: Enso API ---
-  const { data: ensoBalances, isLoading: ensoBalancesLoading } = useQuery({
+  const {
+    data: ensoBalances,
+    isLoading: ensoBalancesLoading,
+    refetch: refetchEnsoBalances,
+  } = useQuery({
     queryKey: ["enso-wallet-balances", userAddress],
     queryFn: () => fetchWalletBalances(userAddress!),
     enabled: !!userAddress && isConnected && !isTestNetwork,
@@ -48,7 +69,11 @@ export function useTokenBalances(tokens: EnsoToken[]) {
     [erc20Addresses],
   );
 
-  const { data: onchainBalances, isLoading: onchainLoading } = useQuery({
+  const {
+    data: onchainBalances,
+    isLoading: onchainLoading,
+    refetch: refetchOnchainBalances,
+  } = useQuery({
     queryKey: ["onchain-balances", userAddress, erc20BalanceKey],
     queryFn: async () => {
       if (!publicClient || !userAddress) return [];
@@ -67,9 +92,9 @@ export function useTokenBalances(tokens: EnsoToken[]) {
         balance: (results[i].status === "success" ? results[i].result : 0n) as bigint,
       }));
     },
-    enabled: !!userAddress && isConnected && isTestNetwork && !!publicClient,
-    staleTime: 10 * 1000,
-    refetchInterval: 15 * 1000,
+    enabled: !!userAddress && isConnected && shouldFetchOnchain && !!publicClient,
+    staleTime: options.preferOnchain ? 0 : 10 * 1000,
+    refetchInterval: isTestNetwork ? 15 * 1000 : false,
   });
 
   // Prices (from Enso — works for both paths, prices are mainnet-based anyway)
@@ -88,6 +113,11 @@ export function useTokenBalances(tokens: EnsoToken[]) {
   const { balanceMap, priceMap, sortedTokens } = useMemo(() => {
     const balances = new Map<string, bigint>();
     const prices = new Map<string, number>();
+    const tokenMap = new Map<string, EnsoToken>();
+
+    for (const token of tokens) {
+      tokenMap.set(token.address.toLowerCase(), token);
+    }
 
     // Add ETH balance
     if (ethBalance) {
@@ -101,17 +131,8 @@ export function useTokenBalances(tokens: EnsoToken[]) {
       }
     }
 
-    if (isTestNetwork) {
-      // Test network: use on-chain multicall results
-      if (onchainBalances) {
-        for (const item of onchainBalances) {
-          if (item.balance > 0n) {
-            balances.set(item.address, item.balance);
-          }
-        }
-      }
-    } else {
-      // Mainnet: use Enso balances (overrides batch prices with more accurate data)
+    if (!isTestNetwork) {
+      // Mainnet: use Enso balances for the broad wallet list and price data.
       if (ensoBalances) {
         for (const item of ensoBalances) {
           const address = item.token.toLowerCase();
@@ -119,12 +140,36 @@ export function useTokenBalances(tokens: EnsoToken[]) {
           if (item.price > 0) {
             prices.set(address, item.price);
           }
+          if (
+            options.includeWalletTokens &&
+            item.price > 0 &&
+            BigInt(item.amount) > 0n &&
+            !tokenMap.has(address)
+          ) {
+            tokenMap.set(address, {
+              address: item.token,
+              chainId: item.chainId,
+              name: item.name || item.symbol || "Unknown",
+              symbol: item.symbol || "???",
+              decimals: item.decimals,
+              logoURI: item.logoUri,
+              type: "base",
+            });
+          }
         }
       }
     }
 
+    // On-chain reads override Enso for requested tokens when enabled. This
+    // keeps selected-token balances fresh immediately after tx receipts.
+    if (shouldFetchOnchain && onchainBalances) {
+      for (const item of onchainBalances) {
+        balances.set(item.address, item.balance);
+      }
+    }
+
     // Sort tokens: those with balance first, then by original order
-    const sorted = [...tokens].sort((a, b) => {
+    const sorted = Array.from(tokenMap.values()).sort((a, b) => {
       const balanceA = balances.get(a.address.toLowerCase()) ?? 0n;
       const balanceB = balances.get(b.address.toLowerCase()) ?? 0n;
 
@@ -133,14 +178,30 @@ export function useTokenBalances(tokens: EnsoToken[]) {
     });
 
     return { balanceMap: balances, priceMap: prices, sortedTokens: sorted };
-  }, [tokens, ensoBalances, onchainBalances, ethBalance, tokenPrices, isTestNetwork]);
+  }, [
+    tokens,
+    ensoBalances,
+    onchainBalances,
+    ethBalance,
+    tokenPrices,
+    isTestNetwork,
+    shouldFetchOnchain,
+    options.includeWalletTokens,
+  ]);
+
+  const refetch = useCallback(() => {
+    void refetchEthBalance();
+    void refetchEnsoBalances();
+    void refetchOnchainBalances();
+  }, [refetchEnsoBalances, refetchEthBalance, refetchOnchainBalances]);
 
   return {
     sortedTokens,
     balanceMap,
     priceMap,
+    refetch,
     isLoading: isTestNetwork
       ? onchainLoading || pricesLoading
-      : ensoBalancesLoading || pricesLoading,
+      : ensoBalancesLoading || (options.preferOnchain && onchainLoading) || pricesLoading,
   };
 }

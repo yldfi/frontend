@@ -248,6 +248,7 @@ describe("ZapPageContent", () => {
       sortedTokens: [],
       balanceMap: new Map([[ETH_ADDRESS.toLowerCase(), 10n ** 18n]]),
       priceMap: new Map(),
+      refetch: vi.fn(),
       isLoading: false,
     } as ReturnType<typeof useTokenBalances>);
 
@@ -283,6 +284,14 @@ describe("ZapPageContent", () => {
 
   it("sends directly when simulation preview is disabled", async () => {
     render(<ZapPageContent />);
+
+    expect(mockUseTokenBalances).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({ symbol: "ETH" }),
+        expect.objectContaining({ symbol: "ycvxCRV" }),
+      ],
+      { preferOnchain: true },
+    );
 
     fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "0.1" } });
     fireEvent.click(screen.getByRole("button", { name: "Zap" }));

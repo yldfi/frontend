@@ -29,6 +29,13 @@ interface SimulationModalProps {
   borrowSwapTitle?: string;
   /** Per-swap price impacts override the single aggregate price impact */
   perSwapPriceImpacts?: { input?: number; output?: number };
+  /**
+   * Route-level price impact from the quote. When provided, this takes
+   * precedence over the aggregate Tenderly USD value delta. Pass null when
+   * the quote could not compute impact so the modal does not relabel value
+   * delta as price impact.
+   */
+  routePriceImpact?: number | null;
   /** When true, groups borrow+deposit as leverage (crvUSD used to buy more collateral) */
   leverageMode?: boolean;
 }
@@ -136,6 +143,7 @@ export function SimulationModal({
   swapTitle = "You Swap",
   borrowSwapTitle,
   perSwapPriceImpacts,
+  routePriceImpact,
   leverageMode = false,
 }: SimulationModalProps) {
   if (!isOpen) return null;
@@ -492,6 +500,24 @@ export function SimulationModal({
           <div className="border-t border-[var(--border)] pt-3 space-y-1">
             {/* Aggregate price impact — hidden when per-swap impacts are shown inline */}
             {!perSwapPriceImpacts && (() => {
+              if (routePriceImpact !== undefined) {
+                if (routePriceImpact === null) return null;
+                return (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-[var(--muted-foreground)]">Price Impact</span>
+                    <span className={cn(
+                      "mono",
+                      routePriceImpact < 0 ? "text-green-500"
+                        : routePriceImpact > 2 ? "text-red-500"
+                        : routePriceImpact > 1 ? "text-yellow-500"
+                        : ""
+                    )}>
+                      {routePriceImpact.toFixed(2)}%
+                    </span>
+                  </div>
+                );
+              }
+
               // Skip price impact if all sent tokens also appear as deposits (direct deposit, no swap)
               const sends = simulationResult.assetChanges.filter(c => c.type === "send");
               const depositSymbols = new Set(

@@ -40,7 +40,9 @@ export interface EnsoRouteResponse {
   };
   gas: string;
   amountOut: string;
-  priceImpact?: number;
+  // Enso SDK returns route price impact in basis points, or null/undefined
+  // when it cannot price one side of the route.
+  priceImpact?: number | null;
   route: EnsoRouteStep[];
 }
 
@@ -117,6 +119,7 @@ export interface RouteStep {
   description?: string;     // Optional: "for CVX", "from crvUSD", etc. (action is primary label)
   protocol: string;         // Protocol name (e.g., "Enso", "Curve", "Convex", "Yearn")
   amount?: string;          // Optional: formatted amount for this step
+  rawAmount?: string;       // Optional raw token amount, for quote math
   bonus?: number;           // Optional: bonus % for this step (e.g., +2.5% from Curve swap)
   bonusAmount?: string;     // Optional: bonus amount (e.g., "2.5" extra tokens vs 1:1 mint)
   bonusSymbol?: string;     // Optional: token symbol for bonus (e.g., "cvgCVX")

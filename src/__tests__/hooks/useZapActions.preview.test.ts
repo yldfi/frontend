@@ -1,5 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { maxUint256 } from "viem";
 import {
   useAccount,
   usePublicClient,
@@ -8,6 +9,7 @@ import {
 } from "wagmi";
 
 import { useZapActions } from "@/hooks/useZapActions";
+import { ENSO_ROUTER_EXECUTOR } from "@/lib/enso";
 import type { EnsoToken, ZapQuote } from "@/types/enso";
 
 const {
@@ -76,6 +78,15 @@ describe("useZapActions preview fallback", () => {
     type: "base",
   };
 
+  const mockUsdcToken: EnsoToken = {
+    address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    chainId: 1,
+    name: "USD Coin",
+    symbol: "USDC",
+    decimals: 6,
+    type: "base",
+  };
+
   const mockEthQuote: ZapQuote = {
     inputToken: mockEthToken,
     inputAmount: "1",
@@ -90,6 +101,24 @@ describe("useZapActions preview fallback", () => {
       to: "0x80EbA3855878739F4710233A8a19d89Bdd2ffB8E",
       data: "0xabcdef",
       value: "1000000000000000000",
+    },
+    route: [],
+  };
+
+  const mockUsdcQuote: ZapQuote = {
+    inputToken: mockUsdcToken,
+    inputAmount: "1000",
+    outputAmount: "1100000000000000000000",
+    outputAmountFormatted: "1100",
+    exchangeRate: 1.1,
+    inputUsdValue: 1000,
+    outputUsdValue: 990,
+    priceImpact: 1.0,
+    gasEstimate: "300000",
+    tx: {
+      to: "0x80EbA3855878739F4710233A8a19d89Bdd2ffB8E",
+      data: "0xabcdef",
+      value: "0",
     },
     route: [],
   };
@@ -151,6 +180,60 @@ describe("useZapActions preview fallback", () => {
 
     mockAnvilCall.mockResolvedValue(undefined);
     mockSendTx.mockResolvedValue("0xabcdef1234567890");
+  });
+
+  it("checks ERC20 allowance against Enso router executor instead of quote tx target", () => {
+    renderHook(() => useZapActions(mockUsdcQuote));
+
+    expect(mockUseReadContract).toHaveBeenCalledWith(
+      expect.objectContaining({
+        functionName: "allowance",
+        args: [userAddress, ENSO_ROUTER_EXECUTOR],
+      })
+    );
+    expect(mockUsdcQuote.tx.to).not.toBe(ENSO_ROUTER_EXECUTOR);
+  });
+
+  it("approves the Enso router executor spender instead of quote tx target", () => {
+    mockUseReadContract.mockReturnValue({
+      data: BigInt(0),
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useReadContract>);
+
+    const { result } = renderHook(() => useZapActions(mockUsdcQuote));
+
+    act(() => {
+      result.current.approve(false);
+    });
+
+    expect(mockWriteApprove).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: mockUsdcToken.address,
+        functionName: "approve",
+        args: [ENSO_ROUTER_EXECUTOR, maxUint256],
+      })
+    );
+  });
+
+  it("shows pending approval for the Enso router executor spender", async () => {
+    mockUseReadContract.mockReturnValue({
+      data: BigInt(0),
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useReadContract>);
+
+    const { result } = renderHook(() => useZapActions(mockUsdcQuote));
+
+    await act(async () => {
+      await result.current.executeZap();
+    });
+
+    expect(result.current.pendingApproval).toMatchObject({
+      spender: ENSO_ROUTER_EXECUTOR,
+      spenderName: "Enso Router",
+    });
+    expect(result.current.approvalProgress?.steps[0]).toMatchObject({
+      spender: ENSO_ROUTER_EXECUTOR,
+    });
   });
 
   it("returns a simulation-unavailable preview result instead of sending immediately", async () => {

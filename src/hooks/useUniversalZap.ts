@@ -54,6 +54,12 @@ import {
 import { useVaultCache } from "@/hooks/useVaultCache";
 import { PUBLIC_RPC_URLS } from "@/config/rpc";
 import { ERC4626_ABI } from "@/lib/abis";
+import {
+  annotateEnsoStepSlippage,
+  calculateCvxLegPriceImpact,
+  calculateRoutePriceImpact,
+  calculateValueDeltaImpact,
+} from "@/lib/price-impact";
 import type { EnsoToken, ZapQuote, RouteInfo, RouteStep } from "@/types/enso";
 
 interface UseUniversalZapParams {
@@ -207,11 +213,6 @@ async function getPrices(addresses: string[]): Promise<Map<string, number | null
   return out;
 }
 
-function calculatePriceImpact(inUsd: number | null, outUsd: number | null): number | null {
-  if (inUsd === null || outUsd === null || inUsd === 0) return null;
-  return ((inUsd - outUsd) / inUsd) * 100;
-}
-
 /**
  * Universal zap dispatcher — works for any (input, output) pair:
  *   - yld vault → yld vault          (vault-to-vault)
@@ -314,6 +315,22 @@ export function useUniversalZap({
         const tgtPx = priceMap.get(targetUnderlying.toLowerCase()) ?? null;
         const inUsd = srcPx !== null && sourceAps !== null ? inNum * sourceAps * srcPx : null;
         const outUsd = tgtPx !== null && targetAps !== null ? outNum * targetAps * tgtPx : null;
+        const sameUnderlying =
+          sourceUnderlying.toLowerCase() === targetUnderlying.toLowerCase();
+        const routeInfo = (bundle as { routeInfo?: RouteInfo }).routeInfo ?? {
+          steps: sameUnderlying
+            ? [
+                { tokenSymbol: inputToken.symbol, action: "Redeem", description: `${inputToken.symbol} for ${getTokenSymbol(sourceUnderlying)}`, protocol: "yld" },
+                { tokenSymbol: outputToken.symbol, action: "Deposit", description: `into ${outputToken.symbol}`, protocol: "yld" },
+                { tokenSymbol: outputToken.symbol, action: "Receive", description: `${outputToken.symbol} shares`, protocol: "yld" },
+              ]
+            : [
+                { tokenSymbol: inputToken.symbol, action: "Redeem", description: `${inputToken.symbol} for ${getTokenSymbol(sourceUnderlying)}`, protocol: "yld" },
+                { tokenSymbol: getTokenSymbol(sourceUnderlying), action: "Swap", description: `for ${getTokenSymbol(targetUnderlying)}`, protocol: "Enso" },
+                { tokenSymbol: getTokenSymbol(targetUnderlying), action: "Deposit", description: `into ${outputToken.symbol}`, protocol: "yld" },
+                { tokenSymbol: outputToken.symbol, action: "Receive", description: `${outputToken.symbol} shares`, protocol: "yld" },
+              ],
+        };
 
         return {
           inputToken,
@@ -323,17 +340,11 @@ export function useUniversalZap({
           exchangeRate: inNum > 0 ? outNum / inNum : 0,
           inputUsdValue: inUsd,
           outputUsdValue: outUsd,
-          priceImpact: calculatePriceImpact(inUsd, outUsd),
+          priceImpact: calculateRoutePriceImpact(inUsd, outUsd, routeInfo, bundle.priceImpact ?? null),
           gasEstimate: bundle.gas,
           tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
           route: [],
-          routeInfo: (bundle as { routeInfo?: RouteInfo }).routeInfo ?? {
-            steps: [
-              { tokenSymbol: inputToken.symbol, action: "Redeem", description: `${inputToken.symbol} for ${getTokenSymbol(sourceUnderlying)}`, protocol: "yld" },
-              { tokenSymbol: outputToken.symbol, action: "Deposit", description: `into ${outputToken.symbol}`, protocol: "yld" },
-              { tokenSymbol: outputToken.symbol, action: "Receive", description: `${outputToken.symbol} shares`, protocol: "yld" },
-            ],
-          },
+          routeInfo,
         };
       }
 
@@ -400,6 +411,14 @@ export function useUniversalZap({
             targetUnderPx !== null && targetSharePrice !== null
               ? outNum * targetSharePrice * targetUnderPx
               : null;
+          const cvxPx = priceMap.get(TOKENS.CVX.toLowerCase()) ?? null;
+          const priceImpact = isUcvxTarget
+            ? calculateCvxLegPriceImpact({
+                inputUsd: inUsd,
+                cvxUsd: cvxPx,
+                routeInfo: bundle.routeInfo,
+              }) ?? calculateRoutePriceImpact(inUsd, outUsd, bundle.routeInfo, bundle.priceImpact ?? null)
+            : calculateRoutePriceImpact(inUsd, outUsd, bundle.routeInfo, bundle.priceImpact ?? null);
 
           return {
             inputToken,
@@ -409,7 +428,7 @@ export function useUniversalZap({
             exchangeRate: inNum > 0 ? outNum / inNum : 0,
             inputUsdValue: inUsd,
             outputUsdValue: outUsd,
-            priceImpact: calculatePriceImpact(inUsd, outUsd),
+            priceImpact,
             gasEstimate: bundle.gas,
             tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
             route: [],
@@ -449,9 +468,16 @@ export function useUniversalZap({
             priceMap.get(TOKENS.CVX.toLowerCase()) ??
             null;
           const outPx = priceMap.get(outputToken.address.toLowerCase()) ?? null;
+          const cvxPx = priceMap.get(TOKENS.CVX.toLowerCase()) ?? null;
           const inUsd =
             underPx !== null && aps !== null ? inNum * aps * underPx : null;
           const outUsd = outPx !== null ? outNum * outPx : null;
+          const priceImpact =
+            calculateCvxLegPriceImpact({
+              inputUsd: inUsd,
+              cvxUsd: cvxPx,
+              routeInfo: bundle.routeInfo,
+            }) ?? calculateRoutePriceImpact(inUsd, outUsd, bundle.routeInfo, bundle.priceImpact ?? null);
 
           return {
             inputToken,
@@ -461,7 +487,7 @@ export function useUniversalZap({
             exchangeRate: inNum > 0 ? outNum / inNum : 0,
             inputUsdValue: inUsd,
             outputUsdValue: outUsd,
-            priceImpact: calculatePriceImpact(inUsd, outUsd),
+            priceImpact,
             gasEstimate: bundle.gas,
             tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
             route: [],
@@ -680,6 +706,7 @@ export function useUniversalZap({
             ],
           };
         }
+        const routeInfo = (bundle as { routeInfo?: RouteInfo }).routeInfo ?? fallbackRouteInfo;
 
         return {
           inputToken,
@@ -689,11 +716,11 @@ export function useUniversalZap({
           exchangeRate: inNum > 0 ? outNum / inNum : 0,
           inputUsdValue: inUsd,
           outputUsdValue: outUsd,
-          priceImpact: calculatePriceImpact(inUsd, outUsd),
+          priceImpact: calculateRoutePriceImpact(inUsd, outUsd, routeInfo, bundle.priceImpact ?? null),
           gasEstimate: bundle.gas,
           tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
           route: [],
-          routeInfo: (bundle as { routeInfo?: RouteInfo }).routeInfo ?? fallbackRouteInfo,
+          routeInfo,
         };
       }
 
@@ -829,6 +856,14 @@ export function useUniversalZap({
             },
           ],
         };
+        const routeInfo = (bundle as { routeInfo?: RouteInfo }).routeInfo ?? fallbackRouteInfo;
+        const priceImpact = underlyingNeedsCvxFallback
+          ? calculateCvxLegPriceImpact({
+              inputUsd: inUsd,
+              cvxUsd: cvxFallbackPx,
+              routeInfo,
+            }) ?? calculateRoutePriceImpact(inUsd, outUsd, routeInfo, bundle.priceImpact ?? null)
+          : calculateRoutePriceImpact(inUsd, outUsd, routeInfo, bundle.priceImpact ?? null);
 
         return {
           inputToken,
@@ -838,11 +873,11 @@ export function useUniversalZap({
           exchangeRate: inNum > 0 ? outNum / inNum : 0,
           inputUsdValue: inUsd,
           outputUsdValue: outUsd,
-          priceImpact: calculatePriceImpact(inUsd, outUsd),
+          priceImpact,
           gasEstimate: bundle.gas,
           tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
           route: [],
-          routeInfo: (bundle as { routeInfo?: RouteInfo }).routeInfo ?? fallbackRouteInfo,
+          routeInfo,
         };
       }
 
@@ -952,6 +987,17 @@ export function useUniversalZap({
           underPx !== null && targetSharePrice !== null
             ? outNum * targetSharePrice * underPx
             : null;
+        const outputUnderlyingIsIlliquid =
+          outputExternalConfig.underlying.toLowerCase() === TOKENS.PXCVX.toLowerCase() ||
+          outputExternalConfig.underlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase() ||
+          outputExternalConfig.underlying.toLowerCase() === TOKENS.LPXCVX.toLowerCase();
+        const priceImpact = outputUnderlyingIsIlliquid
+          ? calculateCvxLegPriceImpact({
+              inputUsd: inUsd,
+              cvxUsd: cvxPx,
+              routeInfo: bundle.routeInfo,
+            }) ?? calculateRoutePriceImpact(inUsd, outUsd, bundle.routeInfo, bundle.priceImpact ?? null)
+          : calculateRoutePriceImpact(inUsd, outUsd, bundle.routeInfo, bundle.priceImpact ?? null);
 
         return {
           inputToken,
@@ -961,7 +1007,7 @@ export function useUniversalZap({
           exchangeRate: inNum > 0 ? outNum / inNum : 0,
           inputUsdValue: inUsd,
           outputUsdValue: outUsd,
-          priceImpact: calculatePriceImpact(inUsd, outUsd),
+          priceImpact,
           gasEstimate: bundle.gas,
           tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
           route: [],
@@ -1025,6 +1071,12 @@ export function useUniversalZap({
             ? inNum * cvxPx
             : null;
         const outUsd = outPx !== null ? outNum * outPx : null;
+        const priceImpact =
+          calculateCvxLegPriceImpact({
+            inputUsd: inUsd,
+            cvxUsd: cvxPx,
+            routeInfo: bundle.routeInfo,
+          }) ?? calculateRoutePriceImpact(inUsd, outUsd, bundle.routeInfo, bundle.priceImpact ?? null);
 
         return {
           inputToken,
@@ -1034,7 +1086,7 @@ export function useUniversalZap({
           exchangeRate: inNum > 0 ? outNum / inNum : 0,
           inputUsdValue: inUsd,
           outputUsdValue: outUsd,
-          priceImpact: calculatePriceImpact(inUsd, outUsd),
+          priceImpact,
           gasEstimate: bundle.gas,
           tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
           route: [],
@@ -1101,6 +1153,7 @@ export function useUniversalZap({
           inputToken.address,
           outputExternalConfig.underlying,
           TOKENS.PXCVX,
+          TOKENS.CVX,
         ]);
         const inPx = priceMap.get(inputToken.address.toLowerCase()) ?? null;
         const underPx = priceMap.get(outputExternalConfig.underlying.toLowerCase()) ?? null;
@@ -1160,6 +1213,14 @@ export function useUniversalZap({
             depositStep.amount = underlyingAmountFromShares.toFixed(4);
           }
         }
+        const cvxPx = priceMap.get(TOKENS.CVX.toLowerCase()) ?? null;
+        const priceImpact = isUcvxOutput
+          ? calculateCvxLegPriceImpact({
+              inputUsd: inUsd,
+              cvxUsd: cvxPx,
+              routeInfo,
+            }) ?? calculateRoutePriceImpact(inUsd, outUsd, routeInfo, bundle.priceImpact ?? null)
+          : calculateRoutePriceImpact(inUsd, outUsd, routeInfo, bundle.priceImpact ?? null);
 
         return {
           inputToken,
@@ -1169,7 +1230,7 @@ export function useUniversalZap({
           exchangeRate: inNum > 0 ? outNum / inNum : 0,
           inputUsdValue: inUsd,
           outputUsdValue: outUsd,
-          priceImpact: calculatePriceImpact(inUsd, outUsd),
+          priceImpact,
           gasEstimate: bundle.gas,
           tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
           route: [],
@@ -1267,6 +1328,12 @@ export function useUniversalZap({
             ? underlyingAmount * underPx
             : null;
         const outUsd = outPx !== null ? outNum * outPx : null;
+        const priceImpact = calculateRoutePriceImpact(
+          inUsd,
+          outUsd,
+          bundle.routeInfo,
+          bundle.priceImpact ?? null,
+        );
 
         return {
           inputToken,
@@ -1276,7 +1343,7 @@ export function useUniversalZap({
           exchangeRate: inNum > 0 ? outNum / inNum : 0,
           inputUsdValue: inUsd,
           outputUsdValue: outUsd,
-          priceImpact: calculatePriceImpact(inUsd, outUsd),
+          priceImpact,
           gasEstimate: bundle.gas,
           tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
           route: [],
@@ -1324,6 +1391,12 @@ export function useUniversalZap({
         const outPx = priceMap.get(outputToken.address.toLowerCase()) ?? null;
         const inUsd = cvxPx !== null ? inNum * cvxPx : null;
         const outUsd = outPx !== null ? outNum * outPx : null;
+        const priceImpact = calculateRoutePriceImpact(
+          inUsd,
+          outUsd,
+          bundle.routeInfo,
+          bundle.priceImpact ?? null,
+        );
 
         return {
           inputToken,
@@ -1333,7 +1406,7 @@ export function useUniversalZap({
           exchangeRate: inNum > 0 ? outNum / inNum : 0,
           inputUsdValue: inUsd,
           outputUsdValue: outUsd,
-          priceImpact: calculatePriceImpact(inUsd, outUsd),
+          priceImpact,
           gasEstimate: bundle.gas,
           tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
           route: [],
@@ -1382,34 +1455,12 @@ export function useUniversalZap({
         const marketOutPx = priceMap.get(outputToken.address.toLowerCase()) ?? null;
         const inUsd = inPx !== null ? inNum * inPx : null;
         const marketOutUsd = marketOutPx !== null ? outNum * marketOutPx : null;
-
-        // Measure Enso-leg slippage: compare CVX mid-bundle to what the input
-        // would buy at market mid-price. swapAmount+mintAmount is the real CVX
-        // that flowed through Enso's route.
-        let priceImpact: number | null = null;
-        let routeInfo = bundle.routeInfo;
-        const hybrid = bundle.routeInfo?.hybrid;
-        const cvxInputIsAlreadyCvx =
-          inputToken.address.toLowerCase() === TOKENS.CVX.toLowerCase();
-        if (hybrid && inPx !== null && cvxPx !== null && inNum > 0 && !cvxInputIsAlreadyCvx) {
-          const cvxMidBundle =
-            Number(BigInt(hybrid.swapAmount) + BigInt(hybrid.mintAmount)) / 1e18;
-          const idealCvxAtMarket = (inNum * inPx) / cvxPx;
-          if (idealCvxAtMarket > 0) {
-            priceImpact = ((idealCvxAtMarket - cvxMidBundle) / idealCvxAtMarket) * 100;
-            if (priceImpact > 0.05 && routeInfo?.steps?.length) {
-              const ensoStepIdx = routeInfo.steps.findIndex((s) => s.protocol === "Enso");
-              if (ensoStepIdx >= 0) {
-                routeInfo = {
-                  ...routeInfo,
-                  steps: routeInfo.steps.map((s, i) =>
-                    i === ensoStepIdx ? { ...s, slippage: priceImpact ?? undefined } : s,
-                  ),
-                };
-              }
-            }
-          }
-        }
+        const priceImpact = calculateCvxLegPriceImpact({
+          inputUsd: inUsd,
+          cvxUsd: cvxPx,
+          routeInfo: bundle.routeInfo,
+        });
+        const routeInfo = annotateEnsoStepSlippage(bundle.routeInfo, priceImpact);
 
         return {
           inputToken,
@@ -1454,7 +1505,7 @@ export function useUniversalZap({
         exchangeRate: inNum > 0 ? outNum / inNum : 0,
         inputUsdValue: inUsd,
         outputUsdValue: outUsd,
-        priceImpact: calculatePriceImpact(inUsd, outUsd),
+        priceImpact: calculateValueDeltaImpact(inUsd, outUsd, route.priceImpact ?? null),
         gasEstimate: route.gas,
         tx: { to: route.tx.to, data: route.tx.data, value: route.tx.value },
         route: route.route,

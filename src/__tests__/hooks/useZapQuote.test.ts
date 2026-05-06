@@ -1,57 +1,57 @@
 import { describe, it, expect } from "vitest";
+import { calculateValueDeltaImpact } from "@/lib/price-impact";
 
-// Test the calculatePriceImpact function logic directly
-// Since it's not exported, we test the mathematical behavior
+// Test the price-impact math used by zap quotes.
 
 describe("calculatePriceImpact logic", () => {
-  // Replicate the function logic for testing
-  function calculatePriceImpact(inputUsd: number | null, outputUsd: number | null): number | null {
-    if (inputUsd === null || outputUsd === null || inputUsd === 0) {
-      return null;
-    }
-    return ((inputUsd - outputUsd) / inputUsd) * 100;
-  }
-
   describe("returns null for invalid inputs", () => {
     it("returns null when inputUsd is null", () => {
-      expect(calculatePriceImpact(null, 100)).toBeNull();
+      expect(calculateValueDeltaImpact(null, 100)).toBeNull();
     });
 
     it("returns null when outputUsd is null", () => {
-      expect(calculatePriceImpact(100, null)).toBeNull();
+      expect(calculateValueDeltaImpact(100, null)).toBeNull();
     });
 
     it("returns null when both are null", () => {
-      expect(calculatePriceImpact(null, null)).toBeNull();
+      expect(calculateValueDeltaImpact(null, null)).toBeNull();
     });
 
     it("returns null when inputUsd is zero", () => {
-      expect(calculatePriceImpact(0, 100)).toBeNull();
+      expect(calculateValueDeltaImpact(0, 100)).toBeNull();
+    });
+
+    it("falls back to Enso basis points when USD prices are missing", () => {
+      expect(calculateValueDeltaImpact(null, null, 75)).toBe(0.75);
+    });
+
+    it("preserves a zero Enso basis-point fallback", () => {
+      expect(calculateValueDeltaImpact(null, null, 0)).toBe(0);
     });
   });
 
   describe("calculates positive price impact (loss)", () => {
     it("calculates 10% loss correctly", () => {
       // Input $100, output $90 = 10% loss
-      const result = calculatePriceImpact(100, 90);
+      const result = calculateValueDeltaImpact(100, 90);
       expect(result).toBe(10);
     });
 
     it("calculates 50% loss correctly", () => {
       // Input $100, output $50 = 50% loss
-      const result = calculatePriceImpact(100, 50);
+      const result = calculateValueDeltaImpact(100, 50);
       expect(result).toBe(50);
     });
 
     it("calculates 1% loss correctly", () => {
       // Input $1000, output $990 = 1% loss
-      const result = calculatePriceImpact(1000, 990);
+      const result = calculateValueDeltaImpact(1000, 990);
       expect(result).toBe(1);
     });
 
     it("calculates small percentage loss", () => {
       // Input $100, output $99.5 = 0.5% loss
-      const result = calculatePriceImpact(100, 99.5);
+      const result = calculateValueDeltaImpact(100, 99.5);
       expect(result).toBeCloseTo(0.5, 5);
     });
   });
@@ -59,34 +59,34 @@ describe("calculatePriceImpact logic", () => {
   describe("calculates negative price impact (gain)", () => {
     it("calculates 10% gain correctly", () => {
       // Input $100, output $110 = -10% (gain)
-      const result = calculatePriceImpact(100, 110);
+      const result = calculateValueDeltaImpact(100, 110);
       expect(result).toBe(-10);
     });
 
     it("calculates small gain", () => {
       // Input $100, output $100.5 = -0.5% (gain)
-      const result = calculatePriceImpact(100, 100.5);
+      const result = calculateValueDeltaImpact(100, 100.5);
       expect(result).toBeCloseTo(-0.5, 5);
     });
   });
 
   describe("edge cases", () => {
     it("returns 0 when input equals output", () => {
-      expect(calculatePriceImpact(100, 100)).toBe(0);
+      expect(calculateValueDeltaImpact(100, 100)).toBe(0);
     });
 
     it("handles very small differences", () => {
-      const result = calculatePriceImpact(1000000, 999999);
+      const result = calculateValueDeltaImpact(1000000, 999999);
       expect(result).toBeCloseTo(0.0001, 4);
     });
 
     it("handles very large values", () => {
-      const result = calculatePriceImpact(1000000000, 900000000);
+      const result = calculateValueDeltaImpact(1000000000, 900000000);
       expect(result).toBe(10);
     });
 
     it("calculates 100% loss (output is zero)", () => {
-      const result = calculatePriceImpact(100, 0);
+      const result = calculateValueDeltaImpact(100, 0);
       expect(result).toBe(100);
     });
   });
