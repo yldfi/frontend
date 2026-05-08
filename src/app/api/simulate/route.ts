@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPublicClient, encodeAbiParameters, http, keccak256, pad, parseAbiParameters, toHex, type Chain } from "viem";
 import { TOKENS, VAULT_ADDRESSES, CURVE_CONTROLLERS, getVaultByAddress, LLAMA_AIRFORCE, CONCENTRATOR, CURVE_SAVINGS, ASYMMETRY } from "@/config/vaults";
-import { fetchTokenPricesDirect, ENSO_ROUTER, ENSO_ROUTER_EXECUTOR } from "@/lib/enso";
+import { fetchTokenPricesDirect, ENSO_ROUTER, ENSO_ROUTER_EXECUTOR, MORPHO_BUNDLER3_ADDRESS } from "@/lib/enso";
 import { CRVUSD_ADDRESS, USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
 import { ZAPPER_ADDRESS } from "@/lib/zapper";
 import { ERC4626_ABI } from "@/lib/abis";
@@ -647,9 +647,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Build allowlist of simulation targets: Enso router + vaults + controllers + zappers
+  // Build allowlist of simulation targets: Enso router + Morpho bundler + vaults + controllers + zappers
   const allowedTargets = new Set<string>([
     ENSO_ROUTER_EXECUTOR.toLowerCase(),
+    MORPHO_BUNDLER3_ADDRESS.toLowerCase(),
     ZAPPER_ADDRESS.toLowerCase(),
     ...Object.values(VAULT_ADDRESSES).map((a) => a.toLowerCase()),
     ...Object.values(CURVE_CONTROLLERS).map((a) => a.toLowerCase()),
