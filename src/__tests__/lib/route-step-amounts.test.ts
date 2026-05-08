@@ -71,8 +71,9 @@ import {
   ENSO_SHORTCUTS,
   ETH_ADDRESS,
   LEGACY_MORPHO_ADDRESS,
+  MORPHO_BUNDLER3_ADDRESS,
+  MORPHO_GENERAL_ADAPTER1_ADDRESS,
   MORPHO_TOKEN_ADDRESS,
-  MORPHO_WRAPPER_ADDRESS,
 } from "@/lib/enso";
 import { cryptoswap, findPegPoint, getCurveGetDy, getStableSwapParams } from "@/lib/curve";
 import { LLAMA_AIRFORCE, PIREX, TANGENT, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
@@ -239,11 +240,6 @@ describe("route step amounts", () => {
       tx: { to: "0xroute", data: "0xrouteData", value: "0" },
       route: [],
     });
-    mockGetBundleData.mockResolvedValueOnce({
-      ...BUNDLE_RESPONSE,
-      gas: "0",
-      amountsOut: {},
-    });
 
     const result = await fetchLegacyMorphoWrapRoute({
       fromAddress: TEST_WALLET,
@@ -259,48 +255,25 @@ describe("route step amounts", () => {
       amountIn: ["1162575544199150998"],
     }));
 
-    const actions = lastBundleActions();
-    expect(actions).toHaveLength(3);
-    expect(actions[0]).toMatchObject({
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: LEGACY_MORPHO_ADDRESS,
-        spender: MORPHO_WRAPPER_ADDRESS,
-        amount: "1162575544199150998",
-      },
+    expect(mockGetBundleData).not.toHaveBeenCalled();
+    expect(result.tx.to).toBe(MORPHO_BUNDLER3_ADDRESS);
+    expect(result.tx.data).toBe("0x");
+    expect(result.legacyMorphoPermit).toMatchObject({
+      token: LEGACY_MORPHO_ADDRESS,
+      spender: MORPHO_GENERAL_ADAPTER1_ADDRESS,
+      amount: "1162575544199150998",
     });
-    expect(actions[1]).toMatchObject({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: MORPHO_WRAPPER_ADDRESS,
-        method: "depositFor",
-        args: [ENSO_SHORTCUTS, "1162575544199150998"],
-      },
-    });
-    expect(actions[2]).toMatchObject({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: ENSO_ROUTER_EXECUTOR.toLowerCase(),
-        method: "routeMulti",
-        args: [[], "0xinner"],
-      },
-    });
+    expect(result.legacyMorphoPermit?.postPermitCalls).toHaveLength(3);
+    expect(result.legacyMorphoPermit?.postPermitCalls[0].to).toBe(MORPHO_GENERAL_ADAPTER1_ADDRESS);
+    expect(result.legacyMorphoPermit?.postPermitCalls[1].to).toBe(MORPHO_GENERAL_ADAPTER1_ADDRESS);
+    expect(result.legacyMorphoPermit?.postPermitCalls[2].to).toBe(ENSO_ROUTER_EXECUTOR);
     expect(result.amountsOut[ETH_ADDRESS.toLowerCase()]).toBe("1110269870387989");
     expect(result.priceImpact).toBe(33);
-    expect(result.gas).toBe("488151");
+    expect(result.gas).toBe("528151");
     expect(result.routeInfo?.steps.map((step) => step.action)).toEqual(["Wrap", "Swap", "Receive"]);
   });
 
   it("wraps legacy MORPHO directly when output is current MORPHO", async () => {
-    mockGetBundleData.mockResolvedValueOnce({
-      ...BUNDLE_RESPONSE,
-      gas: "0",
-      amountsOut: {},
-    });
-
     const result = await fetchLegacyMorphoWrapRoute({
       fromAddress: TEST_WALLET,
       outputToken: MORPHO_TOKEN_ADDRESS,
@@ -309,15 +282,16 @@ describe("route step amounts", () => {
     });
 
     expect(mockGetRouteData).not.toHaveBeenCalled();
-    const actions = lastBundleActions();
-    expect(actions).toHaveLength(2);
-    expect(actions[1]).toMatchObject({
-      args: {
-        address: MORPHO_WRAPPER_ADDRESS,
-        method: "depositFor",
-        args: [TEST_WALLET, "1000000000000000000"],
-      },
+    expect(mockGetBundleData).not.toHaveBeenCalled();
+    expect(result.tx.to).toBe(MORPHO_BUNDLER3_ADDRESS);
+    expect(result.legacyMorphoPermit).toMatchObject({
+      token: LEGACY_MORPHO_ADDRESS,
+      spender: MORPHO_GENERAL_ADAPTER1_ADDRESS,
+      amount: "1000000000000000000",
     });
+    expect(result.legacyMorphoPermit?.postPermitCalls).toHaveLength(2);
+    expect(result.legacyMorphoPermit?.postPermitCalls[0].to).toBe(MORPHO_GENERAL_ADAPTER1_ADDRESS);
+    expect(result.legacyMorphoPermit?.postPermitCalls[1].to).toBe(MORPHO_GENERAL_ADAPTER1_ADDRESS);
     expect(result.amountsOut[MORPHO_TOKEN_ADDRESS.toLowerCase()]).toBe("1000000000000000000");
     expect(result.gas).toBe("150000");
     expect(result.routeInfo?.steps.map((step) => step.action)).toEqual(["Wrap", "Receive"]);
@@ -357,52 +331,41 @@ describe("route step amounts", () => {
     }));
 
     const actions = lastBundleActions();
-    expect(actions).toHaveLength(5);
+    expect(actions).toHaveLength(2);
     expect(actions[0]).toMatchObject({
-      protocol: "erc20",
-      action: "approve",
+      protocol: "enso",
+      action: "route",
       args: {
-        token: LEGACY_MORPHO_ADDRESS,
-        spender: MORPHO_WRAPPER_ADDRESS,
-        amount: "1162575544199150998",
+        tokenIn: MORPHO_TOKEN_ADDRESS,
+        tokenOut: TOKENS.CVXCRV,
+        amountIn: "1162575544199150998",
+        slippage: "100",
       },
     });
     expect(actions[1]).toMatchObject({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: MORPHO_WRAPPER_ADDRESS,
-        method: "depositFor",
-        args: [ENSO_SHORTCUTS, "1162575544199150998"],
-      },
-    });
-    expect(actions[2]).toMatchObject({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: ENSO_ROUTER_EXECUTOR.toLowerCase(),
-        method: "routeMulti",
-        args: [[], "0xinner"],
-      },
-    });
-    expect(actions[3]).toMatchObject({
-      protocol: "enso",
-      action: "balance",
-      args: { token: TOKENS.CVXCRV },
-    });
-    expect(actions[4]).toMatchObject({
       protocol: "erc4626",
       action: "deposit",
       args: {
         tokenIn: TOKENS.CVXCRV,
         tokenOut: VAULT_ADDRESSES.YCVXCRV,
-        amountIn: { useOutputOfCallAt: 3 },
+        amountIn: { useOutputOfCallAt: 0 },
         primaryAddress: VAULT_ADDRESSES.YCVXCRV,
       },
     });
+    expect(result.tx.to).toBe(MORPHO_BUNDLER3_ADDRESS);
+    expect(result.tx.data).toBe("0x");
+    expect(result.legacyMorphoPermit).toMatchObject({
+      token: LEGACY_MORPHO_ADDRESS,
+      spender: MORPHO_GENERAL_ADAPTER1_ADDRESS,
+      amount: "1162575544199150998",
+    });
+    expect(result.legacyMorphoPermit?.postPermitCalls).toHaveLength(3);
+    expect(result.legacyMorphoPermit?.postPermitCalls[0].to).toBe(MORPHO_GENERAL_ADAPTER1_ADDRESS);
+    expect(result.legacyMorphoPermit?.postPermitCalls[1].to).toBe(MORPHO_GENERAL_ADAPTER1_ADDRESS);
+    expect(result.legacyMorphoPermit?.postPermitCalls[2].to).toBe(ENSO_ROUTER_EXECUTOR);
     expect(result.amountsOut[TOKENS.CVXCRV.toLowerCase()]).toBe("27538222472939391973");
     expect(result.amountsOut[VAULT_ADDRESSES.YCVXCRV.toLowerCase()]).toBe("25000000000000000000");
-    expect(result.gas).toBe("671888");
+    expect(result.gas).toBe("571888");
     expect(result.routeInfo?.steps.map((step) => step.action)).toEqual(["Wrap", "Swap", "Deposit", "Receive"]);
   });
 

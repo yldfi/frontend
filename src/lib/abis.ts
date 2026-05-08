@@ -44,6 +44,32 @@ export const ERC20_APPROVAL_ABI = [
   },
 ] as const;
 
+// ERC20 permit helpers (EIP-2612)
+export const ERC20_PERMIT_ABI = [
+  {
+    name: "nonces",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    name: "permit",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "spender", type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+      { name: "v", type: "uint8" },
+      { name: "r", type: "bytes32" },
+      { name: "s", type: "bytes32" },
+    ],
+    outputs: [],
+  },
+] as const;
+
 // ERC20 metadata functions
 export const ERC20_METADATA_ABI = [
   {

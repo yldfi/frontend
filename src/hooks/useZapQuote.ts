@@ -87,7 +87,7 @@ export function useZapQuote({
   const prevTxDataRef = useRef<string | null>(null);
   useEffect(() => {
     if (process.env.NODE_ENV !== "development") return;
-    if (!quote?.tx || !userAddress || !publicClient) return;
+    if (!quote?.tx || quote.legacyMorphoPermit || !userAddress || !publicClient) return;
 
     const txKey = `${quote.tx.to}-${quote.tx.data}`;
     if (prevTxDataRef.current === txKey) return;
@@ -167,7 +167,7 @@ export function useZapQuote({
       .catch(() => {
         // Silently ignore - debug trace is optional
       });
-  }, [quote?.tx, userAddress, isTestNetwork, publicClient]);
+  }, [quote?.tx, quote?.legacyMorphoPermit, userAddress, isTestNetwork, publicClient]);
 
   return {
     quote,

@@ -5,11 +5,17 @@ import {
   useAccount,
   usePublicClient,
   useReadContract,
+  useWalletClient,
   useWaitForTransactionReceipt,
 } from "wagmi";
 
 import { useZapActions } from "@/hooks/useZapActions";
-import { ENSO_ROUTER_EXECUTOR } from "@/lib/enso";
+import {
+  ENSO_ROUTER_EXECUTOR,
+  LEGACY_MORPHO_ADDRESS,
+  MORPHO_BUNDLER3_ADDRESS,
+  MORPHO_GENERAL_ADAPTER1_ADDRESS,
+} from "@/lib/enso";
 import type { EnsoToken, ZapQuote } from "@/types/enso";
 
 const {
@@ -64,6 +70,7 @@ vi.mock("@/lib/tx-utils", () => ({
 const mockUseAccount = vi.mocked(useAccount);
 const mockUsePublicClient = vi.mocked(usePublicClient);
 const mockUseReadContract = vi.mocked(useReadContract);
+const mockUseWalletClient = vi.mocked(useWalletClient);
 const mockUseWaitForTransactionReceipt = vi.mocked(useWaitForTransactionReceipt);
 
 describe("useZapActions preview fallback", () => {
@@ -84,6 +91,15 @@ describe("useZapActions preview fallback", () => {
     name: "USD Coin",
     symbol: "USDC",
     decimals: 6,
+    type: "base",
+  };
+
+  const mockLegacyMorphoToken: EnsoToken = {
+    address: LEGACY_MORPHO_ADDRESS,
+    chainId: 1,
+    name: "Morpho Legacy",
+    symbol: "MORPHO Legacy",
+    decimals: 18,
     type: "base",
   };
 
@@ -166,6 +182,10 @@ describe("useZapActions preview fallback", () => {
     } as unknown as ReturnType<typeof useAccount>);
 
     mockUsePublicClient.mockReturnValue({} as ReturnType<typeof usePublicClient>);
+
+    mockUseWalletClient.mockReturnValue({
+      data: undefined,
+    } as unknown as ReturnType<typeof useWalletClient>);
 
     mockUseReadContract.mockReturnValue({
       data: undefined,
@@ -273,5 +293,119 @@ describe("useZapActions preview fallback", () => {
       data: mockEthQuote.tx.data,
       value: BigInt(mockEthQuote.tx.value),
     });
+  });
+
+  it("signs a legacy MORPHO permit and simulates the prepared bundler transaction", async () => {
+    const readContract = vi.fn().mockResolvedValue(7n);
+    const signTypedData = vi.fn().mockResolvedValue(
+      `0x${"11".repeat(32)}${"22".repeat(32)}1b`
+    );
+    const simulateBodyRef: { current?: Record<string, unknown> } = {};
+
+    mockUsePublicClient.mockReturnValue({
+      readContract,
+    } as unknown as ReturnType<typeof usePublicClient>);
+    mockUseWalletClient.mockReturnValue({
+      data: { signTypedData },
+    } as unknown as ReturnType<typeof useWalletClient>);
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/api/simulate/nonce")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            nonce: "test-nonce",
+            expires: Date.now() + 60_000,
+            sig: "test-sig",
+          }),
+        });
+      }
+
+      if (url.includes("/api/simulate")) {
+        simulateBodyRef.current = JSON.parse(String(init?.body));
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            gasUsed: "12345",
+            simulationId: "sim-id",
+            tenderlyUrl: null,
+            assetChanges: [],
+            errorMessage: null,
+          }),
+        });
+      }
+
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({}),
+      });
+    }));
+
+    const legacyQuote: ZapQuote = {
+      inputToken: mockLegacyMorphoToken,
+      inputAmount: "1000",
+      outputAmount: "950",
+      outputAmountFormatted: "950",
+      exchangeRate: 0.95,
+      inputUsdValue: 1000,
+      outputUsdValue: 950,
+      priceImpact: 0,
+      gasEstimate: "200000",
+      tx: {
+        to: MORPHO_BUNDLER3_ADDRESS,
+        data: "0x",
+        value: "0",
+      },
+      route: [],
+      legacyMorphoPermit: {
+        token: LEGACY_MORPHO_ADDRESS,
+        spender: MORPHO_GENERAL_ADAPTER1_ADDRESS,
+        amount: "1000",
+        postPermitCalls: [
+          {
+            to: MORPHO_GENERAL_ADAPTER1_ADDRESS,
+            data: "0x1234",
+            value: "0",
+            skipRevert: false,
+            callbackHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
+          },
+        ],
+      },
+    };
+
+    const { result } = renderHook(() => useZapActions(legacyQuote));
+
+    await act(async () => {
+      await result.current.executeZap({ previewOnly: true });
+    });
+
+    expect(readContract).toHaveBeenCalledWith(expect.objectContaining({
+      address: LEGACY_MORPHO_ADDRESS,
+      functionName: "nonces",
+      args: [userAddress],
+    }));
+    expect(signTypedData).toHaveBeenCalledWith(expect.objectContaining({
+      domain: expect.objectContaining({
+        name: "Morpho Token",
+        version: "1",
+        chainId: 1,
+        verifyingContract: LEGACY_MORPHO_ADDRESS,
+      }),
+      message: expect.objectContaining({
+        owner: userAddress,
+        spender: MORPHO_GENERAL_ADAPTER1_ADDRESS,
+        value: 1000n,
+        nonce: 7n,
+      }),
+    }));
+    expect(simulateBodyRef.current).toMatchObject({
+      from: userAddress,
+      to: MORPHO_BUNDLER3_ADDRESS,
+      value: "0",
+      inputToken: LEGACY_MORPHO_ADDRESS,
+    });
+    expect(simulateBodyRef.current?.data).not.toBe("0x");
+    expect(mockSendTx).not.toHaveBeenCalled();
   });
 });
