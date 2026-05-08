@@ -1439,7 +1439,7 @@ export function VaultPageContent({ id }: { id: string }) {
                 <div className="bg-[var(--background)]/80 backdrop-blur-sm border border-[var(--border)] rounded-xl p-4 flex flex-col justify-between group hover:border-[var(--muted-foreground)]/30 transition-colors">
                   <div className="flex items-center gap-2 mb-3 text-[var(--muted-foreground)]">
                     <TrendingUp size={16} />
-                    <span className="text-xs font-medium uppercase tracking-wider">APY</span>
+                    <span className="text-xs font-medium uppercase tracking-wider">24 hr APY</span>
                   </div>
                   <p className="mono xl:text-2xl text-xl font-medium text-[var(--success)]">
                     {yearnLoading ? "..." : displayApy}
