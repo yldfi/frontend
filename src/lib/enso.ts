@@ -3,7 +3,9 @@
 // Using official Enso SDK: https://github.com/EnsoBuild/sdk-ts
 
 import { EnsoClient } from "@ensofinance/sdk";
-import type { EnsoToken, EnsoTokensResponse, EnsoRouteResponse, EnsoBundleAction, EnsoBundleResponse, RouteInfo, RouteStep, CustomBundleResponse } from "@/types/enso";
+import { encodeFunctionData, parseAbi } from "viem";
+import type { Hex } from "viem";
+import type { EnsoToken, EnsoTokensResponse, EnsoRouteResponse, EnsoBundleAction, EnsoBundleResponse, RouteInfo, RouteStep, CustomBundleResponse, LegacyMorphoPermitCall, LegacyMorphoPermitRequest } from "@/types/enso";
 import { TOKENS, VAULTS, VAULT_ADDRESSES, CURVE_SAVINGS, isYldfiVault as checkIsYldfiVault } from "@/config/vaults";
 import { getAllRpcUrls } from "@/config/rpc";
 import { formatTokenAmount } from "@/lib/utils";
@@ -89,6 +91,8 @@ export const ETH_ADDRESS = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 export const LEGACY_MORPHO_ADDRESS = "0x9994E35Db50125E0DF82e4c2dde62496CE330999";
 export const MORPHO_TOKEN_ADDRESS = "0x58D97B57BB95320F9a05dC918Aef65434969c2B2";
 export const MORPHO_WRAPPER_ADDRESS = "0x9D03bb2092270648d7480049d0E58d2FcF0E5123";
+export const MORPHO_BUNDLER3_ADDRESS = "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245";
+export const MORPHO_GENERAL_ADAPTER1_ADDRESS = "0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0";
 
 const TOKEN_DISPLAY_OVERRIDES: Record<string, { name: string; symbol: string }> = {
   [LEGACY_MORPHO_ADDRESS.toLowerCase()]: {
@@ -112,6 +116,151 @@ export function applyTokenDisplayOverride<T extends { address: string; name?: st
 
 export const isLegacyMorphoToken = (token: string) =>
   token.toLowerCase() === LEGACY_MORPHO_ADDRESS.toLowerCase();
+
+const ZERO_BYTES32: Hex = "0x0000000000000000000000000000000000000000000000000000000000000000";
+
+const MORPHO_BUNDLER_ABI = parseAbi([
+  "function multicall((address to, bytes data, uint256 value, bool skipRevert, bytes32 callbackHash)[] bundle) payable",
+]);
+const LEGACY_MORPHO_PERMIT_ABI = parseAbi([
+  "function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)",
+]);
+const MORPHO_ADAPTER_ABI = parseAbi([
+  "function erc20TransferFrom(address token, address receiver, uint256 amount)",
+  "function morphoWrapperDepositFor(address receiver, uint256 amount)",
+]);
+const ENSO_ROUTER_EXECUTOR_ABI = parseAbi([
+  "function routeMulti((uint8 tokenType, bytes data)[] tokensIn, bytes data) payable returns (bytes)",
+]);
+
+type MorphoBundlerCall = {
+  to: `0x${string}`;
+  data: Hex;
+  value: bigint;
+  skipRevert: boolean;
+  callbackHash: Hex;
+};
+
+function toLegacyMorphoPermitCall(call: MorphoBundlerCall): LegacyMorphoPermitCall {
+  return {
+    to: call.to,
+    data: call.data,
+    value: call.value.toString(),
+    skipRevert: call.skipRevert,
+    callbackHash: call.callbackHash,
+  };
+}
+
+function fromLegacyMorphoPermitCall(call: LegacyMorphoPermitCall): MorphoBundlerCall {
+  return {
+    to: call.to as `0x${string}`,
+    data: call.data as Hex,
+    value: BigInt(call.value),
+    skipRevert: call.skipRevert,
+    callbackHash: call.callbackHash as Hex,
+  };
+}
+
+function morphoBundlerCall(to: string, data: Hex): MorphoBundlerCall {
+  return {
+    to: to as `0x${string}`,
+    data,
+    value: 0n,
+    skipRevert: false,
+    callbackHash: ZERO_BYTES32,
+  };
+}
+
+function createLegacyMorphoPermitRequest(params: {
+  amount: string;
+  receiver: string;
+  innerEnsoData?: Hex;
+}): LegacyMorphoPermitRequest {
+  const amount = BigInt(params.amount);
+  const calls: MorphoBundlerCall[] = [
+    morphoBundlerCall(
+      MORPHO_GENERAL_ADAPTER1_ADDRESS,
+      encodeFunctionData({
+        abi: MORPHO_ADAPTER_ABI,
+        functionName: "erc20TransferFrom",
+        args: [
+          LEGACY_MORPHO_ADDRESS as `0x${string}`,
+          MORPHO_GENERAL_ADAPTER1_ADDRESS as `0x${string}`,
+          amount,
+        ],
+      }),
+    ),
+    morphoBundlerCall(
+      MORPHO_GENERAL_ADAPTER1_ADDRESS,
+      encodeFunctionData({
+        abi: MORPHO_ADAPTER_ABI,
+        functionName: "morphoWrapperDepositFor",
+        args: [params.receiver as `0x${string}`, amount],
+      }),
+    ),
+  ];
+
+  if (params.innerEnsoData) {
+    calls.push(
+      morphoBundlerCall(
+        ENSO_ROUTER_EXECUTOR,
+        encodeFunctionData({
+          abi: ENSO_ROUTER_EXECUTOR_ABI,
+          functionName: "routeMulti",
+          args: [[], params.innerEnsoData],
+        }),
+      ),
+    );
+  }
+
+  return {
+    token: LEGACY_MORPHO_ADDRESS,
+    spender: MORPHO_GENERAL_ADAPTER1_ADDRESS,
+    amount: params.amount,
+    postPermitCalls: calls.map(toLegacyMorphoPermitCall),
+  };
+}
+
+export function buildLegacyMorphoPermitTransaction(params: {
+  permit: LegacyMorphoPermitRequest;
+  owner: string;
+  deadline: bigint;
+  v: number;
+  r: Hex;
+  s: Hex;
+}): { to: string; data: string; value: string } {
+  const permitCall = morphoBundlerCall(
+    params.permit.token,
+    encodeFunctionData({
+      abi: LEGACY_MORPHO_PERMIT_ABI,
+      functionName: "permit",
+      args: [
+        params.owner as `0x${string}`,
+        params.permit.spender as `0x${string}`,
+        BigInt(params.permit.amount),
+        params.deadline,
+        params.v,
+        params.r,
+        params.s,
+      ],
+    }),
+  );
+
+  const calls = [
+    permitCall,
+    ...params.permit.postPermitCalls.map(fromLegacyMorphoPermitCall),
+  ];
+
+  return {
+    to: MORPHO_BUNDLER3_ADDRESS,
+    data: encodeFunctionData({
+      abi: MORPHO_BUNDLER_ABI,
+      functionName: "multicall",
+      args: [calls],
+    }),
+    value: "0",
+  };
+}
 
 // cvxCRV token address - exported for backwards compatibility
 export const CVXCRV_ADDRESS = TOKENS.CVXCRV;
@@ -2352,23 +2501,10 @@ export async function fetchLegacyMorphoWrapRoute(params: {
   const wrapOnly = outputLower === MORPHO_TOKEN_ADDRESS.toLowerCase();
   const wrapReceiver = wrapOnly ? params.fromAddress : ENSO_SHORTCUTS;
   const amountIn = params.amountIn;
-  const actions: EnsoBundleAction[] = [
-    erc20ApproveAction(LEGACY_MORPHO_ADDRESS, MORPHO_WRAPPER_ADDRESS, amountIn),
-    {
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: MORPHO_WRAPPER_ADDRESS,
-        method: "depositFor",
-        abi: "function depositFor(address account, uint256 value) returns (bool)",
-        args: [wrapReceiver, amountIn],
-      },
-    },
-  ];
-
   let expectedOut = amountIn;
   let routePriceImpact: number | null | undefined = null;
   let gasFallback = 150000n;
+  let innerEnsoData: Hex | undefined;
   const steps: RouteStep[] = [
     createRouteStep({
       tokenAddress: LEGACY_MORPHO_ADDRESS,
@@ -2389,21 +2525,10 @@ export async function fetchLegacyMorphoWrapRoute(params: {
       slippage: params.slippage ?? "100",
       receiver: params.fromAddress,
     });
-    const innerSwapData = extractInnerSwapData(standaloneRoute.tx.data);
+    innerEnsoData = extractInnerSwapData(standaloneRoute.tx.data) as Hex;
     expectedOut = standaloneRoute.amountOut;
     routePriceImpact = standaloneRoute.priceImpact;
-    gasFallback = BigInt(standaloneRoute.gas || "0") + 120000n;
-
-    actions.push({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: ENSO_ROUTER_EXECUTOR.toLowerCase(),
-        method: "routeMulti",
-        abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)",
-        args: [[], innerSwapData],
-      },
-    });
+    gasFallback = BigInt(standaloneRoute.gas || "0") + 160000n;
 
     steps.push(createRouteStep({
       tokenAddress: MORPHO_TOKEN_ADDRESS,
@@ -2423,24 +2548,25 @@ export async function fetchLegacyMorphoWrapRoute(params: {
     protocol: wrapOnly ? "Morpho" : "Enso",
   }));
 
-  const bundle = await fetchBundle({
-    fromAddress: params.fromAddress,
-    actions,
-    receiver: params.fromAddress,
-    routingStrategy: "router",
-    skipQuote: true,
-  });
-
   return {
-    ...bundle,
-    gas: bundle.gas && bundle.gas !== "0" ? bundle.gas : gasFallback.toString(),
+    tx: {
+      to: MORPHO_BUNDLER3_ADDRESS,
+      data: "0x",
+      value: "0",
+      from: params.fromAddress,
+    },
+    gas: gasFallback.toString(),
     amountsOut: {
-      ...bundle.amountsOut,
       [outputLower]: expectedOut,
       ...(isNativeETH(outputToken) ? { [ETH_ADDRESS.toLowerCase()]: expectedOut } : {}),
     },
-    priceImpact: routePriceImpact ?? bundle.priceImpact ?? null,
+    priceImpact: routePriceImpact ?? null,
     routeInfo: { steps },
+    legacyMorphoPermit: createLegacyMorphoPermitRequest({
+      amount: amountIn,
+      receiver: wrapReceiver,
+      innerEnsoData,
+    }),
   };
 }
 
@@ -2477,47 +2603,15 @@ export async function fetchLegacyMorphoZapInRoute(params: {
     receiver: ENSO_SHORTCUTS,
   });
   const expectedUnderlying = BigInt(standaloneRoute.amountOut);
-  const innerSwapData = extractInnerSwapData(standaloneRoute.tx.data);
-
-  const actions: EnsoBundleAction[] = [
-    erc20ApproveAction(LEGACY_MORPHO_ADDRESS, MORPHO_WRAPPER_ADDRESS, amountIn),
-    {
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: MORPHO_WRAPPER_ADDRESS,
-        method: "depositFor",
-        abi: "function depositFor(address account, uint256 value) returns (bool)",
-        args: [ENSO_SHORTCUTS, amountIn],
-      },
-    },
-    {
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: ENSO_ROUTER_EXECUTOR.toLowerCase(),
-        method: "routeMulti",
-        abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)",
-        args: [[], innerSwapData],
-      },
-    },
-    {
-      protocol: "enso",
-      action: "balance",
-      args: { token: underlying },
-    },
-  ];
-  const balanceIdx = actions.length - 1;
-  actions.push({
-    protocol: "erc4626",
-    action: "deposit",
-    args: {
-      tokenIn: underlying,
-      tokenOut: params.vaultAddress,
-      amountIn: { useOutputOfCallAt: balanceIdx },
-      primaryAddress: params.vaultAddress,
-    },
+  const innerZapBundle = await fetchZapInRoute({
+    fromAddress: params.fromAddress,
+    vaultAddress: params.vaultAddress,
+    inputToken: MORPHO_TOKEN_ADDRESS,
+    amountIn,
+    slippage: params.slippage ?? "100",
+    underlyingToken: underlying,
   });
+  const innerZapData = extractInnerSwapData(innerZapBundle.tx.data) as Hex;
 
   let expectedShares = expectedUnderlying.toString();
   try {
@@ -2530,15 +2624,8 @@ export async function fetchLegacyMorphoZapInRoute(params: {
     // Fall back to underlying amount so the UI still has a conservative value.
   }
 
-  const bundle = await fetchBundle({
-    fromAddress: params.fromAddress,
-    actions,
-    receiver: params.fromAddress,
-    routingStrategy: "router",
-    skipQuote: true,
-  });
-
-  const gasFallback = BigInt(standaloneRoute.gas || "0") + 260000n;
+  const innerGas = innerZapBundle.gas && innerZapBundle.gas !== "0" ? innerZapBundle.gas : standaloneRoute.gas;
+  const gasFallback = BigInt(innerGas || "0") + 160000n;
   const steps: RouteStep[] = [
     createRouteStep({
       tokenAddress: LEGACY_MORPHO_ADDRESS,
@@ -2574,18 +2661,28 @@ export async function fetchLegacyMorphoZapInRoute(params: {
   ];
 
   return {
-    ...bundle,
-    gas: bundle.gas && bundle.gas !== "0" ? bundle.gas : gasFallback.toString(),
+    tx: {
+      to: MORPHO_BUNDLER3_ADDRESS,
+      data: "0x",
+      value: "0",
+      from: params.fromAddress,
+    },
+    gas: gasFallback.toString(),
     amountsOut: {
-      ...bundle.amountsOut,
+      ...innerZapBundle.amountsOut,
       [underlying.toLowerCase()]: expectedUnderlying.toString(),
       [params.vaultAddress.toLowerCase()]: expectedShares,
     },
-    priceImpact: standaloneRoute.priceImpact ?? bundle.priceImpact ?? null,
+    priceImpact: standaloneRoute.priceImpact ?? innerZapBundle.priceImpact ?? null,
     routeInfo: {
       steps,
       ...buildRouteMetadataFromSteps(steps),
     },
+    legacyMorphoPermit: createLegacyMorphoPermitRequest({
+      amount: amountIn,
+      receiver: ENSO_SHORTCUTS,
+      innerEnsoData: innerZapData,
+    }),
   };
 }
 

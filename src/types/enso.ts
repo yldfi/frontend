@@ -73,6 +73,7 @@ export interface ZapQuote {
   route: EnsoRouteStep[];
   // Route info for display (custom routes)
   routeInfo?: RouteInfo;
+  legacyMorphoPermit?: LegacyMorphoPermitRequest;
 }
 
 // Zap direction
@@ -109,6 +110,22 @@ export interface EnsoBundleResponse {
   route?: Hop[];  // Route steps from SDK BundleData.route
   priceImpact?: number | null;
   routeInfo?: RouteInfo;
+  legacyMorphoPermit?: LegacyMorphoPermitRequest;
+}
+
+export interface LegacyMorphoPermitCall {
+  to: string;
+  data: string;
+  value: string;
+  skipRevert: boolean;
+  callbackHash: string;
+}
+
+export interface LegacyMorphoPermitRequest {
+  token: string;
+  spender: string;
+  amount: string;
+  postPermitCalls: LegacyMorphoPermitCall[];
 }
 
 // Individual route step for detailed display

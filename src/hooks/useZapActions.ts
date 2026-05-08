@@ -7,12 +7,13 @@ import {
   useWaitForTransactionReceipt,
   useReadContract,
   usePublicClient,
+  useWalletClient,
 } from "wagmi";
 import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
-import { parseUnits, maxUint256 } from "viem";
-import type { Hash } from "viem";
-import { ENSO_ROUTER_EXECUTOR, ETH_ADDRESS } from "@/lib/enso";
-import { ERC20_APPROVAL_ABI } from "@/lib/abis";
+import { parseSignature, parseUnits, maxUint256 } from "viem";
+import type { Hash, Hex } from "viem";
+import { buildLegacyMorphoPermitTransaction, ENSO_ROUTER_EXECUTOR, ETH_ADDRESS, LEGACY_MORPHO_ADDRESS } from "@/lib/enso";
+import { ERC20_APPROVAL_ABI, ERC20_PERMIT_ABI } from "@/lib/abis";
 import { useTestNetwork } from "@/contexts/TestNetworkContext";
 import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
 import { useSendTx } from "@/hooks/useSendTx";
@@ -37,6 +38,7 @@ export type ZapStatus =
 export function useZapActions(quote: ZapQuote | null | undefined) {
   const { address: userAddress, chainId } = useAccount();
   const publicClient = usePublicClient();
+  const { data: walletClient } = useWalletClient();
   const queryClient = useQueryClient();
   const { testNetworkType } = useTestNetwork();
   const { isFlashbotsEnabled, isFlashbotsSupported, toggleFlashbots } = useFlashbotsProtect();
@@ -49,6 +51,10 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const autoExecuteRef = useRef(false);
   const pendingOptionsRef = useRef<{ skipSimulation?: boolean; previewOnly?: boolean } | undefined>(undefined);
+  const preparedPermitTxRef = useRef<{
+    key: string;
+    txParams: { to: `0x${string}`; data: `0x${string}`; value: bigint };
+  } | null>(null);
 
   const invalidateBalances = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["onchain-balances"] });
@@ -57,6 +63,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
   const isEth =
     quote?.inputToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
+  const usesLegacyMorphoPermit = !!quote?.legacyMorphoPermit;
   const tokenAddress = quote?.inputToken.address as `0x${string}` | undefined;
 
   // User ERC20 approvals must target Enso's router executor. quote.tx.to is the
@@ -68,7 +75,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     args: userAddress ? [userAddress, ZAP_APPROVAL_SPENDER] : undefined,
     chainId, // Use connected chain
     query: {
-      enabled: !!userAddress && !isEth && !!tokenAddress,
+      enabled: !!userAddress && !isEth && !usesLegacyMorphoPermit && !!tokenAddress,
     },
   });
 
@@ -155,7 +162,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
   // Check if approval needed
   const needsApproval = useCallback((): boolean => {
-    if (isEth || !quote) {
+    if (isEth || !quote || quote.legacyMorphoPermit) {
       return false;
     }
     try {
@@ -214,6 +221,10 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     }
   }, [status, approveError]);
 
+  useEffect(() => {
+    preparedPermitTxRef.current = null;
+  }, [quote]);
+
   // Approve tokens — exact=true uses the quote amount, exact=false uses unlimited
   const approve = useCallback((exact: boolean) => {
     if (!userAddress || isEth || !tokenAddress || !quote) return;
@@ -247,6 +258,86 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     });
   }, [userAddress, isEth, tokenAddress, quote, writeApprove]);
 
+  const prepareTxParams = useCallback(async (): Promise<{ to: `0x${string}`; data: `0x${string}`; value: bigint }> => {
+    if (!quote || !userAddress || !publicClient) {
+      throw new Error("Missing wallet or quote");
+    }
+
+    if (!quote.legacyMorphoPermit) {
+      return {
+        to: quote.tx.to as `0x${string}`,
+        data: quote.tx.data as `0x${string}`,
+        value: BigInt(quote.tx.value || "0"),
+      };
+    }
+
+    if (!walletClient) {
+      throw new Error("Wallet is not ready to sign the legacy MORPHO permit");
+    }
+
+    const permit = quote.legacyMorphoPermit;
+    const key = [
+      userAddress.toLowerCase(),
+      permit.amount,
+      permit.spender.toLowerCase(),
+      permit.postPermitCalls.map((call) => call.data).join(":"),
+    ].join("|");
+    if (preparedPermitTxRef.current?.key === key) {
+      return preparedPermitTxRef.current.txParams;
+    }
+
+    const nonce = await publicClient.readContract({
+      address: permit.token as `0x${string}`,
+      abi: ERC20_PERMIT_ABI,
+      functionName: "nonces",
+      args: [userAddress],
+    });
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 20 * 60);
+    const signature = await walletClient.signTypedData({
+      account: userAddress,
+      domain: {
+        name: "Morpho Token",
+        version: "1",
+        chainId: 1,
+        verifyingContract: LEGACY_MORPHO_ADDRESS as `0x${string}`,
+      },
+      types: {
+        Permit: [
+          { name: "owner", type: "address" },
+          { name: "spender", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "nonce", type: "uint256" },
+          { name: "deadline", type: "uint256" },
+        ],
+      },
+      primaryType: "Permit",
+      message: {
+        owner: userAddress,
+        spender: permit.spender as `0x${string}`,
+        value: BigInt(permit.amount),
+        nonce,
+        deadline,
+      },
+    });
+    const parsed = parseSignature(signature);
+    const v = Number(parsed.v ?? BigInt(27 + parsed.yParity));
+    const tx = buildLegacyMorphoPermitTransaction({
+      permit,
+      owner: userAddress,
+      deadline,
+      v,
+      r: parsed.r as Hex,
+      s: parsed.s as Hex,
+    });
+    const txParams = {
+      to: tx.to as `0x${string}`,
+      data: tx.data as `0x${string}`,
+      value: BigInt(tx.value || "0"),
+    };
+    preparedPermitTxRef.current = { key, txParams };
+    return txParams;
+  }, [quote, userAddress, publicClient, walletClient]);
+
   // Internal execute — skips approval check, used directly and after auto-approval
   // Options:
   //   - skipSimulation: skip simulation and send tx directly (used after preview confirmation)
@@ -260,11 +351,14 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     setSimulationResult(null);
     setActionState("simulating");
 
-    const txParams = {
-      to: quote.tx.to as `0x${string}`,
-      data: quote.tx.data as `0x${string}`,
-      value: BigInt(quote.tx.value || "0"),
-    };
+    let txParams: { to: `0x${string}`; data: `0x${string}`; value: bigint };
+    try {
+      txParams = await prepareTxParams();
+    } catch (err) {
+      setTxError(err instanceof Error ? err : new Error(String(err)));
+      setActionState("idle");
+      return null;
+    }
 
     if (process.env.NODE_ENV === "development") {
       console.log("[TX]", {
@@ -324,9 +418,9 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 from: userAddress,
-                to: quote.tx.to,
-                data: quote.tx.data,
-                value: quote.tx.value,
+                to: txParams.to,
+                data: txParams.data,
+                value: txParams.value.toString(),
                 inputToken: quote.inputToken.address,
                 nonce: nonceResult.nonce,
                 expires: nonceResult.expires,
@@ -367,7 +461,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       : (testNetworkType === "tenderly" && publicClient)
         ? runVNetSimulation(
             publicClient.transport,
-            { from: userAddress, to: quote.tx.to, data: quote.tx.data, value: quote.tx.value ?? "0x0" },
+            { from: userAddress, to: txParams.to, data: txParams.data, value: txParams.value.toString() },
             userAddress,
           )
         : Promise.resolve({ ok: true as const, result: null });
@@ -461,7 +555,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       setActionState("idle");
     }
     return null;
-  }, [quote, userAddress, publicClient, sendTx, chainId, testNetworkType, simulationResult]);
+  }, [quote, userAddress, publicClient, prepareTxParams, sendTx, chainId, testNetworkType, simulationResult]);
 
   // Keep ref in sync with latest executeZapInternal
   useEffect(() => {
@@ -539,6 +633,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     setPendingApproval(null);
     autoExecuteRef.current = false;
     pendingOptionsRef.current = undefined;
+    preparedPermitTxRef.current = null;
     resetApprove();
   }, [resetApprove]);
 
