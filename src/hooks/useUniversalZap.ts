@@ -897,6 +897,7 @@ export function useUniversalZap({
           tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
           route: [],
           routeInfo,
+          legacyMorphoPermit: bundle.legacyMorphoPermit,
         };
       }
 
@@ -1254,6 +1255,7 @@ export function useUniversalZap({
           tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
           route: [],
           routeInfo,
+          legacyMorphoPermit: bundle.legacyMorphoPermit,
         };
       }
 
@@ -1495,6 +1497,7 @@ export function useUniversalZap({
           tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
           route: [],
           routeInfo,
+          legacyMorphoPermit: bundle.legacyMorphoPermit,
         };
       }
 
@@ -1536,6 +1539,7 @@ export function useUniversalZap({
           tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
           route: [],
           routeInfo,
+          legacyMorphoPermit: bundle.legacyMorphoPermit,
         };
       }
 
