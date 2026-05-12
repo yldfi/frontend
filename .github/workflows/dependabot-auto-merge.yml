@@ -1,10 +1,12 @@
-name: Dependabot Auto-Merge
+name: Dependabot Review Gate
 
 on: pull_request
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: write
+  issues: write
+  id-token: none
 
 jobs:
   auto-merge:
@@ -17,9 +19,12 @@ jobs:
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
 
-      - name: Enable auto-merge for minor/patch updates
+      - name: Mark minor/patch updates for manual review
         if: steps.metadata.outputs.update-type == 'version-update:semver-patch' || steps.metadata.outputs.update-type == 'version-update:semver-minor'
-        run: gh pr merge --auto --squash "$PR_URL"
+        run: |
+          gh label create needs-review --color FBCA04 --description "Requires human review" --force
+          gh pr edit "$PR_URL" --add-label "needs-review"
+          gh pr comment "$PR_URL" --body "Automatic dependency merging is disabled for supply-chain safety. Review this update after CI passes."
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -9,28 +9,28 @@ importers:
   .:
     dependencies:
       '@ensofinance/sdk':
-        specifier: ^2.3.1
+        specifier: 2.3.1
         version: 2.3.1
       '@rainbow-me/rainbowkit':
-        specifier: ^2.2.11
+        specifier: 2.2.11
         version: 2.2.11(@tanstack/react-query@5.100.9(react@19.2.6))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(typescript@6.0.3)(viem@2.48.11(bufferutil@4.0.9)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@3.25.76))(wagmi@2.19.5(@tanstack/query-core@5.100.9)(@tanstack/react-query@5.100.9(react@19.2.6))(@types/react@19.2.14)(aws4fetch@1.0.20)(bufferutil@4.0.9)(fastestsmallesttextencoderdecoder@1.0.22)(react@19.2.6)(typescript@6.0.3)(utf-8-validate@5.0.10)(viem@2.48.11(bufferutil@4.0.9)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@3.25.76))(ws@8.20.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(zod@3.25.76))
       '@tanstack/react-query':
-        specifier: ^5.100.9
+        specifier: 5.100.9
         version: 5.100.9(react@19.2.6)
       '@xyflow/react':
-        specifier: ^12.10.2
+        specifier: 12.10.2
         version: 12.10.2(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@yldfi/curve-amm-math':
-        specifier: ^1.0.0
+        specifier: 1.0.0
         version: 1.0.0(viem@2.48.11(bufferutil@4.0.9)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@3.25.76))
       clsx:
-        specifier: ^2.1.1
+        specifier: 2.1.1
         version: 2.1.1
       lightweight-charts:
-        specifier: ^5.2.0
+        specifier: 5.2.0
         version: 5.2.0
       lucide-react:
-        specifier: ^1.14.0
+        specifier: 1.14.0
         version: 1.14.0(react@19.2.6)
       react:
         specifier: 19.2.6
@@ -39,92 +39,92 @@ importers:
         specifier: 19.2.6
         version: 19.2.6(react@19.2.6)
       sonner:
-        specifier: ^2.0.7
+        specifier: 2.0.7
         version: 2.0.7(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       tailwind-merge:
-        specifier: ^3.6.0
+        specifier: 3.6.0
         version: 3.6.0
       viem:
-        specifier: ^2.48.11
+        specifier: 2.48.11
         version: 2.48.11(bufferutil@4.0.9)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@3.25.76)
       wagmi:
-        specifier: ^2.14.0
+        specifier: 2.19.5
         version: 2.19.5(@tanstack/query-core@5.100.9)(@tanstack/react-query@5.100.9(react@19.2.6))(@types/react@19.2.14)(aws4fetch@1.0.20)(bufferutil@4.0.9)(fastestsmallesttextencoderdecoder@1.0.22)(react@19.2.6)(typescript@6.0.3)(utf-8-validate@5.0.10)(viem@2.48.11(bufferutil@4.0.9)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@3.25.76))(ws@8.20.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(zod@3.25.76)
     devDependencies:
       '@cloudflare/workers-types':
-        specifier: ^4.20260511.1
+        specifier: 4.20260511.1
         version: 4.20260511.1
       '@opennextjs/cloudflare':
-        specifier: ^1.19.9
+        specifier: 1.19.9
         version: 1.19.9(next@16.2.6(@babel/core@7.29.0)(@playwright/test@1.59.1)(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(wrangler@4.90.0(@cloudflare/workers-types@4.20260511.1)(bufferutil@4.0.9)(utf-8-validate@5.0.10))
       '@openzeppelin/contracts':
-        specifier: ^5.6.1
+        specifier: 5.6.1
         version: 5.6.1
       '@playwright/test':
-        specifier: ^1.59.1
+        specifier: 1.59.1
         version: 1.59.1
       '@tailwindcss/postcss':
-        specifier: ^4
+        specifier: 4.3.0
         version: 4.3.0
       '@testing-library/dom':
-        specifier: ^10.4.1
+        specifier: 10.4.1
         version: 10.4.1
       '@testing-library/react':
-        specifier: ^16.3.2
+        specifier: 16.3.2
         version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@types/dotenv':
-        specifier: ^8.2.3
+        specifier: 8.2.3
         version: 8.2.3
       '@types/node':
-        specifier: ^25
+        specifier: 25.6.0
         version: 25.6.0
       '@types/react':
-        specifier: ^19
+        specifier: 19.2.14
         version: 19.2.14
       '@types/react-dom':
-        specifier: ^19
+        specifier: 19.2.3
         version: 19.2.3(@types/react@19.2.14)
       '@vitejs/plugin-react':
-        specifier: ^5.1.4
+        specifier: 5.1.4
         version: 5.1.4(vite@7.3.1(@types/node@25.6.0)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.16.9)(yaml@2.8.4))
       '@vitest/coverage-v8':
-        specifier: ^4.1.5
+        specifier: 4.1.5
         version: 4.1.5(vitest@4.1.5)
       cross-fetch:
-        specifier: ^4.1.0
+        specifier: 4.1.0
         version: 4.1.0
       dotenv:
-        specifier: ^17.4.2
+        specifier: 17.4.2
         version: 17.4.2
       eslint:
-        specifier: ^9
+        specifier: 9.39.2
         version: 9.39.2(jiti@2.7.0)
       eslint-config-next:
         specifier: 16.2.6
         version: 16.2.6(@typescript-eslint/parser@8.58.2(eslint@9.39.2(jiti@2.7.0))(typescript@6.0.3))(eslint@9.39.2(jiti@2.7.0))(typescript@6.0.3)
       husky:
-        specifier: ^9.1.7
+        specifier: 9.1.7
         version: 9.1.7
       jsdom:
-        specifier: ^29.1.1
+        specifier: 29.1.1
         version: 29.1.1(@noble/hashes@1.8.0)
       lint-staged:
-        specifier: ^16.4.0
+        specifier: 16.4.0
         version: 16.4.0
       next:
         specifier: 16.2.6
         version: 16.2.6(@babel/core@7.29.0)(@playwright/test@1.59.1)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       tailwindcss:
-        specifier: ^4
+        specifier: 4.3.0
         version: 4.3.0
       typescript:
-        specifier: ^6
+        specifier: 6.0.3
         version: 6.0.3
       vitest:
-        specifier: ^4.1.5
+        specifier: 4.1.5
         version: 4.1.5(@types/node@25.6.0)(@vitest/coverage-v8@4.1.5)(jsdom@29.1.1(@noble/hashes@1.8.0))(vite@7.3.1(@types/node@25.6.0)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.16.9)(yaml@2.8.4))
       wrangler:
-        specifier: ^4.90.0
+        specifier: 4.90.0
         version: 4.90.0(@cloudflare/workers-types@4.20260511.1)(bufferutil@4.0.9)(utf-8-validate@5.0.10)
 
 packages:
