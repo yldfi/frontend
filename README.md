@@ -25,7 +25,7 @@ yldfi provides automated yield vaults built on Yearn V3's tokenized strategy arc
 
 ```bash
 # Install dependencies
-pnpm install
+pnpm install --frozen-lockfile
 
 # Run development server
 pnpm dev

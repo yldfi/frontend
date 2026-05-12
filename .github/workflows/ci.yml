@@ -20,6 +20,10 @@ env:
   NODE_VERSION: "22"
   PNPM_VERSION: "10"
 
+permissions:
+  contents: read
+  id-token: none
+
 jobs:
   lint:
     name: Lint
@@ -202,7 +206,6 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: "pnpm"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
