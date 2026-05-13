@@ -82,6 +82,7 @@ export async function POST(
         const {
           fetchCvgCvxZapInRoute,
           fetchCvgCvxZapOutRoute,
+          fetchAnyToExternalVaultRoute,
           fetchExternalVaultZapInRoute,
           fetchPxCvxZapInRoute,
           fetchPxCvxZapOutRoute,
@@ -212,6 +213,18 @@ export async function POST(
             const bundle = await fetchExternalVaultZapInRoute({
               fromAddress: body.fromAddress,
               vaultAddress: body.vaultAddress,
+              externalVaultAddress: body.externalVaultAddress,
+              amountIn: body.amountIn,
+              slippage: body.slippage,
+            });
+            assertEnsoIntentTxTarget(body.intent, bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+
+          case "anyToExternalVault": {
+            const bundle = await fetchAnyToExternalVaultRoute({
+              fromAddress: body.fromAddress,
+              inputToken: body.inputToken,
               externalVaultAddress: body.externalVaultAddress,
               amountIn: body.amountIn,
               slippage: body.slippage,
