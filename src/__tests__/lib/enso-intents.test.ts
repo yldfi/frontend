@@ -8,13 +8,15 @@ import {
   isStandardYldVaultIntentVault,
   shouldUsePlainTokenSwapIntent,
 } from "@/lib/enso-intents";
-import { LLAMA_AIRFORCE, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
+import { CURVE_CONTROLLERS, LLAMA_AIRFORCE, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 
 const USER = "0x1000000000000000000000000000000000000001";
 const OTHER = "0x2000000000000000000000000000000000000002";
 const ONE_ETHER = "1000000000000000000";
 const ENSO_ROUTER_EXECUTOR = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf";
 const ENSO_SHORTCUTS = "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003";
+const MORPHO_BUNDLER3 = "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245";
+const LEGACY_MORPHO = "0x9994E35Db50125E0DF82e4c2dde62496CE330999";
 const ENSO_ROUTER_ENTRYPOINT_ABI = parseAbi([
   "function routeSingle((uint8 tokenType, bytes data) tokenIn, bytes data) payable returns (bytes)",
   "function routeMulti((uint8 tokenType, bytes data)[] tokensIn, bytes data) payable returns (bytes)",
@@ -194,6 +196,102 @@ describe("Enso intent validation", () => {
     })).not.toThrow();
   });
 
+  it("accepts the remaining named zap intents", () => {
+    const cases = [
+      {
+        intent: "yldVaultToExternalVault",
+        fromAddress: USER,
+        sourceVault: VAULT_ADDRESSES.YSCVXCRV,
+        targetVault: LLAMA_AIRFORCE.UCRV,
+        amountIn: ONE_ETHER,
+        slippage: "100",
+      },
+      {
+        intent: "yldVaultToIlliquid",
+        fromAddress: USER,
+        sourceVault: VAULT_ADDRESSES.YSCVXCRV,
+        outputToken: TOKENS.PXCVX,
+        amountIn: ONE_ETHER,
+        slippage: "100",
+      },
+      {
+        intent: "specialTokenToExternalVault",
+        fromAddress: USER,
+        inputToken: TOKENS.PXCVX,
+        outputVault: LLAMA_AIRFORCE.UCRV,
+        amountIn: ONE_ETHER,
+        slippage: "100",
+      },
+      {
+        intent: "specialTokenToIlliquid",
+        fromAddress: USER,
+        inputToken: LLAMA_AIRFORCE.UCRV,
+        outputToken: TOKENS.CVGCVX,
+        amountIn: ONE_ETHER,
+        slippage: "100",
+      },
+      {
+        intent: "externalVaultToAny",
+        fromAddress: USER,
+        externalVaultAddress: LLAMA_AIRFORCE.UCRV,
+        outputToken: TOKENS.CVX,
+        amountIn: ONE_ETHER,
+        slippage: "100",
+      },
+      {
+        intent: "illiquidToAny",
+        fromAddress: USER,
+        inputToken: TOKENS.CVGCVX,
+        outputToken: TOKENS.CVX,
+        amountIn: ONE_ETHER,
+        slippage: "100",
+      },
+      {
+        intent: "anyToIlliquid",
+        fromAddress: USER,
+        inputToken: TOKENS.CVX,
+        outputToken: TOKENS.LPXCVX,
+        amountIn: ONE_ETHER,
+        slippage: "100",
+      },
+      {
+        intent: "legacyMorphoWrap",
+        fromAddress: USER,
+        outputToken: TOKENS.CVX,
+        amountIn: ONE_ETHER,
+        slippage: "100",
+      },
+      {
+        intent: "legacyMorphoZapIn",
+        fromAddress: USER,
+        vaultAddress: VAULT_ADDRESSES.YCVXCRV,
+        amountIn: ONE_ETHER,
+        slippage: "100",
+      },
+      {
+        intent: "curveLendingRepay",
+        fromAddress: USER,
+        vaultAddress: VAULT_ADDRESSES.YCVXCRV,
+        amountIn: ONE_ETHER,
+      },
+      {
+        intent: "curveLendingRepayWithSwap",
+        fromAddress: USER,
+        vaultAddress: VAULT_ADDRESSES.YCVXCRV,
+        tokenIn: TOKENS.CVX,
+        amountIn: ONE_ETHER,
+        slippage: "100",
+        inSoftLiquidation: false,
+      },
+    ] as const;
+
+    for (const request of cases) {
+      expect(() => assertValidEnsoIntentRequest(request)).not.toThrow();
+    }
+
+    expect(CURVE_CONTROLLERS[VAULT_ADDRESSES.YCVXCRV]).toBeTruthy();
+  });
+
   it("keeps standard zap intents limited to standard vaults", () => {
     expect(() => assertValidEnsoIntentRequest({
       intent: "yldVaultZapIn",
@@ -364,6 +462,31 @@ describe("Enso intent validation", () => {
       amountIn: ONE_ETHER,
       slippage: "100",
     })).toThrow("known external vault");
+
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "anyToIlliquid",
+      fromAddress: USER,
+      inputToken: LEGACY_MORPHO,
+      outputToken: TOKENS.PXCVX,
+      amountIn: ONE_ETHER,
+      slippage: "100",
+    })).toThrow("legacy MORPHO");
+
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "externalVaultToAny",
+      fromAddress: USER,
+      externalVaultAddress: LLAMA_AIRFORCE.UCRV,
+      outputToken: TOKENS.CVGCVX,
+      amountIn: ONE_ETHER,
+      slippage: "100",
+    })).toThrow("supported illiquid token");
+
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "curveLendingRepay",
+      fromAddress: USER,
+      vaultAddress: VAULT_ADDRESSES.YSCVXCRV,
+      amountIn: ONE_ETHER,
+    })).toThrow("Curve lending collateral vault");
   });
 
   it("looks up migrated vault metadata without accepting the zero address", () => {
@@ -417,6 +540,46 @@ describe("Enso intent validation", () => {
       route: [],
     })).not.toThrow();
 
+    expect(() => assertEnsoIntentTxTarget("yldVaultToExternalVault", {
+      tx: {
+        to: ENSO_ROUTER_EXECUTOR,
+        data: ROUTE_SINGLE_CALLDATA,
+        value: "0",
+        from: USER,
+      },
+      gas: "1",
+      amountsOut: {
+        [LLAMA_AIRFORCE.UCRV]: "1",
+      },
+      route: [],
+    })).not.toThrow();
+
+    expect(() => assertEnsoIntentTxTarget("curveLendingRepayWithSwap", {
+      tx: {
+        to: ENSO_ROUTER_EXECUTOR,
+        data: ROUTE_SINGLE_CALLDATA,
+        value: "0",
+        from: USER,
+      },
+      gas: "1",
+      amountsOut: {},
+      route: [],
+    })).not.toThrow();
+
+    expect(() => assertEnsoIntentTxTarget("legacyMorphoWrap", {
+      tx: {
+        to: MORPHO_BUNDLER3,
+        data: "0x",
+        value: "0",
+        from: USER,
+      },
+      gas: "1",
+      amountsOut: {
+        [TOKENS.CVX]: "1",
+      },
+      route: [],
+    })).not.toThrow();
+
     expect(() => assertEnsoIntentTxTarget("cvgCvxZapOut", {
       tx: {
         to: ENSO_SHORTCUTS,
@@ -437,6 +600,17 @@ describe("Enso intent validation", () => {
       },
       gas: "1",
       amountsOut: {},
+    })).toThrow("unexpected transaction target");
+
+    expect(() => assertEnsoIntentTxTarget("plainTokenSwap", {
+      tx: {
+        to: MORPHO_BUNDLER3,
+        data: "0x",
+        value: "0",
+      },
+      gas: "1",
+      amountOut: "1",
+      route: [],
     })).toThrow("unexpected transaction target");
   });
 

@@ -6,6 +6,7 @@ export type EnsoIntentResponse = EnsoRouteResponse | EnsoBundleResponse;
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 export const ENSO_ROUTE_SINGLE_SELECTOR = "0xb94c3609";
 export const ENSO_ROUTE_MULTI_SELECTOR = "0xf52e33f5";
+export const EMPTY_CALLDATA_SELECTOR = "0x";
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const HEX_DATA_RE = /^0x(?:[a-fA-F0-9]{2})*$/;
 const INTEGER_STRING_RE = /^\d+$/;
@@ -272,6 +273,13 @@ export function assertEnsoIntentTxTargetForIntent(params: {
   }
 
   const data = params.response.tx.data as `0x${string}`;
+  const allowedSelectorSet = new Set(allowedSelectors.map((value) => value.toLowerCase()));
+
+  if (data === EMPTY_CALLDATA_SELECTOR) {
+    if (allowedSelectorSet.has(EMPTY_CALLDATA_SELECTOR)) return;
+    failResponse(`Enso intent ${params.intent} returned empty router calldata`);
+  }
+
   const selector = getCalldataSelector(data);
   const forbiddenSelectors = new Set(
     (params.forbiddenSelectors ?? []).map((value) => value.toLowerCase())
@@ -280,7 +288,6 @@ export function assertEnsoIntentTxTargetForIntent(params: {
     failResponse(`Enso intent ${params.intent} returned a forbidden router selector`);
   }
 
-  const allowedSelectorSet = new Set(allowedSelectors.map((value) => value.toLowerCase()));
   if (!allowedSelectorSet.has(selector)) {
     failResponse(`Enso intent ${params.intent} returned an unexpected router selector`);
   }
