@@ -1,6 +1,6 @@
 export type TxActionKind = "deposit" | "withdraw" | "zap";
 
-export const TX_SUCCESS_VISIBLE_MS = 30_000;
+export const TX_SUCCESS_VISIBLE_MS = 10_000;
 export const TX_REVERTED_VISIBLE_MS = 45_000;
 
 export function isVaultTxPendingVisible(status: string): boolean {

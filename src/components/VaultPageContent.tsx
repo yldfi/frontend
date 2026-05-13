@@ -745,6 +745,66 @@ export function VaultPageContent({ id }: { id: string }) {
     simulationResult,
   } = useZapActions(zapQuote);
 
+  const vaultCompletionResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const zapCompletionResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearVaultCompletionResetTimer = useCallback(() => {
+    if (vaultCompletionResetTimerRef.current) {
+      clearTimeout(vaultCompletionResetTimerRef.current);
+      vaultCompletionResetTimerRef.current = null;
+    }
+  }, []);
+
+  const clearZapCompletionResetTimer = useCallback(() => {
+    if (zapCompletionResetTimerRef.current) {
+      clearTimeout(zapCompletionResetTimerRef.current);
+      zapCompletionResetTimerRef.current = null;
+    }
+  }, []);
+
+  const resetVaultCompletionState = useCallback(() => {
+    clearVaultCompletionResetTimer();
+    setShowTxSuccess((prev) => (prev?.type === "zap" ? prev : null));
+    setShowTxReverted((prev) => (prev?.type === "zap" ? prev : null));
+    setPendingTxDetails(null);
+    setPendingMultiStep(null);
+    setDebugTxState("none");
+    resetVaultActions();
+  }, [
+    clearVaultCompletionResetTimer,
+    resetVaultActions,
+    setDebugTxState,
+    setPendingMultiStep,
+    setPendingTxDetails,
+    setShowTxReverted,
+    setShowTxSuccess,
+  ]);
+
+  const resetZapCompletionState = useCallback(() => {
+    clearZapCompletionResetTimer();
+    setShowTxSuccess((prev) => (prev?.type === "zap" ? null : prev));
+    setShowTxReverted((prev) => (prev?.type === "zap" ? null : prev));
+    setPendingTxDetails(null);
+    setPendingMultiStep(null);
+    setDebugTxState("none");
+    resetZapActions();
+  }, [
+    clearZapCompletionResetTimer,
+    resetZapActions,
+    setDebugTxState,
+    setPendingMultiStep,
+    setPendingTxDetails,
+    setShowTxReverted,
+    setShowTxSuccess,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      clearVaultCompletionResetTimer();
+      clearZapCompletionResetTimer();
+    };
+  }, [clearVaultCompletionResetTimer, clearZapCompletionResetTimer]);
+
   const showZapApprovalCard = !!(zapPendingApproval && (zapStatus === "needsApproval" || zapStatus === "approving" || zapStatus === "waitingApproval"));
   const isVaultTxPending = isVaultTxPendingVisible(txStatus) && !isSimulatingPreview && !showSimulationModal;
   const isZapTxPending = isZapTxPendingVisible(zapStatus) && !isSimulatingPreview && !showSimulationModal;
@@ -1063,12 +1123,11 @@ export function VaultPageContent({ id }: { id: string }) {
             hash: currentHash,
           });
           // Keep completion visible long enough for mobile wallet app handoffs.
-          setTimeout(() => {
-            setShowTxSuccess(null);
-            setPendingTxDetails(null);
-            setPendingMultiStep(null);
-            resetVaultActions();
-          }, TX_SUCCESS_VISIBLE_MS);
+          clearVaultCompletionResetTimer();
+          vaultCompletionResetTimerRef.current = setTimeout(
+            resetVaultCompletionState,
+            TX_SUCCESS_VISIBLE_MS,
+          );
 
           toast.success(`${depositHash ? "Deposit" : "Withdrawal"} successful!`, {
             action: {
@@ -1084,12 +1143,11 @@ export function VaultPageContent({ id }: { id: string }) {
             hash: currentHash,
           });
           // Keep completion visible long enough for mobile wallet app handoffs.
-          setTimeout(() => {
-            setShowTxReverted(null);
-            setPendingTxDetails(null);
-            setPendingMultiStep(null);
-            resetVaultActions();
-          }, TX_REVERTED_VISIBLE_MS);
+          clearVaultCompletionResetTimer();
+          vaultCompletionResetTimerRef.current = setTimeout(
+            resetVaultCompletionState,
+            TX_REVERTED_VISIBLE_MS,
+          );
 
           toast.error(`${depositHash ? "Deposit" : "Withdrawal"} failed - transaction reverted`, {
             action: {
@@ -1100,7 +1158,7 @@ export function VaultPageContent({ id }: { id: string }) {
         }
       }, 0);
     }
-  }, [isSuccess, isReverted, depositHash, withdrawHash, refetchTokenBalance, refetchVaultBalance, resetVaultActions, setAmount, setZapAmount]);
+  }, [clearVaultCompletionResetTimer, isSuccess, isReverted, depositHash, withdrawHash, refetchTokenBalance, refetchVaultBalance, resetVaultCompletionState, setAmount, setZapAmount]);
 
   // Auto-execute deposit after vault approval succeeds (for multi-step transactions)
   const prevTxStatusRef = useRef<string | null>(null);
@@ -1165,12 +1223,11 @@ export function VaultPageContent({ id }: { id: string }) {
             hash: zapHash,
           });
           // Keep completion visible long enough for mobile wallet app handoffs.
-          setTimeout(() => {
-            setShowTxSuccess(null);
-            setPendingTxDetails(null);
-            setPendingMultiStep(null);
-            resetZapActions();
-          }, TX_SUCCESS_VISIBLE_MS);
+          clearZapCompletionResetTimer();
+          zapCompletionResetTimerRef.current = setTimeout(
+            resetZapCompletionState,
+            TX_SUCCESS_VISIBLE_MS,
+          );
 
           if (vault) trackZapSuccess(vault.id, zapDirection, zapDirection === "in" ? (zapInputToken?.symbol ?? "") : vault.symbol, zapDirection === "in" ? vault.symbol : (zapOutputToken?.symbol ?? ""), zapAmount || "0", zapQuote?.outputAmountFormatted ?? "0");
           toast.success("Zap successful!", {
@@ -1187,12 +1244,11 @@ export function VaultPageContent({ id }: { id: string }) {
             hash: zapHash,
           });
           // Keep completion visible long enough for mobile wallet app handoffs.
-          setTimeout(() => {
-            setShowTxReverted(null);
-            setPendingTxDetails(null);
-            setPendingMultiStep(null);
-            resetZapActions();
-          }, TX_REVERTED_VISIBLE_MS);
+          clearZapCompletionResetTimer();
+          zapCompletionResetTimerRef.current = setTimeout(
+            resetZapCompletionState,
+            TX_REVERTED_VISIBLE_MS,
+          );
 
           toast.error("Zap failed - transaction reverted", {
             action: {
@@ -1203,7 +1259,7 @@ export function VaultPageContent({ id }: { id: string }) {
         }
       }, 0);
     }
-  }, [zapIsSuccess, zapIsReverted, zapHash, refetchTokenBalance, refetchVaultBalance, refetchZapInputBalance, resetZapActions, setZapAmount, setAmount, vault, zapDirection, zapInputToken?.symbol, zapOutputToken?.symbol, zapAmount, zapQuote?.outputAmountFormatted]);
+  }, [clearZapCompletionResetTimer, zapIsSuccess, zapIsReverted, zapHash, refetchTokenBalance, refetchVaultBalance, refetchZapInputBalance, resetZapCompletionState, setZapAmount, setAmount, vault, zapDirection, zapInputToken?.symbol, zapOutputToken?.symbol, zapAmount, zapQuote?.outputAmountFormatted]);
 
   // Reset stale zap approval state when user changes inputs
   useEffect(() => {
@@ -1867,6 +1923,14 @@ export function VaultPageContent({ id }: { id: string }) {
                         View on Etherscan
                         <ExternalLink size={14} />
                       </a>
+                      <button
+                        type="button"
+                        onClick={resetVaultCompletionState}
+                        className="mt-4 inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
+                      >
+                        <Check size={14} />
+                        Continue
+                      </button>
                     </div>
                   )}
 
@@ -1891,6 +1955,14 @@ export function VaultPageContent({ id }: { id: string }) {
                         View on Etherscan
                         <ExternalLink size={14} />
                       </a>
+                      <button
+                        type="button"
+                        onClick={resetVaultCompletionState}
+                        className="mt-4 inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
+                      >
+                        <ArrowRightLeft size={14} />
+                        Try again
+                      </button>
                     </div>
                   )}
 
@@ -2169,6 +2241,14 @@ export function VaultPageContent({ id }: { id: string }) {
                         View on Etherscan
                         <ExternalLink size={14} />
                       </a>
+                      <button
+                        type="button"
+                        onClick={resetZapCompletionState}
+                        className="mt-4 inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
+                      >
+                        <ArrowRightLeft size={14} />
+                        New zap
+                      </button>
                     </div>
                   )}
 
@@ -2191,6 +2271,14 @@ export function VaultPageContent({ id }: { id: string }) {
                         View on Etherscan
                         <ExternalLink size={14} />
                       </a>
+                      <button
+                        type="button"
+                        onClick={resetZapCompletionState}
+                        className="mt-4 inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
+                      >
+                        <ArrowRightLeft size={14} />
+                        Try again
+                      </button>
                     </div>
                   )}
 

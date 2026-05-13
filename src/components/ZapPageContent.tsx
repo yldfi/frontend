@@ -251,6 +251,22 @@ export function ZapPageContent() {
     show: boolean;
     hash: string;
   } | null>(null);
+  const completionResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearCompletionResetTimer = useCallback(() => {
+    if (completionResetTimerRef.current) {
+      clearTimeout(completionResetTimerRef.current);
+      completionResetTimerRef.current = null;
+    }
+  }, []);
+
+  const resetCompletionState = useCallback(() => {
+    clearCompletionResetTimer();
+    setShowTxSuccess(null);
+    setShowTxReverted(null);
+    setPendingTxDetails(null);
+    resetActions();
+  }, [clearCompletionResetTimer, resetActions]);
 
   const buildPendingTxDetails = useCallback(() => {
     if (!quote) return null;
@@ -264,6 +280,13 @@ export function ZapPageContent() {
       toLogo: outputToken.logoURI,
     };
   }, [amount, inputToken.logoURI, inputToken.symbol, outputToken.logoURI, outputToken.symbol, quote]);
+
+  const stagePendingTxDetails = useCallback(() => {
+    const txDetails = buildPendingTxDetails();
+    if (txDetails) {
+      setPendingTxDetails(txDetails);
+    }
+  }, [buildPendingTxDetails]);
 
   // Reset stale approval state on input change
   useEffect(() => {
@@ -309,19 +332,21 @@ export function ZapPageContent() {
   }, [quote, executeZap, setShowSimulationModal]);
 
   const handleExecuteZap = useCallback(async () => {
-    const txDetails = buildPendingTxDetails();
-    if (txDetails) {
-      setPendingTxDetails(txDetails);
-      setShowTxSuccess(null);
-      setShowTxReverted(null);
-    }
+    clearCompletionResetTimer();
+    setShowTxSuccess(null);
+    setShowTxReverted(null);
     if (showSimulationPreview) {
       const result = await runSimulationPreview();
       if (result) return;
       if (needsApproval()) return;
     }
+    stagePendingTxDetails();
     await executeZap();
-  }, [buildPendingTxDetails, executeZap, needsApproval, runSimulationPreview, showSimulationPreview]);
+  }, [clearCompletionResetTimer, executeZap, needsApproval, runSimulationPreview, showSimulationPreview, stagePendingTxDetails]);
+
+  useEffect(() => {
+    return () => clearCompletionResetTimer();
+  }, [clearCompletionResetTimer]);
 
   // Completion handling
   const lastHandledHashRef = useRef<string | null>(null);
@@ -357,13 +382,12 @@ export function ZapPageContent() {
     }
 
     // Keep completion visible long enough for mobile wallet app handoffs.
-    setTimeout(() => {
-      setShowTxSuccess(null);
-      setShowTxReverted(null);
-      setPendingTxDetails(null);
-      resetActions();
-    }, isSuccess ? TX_SUCCESS_VISIBLE_MS : TX_REVERTED_VISIBLE_MS);
-  }, [isSuccess, isReverted, zapHash, refetchInputBalance, resetActions, setAmount]);
+    clearCompletionResetTimer();
+    completionResetTimerRef.current = setTimeout(
+      resetCompletionState,
+      isSuccess ? TX_SUCCESS_VISIBLE_MS : TX_REVERTED_VISIBLE_MS,
+    );
+  }, [clearCompletionResetTimer, isSuccess, isReverted, zapHash, refetchInputBalance, resetCompletionState, setAmount]);
 
   // Error display
   const noRoute = !quoteLoading && !!quoteError && !!amount && Number(amount) > 0;
@@ -577,6 +601,14 @@ export function ZapPageContent() {
                       View on Etherscan
                       <ExternalLink size={14} />
                     </a>
+                    <button
+                      type="button"
+                      onClick={resetCompletionState}
+                      className="mt-4 inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
+                    >
+                      <Zap size={14} />
+                      New zap
+                    </button>
                   </div>
                 )}
 
@@ -598,6 +630,14 @@ export function ZapPageContent() {
                       View on Etherscan
                       <ExternalLink size={14} />
                     </a>
+                    <button
+                      type="button"
+                      onClick={resetCompletionState}
+                      className="mt-4 inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
+                    >
+                      <ArrowRightLeft size={14} />
+                      Try again
+                    </button>
                   </div>
                 )}
               </>
@@ -801,6 +841,7 @@ export function ZapPageContent() {
           onClose={() => setShowSimulationModal(false)}
           onConfirm={() => {
             setShowSimulationModal(false);
+            stagePendingTxDetails();
             executeZap({ skipSimulation: true });
           }}
           simulationResult={{
