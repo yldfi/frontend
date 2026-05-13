@@ -10,6 +10,10 @@ import { CRVUSD_ADDRESS } from "@/config/addresses";
 
 const CRVUSD = CRVUSD_ADDRESS;
 
+function shouldUseIntentProxy(): boolean {
+  return typeof window !== "undefined" && process.env.NODE_ENV !== "test";
+}
+
 // Vault info for repay routing
 export interface VaultInfo {
   address: string;
@@ -81,6 +85,17 @@ export async function fetchRepayBundle(params: {
   repayAmount: string;
   maxActiveBand?: number;
 }): Promise<EnsoBundleResponse> {
+  if (shouldUseIntentProxy()) {
+    const { fetchEnsoIntent } = await import("@/lib/enso-intents");
+    return fetchEnsoIntent<EnsoBundleResponse>({
+      intent: "curveLendingRepay",
+      fromAddress: params.fromAddress,
+      vaultAddress: params.vaultAddress,
+      amountIn: params.repayAmount,
+      receiver: params.fromAddress,
+    });
+  }
+
   const controllerAddress = CURVE_CONTROLLERS[params.vaultAddress as keyof typeof CURVE_CONTROLLERS];
   if (!controllerAddress) {
     throw new Error(`No controller found for vault ${params.vaultAddress}`);
@@ -154,6 +169,23 @@ export async function fetchRepayWithSwapBundle(params: {
   withdrawAmount?: string; // Optional: collateral wei to withdraw after repay
   withdrawTokenOut?: string; // If different from collateral, swap after withdrawal
 }): Promise<EnsoBundleResponse> {
+  if (shouldUseIntentProxy()) {
+    const { fetchEnsoIntent } = await import("@/lib/enso-intents");
+    return fetchEnsoIntent<EnsoBundleResponse>({
+      intent: "curveLendingRepayWithSwap",
+      fromAddress: params.fromAddress,
+      vaultAddress: params.vaultAddress,
+      tokenIn: params.tokenIn,
+      amountIn: params.amountIn,
+      slippage: String(params.slippage ?? 100),
+      maxRepayAmount: params.maxRepayAmount,
+      inSoftLiquidation: params.inSoftLiquidation,
+      withdrawAmount: params.withdrawAmount,
+      withdrawTokenOut: params.withdrawTokenOut,
+      receiver: params.fromAddress,
+    });
+  }
+
   const controllerAddress = CURVE_CONTROLLERS[params.vaultAddress as keyof typeof CURVE_CONTROLLERS];
   if (!controllerAddress) {
     throw new Error(`No controller found for vault ${params.vaultAddress}`);

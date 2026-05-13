@@ -6,7 +6,7 @@ import { EnsoClient } from "@ensofinance/sdk";
 import { encodeFunctionData, parseAbi } from "viem";
 import type { Hex } from "viem";
 import type { EnsoToken, EnsoTokensResponse, EnsoRouteResponse, EnsoBundleAction, EnsoBundleResponse, RouteInfo, RouteStep, CustomBundleResponse, LegacyMorphoPermitCall, LegacyMorphoPermitRequest } from "@/types/enso";
-import { TOKENS, VAULTS, VAULT_ADDRESSES, CURVE_SAVINGS, isYldfiVault as checkIsYldfiVault } from "@/config/vaults";
+import { LLAMA_AIRFORCE as STATIC_LLAMA_AIRFORCE, TOKENS, VAULTS, VAULT_ADDRESSES, CURVE_SAVINGS, isYldfiVault as checkIsYldfiVault } from "@/config/vaults";
 import { getAllRpcUrls } from "@/config/rpc";
 import {
   fetchEnsoIntent,
@@ -2499,6 +2499,17 @@ export async function fetchLegacyMorphoWrapRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<EnsoBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<EnsoBundleResponse>({
+      intent: "legacyMorphoWrap",
+      fromAddress: params.fromAddress,
+      outputToken: params.outputToken,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const outputToken = params.outputToken;
   const outputLower = outputToken.toLowerCase();
   const wrapOnly = outputLower === MORPHO_TOKEN_ADDRESS.toLowerCase();
@@ -2588,6 +2599,17 @@ export async function fetchLegacyMorphoZapInRoute(params: {
   slippage?: string;
   underlyingToken?: string;
 }): Promise<EnsoBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<EnsoBundleResponse>({
+      intent: "legacyMorphoZapIn",
+      fromAddress: params.fromAddress,
+      vaultAddress: params.vaultAddress,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const underlying = params.underlyingToken || CVXCRV_ADDRESS;
   const amountIn = params.amountIn;
   const vaultConfig = Object.values(VAULTS).find(
@@ -8040,6 +8062,18 @@ export async function fetchAnyToPxCvxRoute(params: {
   // external vaults (e.g. uCVX) in a single bundle.
   depositIntoVault?: string;
 }): Promise<CustomBundleResponse> {
+  if (typeof window !== "undefined" && !params.depositIntoVault) {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "anyToIlliquid",
+      fromAddress: params.fromAddress,
+      inputToken: params.inputToken,
+      outputToken: TOKENS.PXCVX,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { PIREX } = await import("@/config/vaults");
   const inputSymbol = getTokenSymbol(params.inputToken);
   const inputIsCvx = params.inputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
@@ -8361,6 +8395,18 @@ export async function fetchAnyToCvgCvxRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "anyToIlliquid",
+      fromAddress: params.fromAddress,
+      inputToken: params.inputToken,
+      outputToken: TOKENS.CVGCVX,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { TANGENT } = await import("@/config/vaults");
   const inputSymbol = getTokenSymbol(params.inputToken);
   const inputIsCvx = params.inputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
@@ -8601,6 +8647,18 @@ export async function fetchAnyToLpxCvxRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "anyToIlliquid",
+      fromAddress: params.fromAddress,
+      inputToken: params.inputToken,
+      outputToken: TOKENS.LPXCVX,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { PIREX } = await import("@/config/vaults");
   const inputSymbol = getTokenSymbol(params.inputToken);
   const inputIsCvx = params.inputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
@@ -8874,6 +8932,18 @@ export async function fetchAnyFromLpxCvxRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "illiquidToAny",
+      fromAddress: params.fromAddress,
+      inputToken: TOKENS.LPXCVX,
+      outputToken: params.outputToken,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { PIREX } = await import("@/config/vaults");
   const outputSymbol = getTokenSymbol(params.outputToken);
   const slippageBps = validateSlippage(params.slippage);
@@ -8971,6 +9041,18 @@ export async function fetchAnyFromPxCvxRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "illiquidToAny",
+      fromAddress: params.fromAddress,
+      inputToken: TOKENS.PXCVX,
+      outputToken: params.outputToken,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { PIREX } = await import("@/config/vaults");
   const outputSymbol = getTokenSymbol(params.outputToken);
   const slippageBps = validateSlippage(params.slippage);
@@ -9091,6 +9173,18 @@ export async function fetchAnyFromCvgCvxRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "illiquidToAny",
+      fromAddress: params.fromAddress,
+      inputToken: TOKENS.CVGCVX,
+      outputToken: params.outputToken,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { TANGENT } = await import("@/config/vaults");
   const outputSymbol = getTokenSymbol(params.outputToken);
   const slippageBps = validateSlippage(params.slippage);
@@ -9215,6 +9309,18 @@ export async function fetchAnyFromUCvxRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "externalVaultToAny",
+      fromAddress: params.fromAddress,
+      externalVaultAddress: STATIC_LLAMA_AIRFORCE.UCVX,
+      outputToken: params.outputToken,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { PIREX, LLAMA_AIRFORCE } = await import("@/config/vaults");
   const outputSymbol = getTokenSymbol(params.outputToken);
   const slippageBps = validateSlippage(params.slippage);
@@ -9346,6 +9452,18 @@ export async function fetchAnyFromErc4626ExternalVaultRoute(params: {
   slippage?: string;
   protocolLabel?: string;
 }): Promise<CustomBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "externalVaultToAny",
+      fromAddress: params.fromAddress,
+      externalVaultAddress: params.externalVault,
+      outputToken: params.outputToken,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const externalSymbol = getTokenSymbol(params.externalVault);
   const underlyingSymbol = getTokenSymbol(params.externalVaultUnderlying);
   const outputSymbol = getTokenSymbol(params.outputToken);
@@ -9427,6 +9545,18 @@ export async function fetchAnyFromUCrvRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "externalVaultToAny",
+      fromAddress: params.fromAddress,
+      externalVaultAddress: STATIC_LLAMA_AIRFORCE.UCRV,
+      outputToken: params.outputToken,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { LLAMA_AIRFORCE } = await import("@/config/vaults");
   const outputSymbol = getTokenSymbol(params.outputToken);
 
@@ -9526,6 +9656,18 @@ export async function fetchAnyFromBeefyRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "externalVaultToAny",
+      fromAddress: params.fromAddress,
+      externalVaultAddress: params.beefyVault,
+      outputToken: params.outputToken,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const outputSymbol = getTokenSymbol(params.outputToken);
   const underlyingSymbol = getTokenSymbol(params.beefyVaultUnderlying);
   const expectedUnderlying = await previewBeefyWithdraw(params.beefyVault, params.amountIn);
@@ -10222,6 +10364,18 @@ export async function fetchSpecialTokenToIlliquidRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "specialTokenToIlliquid",
+      fromAddress: params.fromAddress,
+      inputToken: params.inputToken,
+      outputToken: params.outputToken,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { isExternalVaultToken, getExternalVaultConfig } = await import("@/config/vaults");
   const slippageBps = validateSlippage(params.slippage);
   const ctx: ConversionContext = {
@@ -10305,6 +10459,18 @@ export async function fetchSpecialTokenToExternalVaultRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "specialTokenToExternalVault",
+      fromAddress: params.fromAddress,
+      inputToken: params.inputToken,
+      outputVault: params.outputVault,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { getExternalVaultConfig } = await import("@/config/vaults");
   const outputConfig = getExternalVaultConfig(params.outputVault);
   if (!outputConfig) {
@@ -10476,6 +10642,18 @@ export async function fetchYldVaultToIlliquidRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "yldVaultToIlliquid",
+      fromAddress: params.fromAddress,
+      sourceVault: params.sourceVault,
+      outputToken: params.outputToken,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const amountIn = await clampAmountIn(params.sourceVault, params.amountIn);
   const expectedUnderlying = BigInt(await previewRedeem(params.sourceVault, amountIn));
   const slippageBps = validateSlippage(params.slippage);
@@ -10607,6 +10785,18 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "yldVaultToExternalVault",
+      fromAddress: params.fromAddress,
+      sourceVault: params.sourceVault,
+      targetVault: params.targetVault,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { PIREX, LLAMA_AIRFORCE, TANGENT } = await import("@/config/vaults");
   const slippageBps = validateSlippage(params.slippage);
   const totalSlippageBps = getBufferedSlippageBps(slippageBps);
