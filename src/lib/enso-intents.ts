@@ -7,6 +7,13 @@ import {
 } from "@/config/vaults";
 import type { EnsoBundleResponse, EnsoRouteResponse } from "@/types/enso";
 import {
+  ENSO_ROUTER,
+  ENSO_ROUTER_EXECUTOR,
+  ENSO_SHORTCUTS,
+  LEGACY_MORPHO,
+  MORPHO_BUNDLER3,
+} from "@/lib/enso-addresses";
+import {
   EMPTY_CALLDATA_SELECTOR,
   ENSO_ROUTE_MULTI_SELECTOR,
   ENSO_ROUTE_SINGLE_SELECTOR,
@@ -212,11 +219,6 @@ export type YldVaultToVaultIntentName =
 
 export type EnsoIntentResponse = EnsoRouteResponse | EnsoBundleResponse;
 
-const ENSO_ROUTER = "0x80EbA3855878739F4710233A8a19d89Bdd2ffB8E";
-const ENSO_ROUTER_EXECUTOR = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf";
-const ENSO_SHORTCUTS = "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003";
-const MORPHO_BUNDLER3 = "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245";
-const LEGACY_MORPHO = "0x9994E35Db50125E0DF82e4c2dde62496CE330999";
 const FORBIDDEN_INTENT_FIELDS = [
   "actions",
   "data",
@@ -724,13 +726,10 @@ export function assertEnsoIntentTxTarget(
   intent: EnsoIntentName,
   response: EnsoIntentResponse
 ): void;
-export function assertEnsoIntentTxTarget(response: EnsoIntentResponse): void;
 export function assertEnsoIntentTxTarget(
-  intentOrResponse: EnsoIntentName | EnsoIntentResponse,
-  maybeResponse?: EnsoIntentResponse
+  intent: EnsoIntentName,
+  response: EnsoIntentResponse
 ): void {
-  const intent = typeof intentOrResponse === "string" ? intentOrResponse : "plainTokenSwap";
-  const response = typeof intentOrResponse === "string" ? maybeResponse : intentOrResponse;
   if (!response) {
     failValidation("Enso intent response is required");
   }

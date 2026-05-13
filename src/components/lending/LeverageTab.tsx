@@ -35,6 +35,7 @@ import { LoadingDots } from "@/components/LoadingDots";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { useSettings } from "@/hooks/useSettings";
 import { CONTROLLER_ABI, AMM_ABI, ERC4626_ABI, CURVE_GET_DY_ABI } from "@/lib/abis";
+import { isLendingTxPendingVisible } from "@/lib/transaction-ui";
 
 // Combined MAX button with hover options: MAX ALL (above) + Reset (below)
 function LeverageMaxButton({
@@ -233,7 +234,7 @@ interface LeverageTabProps {
   onEstimatedLeverageChange?: (leverage: number | null) => void;
   onDebtDeltaChange?: (delta: bigint | null) => void;
   onCollateralDeltaChange?: (delta: bigint | null) => void;
-  onTxStateChange?: (state: { status: "pending" | "success" | "reverted"; action: string; hash: string; details?: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string } } | null) => void;
+  onTxStateChange?: (state: { status: "pending" | "success" | "reverted"; action: string; hash?: string | null; details?: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string; message?: string } } | null) => void;
   onSwitchTab?: (tab: string) => void;
 }
 
@@ -1226,7 +1227,8 @@ export function LeverageTab({
 
   // Report tx state to parent for full-screen overlay
   useEffect(() => {
-    if ((status === "waitingTx" || status === "success" || status === "reverted") && txHash) {
+    const isPending = isLendingTxPendingVisible(status);
+    if (isPending || ((status === "success" || status === "reverted") && txHash)) {
       const action = activeMode === "leverageUp" ? "Leverage Up" : activeMode === "deleverage" ? "Deleverage" : "Self Liquidate";
       let details: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string } | undefined;
       if (activeMode === "leverageUp" && debtAmount > 0n) {
@@ -1262,7 +1264,7 @@ export function LeverageTab({
           toLogo: "/tokens/crvusd.png",
         };
       }
-      const mapped = status === "waitingTx" ? "pending" : status;
+      const mapped = isPending ? "pending" : status;
       onTxStateChange?.({ status: mapped as "pending" | "success" | "reverted", action, hash: txHash, details });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- withdrawToken is only read inside deleverage branch; isWithdrawToOtherToken derived from it

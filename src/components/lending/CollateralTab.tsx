@@ -40,6 +40,7 @@ import { getMaxEthAmount } from "@/lib/eth-gas";
 import { WETH_ADDRESS, CHAINLINK_ETH_USD } from "@/config/addresses";
 import type { EnsoToken, EnsoRouteResponse } from "@/types/enso";
 import { CONTROLLER_ABI, ERC4626_ABI } from "@/lib/abis";
+import { isLendingTxPendingVisible } from "@/lib/transaction-ui";
 
 type CollateralMode = "add" | "remove";
 
@@ -51,7 +52,7 @@ interface CollateralTabProps {
   onTransactionSuccess: () => void;
   onEstimatedHealthChange?: (health: number | null) => void;
   onCollateralDeltaChange?: (delta: bigint | null) => void;
-  onTxStateChange?: (state: { status: "pending" | "success" | "reverted"; action: string; hash: string; details?: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string } } | null) => void;
+  onTxStateChange?: (state: { status: "pending" | "success" | "reverted"; action: string; hash?: string | null; details?: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string; message?: string } } | null) => void;
   onSwitchTab?: (tab: string) => void;
 }
 
@@ -468,7 +469,8 @@ export function CollateralTab({
 
   // Report tx state to parent for full-screen overlay
   useEffect(() => {
-    if ((status === "waitingTx" || status === "success" || status === "reverted") && txHash) {
+    const isPending = isLendingTxPendingVisible(status);
+    if (isPending || ((status === "success" || status === "reverted") && txHash)) {
       const action = mode === "add" ? "Add Collateral" : "Remove Collateral";
       const details = amount && Number(amount) > 0 ? (mode === "add" ? {
         fromAmount: amount,
@@ -485,7 +487,7 @@ export function CollateralTab({
         toSymbol: selectedToken.symbol,
         toLogo: selectedToken.logoURI || "/tokens/unknown.png",
       }) : undefined;
-      const mapped = status === "waitingTx" ? "pending" : status;
+      const mapped = isPending ? "pending" : status;
       onTxStateChange?.({ status: mapped as "pending" | "success" | "reverted", action, hash: txHash, details });
     }
   }, [status, txHash, mode, onTxStateChange, amount, selectedToken, isVaultToken, isRemoveWithSwap, amountAsVaultToken, estimatedVaultTokenAmount, vault, swapQuote]);
