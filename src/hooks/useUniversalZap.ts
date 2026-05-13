@@ -19,6 +19,7 @@ import {
   fetchAnyToPxCvxRoute,
   fetchAnyToCvgCvxRoute,
   fetchAnyToLpxCvxRoute,
+  fetchAnyToExternalVaultRoute,
   fetchAnyFromPxCvxRoute,
   fetchAnyFromCvgCvxRoute,
   fetchAnyFromLpxCvxRoute,
@@ -26,9 +27,6 @@ import {
   fetchAnyFromErc4626ExternalVaultRoute,
   fetchAnyFromUCrvRoute,
   fetchAnyFromBeefyRoute,
-  fetchAnyToErc4626ExternalVaultRoute,
-  fetchAnyToUCrvRoute,
-  fetchAnyToBeefyRoute,
   fetchComposableZapInRoute,
   fetchSpecialTokenToIlliquidRoute,
   fetchSpecialTokenToExternalVaultRoute,
@@ -1111,47 +1109,13 @@ export function useUniversalZap({
         const isUcvxOutput =
           outputExternalConfig.interface === "erc4626" &&
           extUnderlying === TOKENS.PXCVX.toLowerCase();
-
-        let bundle;
-        if (isUcvxOutput) {
-          // uCVX — hybrid pxCVX acquisition then erc4626/deposit
-          bundle = await fetchAnyToPxCvxRoute({
-            fromAddress: userAddress,
-            inputToken: inputToken.address,
-            amountIn: amountInWei,
-            slippage,
-            depositIntoVault: outputToken.address,
-          });
-        } else if (outputExternalConfig.interface === "ucrv") {
-          bundle = await fetchAnyToUCrvRoute({
-            fromAddress: userAddress,
-            inputToken: inputToken.address,
-            amountIn: amountInWei,
-            slippage,
-          });
-        } else if (outputExternalConfig.interface === "beefy") {
-          bundle = await fetchAnyToBeefyRoute({
-            fromAddress: userAddress,
-            inputToken: inputToken.address,
-            beefyVault: outputToken.address,
-            beefyVaultUnderlying: outputExternalConfig.underlying,
-            beefyVaultSymbol: outputExternalConfig.symbol,
-            amountIn: amountInWei,
-            slippage,
-          });
-        } else {
-          // ERC4626 with liquid underlying (aCVX, aCRV, afCVX, scrvUSD)
-          bundle = await fetchAnyToErc4626ExternalVaultRoute({
-            fromAddress: userAddress,
-            inputToken: inputToken.address,
-            externalVault: outputToken.address,
-            externalVaultUnderlying: outputExternalConfig.underlying,
-            externalVaultSymbol: outputExternalConfig.symbol,
-            externalVaultProtocol: outputExternalConfig.protocol,
-            amountIn: amountInWei,
-            slippage,
-          });
-        }
+        const bundle = await fetchAnyToExternalVaultRoute({
+          fromAddress: userAddress,
+          inputToken: inputToken.address,
+          externalVaultAddress: outputToken.address,
+          amountIn: amountInWei,
+          slippage,
+        });
 
         const outRaw =
           bundle.amountsOut[outAddr] || bundle.amountsOut[outputToken.address] || "0";
