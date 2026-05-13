@@ -80,6 +80,10 @@ export async function POST(
         assertValidEnsoIntentRequest(body);
 
         const {
+          fetchCvgCvxZapInRoute,
+          fetchCvgCvxZapOutRoute,
+          fetchPxCvxZapInRoute,
+          fetchPxCvxZapOutRoute,
           fetchRoute,
           fetchZapInRoute,
           fetchZapOutRoute,
@@ -127,6 +131,77 @@ export async function POST(
               amountIn: body.amountIn,
               slippage: body.slippage,
               underlyingToken: vault.assetAddress,
+            });
+            assertEnsoIntentTxTarget(bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+
+          case "yldVaultToCvgCvxVault":
+          case "cvgCvxVaultToYldVault":
+          case "yldVaultToPxCvxVault":
+          case "pxCvxVaultToYldVault": {
+            const sourceVault = getIntentVault(body.sourceVault);
+            const targetVault = getIntentVault(body.targetVault);
+            if (!sourceVault || !targetVault) {
+              throw new Error("sourceVault and targetVault must be known YLD vaults");
+            }
+
+            const bundle = await fetchVaultToVaultRoute({
+              fromAddress: body.fromAddress,
+              sourceVault: body.sourceVault,
+              targetVault: body.targetVault,
+              amountIn: body.amountIn,
+              sourceUnderlyingToken: sourceVault.assetAddress,
+              targetUnderlyingToken: targetVault.assetAddress,
+              slippage: body.slippage,
+            });
+            assertEnsoIntentTxTarget(bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+
+          case "cvgCvxZapIn": {
+            const bundle = await fetchCvgCvxZapInRoute({
+              fromAddress: body.fromAddress,
+              vaultAddress: body.vaultAddress,
+              inputToken: body.inputToken,
+              amountIn: body.amountIn,
+              slippage: body.slippage,
+            });
+            assertEnsoIntentTxTarget(bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+
+          case "cvgCvxZapOut": {
+            const bundle = await fetchCvgCvxZapOutRoute({
+              fromAddress: body.fromAddress,
+              vaultAddress: body.vaultAddress,
+              outputToken: body.outputToken,
+              amountIn: body.amountIn,
+              slippage: body.slippage,
+            });
+            assertEnsoIntentTxTarget(bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+
+          case "pxCvxZapIn": {
+            const bundle = await fetchPxCvxZapInRoute({
+              fromAddress: body.fromAddress,
+              vaultAddress: body.vaultAddress,
+              inputToken: body.inputToken,
+              amountIn: body.amountIn,
+              slippage: body.slippage,
+            });
+            assertEnsoIntentTxTarget(bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+
+          case "pxCvxZapOut": {
+            const bundle = await fetchPxCvxZapOutRoute({
+              fromAddress: body.fromAddress,
+              vaultAddress: body.vaultAddress,
+              outputToken: body.outputToken,
+              amountIn: body.amountIn,
+              slippage: body.slippage,
             });
             assertEnsoIntentTxTarget(bundle);
             return NextResponse.json(bundle, { headers: cors });
