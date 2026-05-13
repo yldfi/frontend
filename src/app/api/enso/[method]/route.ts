@@ -100,7 +100,7 @@ export async function POST(
               slippage: body.slippage,
               receiver: body.receiver ?? body.fromAddress,
             });
-            assertEnsoIntentTxTarget(route);
+            assertEnsoIntentTxTarget(body.intent, route);
             return NextResponse.json(route, { headers: cors });
           }
 
@@ -116,7 +116,7 @@ export async function POST(
               slippage: body.slippage,
               underlyingToken: vault.assetAddress,
             });
-            assertEnsoIntentTxTarget(bundle);
+            assertEnsoIntentTxTarget(body.intent, bundle);
             return NextResponse.json(bundle, { headers: cors });
           }
 
@@ -132,7 +132,7 @@ export async function POST(
               slippage: body.slippage,
               underlyingToken: vault.assetAddress,
             });
-            assertEnsoIntentTxTarget(bundle);
+            assertEnsoIntentTxTarget(body.intent, bundle);
             return NextResponse.json(bundle, { headers: cors });
           }
 
@@ -155,7 +155,7 @@ export async function POST(
               targetUnderlyingToken: targetVault.assetAddress,
               slippage: body.slippage,
             });
-            assertEnsoIntentTxTarget(bundle);
+            assertEnsoIntentTxTarget(body.intent, bundle);
             return NextResponse.json(bundle, { headers: cors });
           }
 
@@ -167,7 +167,7 @@ export async function POST(
               amountIn: body.amountIn,
               slippage: body.slippage,
             });
-            assertEnsoIntentTxTarget(bundle);
+            assertEnsoIntentTxTarget(body.intent, bundle);
             return NextResponse.json(bundle, { headers: cors });
           }
 
@@ -179,7 +179,7 @@ export async function POST(
               amountIn: body.amountIn,
               slippage: body.slippage,
             });
-            assertEnsoIntentTxTarget(bundle);
+            assertEnsoIntentTxTarget(body.intent, bundle);
             return NextResponse.json(bundle, { headers: cors });
           }
 
@@ -191,7 +191,7 @@ export async function POST(
               amountIn: body.amountIn,
               slippage: body.slippage,
             });
-            assertEnsoIntentTxTarget(bundle);
+            assertEnsoIntentTxTarget(body.intent, bundle);
             return NextResponse.json(bundle, { headers: cors });
           }
 
@@ -203,7 +203,7 @@ export async function POST(
               amountIn: body.amountIn,
               slippage: body.slippage,
             });
-            assertEnsoIntentTxTarget(bundle);
+            assertEnsoIntentTxTarget(body.intent, bundle);
             return NextResponse.json(bundle, { headers: cors });
           }
 
@@ -223,7 +223,7 @@ export async function POST(
               targetUnderlyingToken: targetVault.assetAddress,
               slippage: body.slippage,
             });
-            assertEnsoIntentTxTarget(bundle);
+            assertEnsoIntentTxTarget(body.intent, bundle);
             return NextResponse.json(bundle, { headers: cors });
           }
         }

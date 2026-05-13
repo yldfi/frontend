@@ -124,6 +124,7 @@ describe("Enso intent validation", () => {
       vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
       inputToken: TOKENS.CVX,
       amountIn: ONE_ETHER,
+      slippage: "100",
     })).not.toThrow();
 
     expect(() => assertValidEnsoIntentRequest({
@@ -132,6 +133,7 @@ describe("Enso intent validation", () => {
       vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
       outputToken: TOKENS.CVX,
       amountIn: ONE_ETHER,
+      slippage: "100",
     })).not.toThrow();
 
     expect(() => assertValidEnsoIntentRequest({
@@ -140,6 +142,7 @@ describe("Enso intent validation", () => {
       vaultAddress: VAULT_ADDRESSES.YSPXCVX,
       inputToken: TOKENS.CVX,
       amountIn: ONE_ETHER,
+      slippage: "100",
     })).not.toThrow();
 
     expect(() => assertValidEnsoIntentRequest({
@@ -148,6 +151,7 @@ describe("Enso intent validation", () => {
       vaultAddress: VAULT_ADDRESSES.YSPXCVX,
       outputToken: TOKENS.CVX,
       amountIn: ONE_ETHER,
+      slippage: "100",
     })).not.toThrow();
   });
 
@@ -168,6 +172,7 @@ describe("Enso intent validation", () => {
       vaultAddress: VAULT_ADDRESSES.YSPXCVX,
       inputToken: TOKENS.CVX,
       amountIn: ONE_ETHER,
+      slippage: "100",
     })).toThrow("cvgCVX-backed");
 
     expect(() => assertValidEnsoIntentRequest({
@@ -176,6 +181,7 @@ describe("Enso intent validation", () => {
       vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
       outputToken: TOKENS.CVX,
       amountIn: ONE_ETHER,
+      slippage: "100",
     })).toThrow("pxCVX-backed");
   });
 
@@ -211,6 +217,7 @@ describe("Enso intent validation", () => {
       sourceVault: VAULT_ADDRESSES.YCVXCRV,
       targetVault: VAULT_ADDRESSES.YSCVGCVX,
       amountIn: ONE_ETHER,
+      slippage: "100",
     })).not.toThrow();
 
     expect(() => assertValidEnsoIntentRequest({
@@ -219,7 +226,44 @@ describe("Enso intent validation", () => {
       sourceVault: VAULT_ADDRESSES.YCVXCRV,
       targetVault: VAULT_ADDRESSES.YSPXCVX,
       amountIn: ONE_ETHER,
+      slippage: "100",
     })).toThrow("does not match");
+  });
+
+  it("requires explicit slippage for complex server-owned recipes", () => {
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "cvgCvxZapIn",
+      fromAddress: USER,
+      vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+      inputToken: TOKENS.CVX,
+      amountIn: ONE_ETHER,
+    })).toThrow("slippage is required");
+
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "yldVaultToPxCvxVault",
+      fromAddress: USER,
+      sourceVault: VAULT_ADDRESSES.YCVXCRV,
+      targetVault: VAULT_ADDRESSES.YSPXCVX,
+      amountIn: ONE_ETHER,
+    })).toThrow("slippage is required");
+  });
+
+  it("rejects zero-address and YLD-vault tokens in liquid token fields", () => {
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "plainTokenSwap",
+      fromAddress: USER,
+      tokenIn: "0x0000000000000000000000000000000000000000",
+      tokenOut: TOKENS.CVX,
+      amountIn: ONE_ETHER,
+    })).toThrow("tokenIn must not be the zero address");
+
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "plainTokenSwap",
+      fromAddress: USER,
+      tokenIn: VAULT_ADDRESSES.YCVXCRV,
+      tokenOut: TOKENS.CVX,
+      amountIn: ONE_ETHER,
+    })).toThrow("not a YLD vault");
   });
 
   it("rejects same-vault and unknown-vault zap intents", () => {
@@ -251,8 +295,8 @@ describe("Enso intent validation", () => {
     expect(shouldUsePlainTokenSwapIntent({ fromAddress: USER, receiver: OTHER })).toBe(false);
   });
 
-  it("allows only Enso router transaction targets in intent responses", () => {
-    expect(() => assertEnsoIntentTxTarget({
+  it("allows only per-intent Enso router transaction targets in intent responses", () => {
+    expect(() => assertEnsoIntentTxTarget("cvgCvxZapOut", {
       tx: {
         to: "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf",
         data: "0x",
@@ -263,7 +307,7 @@ describe("Enso intent validation", () => {
       route: [],
     })).not.toThrow();
 
-    expect(() => assertEnsoIntentTxTarget({
+    expect(() => assertEnsoIntentTxTarget("cvgCvxZapOut", {
       tx: {
         to: "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003",
         data: "0x",
@@ -272,9 +316,9 @@ describe("Enso intent validation", () => {
       gas: "1",
       amountOut: "1",
       route: [],
-    })).toThrow("ENSO_SHORTCUTS");
+    })).toThrow("forbidden transaction target");
 
-    expect(() => assertEnsoIntentTxTarget({
+    expect(() => assertEnsoIntentTxTarget("cvgCvxZapOut", {
       tx: {
         to: OTHER,
         data: "0x",
@@ -284,5 +328,32 @@ describe("Enso intent validation", () => {
       gas: "1",
       amountsOut: {},
     })).toThrow("unexpected transaction target");
+  });
+
+  it("rejects malformed Enso intent response payloads before returning them", () => {
+    expect(() => assertEnsoIntentTxTarget("plainTokenSwap", {
+      tx: {
+        to: "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf",
+        data: "not-hex",
+        value: "0",
+      },
+      gas: "1",
+      amountOut: "1",
+      route: [],
+    })).toThrow("tx.data");
+
+    expect(() => assertEnsoIntentTxTarget("plainTokenSwap", {
+      tx: {
+        to: "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf",
+        data: "0x",
+        value: "0",
+        from: USER,
+      },
+      gas: "1",
+      amountsOut: {
+        [TOKENS.CVX]: "1",
+        notAddress: "1",
+      },
+    })).toThrow("invalid token address");
   });
 });
