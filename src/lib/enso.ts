@@ -10,6 +10,7 @@ import { TOKENS, VAULTS, VAULT_ADDRESSES, CURVE_SAVINGS, isYldfiVault as checkIs
 import { getAllRpcUrls } from "@/config/rpc";
 import {
   fetchEnsoIntent,
+  getYldVaultToVaultIntentName,
   isStandardYldVaultIntentVault,
   shouldUsePlainTokenSwapIntent,
 } from "@/lib/enso-intents";
@@ -2853,13 +2854,16 @@ export async function fetchVaultToVaultRoute(params: {
     throw new Error("Cannot zap from a vault to itself");
   }
 
-  if (
-    typeof window !== "undefined" &&
-    isStandardYldVaultIntentVault(params.sourceVault) &&
-    isStandardYldVaultIntentVault(params.targetVault)
-  ) {
+  if (typeof window !== "undefined") {
+    const intent = getYldVaultToVaultIntentName({
+      sourceVault: params.sourceVault,
+      targetVault: params.targetVault,
+    });
+    if (!intent) {
+      throw new Error("sourceVault and targetVault must be known YLD vaults");
+    }
     return fetchEnsoIntent<EnsoBundleResponse>({
-      intent: "yldVaultToVault",
+      intent,
       fromAddress: params.fromAddress,
       sourceVault: params.sourceVault,
       targetVault: params.targetVault,
@@ -4445,6 +4449,18 @@ export async function fetchCvgCvxZapInRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "cvgCvxZapIn",
+      fromAddress: params.fromAddress,
+      vaultAddress: params.vaultAddress,
+      inputToken: params.inputToken,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { TANGENT } = await import("@/config/vaults");
   const slippageBps = parseInt(params.slippage ?? "100", 10);
   const vaultSymbol = getTokenSymbol(params.vaultAddress);
@@ -5483,6 +5499,18 @@ export async function fetchCvgCvxZapOutRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<EnsoBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<EnsoBundleResponse>({
+      intent: "cvgCvxZapOut",
+      fromAddress: params.fromAddress,
+      vaultAddress: params.vaultAddress,
+      outputToken: params.outputToken,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { TANGENT } = await import("@/config/vaults");
   const slippageBps = parseInt(params.slippage ?? "100", 10);
   const amountIn = await clampAmountIn(params.vaultAddress, params.amountIn);
@@ -5759,6 +5787,18 @@ export async function fetchPxCvxZapOutRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<EnsoBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<EnsoBundleResponse>({
+      intent: "pxCvxZapOut",
+      fromAddress: params.fromAddress,
+      vaultAddress: params.vaultAddress,
+      outputToken: params.outputToken,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { PIREX } = await import("@/config/vaults");
 
   // Validate slippage parameter
@@ -6067,6 +6107,18 @@ export async function fetchPxCvxZapInRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "pxCvxZapIn",
+      fromAddress: params.fromAddress,
+      vaultAddress: params.vaultAddress,
+      inputToken: params.inputToken,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { PIREX } = await import("@/config/vaults");
   const vaultSymbol = getTokenSymbol(params.vaultAddress);
   const inputSymbol = getTokenSymbol(params.inputToken);

@@ -3,6 +3,7 @@ import {
   assertEnsoIntentTxTarget,
   assertValidEnsoIntentRequest,
   getIntentVault,
+  getYldVaultToVaultIntentName,
   isStandardYldVaultIntentVault,
   shouldUsePlainTokenSwapIntent,
 } from "@/lib/enso-intents";
@@ -113,10 +114,44 @@ describe("Enso intent validation", () => {
     })).not.toThrow();
   });
 
-  it("defers cvgCVX and pxCVX vaults to the later special-flow migration", () => {
+  it("accepts special cvgCVX and pxCVX vault zap intents", () => {
     expect(isStandardYldVaultIntentVault(VAULT_ADDRESSES.YSCVGCVX)).toBe(false);
     expect(isStandardYldVaultIntentVault(VAULT_ADDRESSES.YSPXCVX)).toBe(false);
 
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "cvgCvxZapIn",
+      fromAddress: USER,
+      vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+      inputToken: TOKENS.CVX,
+      amountIn: ONE_ETHER,
+    })).not.toThrow();
+
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "cvgCvxZapOut",
+      fromAddress: USER,
+      vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+      outputToken: TOKENS.CVX,
+      amountIn: ONE_ETHER,
+    })).not.toThrow();
+
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "pxCvxZapIn",
+      fromAddress: USER,
+      vaultAddress: VAULT_ADDRESSES.YSPXCVX,
+      inputToken: TOKENS.CVX,
+      amountIn: ONE_ETHER,
+    })).not.toThrow();
+
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "pxCvxZapOut",
+      fromAddress: USER,
+      vaultAddress: VAULT_ADDRESSES.YSPXCVX,
+      outputToken: TOKENS.CVX,
+      amountIn: ONE_ETHER,
+    })).not.toThrow();
+  });
+
+  it("keeps standard zap intents limited to standard vaults", () => {
     expect(() => assertValidEnsoIntentRequest({
       intent: "yldVaultZapIn",
       fromAddress: USER,
@@ -124,6 +159,67 @@ describe("Enso intent validation", () => {
       inputToken: TOKENS.CVX,
       amountIn: ONE_ETHER,
     })).toThrow("special asset flow");
+  });
+
+  it("rejects special zap intents when the vault asset does not match", () => {
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "cvgCvxZapIn",
+      fromAddress: USER,
+      vaultAddress: VAULT_ADDRESSES.YSPXCVX,
+      inputToken: TOKENS.CVX,
+      amountIn: ONE_ETHER,
+    })).toThrow("cvgCVX-backed");
+
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "pxCvxZapOut",
+      fromAddress: USER,
+      vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+      outputToken: TOKENS.CVX,
+      amountIn: ONE_ETHER,
+    })).toThrow("pxCVX-backed");
+  });
+
+  it("selects and validates special vault-to-vault intent names", () => {
+    expect(getYldVaultToVaultIntentName({
+      sourceVault: VAULT_ADDRESSES.YCVXCRV,
+      targetVault: VAULT_ADDRESSES.YSCVXCRV,
+    })).toBe("yldVaultToVault");
+
+    expect(getYldVaultToVaultIntentName({
+      sourceVault: VAULT_ADDRESSES.YCVXCRV,
+      targetVault: VAULT_ADDRESSES.YSCVGCVX,
+    })).toBe("yldVaultToCvgCvxVault");
+
+    expect(getYldVaultToVaultIntentName({
+      sourceVault: VAULT_ADDRESSES.YSCVGCVX,
+      targetVault: VAULT_ADDRESSES.YCVXCRV,
+    })).toBe("cvgCvxVaultToYldVault");
+
+    expect(getYldVaultToVaultIntentName({
+      sourceVault: VAULT_ADDRESSES.YCVXCRV,
+      targetVault: VAULT_ADDRESSES.YSPXCVX,
+    })).toBe("yldVaultToPxCvxVault");
+
+    expect(getYldVaultToVaultIntentName({
+      sourceVault: VAULT_ADDRESSES.YSPXCVX,
+      targetVault: VAULT_ADDRESSES.YSCVGCVX,
+    })).toBe("pxCvxVaultToYldVault");
+
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "yldVaultToCvgCvxVault",
+      fromAddress: USER,
+      sourceVault: VAULT_ADDRESSES.YCVXCRV,
+      targetVault: VAULT_ADDRESSES.YSCVGCVX,
+      amountIn: ONE_ETHER,
+    })).not.toThrow();
+
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "yldVaultToCvgCvxVault",
+      fromAddress: USER,
+      sourceVault: VAULT_ADDRESSES.YCVXCRV,
+      targetVault: VAULT_ADDRESSES.YSPXCVX,
+      amountIn: ONE_ETHER,
+    })).toThrow("does not match");
   });
 
   it("rejects same-vault and unknown-vault zap intents", () => {
