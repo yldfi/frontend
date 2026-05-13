@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { EnsoClient } from "@ensofinance/sdk";
+import {
+  assertEnsoIntentTxTarget,
+  assertValidEnsoIntentRequest,
+  getIntentVault,
+} from "@/lib/enso-intents";
 
 export const dynamic = "force-dynamic";
 
@@ -71,6 +76,84 @@ export async function POST(
 
   try {
     switch (method) {
+      case "intent": {
+        assertValidEnsoIntentRequest(body);
+
+        const {
+          fetchRoute,
+          fetchZapInRoute,
+          fetchZapOutRoute,
+          fetchVaultToVaultRoute,
+        } = await import("@/lib/enso");
+
+        switch (body.intent) {
+          case "plainTokenSwap": {
+            const route = await fetchRoute({
+              fromAddress: body.fromAddress,
+              tokenIn: body.tokenIn,
+              tokenOut: body.tokenOut,
+              amountIn: body.amountIn,
+              slippage: body.slippage,
+              receiver: body.receiver ?? body.fromAddress,
+            });
+            assertEnsoIntentTxTarget(route);
+            return NextResponse.json(route, { headers: cors });
+          }
+
+          case "yldVaultZapIn": {
+            const vault = getIntentVault(body.vaultAddress);
+            if (!vault) throw new Error("vaultAddress must be a known YLD vault");
+
+            const bundle = await fetchZapInRoute({
+              fromAddress: body.fromAddress,
+              vaultAddress: body.vaultAddress,
+              inputToken: body.inputToken,
+              amountIn: body.amountIn,
+              slippage: body.slippage,
+              underlyingToken: vault.assetAddress,
+            });
+            assertEnsoIntentTxTarget(bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+
+          case "yldVaultZapOut": {
+            const vault = getIntentVault(body.vaultAddress);
+            if (!vault) throw new Error("vaultAddress must be a known YLD vault");
+
+            const bundle = await fetchZapOutRoute({
+              fromAddress: body.fromAddress,
+              vaultAddress: body.vaultAddress,
+              outputToken: body.outputToken,
+              amountIn: body.amountIn,
+              slippage: body.slippage,
+              underlyingToken: vault.assetAddress,
+            });
+            assertEnsoIntentTxTarget(bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+
+          case "yldVaultToVault": {
+            const sourceVault = getIntentVault(body.sourceVault);
+            const targetVault = getIntentVault(body.targetVault);
+            if (!sourceVault || !targetVault) {
+              throw new Error("sourceVault and targetVault must be known YLD vaults");
+            }
+
+            const bundle = await fetchVaultToVaultRoute({
+              fromAddress: body.fromAddress,
+              sourceVault: body.sourceVault,
+              targetVault: body.targetVault,
+              amountIn: body.amountIn,
+              sourceUnderlyingToken: sourceVault.assetAddress,
+              targetUnderlyingToken: targetVault.assetAddress,
+              slippage: body.slippage,
+            });
+            assertEnsoIntentTxTarget(bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+        }
+      }
+
       case "route": {
         const routeData = await ensoClient.getRouteData({
           chainId: CHAIN_ID,
