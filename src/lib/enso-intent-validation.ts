@@ -1,11 +1,19 @@
 import type { EnsoBundleResponse, EnsoRouteResponse } from "@/types/enso";
+import { decodeFunctionData, parseAbi } from "viem";
 
 export type EnsoIntentResponse = EnsoRouteResponse | EnsoBundleResponse;
 
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+export const ENSO_ROUTE_SINGLE_SELECTOR = "0xb94c3609";
+export const ENSO_ROUTE_MULTI_SELECTOR = "0xf52e33f5";
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const HEX_DATA_RE = /^0x(?:[a-fA-F0-9]{2})*$/;
 const INTEGER_STRING_RE = /^\d+$/;
+const SELECTOR_LENGTH = 10;
+const ENSO_ROUTER_ENTRYPOINT_ABI = parseAbi([
+  "function routeSingle((uint8 tokenType, bytes data) tokenIn, bytes data) payable returns (bytes)",
+  "function routeMulti((uint8 tokenType, bytes data)[] tokensIn, bytes data) payable returns (bytes)",
+]);
 
 export class EnsoIntentValidationError extends Error {
   statusCode = 400;
@@ -151,6 +159,48 @@ function assertHexData(value: unknown, field: string) {
   }
 }
 
+function assertNonEmptyHexData(value: unknown, field: string) {
+  assertHexData(value, field);
+  if (value === "0x") {
+    failResponse(`${field} must not be empty`);
+  }
+}
+
+function getCalldataSelector(data: `0x${string}`): `0x${string}` {
+  if (data.length < SELECTOR_LENGTH) {
+    failResponse("Enso intent returned empty router calldata");
+  }
+  return data.slice(0, SELECTOR_LENGTH).toLowerCase() as `0x${string}`;
+}
+
+function assertDecodableEnsoRouterCalldata(
+  data: `0x${string}`,
+  selector: `0x${string}`
+) {
+  let decoded: { functionName?: string; args?: readonly unknown[] };
+  try {
+    decoded = decodeFunctionData({
+      abi: ENSO_ROUTER_ENTRYPOINT_ABI,
+      data,
+    }) as { functionName?: string; args?: readonly unknown[] };
+  } catch {
+    failResponse("Enso intent returned undecodable router calldata");
+  }
+
+  const expectedFunction =
+    selector === ENSO_ROUTE_SINGLE_SELECTOR ? "routeSingle" :
+    selector === ENSO_ROUTE_MULTI_SELECTOR ? "routeMulti" :
+    undefined;
+  if (!expectedFunction || decoded.functionName !== expectedFunction) {
+    failResponse("Enso intent returned mismatched router calldata");
+  }
+
+  if (!decoded.args || decoded.args.length !== 2) {
+    failResponse("Enso intent returned malformed router calldata");
+  }
+  assertNonEmptyHexData(decoded.args[1], "router calldata payload");
+}
+
 function assertResponseAmountMap(value: unknown, field: string) {
   if (value === undefined) return;
   if (!isRecord(value)) {
@@ -190,7 +240,9 @@ export function assertEnsoIntentTxTargetForIntent(params: {
   intent: string;
   response: EnsoIntentResponse;
   allowedTargets: Readonly<Record<string, readonly string[]>>;
+  allowedSelectors?: Readonly<Record<string, readonly `0x${string}`[]>>;
   forbiddenTargets?: readonly string[];
+  forbiddenSelectors?: readonly `0x${string}`[];
 }): void {
   assertEnsoIntentResponseShape(params.response);
 
@@ -211,4 +263,27 @@ export function assertEnsoIntentTxTargetForIntent(params: {
   if (!allowed.has(target)) {
     failResponse(`Enso intent ${params.intent} returned an unexpected transaction target`);
   }
+
+  if (!params.allowedSelectors) return;
+
+  const allowedSelectors = params.allowedSelectors[params.intent];
+  if (!allowedSelectors || allowedSelectors.length === 0) {
+    failResponse(`No calldata selector allowlist configured for ${params.intent}`);
+  }
+
+  const data = params.response.tx.data as `0x${string}`;
+  const selector = getCalldataSelector(data);
+  const forbiddenSelectors = new Set(
+    (params.forbiddenSelectors ?? []).map((value) => value.toLowerCase())
+  );
+  if (forbiddenSelectors.has(selector)) {
+    failResponse(`Enso intent ${params.intent} returned a forbidden router selector`);
+  }
+
+  const allowedSelectorSet = new Set(allowedSelectors.map((value) => value.toLowerCase()));
+  if (!allowedSelectorSet.has(selector)) {
+    failResponse(`Enso intent ${params.intent} returned an unexpected router selector`);
+  }
+
+  assertDecodableEnsoRouterCalldata(data, selector);
 }

@@ -1,6 +1,8 @@
 import { getVaultByAddress, TOKENS, type VaultConfig } from "@/config/vaults";
 import type { EnsoBundleResponse, EnsoRouteResponse } from "@/types/enso";
 import {
+  ENSO_ROUTE_MULTI_SELECTOR,
+  ENSO_ROUTE_SINGLE_SELECTOR,
   ZERO_ADDRESS,
   assertAddress,
   assertBaseIntentFields,
@@ -124,6 +126,7 @@ const SPECIAL_STANDARD_DEFERRED_ASSETS = new Set([
   TOKENS.PXCVX.toLowerCase(),
 ]);
 const COMMON_INTENT_TX_TARGETS = [ENSO_ROUTER, ENSO_ROUTER_EXECUTOR] as const;
+const COMMON_INTENT_CALLDATA_SELECTORS = [ENSO_ROUTE_SINGLE_SELECTOR] as const;
 const INTENT_TX_TARGET_ALLOWLIST: Record<EnsoIntentName, readonly string[]> = {
   plainTokenSwap: COMMON_INTENT_TX_TARGETS,
   yldVaultZapIn: COMMON_INTENT_TX_TARGETS,
@@ -137,6 +140,20 @@ const INTENT_TX_TARGET_ALLOWLIST: Record<EnsoIntentName, readonly string[]> = {
   cvgCvxZapOut: COMMON_INTENT_TX_TARGETS,
   pxCvxZapIn: COMMON_INTENT_TX_TARGETS,
   pxCvxZapOut: COMMON_INTENT_TX_TARGETS,
+};
+const INTENT_CALLDATA_SELECTOR_ALLOWLIST: Record<EnsoIntentName, readonly `0x${string}`[]> = {
+  plainTokenSwap: COMMON_INTENT_CALLDATA_SELECTORS,
+  yldVaultZapIn: COMMON_INTENT_CALLDATA_SELECTORS,
+  yldVaultZapOut: COMMON_INTENT_CALLDATA_SELECTORS,
+  yldVaultToVault: COMMON_INTENT_CALLDATA_SELECTORS,
+  yldVaultToCvgCvxVault: COMMON_INTENT_CALLDATA_SELECTORS,
+  cvgCvxVaultToYldVault: COMMON_INTENT_CALLDATA_SELECTORS,
+  yldVaultToPxCvxVault: COMMON_INTENT_CALLDATA_SELECTORS,
+  pxCvxVaultToYldVault: COMMON_INTENT_CALLDATA_SELECTORS,
+  cvgCvxZapIn: COMMON_INTENT_CALLDATA_SELECTORS,
+  cvgCvxZapOut: COMMON_INTENT_CALLDATA_SELECTORS,
+  pxCvxZapIn: COMMON_INTENT_CALLDATA_SELECTORS,
+  pxCvxZapOut: COMMON_INTENT_CALLDATA_SELECTORS,
 };
 
 function assertOnlyIntentFields(
@@ -355,7 +372,9 @@ export function assertEnsoIntentTxTarget(
     intent,
     response,
     allowedTargets: INTENT_TX_TARGET_ALLOWLIST,
+    allowedSelectors: INTENT_CALLDATA_SELECTOR_ALLOWLIST,
     forbiddenTargets: [ENSO_SHORTCUTS],
+    forbiddenSelectors: [ENSO_ROUTE_MULTI_SELECTOR],
   });
 }
 
