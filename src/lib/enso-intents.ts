@@ -1,5 +1,23 @@
 import { getVaultByAddress, TOKENS, type VaultConfig } from "@/config/vaults";
 import type { EnsoBundleResponse, EnsoRouteResponse } from "@/types/enso";
+import {
+  ZERO_ADDRESS,
+  assertAddress,
+  assertBaseIntentFields,
+  assertEnsoIntentTxTargetForIntent,
+  assertNoForbiddenFields,
+  assertOnlyFields,
+  assertTokenAddress,
+  failValidation,
+  isRecord,
+  normalizeAddress,
+} from "@/lib/enso-intent-validation";
+
+export {
+  EnsoIntentResponseError,
+  EnsoIntentValidationError,
+  isHexAddress,
+} from "@/lib/enso-intent-validation";
 
 export type EnsoIntentName =
   | "plainTokenSwap"
@@ -83,8 +101,6 @@ export type YldVaultToVaultIntentName =
 
 export type EnsoIntentResponse = EnsoRouteResponse | EnsoBundleResponse;
 
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
-const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const ENSO_ROUTER = "0x80EbA3855878739F4710233A8a19d89Bdd2ffB8E";
 const ENSO_ROUTER_EXECUTOR = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf";
 const ENSO_SHORTCUTS = "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003";
@@ -107,92 +123,41 @@ const SPECIAL_STANDARD_DEFERRED_ASSETS = new Set([
   TOKENS.CVGCVX.toLowerCase(),
   TOKENS.PXCVX.toLowerCase(),
 ]);
-const ALLOWED_INTENT_TX_TARGETS = new Set([
-  ENSO_ROUTER.toLowerCase(),
-  ENSO_ROUTER_EXECUTOR.toLowerCase(),
-]);
-
-export class EnsoIntentValidationError extends Error {
-  statusCode = 400;
-}
-
-export class EnsoIntentResponseError extends Error {
-  statusCode = 502;
-}
-
-function failValidation(message: string): never {
-  throw new EnsoIntentValidationError(message);
-}
-
-function failResponse(message: string): never {
-  throw new EnsoIntentResponseError(message);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-export function isHexAddress(value: unknown): value is `0x${string}` {
-  return typeof value === "string" && ADDRESS_RE.test(value);
-}
-
-function assertAddress(value: unknown, field: string): asserts value is `0x${string}` {
-  if (!isHexAddress(value)) {
-    failValidation(`${field} must be a valid address`);
-  }
-}
-
-function assertPositiveAmount(value: unknown): asserts value is string {
-  if (typeof value !== "string" || !/^\d+$/.test(value)) {
-    failValidation("amountIn must be a positive integer string");
-  }
-  if (BigInt(value) <= 0n) {
-    failValidation("amountIn must be greater than zero");
-  }
-}
-
-function assertSlippage(value: unknown): asserts value is string | undefined {
-  if (value === undefined) return;
-  if (typeof value !== "string" || !/^\d+$/.test(value)) {
-    failValidation("slippage must be a basis-points string");
-  }
-  const slippageBps = Number(value);
-  if (!Number.isSafeInteger(slippageBps) || slippageBps < 0 || slippageBps > 10_000) {
-    failValidation("slippage must be between 0 and 10000 basis points");
-  }
-}
-
-function assertReceiverIsOwner(request: Record<string, unknown>) {
-  if (request.receiver === undefined) return;
-  assertAddress(request.receiver, "receiver");
-  assertAddress(request.fromAddress, "fromAddress");
-
-  if (request.receiver.toLowerCase() !== request.fromAddress.toLowerCase()) {
-    failValidation("receiver must match fromAddress for this intent");
-  }
-}
-
-function assertBaseIntentFields(request: Record<string, unknown>) {
-  assertAddress(request.fromAddress, "fromAddress");
-  assertPositiveAmount(request.amountIn);
-  assertSlippage(request.slippage);
-  assertReceiverIsOwner(request);
-}
+const COMMON_INTENT_TX_TARGETS = [ENSO_ROUTER, ENSO_ROUTER_EXECUTOR] as const;
+const INTENT_TX_TARGET_ALLOWLIST: Record<EnsoIntentName, readonly string[]> = {
+  plainTokenSwap: COMMON_INTENT_TX_TARGETS,
+  yldVaultZapIn: COMMON_INTENT_TX_TARGETS,
+  yldVaultZapOut: COMMON_INTENT_TX_TARGETS,
+  yldVaultToVault: COMMON_INTENT_TX_TARGETS,
+  yldVaultToCvgCvxVault: COMMON_INTENT_TX_TARGETS,
+  cvgCvxVaultToYldVault: COMMON_INTENT_TX_TARGETS,
+  yldVaultToPxCvxVault: COMMON_INTENT_TX_TARGETS,
+  pxCvxVaultToYldVault: COMMON_INTENT_TX_TARGETS,
+  cvgCvxZapIn: COMMON_INTENT_TX_TARGETS,
+  cvgCvxZapOut: COMMON_INTENT_TX_TARGETS,
+  pxCvxZapIn: COMMON_INTENT_TX_TARGETS,
+  pxCvxZapOut: COMMON_INTENT_TX_TARGETS,
+};
 
 function assertOnlyIntentFields(
   request: Record<string, unknown>,
   fields: readonly string[]
 ) {
-  const allowedFields = new Set<string>([...BASE_INTENT_FIELDS, ...fields]);
-  for (const field of Object.keys(request)) {
-    if (!allowedFields.has(field)) {
-      failValidation(`${field} is not accepted by the ${String(request.intent)} intent`);
-    }
+  assertOnlyFields(request, [...BASE_INTENT_FIELDS, ...fields]);
+}
+
+function assertLiquidTokenAddress(
+  value: unknown,
+  field: string
+): asserts value is `0x${string}` {
+  assertTokenAddress(value, field);
+  if (getIntentVault(value)) {
+    failValidation(`${field} must be a liquid token, not a YLD vault`);
   }
 }
 
 export function getIntentVault(address: string): VaultConfig | undefined {
-  if (address.toLowerCase() === ZERO_ADDRESS) return undefined;
+  if (normalizeAddress(address) === ZERO_ADDRESS) return undefined;
   return getVaultByAddress(address);
 }
 
@@ -259,39 +224,39 @@ function assertYldVaultAsset(address: unknown, field: string, asset: string, lab
 
 function assertPlainTokenSwap(request: Record<string, unknown>): asserts request is PlainTokenSwapIntentRequest {
   assertBaseIntentFields(request);
-  assertAddress(request.tokenIn, "tokenIn");
-  assertAddress(request.tokenOut, "tokenOut");
-  if (request.tokenIn.toLowerCase() === request.tokenOut.toLowerCase()) {
+  assertLiquidTokenAddress(request.tokenIn, "tokenIn");
+  assertLiquidTokenAddress(request.tokenOut, "tokenOut");
+  if (normalizeAddress(request.tokenIn) === normalizeAddress(request.tokenOut)) {
     failValidation("tokenIn and tokenOut must be different");
   }
 }
 
 function assertYldVaultZapIn(request: Record<string, unknown>): asserts request is YldVaultZapInIntentRequest {
   assertBaseIntentFields(request);
-  assertAddress(request.inputToken, "inputToken");
+  assertLiquidTokenAddress(request.inputToken, "inputToken");
   assertStandardYldVault(request.vaultAddress, "vaultAddress");
 }
 
 function assertYldVaultZapOut(request: Record<string, unknown>): asserts request is YldVaultZapOutIntentRequest {
   assertBaseIntentFields(request);
   assertStandardYldVault(request.vaultAddress, "vaultAddress");
-  assertAddress(request.outputToken, "outputToken");
+  assertLiquidTokenAddress(request.outputToken, "outputToken");
 }
 
 function assertYldVaultToVault(request: Record<string, unknown>): asserts request is YldVaultToVaultIntentRequest {
   assertBaseIntentFields(request);
   assertStandardYldVault(request.sourceVault, "sourceVault");
   assertStandardYldVault(request.targetVault, "targetVault");
-  if (request.sourceVault.toLowerCase() === request.targetVault.toLowerCase()) {
+  if (normalizeAddress(request.sourceVault) === normalizeAddress(request.targetVault)) {
     failValidation("sourceVault and targetVault must be different");
   }
 }
 
 function assertSpecialYldVaultToVault(request: Record<string, unknown>): asserts request is SpecialYldVaultToVaultIntentRequest {
-  assertBaseIntentFields(request);
+  assertBaseIntentFields(request, { requireSlippage: true });
   assertYldVault(request.sourceVault, "sourceVault");
   assertYldVault(request.targetVault, "targetVault");
-  if (request.sourceVault.toLowerCase() === request.targetVault.toLowerCase()) {
+  if (normalizeAddress(request.sourceVault) === normalizeAddress(request.targetVault)) {
     failValidation("sourceVault and targetVault must be different");
   }
 
@@ -302,8 +267,8 @@ function assertSpecialYldVaultToVault(request: Record<string, unknown>): asserts
 }
 
 function assertSpecialYldVaultZapIn(request: Record<string, unknown>): asserts request is SpecialYldVaultZapInIntentRequest {
-  assertBaseIntentFields(request);
-  assertAddress(request.inputToken, "inputToken");
+  assertBaseIntentFields(request, { requireSlippage: true });
+  assertLiquidTokenAddress(request.inputToken, "inputToken");
 
   if (request.intent === "cvgCvxZapIn") {
     assertYldVaultAsset(request.vaultAddress, "vaultAddress", TOKENS.CVGCVX, "cvgCVX");
@@ -314,8 +279,8 @@ function assertSpecialYldVaultZapIn(request: Record<string, unknown>): asserts r
 }
 
 function assertSpecialYldVaultZapOut(request: Record<string, unknown>): asserts request is SpecialYldVaultZapOutIntentRequest {
-  assertBaseIntentFields(request);
-  assertAddress(request.outputToken, "outputToken");
+  assertBaseIntentFields(request, { requireSlippage: true });
+  assertLiquidTokenAddress(request.outputToken, "outputToken");
 
   if (request.intent === "cvgCvxZapOut") {
     assertYldVaultAsset(request.vaultAddress, "vaultAddress", TOKENS.CVGCVX, "cvgCVX");
@@ -330,11 +295,7 @@ export function assertValidEnsoIntentRequest(value: unknown): asserts value is E
     failValidation("Intent request body must be an object");
   }
 
-  for (const field of FORBIDDEN_INTENT_FIELDS) {
-    if (field in value) {
-      failValidation(`${field} is not accepted by the intent endpoint`);
-    }
-  }
+  assertNoForbiddenFields(value, FORBIDDEN_INTENT_FIELDS);
 
   switch (value.intent) {
     case "plainTokenSwap":
@@ -375,14 +336,27 @@ export function assertValidEnsoIntentRequest(value: unknown): asserts value is E
   }
 }
 
-export function assertEnsoIntentTxTarget(response: EnsoIntentResponse): void {
-  const target = response.tx.to.toLowerCase();
-  if (target === ENSO_SHORTCUTS.toLowerCase()) {
-    failResponse("Enso intent returned ENSO_SHORTCUTS as the transaction target");
+export function assertEnsoIntentTxTarget(
+  intent: EnsoIntentName,
+  response: EnsoIntentResponse
+): void;
+export function assertEnsoIntentTxTarget(response: EnsoIntentResponse): void;
+export function assertEnsoIntentTxTarget(
+  intentOrResponse: EnsoIntentName | EnsoIntentResponse,
+  maybeResponse?: EnsoIntentResponse
+): void {
+  const intent = typeof intentOrResponse === "string" ? intentOrResponse : "plainTokenSwap";
+  const response = typeof intentOrResponse === "string" ? maybeResponse : intentOrResponse;
+  if (!response) {
+    failValidation("Enso intent response is required");
   }
-  if (!ALLOWED_INTENT_TX_TARGETS.has(target)) {
-    failResponse("Enso intent returned an unexpected transaction target");
-  }
+
+  assertEnsoIntentTxTargetForIntent({
+    intent,
+    response,
+    allowedTargets: INTENT_TX_TARGET_ALLOWLIST,
+    forbiddenTargets: [ENSO_SHORTCUTS],
+  });
 }
 
 export function shouldUsePlainTokenSwapIntent(params: {
