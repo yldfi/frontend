@@ -78,6 +78,15 @@ import { getVault, getVaultByAddress, TOKENS, VAULT_UNDERLYING_TOKENS, VAULTS, E
 import { VaultInfoCard } from "@/components/VaultInfoCard";
 import type { EnsoToken, ZapDirection, SimulationAssetChange } from "@/types/enso";
 import {
+  getPendingTxCopy,
+  getRevertedTxCopy,
+  getSuccessTxCopy,
+  isVaultTxPendingVisible,
+  isZapTxPendingVisible,
+  TX_REVERTED_VISIBLE_MS,
+  TX_SUCCESS_VISIBLE_MS,
+} from "@/lib/transaction-ui";
+import {
   trackVaultView,
   trackDepositInitiated,
   trackDepositSuccess,
@@ -737,6 +746,18 @@ export function VaultPageContent({ id }: { id: string }) {
   } = useZapActions(zapQuote);
 
   const showZapApprovalCard = !!(zapPendingApproval && (zapStatus === "needsApproval" || zapStatus === "approving" || zapStatus === "waitingApproval"));
+  const isVaultTxPending = isVaultTxPendingVisible(txStatus) && !isSimulatingPreview && !showSimulationModal;
+  const isZapTxPending = isZapTxPendingVisible(zapStatus) && !isSimulatingPreview && !showSimulationModal;
+  const currentVaultHash = depositHash || withdrawHash;
+  const currentVaultAction = txStatus === "withdrawing" || (!!withdrawHash && !depositHash) || activeTab === "withdraw" ? "withdraw" : "deposit";
+  const currentVaultActionKind = currentVaultAction as "deposit" | "withdraw";
+  const currentVaultActionLabel = currentVaultAction === "withdraw" ? "withdrawal" : "deposit";
+  const currentVaultPendingCopy = getPendingTxCopy(Boolean(currentVaultHash), currentVaultActionLabel);
+  const currentZapPendingCopy = getPendingTxCopy(Boolean(zapHash), "zap");
+  const currentVaultSuccessCopy = getSuccessTxCopy(currentVaultActionKind);
+  const currentVaultRevertedCopy = getRevertedTxCopy(currentVaultActionKind);
+  const currentZapSuccessCopy = getSuccessTxCopy("zap");
+  const currentZapRevertedCopy = getRevertedTxCopy("zap");
 
   // Sync zapInProgress with zapIsLoading to pause quote fetching during transaction
   useEffect(() => {
@@ -1041,13 +1062,13 @@ export function VaultPageContent({ id }: { id: string }) {
             type: depositHash ? "deposit" : "withdraw",
             hash: currentHash,
           });
-          // Clear success animation after 2 seconds
+          // Keep completion visible long enough for mobile wallet app handoffs.
           setTimeout(() => {
             setShowTxSuccess(null);
             setPendingTxDetails(null);
             setPendingMultiStep(null);
             resetVaultActions();
-          }, 2000);
+          }, TX_SUCCESS_VISIBLE_MS);
 
           toast.success(`${depositHash ? "Deposit" : "Withdrawal"} successful!`, {
             action: {
@@ -1062,13 +1083,13 @@ export function VaultPageContent({ id }: { id: string }) {
             type: depositHash ? "deposit" : "withdraw",
             hash: currentHash,
           });
-          // Clear reverted animation after 3 seconds and reset
+          // Keep completion visible long enough for mobile wallet app handoffs.
           setTimeout(() => {
             setShowTxReverted(null);
             setPendingTxDetails(null);
             setPendingMultiStep(null);
             resetVaultActions();
-          }, 3000);
+          }, TX_REVERTED_VISIBLE_MS);
 
           toast.error(`${depositHash ? "Deposit" : "Withdrawal"} failed - transaction reverted`, {
             action: {
@@ -1143,13 +1164,13 @@ export function VaultPageContent({ id }: { id: string }) {
             type: "zap",
             hash: zapHash,
           });
-          // Clear success animation after 2 seconds
+          // Keep completion visible long enough for mobile wallet app handoffs.
           setTimeout(() => {
             setShowTxSuccess(null);
             setPendingTxDetails(null);
             setPendingMultiStep(null);
             resetZapActions();
-          }, 2000);
+          }, TX_SUCCESS_VISIBLE_MS);
 
           if (vault) trackZapSuccess(vault.id, zapDirection, zapDirection === "in" ? (zapInputToken?.symbol ?? "") : vault.symbol, zapDirection === "in" ? vault.symbol : (zapOutputToken?.symbol ?? ""), zapAmount || "0", zapQuote?.outputAmountFormatted ?? "0");
           toast.success("Zap successful!", {
@@ -1165,13 +1186,13 @@ export function VaultPageContent({ id }: { id: string }) {
             type: "zap",
             hash: zapHash,
           });
-          // Clear reverted animation after 3 seconds and reset
+          // Keep completion visible long enough for mobile wallet app handoffs.
           setTimeout(() => {
             setShowTxReverted(null);
             setPendingTxDetails(null);
             setPendingMultiStep(null);
             resetZapActions();
-          }, 3000);
+          }, TX_REVERTED_VISIBLE_MS);
 
           toast.error("Zap failed - transaction reverted", {
             action: {
@@ -1590,7 +1611,7 @@ export function VaultPageContent({ id }: { id: string }) {
             <div className="lg:col-span-2 min-w-0">
               <div className="sticky border border-[var(--border)] rounded-xl overflow-x-hidden w-full" style={{ top: "calc(6rem + var(--test-banner-height))" }}>
                 {/* Your Wallet - visible when connected with balance, hidden during pending/success/reverted states */}
-                {isConnected && vaultBalance > 0 && debugTxState === "none" && !pendingMultiStep && txStatus !== "waitingTx" && zapStatus !== "waitingTx" && !showTxSuccess?.show && !showTxReverted?.show && (
+                {isConnected && vaultBalance > 0 && debugTxState === "none" && !pendingMultiStep && !isVaultTxPending && !isZapTxPending && !showTxSuccess?.show && !showTxReverted?.show && (
                   <div className="bg-[var(--muted)]/30 p-5 border-b border-[var(--border)]">
                     <div className="flex flex-wrap items-center justify-center gap-4">
                       <div className="text-center basis-full sm:basis-auto">
@@ -1629,7 +1650,7 @@ export function VaultPageContent({ id }: { id: string }) {
                 )}
 
                 {/* Tabs - hidden during waitingTx (vault or zap)/pendingMultiStep/success/reverted states (visible during wallet signing & simulation) */}
-                {isVaultDeployed && debugTxState === "none" && !pendingMultiStep && txStatus !== "waitingTx" && zapStatus !== "waitingTx" && !showTxSuccess?.show && !showTxReverted?.show && (
+                {isVaultDeployed && debugTxState === "none" && !pendingMultiStep && !isVaultTxPending && !isZapTxPending && !showTxSuccess?.show && !showTxReverted?.show && (
                   <div className="p-5 pb-0">
                     <div className="flex border-b border-[var(--border)]">
                       {(["deposit", "withdraw", "zap"] as const).map((tab) => {
@@ -1751,12 +1772,14 @@ export function VaultPageContent({ id }: { id: string }) {
                   )}
 
                   {/* Transaction Pending State - Deposit/Withdraw */}
-                  {isVaultDeployed && (((isDebugDeposit || isDebugWithdraw) && isDebugPending) || (txStatus === "waitingTx" && (depositHash || withdrawHash))) && (
+                  {isVaultDeployed && (((isDebugDeposit || isDebugWithdraw) && isDebugPending) || isVaultTxPending) && (
                     <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
                       <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
                         <LoadingDots />
                       </div>
-                      <h3 className="text-lg font-medium mb-2">Awaiting Confirmation</h3>
+                      <h3 className="text-lg font-medium mb-2">
+                        {(isDebugDeposit || isDebugWithdraw) ? "Awaiting Confirmation" : currentVaultPendingCopy.title}
+                      </h3>
                       {/* Multi-Step List (when in multi-step mode) */}
                       {pendingMultiStep?.type === "deposit" && pendingMultiStep.step === 2 && pendingTxDetails && (
                         <div className="flex flex-col gap-3 mb-4 w-full max-w-xs">
@@ -1805,17 +1828,21 @@ export function VaultPageContent({ id }: { id: string }) {
                         );
                       })()}
                       <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
-                        Your {isDebugDeposit ? "deposit" : isDebugWithdraw ? "withdraw" : activeTab} transaction is being confirmed on-chain.
+                        {(isDebugDeposit || isDebugWithdraw)
+                          ? `Your ${isDebugDeposit ? "deposit" : "withdrawal"} transaction is being confirmed on-chain.`
+                          : currentVaultPendingCopy.message}
                       </p>
-                      <a
-                        href={`https://etherscan.io/tx/${depositHash || withdrawHash || debugHash}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
-                      >
-                        View on Etherscan
-                        <ExternalLink size={14} />
-                      </a>
+                      {(depositHash || withdrawHash || isDebugDeposit || isDebugWithdraw) && (
+                        <a
+                          href={`https://etherscan.io/tx/${depositHash || withdrawHash || debugHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
+                        >
+                          View on Etherscan
+                          <ExternalLink size={14} />
+                        </a>
+                      )}
                     </div>
                   )}
 
@@ -1826,10 +1853,10 @@ export function VaultPageContent({ id }: { id: string }) {
                         <Check className="w-8 h-8 text-green-500" />
                       </div>
                       <h3 className="text-lg font-medium mb-2 text-green-500">
-                        {isDebugDeposit ? "Deposit" : isDebugWithdraw ? "Withdrawal" : (showTxSuccess?.type === "deposit" ? "Deposit" : "Withdrawal")} Successful
+                        {isDebugDeposit ? "Deposit Successful" : isDebugWithdraw ? "Withdrawal Successful" : getSuccessTxCopy(showTxSuccess?.type === "withdraw" ? "withdraw" : "deposit").title}
                       </h3>
                       <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
-                        Your transaction has been confirmed.
+                        {currentVaultSuccessCopy.message}
                       </p>
                       <a
                         href={`https://etherscan.io/tx/${showTxSuccess?.hash || debugHash}`}
@@ -1850,10 +1877,10 @@ export function VaultPageContent({ id }: { id: string }) {
                         <X className="w-8 h-8 text-[var(--destructive)]" />
                       </div>
                       <h3 className="text-lg font-medium mb-2 text-[var(--destructive)]">
-                        {isDebugDeposit ? "Deposit" : isDebugWithdraw ? "Withdrawal" : (showTxReverted?.type === "deposit" ? "Deposit" : "Withdrawal")} Failed
+                        {isDebugDeposit ? "Deposit Failed" : isDebugWithdraw ? "Withdrawal Failed" : getRevertedTxCopy(showTxReverted?.type === "withdraw" ? "withdraw" : "deposit").title}
                       </h3>
                       <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
-                        Transaction reverted on-chain.
+                        {currentVaultRevertedCopy.message}
                       </p>
                       <a
                         href={`https://etherscan.io/tx/${showTxReverted?.hash || debugHash}`}
@@ -1868,7 +1895,7 @@ export function VaultPageContent({ id }: { id: string }) {
                   )}
 
                   {/* Deposit/Withdraw Form - hidden during pending/success/reverted states and multi-step approval */}
-                  {isVaultDeployed && activeTab !== "zap" && !isDebugDeposit && !isDebugWithdraw && !isDebugZap && txStatus !== "waitingTx" && !pendingMultiStep?.type && !(showTxSuccess?.show && (showTxSuccess.type === "deposit" || showTxSuccess.type === "withdraw")) && !(showTxReverted?.show && (showTxReverted.type === "deposit" || showTxReverted.type === "withdraw")) && (
+                  {isVaultDeployed && activeTab !== "zap" && !isDebugDeposit && !isDebugWithdraw && !isDebugZap && !isVaultTxPending && !pendingMultiStep?.type && !(showTxSuccess?.show && (showTxSuccess.type === "deposit" || showTxSuccess.type === "withdraw")) && !(showTxReverted?.show && (showTxReverted.type === "deposit" || showTxReverted.type === "withdraw")) && (
                     <>
                       {/* Input */}
                       <div>
@@ -2079,12 +2106,14 @@ export function VaultPageContent({ id }: { id: string }) {
                   )}
 
                   {/* Transaction Pending State - Zap */}
-                  {isVaultDeployed && ((isDebugZap && isDebugPending) || (zapStatus === "waitingTx" && zapHash)) && (
+                  {isVaultDeployed && ((isDebugZap && isDebugPending) || isZapTxPending) && (
                     <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
                       <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
                         <LoadingDots />
                       </div>
-                      <h3 className="text-lg font-medium mb-2">Awaiting Confirmation</h3>
+                      <h3 className="text-lg font-medium mb-2">
+                        {isDebugZap ? "Awaiting Confirmation" : currentZapPendingCopy.title}
+                      </h3>
                       {/* Transaction Details */}
                       {(() => {
                         const details = isDebugZap ? debugTxDetails : pendingTxDetails;
@@ -2103,17 +2132,21 @@ export function VaultPageContent({ id }: { id: string }) {
                         );
                       })()}
                       <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
-                        Your zap {isDebugZapIn ? "in" : isDebugZapOut ? "out" : (zapDirection === "in" ? "in" : "out")} transaction is being confirmed on-chain.
+                        {isDebugZap
+                          ? `Your zap ${isDebugZapIn ? "in" : isDebugZapOut ? "out" : (zapDirection === "in" ? "in" : "out")} transaction is being confirmed on-chain.`
+                          : currentZapPendingCopy.message}
                       </p>
-                      <a
-                        href={`https://etherscan.io/tx/${zapHash || debugHash}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
-                      >
-                        View on Etherscan
-                        <ExternalLink size={14} />
-                      </a>
+                      {(zapHash || isDebugZap) && (
+                        <a
+                          href={`https://etherscan.io/tx/${zapHash || debugHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
+                        >
+                          View on Etherscan
+                          <ExternalLink size={14} />
+                        </a>
+                      )}
                     </div>
                   )}
 
@@ -2123,9 +2156,9 @@ export function VaultPageContent({ id }: { id: string }) {
                       <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center mb-4">
                         <Check className="w-8 h-8 text-green-500" />
                       </div>
-                      <h3 className="text-lg font-medium mb-2 text-green-500">Zap Successful</h3>
+                      <h3 className="text-lg font-medium mb-2 text-green-500">{currentZapSuccessCopy.title}</h3>
                       <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
-                        Your transaction has been confirmed.
+                        {currentZapSuccessCopy.message}
                       </p>
                       <a
                         href={`https://etherscan.io/tx/${showTxSuccess?.hash || debugHash}`}
@@ -2145,9 +2178,9 @@ export function VaultPageContent({ id }: { id: string }) {
                       <div className="w-16 h-16 rounded-full bg-[var(--destructive)]/20 flex items-center justify-center mb-4">
                         <X className="w-8 h-8 text-[var(--destructive)]" />
                       </div>
-                      <h3 className="text-lg font-medium mb-2 text-[var(--destructive)]">Zap Failed</h3>
+                      <h3 className="text-lg font-medium mb-2 text-[var(--destructive)]">{currentZapRevertedCopy.title}</h3>
                       <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
-                        Transaction reverted on-chain.
+                        {currentZapRevertedCopy.message}
                       </p>
                       <a
                         href={`https://etherscan.io/tx/${showTxReverted?.hash || debugHash}`}
@@ -2162,7 +2195,7 @@ export function VaultPageContent({ id }: { id: string }) {
                   )}
 
                   {/* Zap Form - hidden during pending/success/reverted states and multi-step approval */}
-                  {isVaultDeployed && activeTab === "zap" && !isDebugZap && !isDebugDeposit && !isDebugWithdraw && zapStatus !== "waitingTx" && !pendingMultiStep?.type && !(showTxSuccess?.show && showTxSuccess.type === "zap") && !(showTxReverted?.show && showTxReverted.type === "zap") && (
+                  {isVaultDeployed && activeTab === "zap" && !isDebugZap && !isDebugDeposit && !isDebugWithdraw && !isZapTxPending && !pendingMultiStep?.type && !(showTxSuccess?.show && showTxSuccess.type === "zap") && !(showTxReverted?.show && showTxReverted.type === "zap") && (
                     <>
                       {/* Direction Toggle + Settings */}
                       <div className="flex items-center gap-1 p-1 rounded-lg bg-[var(--muted)] border border-[var(--border)]">

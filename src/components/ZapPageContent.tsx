@@ -31,6 +31,14 @@ import { cn } from "@/lib/utils";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { getMaxEthAmount } from "@/lib/eth-gas";
 import { VAULTS } from "@/config/vaults";
+import {
+  getPendingTxCopy,
+  getRevertedTxCopy,
+  getSuccessTxCopy,
+  isZapTxPendingVisible,
+  TX_REVERTED_VISIBLE_MS,
+  TX_SUCCESS_VISIBLE_MS,
+} from "@/lib/transaction-ui";
 
 import type { EnsoToken } from "@/types/enso";
 
@@ -348,21 +356,24 @@ export function ZapPageContent() {
       });
     }
 
-    // Keep completion state visible briefly before returning to idle
+    // Keep completion visible long enough for mobile wallet app handoffs.
     setTimeout(() => {
       setShowTxSuccess(null);
       setShowTxReverted(null);
       setPendingTxDetails(null);
       resetActions();
-    }, isSuccess ? 4500 : 5000);
+    }, isSuccess ? TX_SUCCESS_VISIBLE_MS : TX_REVERTED_VISIBLE_MS);
   }, [isSuccess, isReverted, zapHash, refetchInputBalance, resetActions, setAmount]);
 
   // Error display
   const noRoute = !quoteLoading && !!quoteError && !!amount && Number(amount) > 0;
-  const isPendingTx = status === "waitingTx" && !!zapHash;
+  const isPendingTx = isZapTxPendingVisible(status) && !isSimulatingPreview && !showSimulationModal;
   const isZapSuccessVisible = !!showTxSuccess?.show;
   const isZapRevertedVisible = !!showTxReverted?.show;
   const isTxStateVisible = isPendingTx || isZapSuccessVisible || isZapRevertedVisible;
+  const pendingCopy = getPendingTxCopy(Boolean(zapHash), "zap");
+  const successCopy = getSuccessTxCopy("zap");
+  const revertedCopy = getRevertedTxCopy("zap");
 
   return (
     <div className="min-h-screen bg-[var(--background)] flex flex-col">
@@ -511,7 +522,7 @@ export function ZapPageContent() {
                     <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
                       <LoadingDots />
                     </div>
-                    <h3 className="text-lg font-medium mb-2">Awaiting Confirmation</h3>
+                    <h3 className="text-lg font-medium mb-2">{pendingCopy.title}</h3>
                     {pendingTxDetails && (
                       <div className="flex items-center gap-2 mb-3 px-4 py-2 bg-[var(--muted)] rounded-lg max-w-full">
                         {pendingTxDetails.fromLogo ? (
@@ -532,17 +543,19 @@ export function ZapPageContent() {
                       </div>
                     )}
                     <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
-                      Your zap transaction is being confirmed on-chain.
+                      {pendingCopy.message}
                     </p>
-                    <a
-                      href={`https://etherscan.io/tx/${zapHash}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
-                    >
-                      View on Etherscan
-                      <ExternalLink size={14} />
-                    </a>
+                    {zapHash && (
+                      <a
+                        href={`https://etherscan.io/tx/${zapHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
+                      >
+                        View on Etherscan
+                        <ExternalLink size={14} />
+                      </a>
+                    )}
                   </div>
                 )}
 
@@ -551,9 +564,9 @@ export function ZapPageContent() {
                     <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center mb-4">
                       <Check className="w-8 h-8 text-green-500" />
                     </div>
-                    <h3 className="text-lg font-medium mb-2 text-green-500">Zap Successful</h3>
+                    <h3 className="text-lg font-medium mb-2 text-green-500">{successCopy.title}</h3>
                     <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
-                      Your transaction has been confirmed.
+                      {successCopy.message}
                     </p>
                     <a
                       href={`https://etherscan.io/tx/${showTxSuccess?.hash}`}
@@ -572,9 +585,9 @@ export function ZapPageContent() {
                     <div className="w-16 h-16 rounded-full bg-[var(--destructive)]/20 flex items-center justify-center mb-4">
                       <X className="w-8 h-8 text-[var(--destructive)]" />
                     </div>
-                    <h3 className="text-lg font-medium mb-2 text-[var(--destructive)]">Zap Failed</h3>
+                    <h3 className="text-lg font-medium mb-2 text-[var(--destructive)]">{revertedCopy.title}</h3>
                     <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
-                      Transaction reverted on-chain.
+                      {revertedCopy.message}
                     </p>
                     <a
                       href={`https://etherscan.io/tx/${showTxReverted?.hash}`}

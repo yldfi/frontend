@@ -481,6 +481,9 @@ export async function POST(
             assertEnsoIntentTxTarget(body.intent, bundle);
             return NextResponse.json(bundle, { headers: cors });
           }
+
+          default:
+            throw new Error(`Unhandled Enso intent: ${(body as { intent: string }).intent}`);
         }
       }
 

@@ -42,6 +42,7 @@ import { getVaultInfo } from "@/lib/curve-lending";
 import type { EnsoToken, EnsoRouteResponse } from "@/types/enso";
 import { CONTROLLER_ABI, ERC4626_ABI, CURVE_GET_DY_ABI, ERC20_BALANCE_ABI } from "@/lib/abis";
 import { CRVUSD_TOKEN, SCRVUSD_TOKEN } from "@/config/tokens";
+import { isLendingTxPendingVisible } from "@/lib/transaction-ui";
 
 interface BorrowTabProps {
   vault: VaultConfig;
@@ -52,7 +53,7 @@ interface BorrowTabProps {
   onEstimatedHealthChange?: (health: number | null) => void;
   onDebtDeltaChange?: (delta: bigint | null) => void;
   onCollateralDeltaChange?: (delta: bigint | null) => void;
-  onTxStateChange?: (state: { status: "pending" | "success" | "reverted"; action: string; hash: string; details?: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string } } | null) => void;
+  onTxStateChange?: (state: { status: "pending" | "success" | "reverted"; action: string; hash?: string | null; details?: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string; message?: string } } | null) => void;
   onSwitchTab?: (tab: string) => void;
 }
 
@@ -755,7 +756,8 @@ export function BorrowTab({
 
   // Report tx state to parent for full-screen overlay
   useEffect(() => {
-    if ((status === "waitingTx" || status === "success" || status === "reverted") && txHash) {
+    const isPending = isLendingTxPendingVisible(status);
+    if (isPending || ((status === "success" || status === "reverted") && txHash)) {
       let details: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string } | undefined;
       if (isCrvUsd && estimatedCrvUsdBorrow) {
         // Direct crvUSD borrow: show crvUSD amount only (no arrow needed, but using same shape)
@@ -775,7 +777,7 @@ export function BorrowTab({
           toLogo: borrowToken.logoURI || "/tokens/unknown.png",
         };
       }
-      const mapped = status === "waitingTx" ? "pending" : status;
+      const mapped = isPending ? "pending" : status;
       onTxStateChange?.({ status: mapped as "pending" | "success" | "reverted", action: "Borrow", hash: txHash, details });
     }
   }, [status, txHash, onTxStateChange, estimatedCrvUsdBorrow, borrowAmount, borrowToken, isCrvUsd]);

@@ -42,6 +42,7 @@ import { getVaultInfo } from "@/lib/curve-lending";
 import type { EnsoToken, EnsoRouteResponse } from "@/types/enso";
 import { CONTROLLER_ABI, ERC4626_ABI } from "@/lib/abis";
 import { CRVUSD_TOKEN, SCRVUSD_TOKEN } from "@/config/tokens";
+import { isLendingTxPendingVisible } from "@/lib/transaction-ui";
 
 interface RepayTabProps {
   vault: VaultConfig;
@@ -51,7 +52,7 @@ interface RepayTabProps {
   onEstimatedHealthChange?: (health: number | null) => void;
   onDebtDeltaChange?: (delta: bigint | null) => void;
   onCollateralDeltaChange?: (delta: bigint | null) => void;
-  onTxStateChange?: (state: { status: "pending" | "success" | "reverted"; action: string; hash: string; details?: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string } } | null) => void;
+  onTxStateChange?: (state: { status: "pending" | "success" | "reverted"; action: string; hash?: string | null; details?: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string; message?: string } } | null) => void;
   onSwitchTab?: (tab: string) => void;
 }
 
@@ -858,7 +859,8 @@ export function RepayTab({
 
   // Report tx state to parent for full-screen overlay
   useEffect(() => {
-    if ((status === "waitingTx" || status === "success" || status === "reverted") && txHash) {
+    const isPending = isLendingTxPendingVisible(status);
+    if (isPending || ((status === "success" || status === "reverted") && txHash)) {
       const action = isClosingLoan ? "Close Loan" : "Repay";
       const crvUsdAmount = isCrvUsd
         ? Number(repayAmount).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })
@@ -889,7 +891,7 @@ export function RepayTab({
         toLogo: "/tokens/crvusd.png",
         message,
       } : undefined;
-      const mapped = status === "waitingTx" ? "pending" : status;
+      const mapped = isPending ? "pending" : status;
       onTxStateChange?.({ status: mapped as "pending" | "success" | "reverted", action, hash: txHash, details });
     }
   }, [status, txHash, isClosingLoan, onTxStateChange, repayAmount, repayToken, isCrvUsd, isVaultWithCrvUsdUnderlying, estimatedCrvUsdOut, withdrawAmountWei, debouncedWithdrawAmount, vault.symbol, vault.decimals]);

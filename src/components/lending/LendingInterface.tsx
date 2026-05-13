@@ -20,11 +20,16 @@ import { useVaultCache } from "@/hooks/useVaultCache";
 import { LoadingDots } from "@/components/LoadingDots";
 import { useSettings } from "@/hooks/useSettings";
 import { trackLendingTabSwitch } from "@/lib/analytics";
+import {
+  getPendingTxCopy,
+  TX_REVERTED_VISIBLE_MS,
+  TX_SUCCESS_VISIBLE_MS,
+} from "@/lib/transaction-ui";
 
 export type LendingTxState = {
   status: "pending" | "success" | "reverted";
   action: string;
-  hash: string;
+  hash?: string | null;
   details?: {
     fromAmount: string;
     fromSymbol: string;
@@ -327,10 +332,10 @@ export function LendingInterface({
       if (state.action === "Create Loan") {
         setActiveTab("borrow");
       }
-      setTimeout(() => setActiveTxState(null), 2000);
+      setTimeout(() => setActiveTxState(null), TX_SUCCESS_VISIBLE_MS);
     }
     if (state?.status === "reverted") {
-      setTimeout(() => setActiveTxState(null), 3000);
+      setTimeout(() => setActiveTxState(null), TX_REVERTED_VISIBLE_MS);
     }
   }, [setActiveTab]);
 
@@ -684,7 +689,7 @@ export function LendingInterface({
     // the tab component unmounted before reporting success — auto-clear the overlay
     if (!hasLoan && prevHasLoan.current && activeTxState?.status === "pending") {
       setActiveTxState({ ...activeTxState, status: "success" });
-      setTimeout(() => setActiveTxState(null), 2000);
+      setTimeout(() => setActiveTxState(null), TX_SUCCESS_VISIBLE_MS);
     }
     prevHasLoan.current = hasLoan;
   }, [hasLoan, activeTxState, setActiveTab]);
@@ -727,6 +732,15 @@ export function LendingInterface({
   }
 
   // --- Tx State Overlay (shared between has-loan and no-loan views) ---
+  const pendingTxCopy = effectiveTxState?.status === "pending"
+    ? getPendingTxCopy(Boolean(effectiveTxState.hash), effectiveTxState.action)
+    : null;
+  const successTxCopy = effectiveTxState?.status === "success"
+    ? { title: `${effectiveTxState.action} Successful`, message: "Your transaction has been confirmed." }
+    : null;
+  const revertedTxCopy = effectiveTxState?.status === "reverted"
+    ? { title: `${effectiveTxState.action} Failed`, message: "Transaction reverted on-chain." }
+    : null;
   const txStateOverlay = effectiveTxState && (
     <div className="p-4">
       {effectiveTxState.status === "pending" && (
@@ -734,26 +748,13 @@ export function LendingInterface({
           <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
             <LoadingDots />
           </div>
-          <h3 className="text-lg font-medium mb-2">Awaiting Confirmation</h3>
+          <h3 className="text-lg font-medium mb-2">{pendingTxCopy?.title}</h3>
           {effectiveTxState.details && (() => {
             const d = effectiveTxState.details!;
             if (d.message) {
-              // Render message with inline token logos
-              const isSameToken = d.fromSymbol === d.toSymbol;
               return (
-                <div className="flex items-center flex-wrap justify-center gap-1 text-sm text-[var(--muted-foreground)] mb-3 px-4">
-                  <span>Repaying</span>
-                  <span className="mono">{d.toAmount}</span>
-                  <Image src={d.toLogo} alt={d.toSymbol} width={16} height={16} className="w-4 h-4 rounded-full" />
-                  <span className="mono">{d.toSymbol}</span>
-                  {!isSameToken && (
-                    <>
-                      <span>with</span>
-                      <span className="mono">{d.fromAmount}</span>
-                      <Image src={d.fromLogo} alt={d.fromSymbol} width={16} height={16} className="w-4 h-4 rounded-full" />
-                      <span className="mono">{d.fromSymbol}</span>
-                    </>
-                  )}
+                <div className="text-sm text-[var(--muted-foreground)] mb-3 px-4 max-w-sm">
+                  {d.message}
                 </div>
               );
             }
@@ -775,17 +776,19 @@ export function LendingInterface({
             );
           })()}
           <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
-            Your {effectiveTxState.action.toLowerCase()} transaction is being confirmed on-chain.
+            {pendingTxCopy?.message}
           </p>
-          <a
-            href={`https://etherscan.io/tx/${effectiveTxState.hash}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
-          >
-            View on Etherscan
-            <ExternalLink size={14} />
-          </a>
+          {effectiveTxState.hash && (
+            <a
+              href={`https://etherscan.io/tx/${effectiveTxState.hash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
+            >
+              View on Etherscan
+              <ExternalLink size={14} />
+            </a>
+          )}
         </div>
       )}
       {effectiveTxState.status === "success" && (
@@ -794,20 +797,22 @@ export function LendingInterface({
             <Check className="w-8 h-8 text-green-500" />
           </div>
           <h3 className="text-lg font-medium mb-2 text-green-500">
-            {effectiveTxState.action} Successful
+            {successTxCopy?.title ?? `${effectiveTxState.action} Successful`}
           </h3>
           <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
-            Your transaction has been confirmed.
+            {successTxCopy?.message ?? "Your transaction has been confirmed."}
           </p>
-          <a
-            href={`https://etherscan.io/tx/${effectiveTxState.hash}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
-          >
-            View on Etherscan
-            <ExternalLink size={14} />
-          </a>
+          {effectiveTxState.hash && (
+            <a
+              href={`https://etherscan.io/tx/${effectiveTxState.hash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
+            >
+              View on Etherscan
+              <ExternalLink size={14} />
+            </a>
+          )}
         </div>
       )}
       {effectiveTxState.status === "reverted" && (
@@ -816,20 +821,22 @@ export function LendingInterface({
             <X className="w-8 h-8 text-[var(--destructive)]" />
           </div>
           <h3 className="text-lg font-medium mb-2 text-[var(--destructive)]">
-            {effectiveTxState.action} Failed
+            {revertedTxCopy?.title ?? `${effectiveTxState.action} Failed`}
           </h3>
           <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
-            Transaction reverted on-chain.
+            {revertedTxCopy?.message ?? "Transaction reverted on-chain."}
           </p>
-          <a
-            href={`https://etherscan.io/tx/${effectiveTxState.hash}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
-          >
-            View on Etherscan
-            <ExternalLink size={14} />
-          </a>
+          {effectiveTxState.hash && (
+            <a
+              href={`https://etherscan.io/tx/${effectiveTxState.hash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
+            >
+              View on Etherscan
+              <ExternalLink size={14} />
+            </a>
+          )}
         </div>
       )}
     </div>

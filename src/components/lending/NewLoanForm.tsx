@@ -44,6 +44,7 @@ import { CURVE_SAVINGS, TOKENS, TANGENT } from "@/config/vaults";
 import { getVaultInfo } from "@/lib/curve-lending";
 import type { EnsoToken, EnsoRouteResponse } from "@/types/enso";
 import { CONTROLLER_ABI, ERC4626_ABI, CURVE_GET_DY_ABI, ERC20_BALANCE_ABI } from "@/lib/abis";
+import { isLendingTxPendingVisible } from "@/lib/transaction-ui";
 
 // Combined MAX button with hover options: MAX ALL (above) + Reset (below)
 function LeverageMaxButton({
@@ -151,7 +152,7 @@ interface NewLoanFormProps {
   onDebtDeltaChange?: (delta: bigint | null) => void;
   onCollateralAmountChange?: (amount: bigint | null) => void;
   onSettlingChange?: (settling: boolean) => void;
-  onTxStateChange?: (state: { status: "pending" | "success" | "reverted"; action: string; hash: string; details?: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string } } | null) => void;
+  onTxStateChange?: (state: { status: "pending" | "success" | "reverted"; action: string; hash?: string | null; details?: { fromAmount: string; fromSymbol: string; fromLogo: string; toAmount: string; toSymbol: string; toLogo: string; message?: string } } | null) => void;
   onBandsChange?: (bands: number) => void;
   defaultToken?: EnsoToken;
 }
@@ -1571,7 +1572,8 @@ export function NewLoanForm({
 
   // Report tx state to parent for full-screen overlay
   useEffect(() => {
-    if ((status === "waitingTx" || status === "success" || status === "reverted") && txHash) {
+    const isPending = isLendingTxPendingVisible(status);
+    if (isPending || ((status === "success" || status === "reverted") && txHash)) {
       // Determine output token details
       const toAmount = hasOutputSwap && debtInput
         ? Number(debtInput).toLocaleString(undefined, { maximumFractionDigits: 4 })
@@ -1587,7 +1589,7 @@ export function NewLoanForm({
         toSymbol,
         toLogo,
       } : undefined;
-      const mapped = status === "waitingTx" ? "pending" : status;
+      const mapped = isPending ? "pending" : status;
       onTxStateChange?.({ status: mapped as "pending" | "success" | "reverted", action: "Create Loan", hash: txHash, details });
     }
   }, [status, txHash, onTxStateChange, amount, selectedToken, debtAmount, hasOutputSwap, outputToken, debtInput]);
