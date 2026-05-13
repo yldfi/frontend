@@ -284,7 +284,7 @@ export function assertEnsoIntentTxTargetForIntent(params: {
   const forbiddenSelectors = new Set(
     (params.forbiddenSelectors ?? []).map((value) => value.toLowerCase())
   );
-  if (forbiddenSelectors.has(selector)) {
+  if (forbiddenSelectors.has(selector) && !allowedSelectorSet.has(selector)) {
     failResponse(`Enso intent ${params.intent} returned a forbidden router selector`);
   }
 

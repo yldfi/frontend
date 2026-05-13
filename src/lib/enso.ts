@@ -8946,6 +8946,7 @@ export async function fetchAnyFromLpxCvxRoute(params: {
 
   const { PIREX } = await import("@/config/vaults");
   const outputSymbol = getTokenSymbol(params.outputToken);
+  const outputIsCvx = params.outputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
   const slippageBps = validateSlippage(params.slippage);
   const totalSlippageBps = getBufferedSlippageBps(slippageBps);
 
@@ -8979,8 +8980,20 @@ export async function fetchAnyFromLpxCvxRoute(params: {
         ],
       },
     },
-    // Enso route CVX → output (uses Curve exchange output as input)
-    {
+  ];
+
+  if (outputIsCvx) {
+    actions.push({
+      protocol: "erc20",
+      action: "transfer",
+      args: {
+        token: TOKENS.CVX,
+        amount: { useOutputOfCallAt: 1 },
+        receiver: params.fromAddress,
+      },
+    });
+  } else {
+    actions.push({
       protocol: "enso",
       action: "route",
       args: {
@@ -8989,10 +9002,9 @@ export async function fetchAnyFromLpxCvxRoute(params: {
         amountIn: { useOutputOfCallAt: 1 },
         slippage: params.slippage ?? "100",
       },
-    },
-  ];
-
-  appendETHUnwrapIfNeeded(actions, params.outputToken);
+    });
+    appendETHUnwrapIfNeeded(actions, params.outputToken);
+  }
 
   const bundleResult = await fetchBundle({
     fromAddress: params.fromAddress,
@@ -9009,27 +9021,43 @@ export async function fetchAnyFromLpxCvxRoute(params: {
       description: "lpxCVX for CVX via Curve pool",
       protocol: "Curve",
     },
-    {
+  ];
+  if (outputIsCvx) {
+    steps.push({
       tokenSymbol: "CVX",
       amount: (Number(expectedCvx) / 1e18).toFixed(4),
-      action: "Swap",
-      description: `CVX for ${outputSymbol}`,
-      protocol: "Enso",
-    },
-    {
-      tokenSymbol: outputSymbol,
       action: "Receive",
       description: "tokens",
-      protocol: "Enso",
-    },
-  ];
+      protocol: "Curve",
+    });
+  } else {
+    steps.push(
+      {
+        tokenSymbol: "CVX",
+        amount: (Number(expectedCvx) / 1e18).toFixed(4),
+        action: "Swap",
+        description: `CVX for ${outputSymbol}`,
+        protocol: "Enso",
+      },
+      {
+        tokenSymbol: outputSymbol,
+        action: "Receive",
+        description: "tokens",
+        protocol: "Enso",
+      },
+    );
+  }
 
   return {
     ...bundleResult,
+    amountsOut: {
+      ...bundleResult.amountsOut,
+      ...(outputIsCvx ? { [TOKENS.CVX.toLowerCase()]: expectedCvx.toString() } : {}),
+    },
     routeInfo: {
       steps,
-      tokens: ["lpxCVX", "CVX", outputSymbol],
-      protocols: ["Curve", "Enso"],
+      tokens: outputIsCvx ? ["lpxCVX", "CVX"] : ["lpxCVX", "CVX", outputSymbol],
+      protocols: outputIsCvx ? ["Curve"] : ["Curve", "Enso"],
     },
   };
 }
@@ -9055,6 +9083,7 @@ export async function fetchAnyFromPxCvxRoute(params: {
 
   const { PIREX } = await import("@/config/vaults");
   const outputSymbol = getTokenSymbol(params.outputToken);
+  const outputIsCvx = params.outputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
   const slippageBps = validateSlippage(params.slippage);
   const totalSlippageBps = getBufferedSlippageBps(slippageBps);
 
@@ -9105,8 +9134,20 @@ export async function fetchAnyFromPxCvxRoute(params: {
         ],
       },
     },
-    // Enso route CVX → output
-    {
+  ];
+
+  if (outputIsCvx) {
+    actions.push({
+      protocol: "erc20",
+      action: "transfer",
+      args: {
+        token: TOKENS.CVX,
+        amount: { useOutputOfCallAt: 3 },
+        receiver: params.fromAddress,
+      },
+    });
+  } else {
+    actions.push({
       protocol: "enso",
       action: "route",
       args: {
@@ -9115,10 +9156,9 @@ export async function fetchAnyFromPxCvxRoute(params: {
         amountIn: { useOutputOfCallAt: 3 },
         slippage: params.slippage ?? "100",
       },
-    },
-  ];
-
-  appendETHUnwrapIfNeeded(actions, params.outputToken);
+    });
+    appendETHUnwrapIfNeeded(actions, params.outputToken);
+  }
 
   const bundleResult = await fetchBundle({
     fromAddress: params.fromAddress,
@@ -9141,27 +9181,43 @@ export async function fetchAnyFromPxCvxRoute(params: {
       description: "lpxCVX for CVX via Curve pool",
       protocol: "Curve",
     },
-    {
+  ];
+  if (outputIsCvx) {
+    steps.push({
       tokenSymbol: "CVX",
       amount: (Number(expectedCvx) / 1e18).toFixed(4),
-      action: "Swap",
-      description: `CVX for ${outputSymbol}`,
-      protocol: "Enso",
-    },
-    {
-      tokenSymbol: outputSymbol,
       action: "Receive",
       description: "tokens",
-      protocol: "Enso",
-    },
-  ];
+      protocol: "Curve",
+    });
+  } else {
+    steps.push(
+      {
+        tokenSymbol: "CVX",
+        amount: (Number(expectedCvx) / 1e18).toFixed(4),
+        action: "Swap",
+        description: `CVX for ${outputSymbol}`,
+        protocol: "Enso",
+      },
+      {
+        tokenSymbol: outputSymbol,
+        action: "Receive",
+        description: "tokens",
+        protocol: "Enso",
+      },
+    );
+  }
 
   return {
     ...bundleResult,
+    amountsOut: {
+      ...bundleResult.amountsOut,
+      ...(outputIsCvx ? { [TOKENS.CVX.toLowerCase()]: expectedCvx.toString() } : {}),
+    },
     routeInfo: {
       steps,
-      tokens: ["pxCVX", "lpxCVX", "CVX", outputSymbol],
-      protocols: ["Pirex", "Curve", "Enso"],
+      tokens: outputIsCvx ? ["pxCVX", "lpxCVX", "CVX"] : ["pxCVX", "lpxCVX", "CVX", outputSymbol],
+      protocols: outputIsCvx ? ["Pirex", "Curve"] : ["Pirex", "Curve", "Enso"],
     },
   };
 }
@@ -9187,6 +9243,7 @@ export async function fetchAnyFromCvgCvxRoute(params: {
 
   const { TANGENT } = await import("@/config/vaults");
   const outputSymbol = getTokenSymbol(params.outputToken);
+  const outputIsCvx = params.outputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
   const slippageBps = validateSlippage(params.slippage);
 
   // Estimate CVX1 output from Curve swap (cvgCVX index 1 → CVX1 index 0)
@@ -9234,8 +9291,20 @@ export async function fetchAnyFromCvgCvxRoute(params: {
         args: [{ useOutputOfCallAt: 1 }, ENSO_SHORTCUTS],
       },
     },
-    // Enso route CVX → output (CVX1 unwrap is 1:1, so use Curve exchange output)
-    {
+  ];
+
+  if (outputIsCvx) {
+    actions.push({
+      protocol: "erc20",
+      action: "transfer",
+      args: {
+        token: TOKENS.CVX,
+        amount: { useOutputOfCallAt: 1 },
+        receiver: params.fromAddress,
+      },
+    });
+  } else {
+    actions.push({
       protocol: "enso",
       action: "route",
       args: {
@@ -9244,10 +9313,9 @@ export async function fetchAnyFromCvgCvxRoute(params: {
         amountIn: { useOutputOfCallAt: 1 },
         slippage: params.slippage ?? "100",
       },
-    },
-  ];
-
-  appendETHUnwrapIfNeeded(actions, params.outputToken);
+    });
+    appendETHUnwrapIfNeeded(actions, params.outputToken);
+  }
 
   const bundleResult = await fetchBundle({
     fromAddress: params.fromAddress,
@@ -9270,27 +9338,43 @@ export async function fetchAnyFromCvgCvxRoute(params: {
       description: "CVX1 to CVX (1:1)",
       protocol: "Convex",
     },
-    {
+  ];
+  if (outputIsCvx) {
+    steps.push({
       tokenSymbol: "CVX",
       amount: (Number(expectedCvx1) / 1e18).toFixed(4),
-      action: "Swap",
-      description: `CVX for ${outputSymbol}`,
-      protocol: "Enso",
-    },
-    {
-      tokenSymbol: outputSymbol,
       action: "Receive",
       description: "tokens",
-      protocol: "Enso",
-    },
-  ];
+      protocol: "Convex",
+    });
+  } else {
+    steps.push(
+      {
+        tokenSymbol: "CVX",
+        amount: (Number(expectedCvx1) / 1e18).toFixed(4),
+        action: "Swap",
+        description: `CVX for ${outputSymbol}`,
+        protocol: "Enso",
+      },
+      {
+        tokenSymbol: outputSymbol,
+        action: "Receive",
+        description: "tokens",
+        protocol: "Enso",
+      },
+    );
+  }
 
   return {
     ...bundleResult,
+    amountsOut: {
+      ...bundleResult.amountsOut,
+      ...(outputIsCvx ? { [TOKENS.CVX.toLowerCase()]: expectedCvx1.toString() } : {}),
+    },
     routeInfo: {
       steps,
-      tokens: ["cvgCVX", "CVX1", "CVX", outputSymbol],
-      protocols: ["Curve", "Convex", "Enso"],
+      tokens: outputIsCvx ? ["cvgCVX", "CVX1", "CVX"] : ["cvgCVX", "CVX1", "CVX", outputSymbol],
+      protocols: outputIsCvx ? ["Curve", "Convex"] : ["Curve", "Convex", "Enso"],
     },
   };
 }
