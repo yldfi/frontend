@@ -72,6 +72,7 @@ import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS } from "@/lib/enso";
 import { getMaxEthAmount } from "@/lib/eth-gas";
+import { getVaultFormBalanceAddresses } from "@/lib/vault-form-balances";
 import { CHAINLINK_ETH_USD } from "@/config/addresses";
 import { getVault, getVaultByAddress, TOKENS, VAULT_UNDERLYING_TOKENS, VAULTS, EXTERNAL_VAULT_TOKENS, CURVE_CONTROLLERS, CURVE_SAVINGS } from "@/config/vaults";
 import { VaultInfoCard } from "@/components/VaultInfoCard";
@@ -638,13 +639,14 @@ export function VaultPageContent({ id }: { id: string }) {
     }
   };
   const underlyingPrice = getUnderlyingPrice();
+  const { depositTokenAddress, withdrawTokenAddress } = getVaultFormBalanceAddresses(vault);
 
   // Fetch price per share from on-chain
-  const vaultAddressTyped = (vault?.address ?? "0x0000000000000000000000000000000000000000") as `0x${string}`;
+  const vaultAddressTyped = withdrawTokenAddress;
   const { pricePerShare, pricePerShareFormatted, isLoading: ppsLoading } = usePricePerShare(vaultAddressTyped);
 
   // Fetch user balances
-  const { balance: tokenBalanceRaw, decimals: tokenDecimals, formatted: tokenBalanceFormatted, isLoading: tokenBalanceLoading, refetch: refetchTokenBalance } = useTokenBalance(TOKENS.CVXCRV);
+  const { balance: tokenBalanceRaw, decimals: tokenDecimals, formatted: tokenBalanceFormatted, isLoading: tokenBalanceLoading, refetch: refetchTokenBalance } = useTokenBalance(depositTokenAddress);
   const {
     balance: vaultBalanceRaw,
     decimals: vaultDecimals,

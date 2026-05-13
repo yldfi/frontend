@@ -1,10 +1,44 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { formatUnits, parseUnits } from "viem";
+import { TOKENS, VAULTS } from "@/config/vaults";
+import { getVaultFormBalanceAddresses } from "@/lib/vault-form-balances";
 
 // Test the VaultPageContent business logic directly
 // We test vault configuration, calculations, and formatting without rendering components
 
 describe("VaultPageContent logic", () => {
+  describe("form balance contract selection", () => {
+    it("uses each vault underlying token for deposit balances and vault shares for withdraw balances", () => {
+      for (const vault of Object.values(VAULTS)) {
+        const addresses = getVaultFormBalanceAddresses(vault);
+
+        expect(addresses.depositTokenAddress.toLowerCase()).toBe(vault.assetAddress.toLowerCase());
+        expect(addresses.withdrawTokenAddress.toLowerCase()).toBe(vault.address.toLowerCase());
+      }
+    });
+
+    it("covers the live vault underlying-token matrix", () => {
+      expect(getVaultFormBalanceAddresses(VAULTS.ycvx).depositTokenAddress).toBe(TOKENS.CVX);
+      expect(getVaultFormBalanceAddresses(VAULTS.yscvx).depositTokenAddress).toBe(TOKENS.CVX);
+      expect(getVaultFormBalanceAddresses(VAULTS.ycvxcrv).depositTokenAddress).toBe(TOKENS.CVXCRV);
+      expect(getVaultFormBalanceAddresses(VAULTS.yscvxcrv).depositTokenAddress).toBe(TOKENS.CVXCRV);
+      expect(getVaultFormBalanceAddresses(VAULTS.ycvgcvx).depositTokenAddress).toBe(TOKENS.CVGCVX);
+      expect(getVaultFormBalanceAddresses(VAULTS.yscvgcvx).depositTokenAddress).toBe(TOKENS.CVGCVX);
+      expect(getVaultFormBalanceAddresses(VAULTS.yspxcvx).depositTokenAddress).toBe(TOKENS.PXCVX);
+    });
+
+    it("keeps VaultPageContent wired to dynamic deposit and withdraw balance addresses", () => {
+      const source = readFileSync(join(process.cwd(), "src/components/VaultPageContent.tsx"), "utf-8");
+
+      expect(source).toContain("getVaultFormBalanceAddresses(vault)");
+      expect(source).toContain("const vaultAddressTyped = withdrawTokenAddress;");
+      expect(source).toMatch(/useTokenBalance\(\s*depositTokenAddress\s*\)/);
+      expect(source).not.toMatch(/useTokenBalance\(\s*TOKENS\.CVXCRV\s*\)/);
+    });
+  });
+
   describe("vaultsData configuration", () => {
     const YCVXCRV_ADDRESS = "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86";
     const YSCVXCRV_ADDRESS = "0x27B5739e22ad9033bcBf192059122d163b60349D";
