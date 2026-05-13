@@ -263,34 +263,10 @@ export async function POST(
       }
 
       case "bundle": {
-        const { actions, ...config } = body;
-        const bundleData = await ensoClient.getBundleData(
-          {
-            chainId: CHAIN_ID,
-            fromAddress: config.fromAddress as `0x${string}`,
-            routingStrategy: (config.routingStrategy as "router" | "delegate") ?? "router",
-            referralCode: REFERRAL_CODE,
-            receiver: config.receiver as `0x${string}` | undefined,
-            skipQuote: config.skipQuote as boolean | undefined,
-          },
-          actions as Parameters<typeof ensoClient.getBundleData>[1]
+        return NextResponse.json(
+          { error: "Raw Enso bundle actions are disabled; use /api/enso/intent" },
+          { status: 410, headers: cors }
         );
-        return NextResponse.json({
-          tx: {
-            to: bundleData.tx.to,
-            data: bundleData.tx.data,
-            value: String(bundleData.tx.value),
-            from: bundleData.tx.from ?? config.fromAddress,
-          },
-          gas: String(bundleData.gas ?? "0"),
-          amountsOut: bundleData.amountsOut
-            ? Object.fromEntries(
-                Object.entries(bundleData.amountsOut).map(([k, v]) => [k, String(v)])
-              )
-            : {},
-          route: bundleData.route,
-          priceImpact: bundleData.priceImpact,
-        }, { headers: cors });
       }
 
       case "tokens": {

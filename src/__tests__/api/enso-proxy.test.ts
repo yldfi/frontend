@@ -6,14 +6,19 @@ import { describe, it, expect } from "vitest";
 const KNOWN_METHODS = new Set([
   "intent",
   "route",
-  "bundle",
   "tokens",
   "prices",
   "balances",
 ]);
 
+const DISABLED_METHODS = new Set(["bundle"]);
+
 function isKnownMethod(method: string): boolean {
   return KNOWN_METHODS.has(method);
+}
+
+function isDisabledMethod(method: string): boolean {
+  return DISABLED_METHODS.has(method);
 }
 
 // BigInt serialization for route response
@@ -59,10 +64,14 @@ describe("Enso Proxy API", () => {
     it("accepts known methods", () => {
       expect(isKnownMethod("intent")).toBe(true);
       expect(isKnownMethod("route")).toBe(true);
-      expect(isKnownMethod("bundle")).toBe(true);
       expect(isKnownMethod("tokens")).toBe(true);
       expect(isKnownMethod("prices")).toBe(true);
       expect(isKnownMethod("balances")).toBe(true);
+    });
+
+    it("keeps raw bundle disabled", () => {
+      expect(isKnownMethod("bundle")).toBe(false);
+      expect(isDisabledMethod("bundle")).toBe(true);
     });
 
     it("rejects unknown methods", () => {
