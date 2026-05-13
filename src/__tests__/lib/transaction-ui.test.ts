@@ -5,6 +5,8 @@ import {
   isLendingTxPendingVisible,
   isVaultTxPendingVisible,
   isZapTxPendingVisible,
+  TX_REVERTED_VISIBLE_MS,
+  TX_SUCCESS_VISIBLE_MS,
 } from "@/lib/transaction-ui";
 
 describe("transaction-ui", () => {
@@ -33,5 +35,10 @@ describe("transaction-ui", () => {
       message:
         "Confirm the repay transaction in your wallet. If you already confirmed on mobile, keep this page open while the wallet returns the transaction hash.",
     });
+  });
+
+  it("keeps success visible briefly but leaves failures longer", () => {
+    expect(TX_SUCCESS_VISIBLE_MS).toBe(10_000);
+    expect(TX_REVERTED_VISIBLE_MS).toBeGreaterThan(TX_SUCCESS_VISIBLE_MS);
   });
 });
