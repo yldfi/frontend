@@ -456,10 +456,7 @@ export async function POST(
               tokenIn: body.tokenIn,
               amountIn: body.amountIn,
               slippage: Number(body.slippage),
-              maxRepayAmount: body.maxRepayAmount,
               inSoftLiquidation: body.inSoftLiquidation,
-              withdrawAmount: body.withdrawAmount,
-              withdrawTokenOut: body.withdrawTokenOut,
             });
             assertEnsoIntentTxTarget(body.intent, bundle);
             return NextResponse.json(bundle, { headers: cors });

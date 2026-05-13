@@ -178,10 +178,7 @@ export async function fetchRepayWithSwapBundle(params: {
       tokenIn: params.tokenIn,
       amountIn: params.amountIn,
       slippage: String(params.slippage ?? 100),
-      maxRepayAmount: params.maxRepayAmount,
       inSoftLiquidation: params.inSoftLiquidation,
-      withdrawAmount: params.withdrawAmount,
-      withdrawTokenOut: params.withdrawTokenOut,
       receiver: params.fromAddress,
     });
   }
