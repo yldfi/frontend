@@ -8,6 +8,11 @@ import type { Hex } from "viem";
 import type { EnsoToken, EnsoTokensResponse, EnsoRouteResponse, EnsoBundleAction, EnsoBundleResponse, RouteInfo, RouteStep, CustomBundleResponse, LegacyMorphoPermitCall, LegacyMorphoPermitRequest } from "@/types/enso";
 import { TOKENS, VAULTS, VAULT_ADDRESSES, CURVE_SAVINGS, isYldfiVault as checkIsYldfiVault } from "@/config/vaults";
 import { getAllRpcUrls } from "@/config/rpc";
+import {
+  fetchEnsoIntent,
+  isStandardYldVaultIntentVault,
+  shouldUsePlainTokenSwapIntent,
+} from "@/lib/enso-intents";
 import { formatTokenAmount } from "@/lib/utils";
 
 // Import Curve helpers from dedicated module
@@ -2130,7 +2135,27 @@ export async function fetchRoute(params: {
     slippage: params.slippage ?? "100",
   });
 
-  // Client-side: proxy through our API route to keep API key server-side
+  // Client-side: proxy low-risk user-owned swaps through the named intent route.
+  if (typeof window !== "undefined" && shouldUsePlainTokenSwapIntent(params)) {
+    const result = await fetchEnsoIntent<EnsoRouteResponse>({
+      intent: "plainTokenSwap",
+      fromAddress: params.fromAddress,
+      tokenIn: params.tokenIn,
+      tokenOut: params.tokenOut,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.receiver ?? params.fromAddress,
+    });
+    console.log("[Enso Route] Response (via intent):", {
+      amountOut: result.amountOut,
+      gas: result.gas,
+      priceImpact: result.priceImpact,
+    });
+    return result;
+  }
+
+  // Client-side fallback for internal route builders that intentionally use an
+  // app receiver such as a zapper contract or Enso shortcut context.
   if (typeof window !== "undefined") {
     const res = await fetch("/api/enso/route", {
       method: "POST",
@@ -2698,6 +2723,18 @@ export async function fetchZapOutRoute(params: {
   slippage?: string;
   underlyingToken?: string; // defaults to cvxCRV
 }): Promise<EnsoBundleResponse> {
+  if (typeof window !== "undefined" && isStandardYldVaultIntentVault(params.vaultAddress)) {
+    return fetchEnsoIntent<EnsoBundleResponse>({
+      intent: "yldVaultZapOut",
+      fromAddress: params.fromAddress,
+      vaultAddress: params.vaultAddress,
+      outputToken: params.outputToken,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const underlying = params.underlyingToken || CVXCRV_ADDRESS;
   const amountIn = await clampAmountIn(params.vaultAddress, params.amountIn);
 
@@ -2749,6 +2786,18 @@ export async function fetchZapInRoute(params: {
   slippage?: string;
   underlyingToken?: string; // defaults to cvxCRV
 }): Promise<EnsoBundleResponse> {
+  if (typeof window !== "undefined" && isStandardYldVaultIntentVault(params.vaultAddress)) {
+    return fetchEnsoIntent<EnsoBundleResponse>({
+      intent: "yldVaultZapIn",
+      fromAddress: params.fromAddress,
+      vaultAddress: params.vaultAddress,
+      inputToken: params.inputToken,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const underlying = params.underlyingToken || CVXCRV_ADDRESS;
   const amountIn = await clampAmountIn(params.inputToken, params.amountIn);
 
@@ -2802,6 +2851,22 @@ export async function fetchVaultToVaultRoute(params: {
   // Block same-vault zaps (pointless)
   if (params.sourceVault.toLowerCase() === params.targetVault.toLowerCase()) {
     throw new Error("Cannot zap from a vault to itself");
+  }
+
+  if (
+    typeof window !== "undefined" &&
+    isStandardYldVaultIntentVault(params.sourceVault) &&
+    isStandardYldVaultIntentVault(params.targetVault)
+  ) {
+    return fetchEnsoIntent<EnsoBundleResponse>({
+      intent: "yldVaultToVault",
+      fromAddress: params.fromAddress,
+      sourceVault: params.sourceVault,
+      targetVault: params.targetVault,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
   }
 
   // Look up underlying tokens from VAULTS config if not provided

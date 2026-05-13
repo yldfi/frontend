@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest";
 
 // Known API methods
 const KNOWN_METHODS = new Set([
+  "intent",
   "route",
   "bundle",
   "tokens",
@@ -56,6 +57,7 @@ function getCorsOrigin(origin: string): string {
 describe("Enso Proxy API", () => {
   describe("method validation", () => {
     it("accepts known methods", () => {
+      expect(isKnownMethod("intent")).toBe(true);
       expect(isKnownMethod("route")).toBe(true);
       expect(isKnownMethod("bundle")).toBe(true);
       expect(isKnownMethod("tokens")).toBe(true);
