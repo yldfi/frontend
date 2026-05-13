@@ -322,6 +322,20 @@ describe("Enso intent validation", () => {
     })).toThrow("pxCVX-backed");
   });
 
+  it("keeps curve repay-with-swap intent limited to repay semantics", () => {
+    for (const field of ["maxRepayAmount", "withdrawAmount", "withdrawTokenOut"]) {
+      expect(() => assertValidEnsoIntentRequest({
+        intent: "curveLendingRepayWithSwap",
+        fromAddress: USER,
+        vaultAddress: VAULT_ADDRESSES.YCVXCRV,
+        tokenIn: TOKENS.CVX,
+        amountIn: ONE_ETHER,
+        slippage: "100",
+        [field]: field === "withdrawTokenOut" ? TOKENS.CVX : ONE_ETHER,
+      })).toThrow(`${field} is not accepted`);
+    }
+  });
+
   it("selects and validates special vault-to-vault intent names", () => {
     expect(getYldVaultToVaultIntentName({
       sourceVault: VAULT_ADDRESSES.YCVXCRV,

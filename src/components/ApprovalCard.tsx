@@ -6,6 +6,7 @@ import { formatUnits } from "viem";
 import { cn } from "@/lib/utils";
 import type { PendingApproval, ApprovalProgress } from "@/types/approval";
 import { LoadingDots } from "@/components/LoadingDots";
+import { FORBIDDEN_APPROVAL_SPENDER_ERROR, isForbiddenApprovalSpender } from "@/lib/approval-safety";
 
 interface ApprovalCardProps {
   show: boolean;
@@ -33,6 +34,7 @@ export function ApprovalCard({
 
   const hasMultiStep = approvalProgress && approvalProgress.total > 1;
   const hasExactAmount = pendingApproval?.type !== "controller" && pendingApproval?.amount;
+  const hasForbiddenApproval = isForbiddenApprovalSpender(pendingApproval?.spender);
 
   return (
     <div
@@ -97,7 +99,11 @@ export function ApprovalCard({
             )}
 
             {/* Approval buttons */}
-            {hasExactAmount ? (
+            {hasForbiddenApproval ? (
+              <div className="rounded-md border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-600 dark:text-red-400">
+                {FORBIDDEN_APPROVAL_SPENDER_ERROR}
+              </div>
+            ) : hasExactAmount ? (
               <div className="flex gap-2">
                 <button
                   onClick={() => { setApprovingType("exact"); onApprove(true); }}
