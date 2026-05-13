@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { encodeFunctionData, parseAbi } from "viem";
 import {
   assertEnsoIntentTxTarget,
   assertValidEnsoIntentRequest,
@@ -12,6 +13,22 @@ import { TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 const USER = "0x1000000000000000000000000000000000000001";
 const OTHER = "0x2000000000000000000000000000000000000002";
 const ONE_ETHER = "1000000000000000000";
+const ENSO_ROUTER_EXECUTOR = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf";
+const ENSO_SHORTCUTS = "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003";
+const ENSO_ROUTER_ENTRYPOINT_ABI = parseAbi([
+  "function routeSingle((uint8 tokenType, bytes data) tokenIn, bytes data) payable returns (bytes)",
+  "function routeMulti((uint8 tokenType, bytes data)[] tokensIn, bytes data) payable returns (bytes)",
+]);
+const ROUTE_SINGLE_CALLDATA = encodeFunctionData({
+  abi: ENSO_ROUTER_ENTRYPOINT_ABI,
+  functionName: "routeSingle",
+  args: [{ tokenType: 0, data: "0x" }, "0x1234"],
+});
+const ROUTE_MULTI_CALLDATA = encodeFunctionData({
+  abi: ENSO_ROUTER_ENTRYPOINT_ABI,
+  functionName: "routeMulti",
+  args: [[], "0x1234"],
+});
 
 describe("Enso intent validation", () => {
   it("accepts a plain user-owned token swap intent", () => {
@@ -298,8 +315,8 @@ describe("Enso intent validation", () => {
   it("allows only per-intent Enso router transaction targets in intent responses", () => {
     expect(() => assertEnsoIntentTxTarget("cvgCvxZapOut", {
       tx: {
-        to: "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf",
-        data: "0x",
+        to: ENSO_ROUTER_EXECUTOR,
+        data: ROUTE_SINGLE_CALLDATA,
         value: "0",
       },
       gas: "1",
@@ -309,8 +326,8 @@ describe("Enso intent validation", () => {
 
     expect(() => assertEnsoIntentTxTarget("cvgCvxZapOut", {
       tx: {
-        to: "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003",
-        data: "0x",
+        to: ENSO_SHORTCUTS,
+        data: ROUTE_SINGLE_CALLDATA,
         value: "0",
       },
       gas: "1",
@@ -321,7 +338,7 @@ describe("Enso intent validation", () => {
     expect(() => assertEnsoIntentTxTarget("cvgCvxZapOut", {
       tx: {
         to: OTHER,
-        data: "0x",
+        data: ROUTE_SINGLE_CALLDATA,
         value: "0",
         from: USER,
       },
@@ -333,7 +350,7 @@ describe("Enso intent validation", () => {
   it("rejects malformed Enso intent response payloads before returning them", () => {
     expect(() => assertEnsoIntentTxTarget("plainTokenSwap", {
       tx: {
-        to: "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf",
+        to: ENSO_ROUTER_EXECUTOR,
         data: "not-hex",
         value: "0",
       },
@@ -344,8 +361,8 @@ describe("Enso intent validation", () => {
 
     expect(() => assertEnsoIntentTxTarget("plainTokenSwap", {
       tx: {
-        to: "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf",
-        data: "0x",
+        to: ENSO_ROUTER_EXECUTOR,
+        data: ROUTE_SINGLE_CALLDATA,
         value: "0",
         from: USER,
       },
@@ -355,5 +372,40 @@ describe("Enso intent validation", () => {
         notAddress: "1",
       },
     })).toThrow("invalid token address");
+  });
+
+  it("rejects unexpected or undecodable Enso router calldata", () => {
+    expect(() => assertEnsoIntentTxTarget("plainTokenSwap", {
+      tx: {
+        to: ENSO_ROUTER_EXECUTOR,
+        data: ROUTE_MULTI_CALLDATA,
+        value: "0",
+      },
+      gas: "1",
+      amountOut: "1",
+      route: [],
+    })).toThrow("forbidden router selector");
+
+    expect(() => assertEnsoIntentTxTarget("plainTokenSwap", {
+      tx: {
+        to: ENSO_ROUTER_EXECUTOR,
+        data: "0xdeadbeef",
+        value: "0",
+      },
+      gas: "1",
+      amountOut: "1",
+      route: [],
+    })).toThrow("unexpected router selector");
+
+    expect(() => assertEnsoIntentTxTarget("plainTokenSwap", {
+      tx: {
+        to: ENSO_ROUTER_EXECUTOR,
+        data: "0xb94c3609",
+        value: "0",
+      },
+      gas: "1",
+      amountOut: "1",
+      route: [],
+    })).toThrow("undecodable router calldata");
   });
 });
