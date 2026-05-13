@@ -6,6 +6,11 @@ import { EnsoClient } from "@ensofinance/sdk";
 import { encodeFunctionData, parseAbi } from "viem";
 import type { Hex } from "viem";
 import type { EnsoToken, EnsoTokensResponse, EnsoRouteResponse, EnsoBundleAction, EnsoBundleResponse, RouteInfo, RouteStep, CustomBundleResponse, LegacyMorphoPermitCall, LegacyMorphoPermitRequest } from "@/types/enso";
+import {
+  ENSO_ROUTER as ENSO_ROUTER_ADDRESS,
+  ENSO_ROUTER_EXECUTOR as ENSO_ROUTER_EXECUTOR_ADDRESS,
+  ENSO_SHORTCUTS as ENSO_SHORTCUTS_ADDRESS,
+} from "@/lib/enso-addresses";
 import { LLAMA_AIRFORCE as STATIC_LLAMA_AIRFORCE, TOKENS, VAULTS, VAULT_ADDRESSES, CURVE_SAVINGS, isYldfiVault as checkIsYldfiVault } from "@/config/vaults";
 import { getAllRpcUrls } from "@/config/rpc";
 import {
@@ -273,11 +278,11 @@ export const CVXCRV_ADDRESS = TOKENS.CVXCRV;
 
 // Enso router contract addresses
 // Old EnsoShortcutRouter
-export const ENSO_ROUTER = "0x80EbA3855878739F4710233A8a19d89Bdd2ffB8E";
+export const ENSO_ROUTER = ENSO_ROUTER_ADDRESS;
 // Enso Router Executor — the CORRECT spender for user token approvals.
 // Enso's own /wallet/approve endpoint returns this address as the spender.
 // The Router pulls tokens via safeTransferFrom(msg.sender, enso, amount) in tokensIn.
-export const ENSO_ROUTER_EXECUTOR = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf";
+export const ENSO_ROUTER_EXECUTOR = ENSO_ROUTER_EXECUTOR_ADDRESS;
 // EnsoShortcuts contract — shared singleton execution context.
 // This is msg.sender when Enso calls external contracts via the "call" action.
 // Used as a DESTINATION for tokens during bundle execution (e.g., mint/unwrap to here).
@@ -288,7 +293,7 @@ export const ENSO_ROUTER_EXECUTOR = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf"
 // ENSO_SHORTCUTS, their tokens can be drained via crafted routeMulti commands.
 // For user approvals, use ENSO_ROUTER_EXECUTOR (the Router) instead.
 // For complex flows needing mid-bundle token pulls, use the LlamaLendZapper contract.
-export const ENSO_SHORTCUTS = "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003";
+export const ENSO_SHORTCUTS = ENSO_SHORTCUTS_ADDRESS;
 const HYBRID_EXTRA_BUFFER_BPS = Number(process.env.ENSO_HYBRID_EXTRA_BUFFER_BPS ?? "200");
 
 // yld referral code for Enso attribution

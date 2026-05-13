@@ -1,5 +1,6 @@
-// Mirrors ENSO_SHORTCUTS from src/lib/enso.ts without importing the large Enso module.
-export const ENSO_SHORTCUTS_ADDRESS = "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003";
+import { ENSO_SHORTCUTS } from "@/lib/enso-addresses";
+
+export const ENSO_SHORTCUTS_ADDRESS = ENSO_SHORTCUTS;
 
 export const FORBIDDEN_APPROVAL_SPENDER_ERROR =
   "Refusing to request approval for Enso Shortcuts. User approvals must target Enso Router Executor or an explicit trusted protocol spender.";
