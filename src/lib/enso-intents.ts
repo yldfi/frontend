@@ -181,10 +181,7 @@ export type CurveLendingRepayWithSwapIntentRequest = BaseIntentRequest & {
   intent: "curveLendingRepayWithSwap";
   vaultAddress: string;
   tokenIn: string;
-  maxRepayAmount?: string;
   inSoftLiquidation?: boolean;
-  withdrawAmount?: string;
-  withdrawTokenOut?: string;
 };
 
 export type EnsoIntentRequest =
@@ -371,13 +368,6 @@ function assertSpecialInputToken(
 function assertOptionalBoolean(value: unknown, field: string) {
   if (value !== undefined && typeof value !== "boolean") {
     failValidation(`${field} must be a boolean`);
-  }
-}
-
-function assertOptionalNonNegativeAmount(value: unknown, field: string) {
-  if (value === undefined) return;
-  if (typeof value !== "string" || !/^\d+$/.test(value)) {
-    failValidation(`${field} must be an integer string`);
   }
 }
 
@@ -625,12 +615,7 @@ function assertCurveLendingRepayWithSwap(request: Record<string, unknown>): asse
   assertBaseIntentFields(request, { requireSlippage: true });
   assertCurveLendingVault(request.vaultAddress, "vaultAddress");
   assertTokenAddress(request.tokenIn, "tokenIn");
-  assertOptionalNonNegativeAmount(request.maxRepayAmount, "maxRepayAmount");
   assertOptionalBoolean(request.inSoftLiquidation, "inSoftLiquidation");
-  assertOptionalNonNegativeAmount(request.withdrawAmount, "withdrawAmount");
-  if (request.withdrawTokenOut !== undefined) {
-    assertTokenAddress(request.withdrawTokenOut, "withdrawTokenOut");
-  }
 }
 
 export function assertValidEnsoIntentRequest(value: unknown): asserts value is EnsoIntentRequest {
@@ -726,10 +711,7 @@ export function assertValidEnsoIntentRequest(value: unknown): asserts value is E
       assertOnlyIntentFields(value, [
         "vaultAddress",
         "tokenIn",
-        "maxRepayAmount",
         "inSoftLiquidation",
-        "withdrawAmount",
-        "withdrawTokenOut",
       ]);
       assertCurveLendingRepayWithSwap(value);
       return;

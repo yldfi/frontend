@@ -13,6 +13,7 @@ import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWri
 import { parseSignature, parseUnits, maxUint256 } from "viem";
 import type { Hash, Hex } from "viem";
 import { buildLegacyMorphoPermitTransaction, ENSO_ROUTER_EXECUTOR, ETH_ADDRESS, LEGACY_MORPHO_ADDRESS } from "@/lib/enso";
+import { FORBIDDEN_APPROVAL_SPENDER_ERROR, assertSafeApprovalSpender, isForbiddenApprovalSpender } from "@/lib/approval-safety";
 import { ERC20_APPROVAL_ABI, ERC20_PERMIT_ABI } from "@/lib/abis";
 import { useTestNetwork } from "@/contexts/TestNetworkContext";
 import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
@@ -225,9 +226,23 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     preparedPermitTxRef.current = null;
   }, [quote]);
 
+  const rejectForbiddenApproval = useCallback(() => {
+    setPendingApproval(null);
+    setTxError(new Error(FORBIDDEN_APPROVAL_SPENDER_ERROR));
+    setActionState("idle");
+    autoExecuteRef.current = false;
+    pendingOptionsRef.current = undefined;
+  }, []);
+
   // Approve tokens — exact=true uses the quote amount, exact=false uses unlimited
   const approve = useCallback((exact: boolean) => {
     if (!userAddress || isEth || !tokenAddress || !quote) return;
+
+    if (isForbiddenApprovalSpender(ZAP_APPROVAL_SPENDER)) {
+      rejectForbiddenApproval();
+      return;
+    }
+
     setActionState("approving");
     autoExecuteRef.current = true;
 
@@ -256,7 +271,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       functionName: "approve",
       args: [ZAP_APPROVAL_SPENDER, amount],
     });
-  }, [userAddress, isEth, tokenAddress, quote, writeApprove]);
+  }, [userAddress, isEth, tokenAddress, quote, rejectForbiddenApproval, writeApprove]);
 
   const prepareTxParams = useCallback(async (): Promise<{ to: `0x${string}`; data: `0x${string}`; value: bigint }> => {
     if (!quote || !userAddress || !publicClient) {
@@ -276,6 +291,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     }
 
     const permit = quote.legacyMorphoPermit;
+    assertSafeApprovalSpender(permit.spender);
     const key = [
       userAddress.toLowerCase(),
       permit.amount,
@@ -597,6 +613,11 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
     // Check if approval is needed
     if (needsApproval()) {
+      if (isForbiddenApprovalSpender(ZAP_APPROVAL_SPENDER)) {
+        rejectForbiddenApproval();
+        return null;
+      }
+
       // Store options so auto-execute after approval preserves intent (e.g. previewOnly)
       pendingOptionsRef.current = options;
       // Set pending approval state to show the approval card
@@ -621,7 +642,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
     // No approval needed — execute directly
     return executeZapInternal(options);
-  }, [quote, userAddress, needsApproval, tokenAddress, executeZapInternal, resetApprove]);
+  }, [quote, userAddress, needsApproval, tokenAddress, executeZapInternal, rejectForbiddenApproval, resetApprove]);
 
   // Reset state
   const reset = useCallback(() => {

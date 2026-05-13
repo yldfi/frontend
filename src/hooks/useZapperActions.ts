@@ -17,6 +17,7 @@ import { CRVUSD_ADDRESS, WETH_ADDRESS } from "@/config/addresses";
 import { ETH_ADDRESS } from "@/lib/enso";
 import { CONTROLLER_APPROVE_ABI } from "@/lib/abis";
 import { getVaultInfo } from "@/lib/curve-lending";
+import { FORBIDDEN_APPROVAL_SPENDER_ERROR, isForbiddenApprovalSpender } from "@/lib/approval-safety";
 import { TOKENS, TANGENT } from "@/config/vaults";
 import { useSendTx } from "@/hooks/useSendTx";
 
@@ -279,8 +280,23 @@ export function useZapperActions(): UseZapperActionsResult {
     setError(null);
   }, []);
 
+  const rejectForbiddenApproval = useCallback(() => {
+    setPendingApproval(null);
+    setApprovalQueue([]);
+    setApprovalProgress(null);
+    pendingPreviewRef.current = false;
+    setError(FORBIDDEN_APPROVAL_SPENDER_ERROR);
+    setStatus("error");
+  }, []);
+
   const approve = useCallback((exactAmount?: boolean) => {
     if (!address || !pendingApproval) return;
+
+    if (isForbiddenApprovalSpender(pendingApproval.spender)) {
+      rejectForbiddenApproval();
+      return;
+    }
+
     setStatus("approving");
 
     if (pendingApproval.type === "erc20") {
@@ -306,7 +322,7 @@ export function useZapperActions(): UseZapperActionsResult {
         args: [pendingApproval.spender, true],
       });
     }
-  }, [address, pendingApproval, writeApprove]);
+  }, [address, pendingApproval, rejectForbiddenApproval, writeApprove]);
 
   const simulateAndExecute = useCallback(async (
     txData: PendingTx,
@@ -559,6 +575,11 @@ export function useZapperActions(): UseZapperActionsResult {
     // If more approvals in queue, show the next one
     if (approvalQueue.length > 0) {
       const [next, ...rest] = approvalQueue;
+      if (isForbiddenApprovalSpender(next.spender)) {
+        rejectForbiddenApproval();
+        resetApprove();
+        return;
+      }
       setPendingApproval(next);
       setApprovalQueue(rest);
       // Update progress: mark current step done, advance to next
@@ -584,7 +605,7 @@ export function useZapperActions(): UseZapperActionsResult {
       setError(parseErrorMessage(err));
       setStatus("error");
     }
-  }, [pendingTx, approvalQueue, approvalProgress, simulateAndExecute, resetApprove]);
+  }, [pendingTx, approvalQueue, approvalProgress, simulateAndExecute, rejectForbiddenApproval, resetApprove]);
 
   const executeAfterPreview = useCallback(async () => {
     if (!pendingTx || !publicClient) {

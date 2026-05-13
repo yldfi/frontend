@@ -13,6 +13,7 @@ import {
 import { TOKENS, getVaultByAddress } from "@/config/vaults";
 import { ERC20_APPROVAL_ABI, CONTROLLER_APPROVE_ABI } from "@/lib/abis";
 import { ETH_ADDRESS, ENSO_ROUTER_EXECUTOR } from "@/lib/enso";
+import { FORBIDDEN_APPROVAL_SPENDER_ERROR, assertSafeApprovalSpender, findForbiddenApproval, isForbiddenApprovalSpender } from "@/lib/approval-safety";
 import { ZAPPER_ADDRESS, ZAPPER_ABI, fetchZapperSwapData, buildExoticOutputSwapData, getDeadline } from "@/lib/zapper";
 import { CRVUSD_ADDRESS, WETH_ADDRESS } from "@/config/addresses";
 import type { EnsoBundleResponse, SimulationResult } from "@/types/enso";
@@ -289,6 +290,16 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     setError(null);
   }, []);
 
+  const rejectForbiddenApproval = useCallback(() => {
+    setPendingApproval(null);
+    setApprovalQueue([]);
+    setApprovalProgress(null);
+    pendingActionRef.current = null;
+    pendingPreviewRef.current = false;
+    setError(FORBIDDEN_APPROVAL_SPENDER_ERROR);
+    setStatus("error");
+  }, []);
+
   // Queue approvals or run action immediately if all approvals are satisfied.
   // Returns null if approvals are queued (caller should return null too).
   const queueApprovalsOrRun = (
@@ -300,6 +311,11 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     const missing = allApprovals.filter((a) => a.needed);
 
     if (missing.length > 0) {
+      if (findForbiddenApproval(missing.map((a) => a.approval))) {
+        rejectForbiddenApproval();
+        return null;
+      }
+
       const firstNeededIdx = allApprovals.findIndex((a) => a.needed);
       setApprovalProgress({ step: firstNeededIdx + 1, total, steps });
       setPendingApproval(missing[0].approval);
@@ -317,6 +333,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
   // When exactApproval is true and amount is available, approve only the needed amount
   const approve = useCallback((exactApproval?: boolean) => {
     if (!address || !pendingApproval) return;
+
+    if (isForbiddenApprovalSpender(pendingApproval.spender)) {
+      rejectForbiddenApproval();
+      return;
+    }
+
     setStatus("approving");
 
     if (pendingApproval.type === "controller") {
@@ -339,13 +361,18 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         args: [pendingApproval.spender, approvalAmount],
       });
     }
-  }, [address, pendingApproval, writeApprove]);
+  }, [address, pendingApproval, rejectForbiddenApproval, writeApprove]);
 
   // Execute the pending bundle after approval
   const executeAfterApproval = useCallback(async () => {
     // If more approvals in queue, show the next one
     if (approvalQueue.length > 0) {
       const [next, ...rest] = approvalQueue;
+      if (isForbiddenApprovalSpender(next.spender)) {
+        rejectForbiddenApproval();
+        resetApprove();
+        return;
+      }
       setPendingApproval(next);
       setApprovalQueue(rest);
       if (approvalProgress) {
@@ -516,7 +543,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       setError(parseErrorMessage(err));
       setStatus("error");
     }
-  }, [pendingBundle, publicClient, address, pendingInputToken, sendTx, testNetworkType, chainId, pendingController, approvalQueue, approvalProgress, resetApprove, invalidateBalances]);
+  }, [pendingBundle, publicClient, address, pendingInputToken, sendTx, testNetworkType, chainId, pendingController, approvalQueue, approvalProgress, rejectForbiddenApproval, resetApprove, invalidateBalances]);
 
   // Execute a pending bundle after preview confirmation
   const executeAfterPreview = useCallback(async () => {
@@ -604,6 +631,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       // Complex flows that need mid-bundle transferFrom handle their own
       // approvals and pass inputAmount=0n to skip this check.
       const spender = ENSO_ROUTER_EXECUTOR as `0x${string}`;
+      assertSafeApprovalSpender(spender);
 
       // Check allowance against the Router
       // Skip for actions that don't require approval:
