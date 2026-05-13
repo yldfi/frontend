@@ -5,7 +5,15 @@ export type EnsoIntentName =
   | "plainTokenSwap"
   | "yldVaultZapIn"
   | "yldVaultZapOut"
-  | "yldVaultToVault";
+  | "yldVaultToVault"
+  | "yldVaultToCvgCvxVault"
+  | "cvgCvxVaultToYldVault"
+  | "yldVaultToPxCvxVault"
+  | "pxCvxVaultToYldVault"
+  | "cvgCvxZapIn"
+  | "cvgCvxZapOut"
+  | "pxCvxZapIn"
+  | "pxCvxZapOut";
 
 type BaseIntentRequest = {
   fromAddress: string;
@@ -38,11 +46,40 @@ export type YldVaultToVaultIntentRequest = BaseIntentRequest & {
   targetVault: string;
 };
 
+export type SpecialYldVaultToVaultIntentRequest = BaseIntentRequest & {
+  intent:
+    | "yldVaultToCvgCvxVault"
+    | "cvgCvxVaultToYldVault"
+    | "yldVaultToPxCvxVault"
+    | "pxCvxVaultToYldVault";
+  sourceVault: string;
+  targetVault: string;
+};
+
+export type SpecialYldVaultZapInIntentRequest = BaseIntentRequest & {
+  intent: "cvgCvxZapIn" | "pxCvxZapIn";
+  inputToken: string;
+  vaultAddress: string;
+};
+
+export type SpecialYldVaultZapOutIntentRequest = BaseIntentRequest & {
+  intent: "cvgCvxZapOut" | "pxCvxZapOut";
+  vaultAddress: string;
+  outputToken: string;
+};
+
 export type EnsoIntentRequest =
   | PlainTokenSwapIntentRequest
   | YldVaultZapInIntentRequest
   | YldVaultZapOutIntentRequest
-  | YldVaultToVaultIntentRequest;
+  | YldVaultToVaultIntentRequest
+  | SpecialYldVaultToVaultIntentRequest
+  | SpecialYldVaultZapInIntentRequest
+  | SpecialYldVaultZapOutIntentRequest;
+
+export type YldVaultToVaultIntentName =
+  | YldVaultToVaultIntentRequest["intent"]
+  | SpecialYldVaultToVaultIntentRequest["intent"];
 
 export type EnsoIntentResponse = EnsoRouteResponse | EnsoBundleResponse;
 
@@ -165,6 +202,42 @@ export function isStandardYldVaultIntentVault(vaultAddress: string): boolean {
   return !SPECIAL_STANDARD_DEFERRED_ASSETS.has(vault.assetAddress.toLowerCase());
 }
 
+function getVaultAsset(address: string): string | undefined {
+  return getIntentVault(address)?.assetAddress.toLowerCase();
+}
+
+function getVaultToVaultIntentName(
+  sourceVault: string,
+  targetVault: string
+): YldVaultToVaultIntentName | undefined {
+  const sourceAsset = getVaultAsset(sourceVault);
+  const targetAsset = getVaultAsset(targetVault);
+  if (!sourceAsset || !targetAsset) return undefined;
+
+  // Match fetchVaultToVaultRoute dispatch order. Source pxCVX has precedence
+  // because pxCVX exits need the Pirex unwrap/swap path even when the target is
+  // another special vault.
+  if (sourceAsset === TOKENS.PXCVX.toLowerCase()) return "pxCvxVaultToYldVault";
+  if (targetAsset === TOKENS.CVGCVX.toLowerCase()) return "yldVaultToCvgCvxVault";
+  if (sourceAsset === TOKENS.CVGCVX.toLowerCase()) return "cvgCvxVaultToYldVault";
+  if (targetAsset === TOKENS.PXCVX.toLowerCase()) return "yldVaultToPxCvxVault";
+  return "yldVaultToVault";
+}
+
+export function getYldVaultToVaultIntentName(params: {
+  sourceVault: string;
+  targetVault: string;
+}): YldVaultToVaultIntentName | undefined {
+  return getVaultToVaultIntentName(params.sourceVault, params.targetVault);
+}
+
+function assertYldVault(address: unknown, field: string): asserts address is `0x${string}` {
+  assertAddress(address, field);
+  if (!getIntentVault(address)) {
+    failValidation(`${field} must be a known YLD vault`);
+  }
+}
+
 function assertStandardYldVault(address: unknown, field: string): asserts address is `0x${string}` {
   assertAddress(address, field);
   const vault = getIntentVault(address);
@@ -173,6 +246,14 @@ function assertStandardYldVault(address: unknown, field: string): asserts addres
   }
   if (!isStandardYldVaultIntentVault(address)) {
     failValidation(`${field} uses a special asset flow that is not migrated to this intent yet`);
+  }
+}
+
+function assertYldVaultAsset(address: unknown, field: string, asset: string, label: string): asserts address is `0x${string}` {
+  assertYldVault(address, field);
+  const vault = getIntentVault(address);
+  if (vault?.assetAddress.toLowerCase() !== asset.toLowerCase()) {
+    failValidation(`${field} must be a ${label}-backed YLD vault`);
   }
 }
 
@@ -206,6 +287,44 @@ function assertYldVaultToVault(request: Record<string, unknown>): asserts reques
   }
 }
 
+function assertSpecialYldVaultToVault(request: Record<string, unknown>): asserts request is SpecialYldVaultToVaultIntentRequest {
+  assertBaseIntentFields(request);
+  assertYldVault(request.sourceVault, "sourceVault");
+  assertYldVault(request.targetVault, "targetVault");
+  if (request.sourceVault.toLowerCase() === request.targetVault.toLowerCase()) {
+    failValidation("sourceVault and targetVault must be different");
+  }
+
+  const expectedIntent = getVaultToVaultIntentName(request.sourceVault, request.targetVault);
+  if (expectedIntent !== request.intent) {
+    failValidation(`${String(request.intent)} does not match the source and target vault assets`);
+  }
+}
+
+function assertSpecialYldVaultZapIn(request: Record<string, unknown>): asserts request is SpecialYldVaultZapInIntentRequest {
+  assertBaseIntentFields(request);
+  assertAddress(request.inputToken, "inputToken");
+
+  if (request.intent === "cvgCvxZapIn") {
+    assertYldVaultAsset(request.vaultAddress, "vaultAddress", TOKENS.CVGCVX, "cvgCVX");
+    return;
+  }
+
+  assertYldVaultAsset(request.vaultAddress, "vaultAddress", TOKENS.PXCVX, "pxCVX");
+}
+
+function assertSpecialYldVaultZapOut(request: Record<string, unknown>): asserts request is SpecialYldVaultZapOutIntentRequest {
+  assertBaseIntentFields(request);
+  assertAddress(request.outputToken, "outputToken");
+
+  if (request.intent === "cvgCvxZapOut") {
+    assertYldVaultAsset(request.vaultAddress, "vaultAddress", TOKENS.CVGCVX, "cvgCVX");
+    return;
+  }
+
+  assertYldVaultAsset(request.vaultAddress, "vaultAddress", TOKENS.PXCVX, "pxCVX");
+}
+
 export function assertValidEnsoIntentRequest(value: unknown): asserts value is EnsoIntentRequest {
   if (!isRecord(value)) {
     failValidation("Intent request body must be an object");
@@ -233,6 +352,23 @@ export function assertValidEnsoIntentRequest(value: unknown): asserts value is E
     case "yldVaultToVault":
       assertOnlyIntentFields(value, ["sourceVault", "targetVault"]);
       assertYldVaultToVault(value);
+      return;
+    case "yldVaultToCvgCvxVault":
+    case "cvgCvxVaultToYldVault":
+    case "yldVaultToPxCvxVault":
+    case "pxCvxVaultToYldVault":
+      assertOnlyIntentFields(value, ["sourceVault", "targetVault"]);
+      assertSpecialYldVaultToVault(value);
+      return;
+    case "cvgCvxZapIn":
+    case "pxCvxZapIn":
+      assertOnlyIntentFields(value, ["inputToken", "vaultAddress"]);
+      assertSpecialYldVaultZapIn(value);
+      return;
+    case "cvgCvxZapOut":
+    case "pxCvxZapOut":
+      assertOnlyIntentFields(value, ["vaultAddress", "outputToken"]);
+      assertSpecialYldVaultZapOut(value);
       return;
     default:
       failValidation("Unknown Enso intent");
