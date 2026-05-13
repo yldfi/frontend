@@ -22,9 +22,10 @@ jobs:
       - name: Mark minor/patch updates for manual review
         if: steps.metadata.outputs.update-type == 'version-update:semver-patch' || steps.metadata.outputs.update-type == 'version-update:semver-minor'
         run: |
-          gh label create needs-review --color FBCA04 --description "Requires human review" --force
-          gh pr edit "$PR_URL" --add-label "needs-review"
-          gh pr comment "$PR_URL" --body "Automatic dependency merging is disabled for supply-chain safety. Review this update after CI passes."
+          gh label create needs-review --color FBCA04 --description "Requires human review" --force --repo "$GH_REPO"
+          gh pr edit "$PR_NUMBER" --add-label "needs-review" --repo "$GH_REPO"
+          gh pr comment "$PR_NUMBER" --body "Automatic dependency merging is disabled for supply-chain safety. Review this update after CI passes." --repo "$GH_REPO"
         env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
