@@ -9618,6 +9618,77 @@ export async function fetchAnyFromBeefyRoute(params: {
 // ============================================================================
 
 /**
+ * Server-owned dispatcher for liquid token → external vault outputs.
+ */
+export async function fetchAnyToExternalVaultRoute(params: {
+  fromAddress: string;
+  inputToken: string;
+  externalVaultAddress: string;
+  amountIn: string;
+  slippage?: string;
+}): Promise<CustomBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "anyToExternalVault",
+      fromAddress: params.fromAddress,
+      inputToken: params.inputToken,
+      externalVaultAddress: params.externalVaultAddress,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
+  const { getExternalVaultConfig } = await import("@/config/vaults");
+  const config = getExternalVaultConfig(params.externalVaultAddress);
+  if (!config) {
+    throw new Error(`Unknown external vault: ${params.externalVaultAddress}`);
+  }
+
+  if (config.interface === "ucrv") {
+    return fetchAnyToUCrvRoute({
+      fromAddress: params.fromAddress,
+      inputToken: params.inputToken,
+      amountIn: params.amountIn,
+      slippage: params.slippage,
+    });
+  }
+
+  if (config.interface === "beefy") {
+    return fetchAnyToBeefyRoute({
+      fromAddress: params.fromAddress,
+      inputToken: params.inputToken,
+      beefyVault: config.address,
+      beefyVaultUnderlying: config.underlying,
+      beefyVaultSymbol: config.symbol,
+      amountIn: params.amountIn,
+      slippage: params.slippage,
+    });
+  }
+
+  if (config.underlying.toLowerCase() === TOKENS.PXCVX.toLowerCase()) {
+    return fetchAnyToPxCvxRoute({
+      fromAddress: params.fromAddress,
+      inputToken: params.inputToken,
+      amountIn: params.amountIn,
+      slippage: params.slippage,
+      depositIntoVault: config.address,
+    });
+  }
+
+  return fetchAnyToErc4626ExternalVaultRoute({
+    fromAddress: params.fromAddress,
+    inputToken: params.inputToken,
+    externalVault: config.address,
+    externalVaultUnderlying: config.underlying,
+    externalVaultSymbol: config.symbol,
+    externalVaultProtocol: config.protocol,
+    amountIn: params.amountIn,
+    slippage: params.slippage,
+  });
+}
+
+/**
  * Any token → ERC4626 external vault (aCVX, aCRV, afCVX, scrvUSD).
  * Route input → vault's underlying via Enso, then erc4626/deposit. Works for
  * any vault whose underlying Enso indexes liquidly (CVX, cvxCRV, crvUSD).

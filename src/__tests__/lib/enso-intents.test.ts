@@ -183,6 +183,17 @@ describe("Enso intent validation", () => {
     })).not.toThrow();
   });
 
+  it("accepts liquid-token zap-in intents into external vaults", () => {
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "anyToExternalVault",
+      fromAddress: USER,
+      inputToken: TOKENS.CVX,
+      externalVaultAddress: LLAMA_AIRFORCE.UCRV,
+      amountIn: ONE_ETHER,
+      slippage: "100",
+    })).not.toThrow();
+  });
+
   it("keeps standard zap intents limited to standard vaults", () => {
     expect(() => assertValidEnsoIntentRequest({
       intent: "yldVaultZapIn",
@@ -282,6 +293,14 @@ describe("Enso intent validation", () => {
       vaultAddress: VAULT_ADDRESSES.YCVXCRV,
       amountIn: ONE_ETHER,
     })).toThrow("slippage is required");
+
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "anyToExternalVault",
+      fromAddress: USER,
+      inputToken: TOKENS.CVX,
+      externalVaultAddress: LLAMA_AIRFORCE.UCRV,
+      amountIn: ONE_ETHER,
+    })).toThrow("slippage is required");
   });
 
   it("rejects zero-address and YLD-vault tokens in liquid token fields", () => {
@@ -327,6 +346,24 @@ describe("Enso intent validation", () => {
       amountIn: ONE_ETHER,
       slippage: "100",
     })).toThrow("known external vault");
+
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "anyToExternalVault",
+      fromAddress: USER,
+      inputToken: TOKENS.PXCVX,
+      externalVaultAddress: LLAMA_AIRFORCE.UCRV,
+      amountIn: ONE_ETHER,
+      slippage: "100",
+    })).toThrow("specialTokenToExternalVault");
+
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "anyToExternalVault",
+      fromAddress: USER,
+      inputToken: TOKENS.CVX,
+      externalVaultAddress: OTHER,
+      amountIn: ONE_ETHER,
+      slippage: "100",
+    })).toThrow("known external vault");
   });
 
   it("looks up migrated vault metadata without accepting the zero address", () => {
@@ -362,6 +399,20 @@ describe("Enso intent validation", () => {
       gas: "1",
       amountsOut: {
         [VAULT_ADDRESSES.YCVXCRV]: "1",
+      },
+      route: [],
+    })).not.toThrow();
+
+    expect(() => assertEnsoIntentTxTarget("anyToExternalVault", {
+      tx: {
+        to: ENSO_ROUTER_EXECUTOR,
+        data: ROUTE_SINGLE_CALLDATA,
+        value: "0",
+        from: USER,
+      },
+      gas: "1",
+      amountsOut: {
+        [LLAMA_AIRFORCE.UCRV]: "1",
       },
       route: [],
     })).not.toThrow();
