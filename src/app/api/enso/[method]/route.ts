@@ -5,6 +5,7 @@ import {
   assertValidEnsoIntentRequest,
   getIntentVault,
 } from "@/lib/enso-intents";
+import { getExternalVaultConfig, LLAMA_AIRFORCE, TOKENS } from "@/config/vaults";
 
 export const dynamic = "force-dynamic";
 
@@ -82,15 +83,35 @@ export async function POST(
         const {
           fetchCvgCvxZapInRoute,
           fetchCvgCvxZapOutRoute,
+          fetchAnyFromBeefyRoute,
+          fetchAnyFromCvgCvxRoute,
+          fetchAnyFromErc4626ExternalVaultRoute,
+          fetchAnyFromLpxCvxRoute,
+          fetchAnyFromPxCvxRoute,
+          fetchAnyFromUCvxRoute,
+          fetchAnyFromUCrvRoute,
           fetchAnyToExternalVaultRoute,
+          fetchAnyToCvgCvxRoute,
+          fetchAnyToLpxCvxRoute,
+          fetchAnyToPxCvxRoute,
           fetchExternalVaultZapInRoute,
+          fetchLegacyMorphoWrapRoute,
+          fetchLegacyMorphoZapInRoute,
           fetchPxCvxZapInRoute,
           fetchPxCvxZapOutRoute,
           fetchRoute,
+          fetchSpecialTokenToExternalVaultRoute,
+          fetchSpecialTokenToIlliquidRoute,
+          fetchYldVaultToExternalVaultRoute,
+          fetchYldVaultToIlliquidRoute,
           fetchZapInRoute,
           fetchZapOutRoute,
           fetchVaultToVaultRoute,
         } = await import("@/lib/enso");
+        const {
+          fetchRepayBundle,
+          fetchRepayWithSwapBundle,
+        } = await import("@/lib/curve-lending");
 
         switch (body.intent) {
           case "plainTokenSwap": {
@@ -228,6 +249,217 @@ export async function POST(
               externalVaultAddress: body.externalVaultAddress,
               amountIn: body.amountIn,
               slippage: body.slippage,
+            });
+            assertEnsoIntentTxTarget(body.intent, bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+
+          case "yldVaultToExternalVault": {
+            const sourceVault = getIntentVault(body.sourceVault);
+            const targetVault = getExternalVaultConfig(body.targetVault);
+            if (!sourceVault || !targetVault) {
+              throw new Error("sourceVault and targetVault must be known vaults");
+            }
+
+            const bundle = await fetchYldVaultToExternalVaultRoute({
+              fromAddress: body.fromAddress,
+              sourceVault: body.sourceVault,
+              sourceUnderlying: sourceVault.assetAddress,
+              targetVault: targetVault.address,
+              targetUnderlying: targetVault.underlying,
+              targetInterface: targetVault.interface,
+              targetSymbol: targetVault.symbol,
+              targetProtocol: targetVault.protocol,
+              amountIn: body.amountIn,
+              slippage: body.slippage,
+            });
+            assertEnsoIntentTxTarget(body.intent, bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+
+          case "yldVaultToIlliquid": {
+            const sourceVault = getIntentVault(body.sourceVault);
+            if (!sourceVault) throw new Error("sourceVault must be a known YLD vault");
+
+            const bundle = await fetchYldVaultToIlliquidRoute({
+              fromAddress: body.fromAddress,
+              sourceVault: body.sourceVault,
+              sourceUnderlying: sourceVault.assetAddress,
+              outputToken: body.outputToken,
+              amountIn: body.amountIn,
+              slippage: body.slippage,
+            });
+            assertEnsoIntentTxTarget(body.intent, bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+
+          case "specialTokenToExternalVault": {
+            const bundle = await fetchSpecialTokenToExternalVaultRoute({
+              fromAddress: body.fromAddress,
+              inputToken: body.inputToken,
+              outputVault: body.outputVault,
+              amountIn: body.amountIn,
+              slippage: body.slippage,
+            });
+            assertEnsoIntentTxTarget(body.intent, bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+
+          case "specialTokenToIlliquid": {
+            const bundle = await fetchSpecialTokenToIlliquidRoute({
+              fromAddress: body.fromAddress,
+              inputToken: body.inputToken,
+              outputToken: body.outputToken,
+              amountIn: body.amountIn,
+              slippage: body.slippage,
+            });
+            assertEnsoIntentTxTarget(body.intent, bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+
+          case "externalVaultToAny": {
+            const config = getExternalVaultConfig(body.externalVaultAddress);
+            if (!config) throw new Error("externalVaultAddress must be a known external vault");
+
+            const bundle =
+              config.address.toLowerCase() === LLAMA_AIRFORCE.UCVX.toLowerCase()
+                ? await fetchAnyFromUCvxRoute({
+                    fromAddress: body.fromAddress,
+                    outputToken: body.outputToken,
+                    amountIn: body.amountIn,
+                    slippage: body.slippage,
+                  })
+                : config.interface === "ucrv"
+                  ? await fetchAnyFromUCrvRoute({
+                      fromAddress: body.fromAddress,
+                      outputToken: body.outputToken,
+                      amountIn: body.amountIn,
+                      slippage: body.slippage,
+                    })
+                  : config.interface === "beefy"
+                    ? await fetchAnyFromBeefyRoute({
+                        fromAddress: body.fromAddress,
+                        beefyVault: config.address,
+                        beefyVaultUnderlying: config.underlying,
+                        beefyVaultSymbol: config.symbol,
+                        outputToken: body.outputToken,
+                        amountIn: body.amountIn,
+                        slippage: body.slippage,
+                      })
+                    : await fetchAnyFromErc4626ExternalVaultRoute({
+                        fromAddress: body.fromAddress,
+                        externalVault: config.address,
+                        externalVaultUnderlying: config.underlying,
+                        outputToken: body.outputToken,
+                        amountIn: body.amountIn,
+                        slippage: body.slippage,
+                        protocolLabel: config.protocol,
+                      });
+            assertEnsoIntentTxTarget(body.intent, bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+
+          case "illiquidToAny": {
+            const input = body.inputToken.toLowerCase();
+            const bundle =
+              input === TOKENS.PXCVX.toLowerCase()
+                ? await fetchAnyFromPxCvxRoute({
+                    fromAddress: body.fromAddress,
+                    outputToken: body.outputToken,
+                    amountIn: body.amountIn,
+                    slippage: body.slippage,
+                  })
+                : input === TOKENS.CVGCVX.toLowerCase()
+                  ? await fetchAnyFromCvgCvxRoute({
+                      fromAddress: body.fromAddress,
+                      outputToken: body.outputToken,
+                      amountIn: body.amountIn,
+                      slippage: body.slippage,
+                    })
+                  : await fetchAnyFromLpxCvxRoute({
+                      fromAddress: body.fromAddress,
+                      outputToken: body.outputToken,
+                      amountIn: body.amountIn,
+                      slippage: body.slippage,
+                    });
+            assertEnsoIntentTxTarget(body.intent, bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+
+          case "anyToIlliquid": {
+            const output = body.outputToken.toLowerCase();
+            const bundle =
+              output === TOKENS.PXCVX.toLowerCase()
+                ? await fetchAnyToPxCvxRoute({
+                    fromAddress: body.fromAddress,
+                    inputToken: body.inputToken,
+                    amountIn: body.amountIn,
+                    slippage: body.slippage,
+                  })
+                : output === TOKENS.CVGCVX.toLowerCase()
+                  ? await fetchAnyToCvgCvxRoute({
+                      fromAddress: body.fromAddress,
+                      inputToken: body.inputToken,
+                      amountIn: body.amountIn,
+                      slippage: body.slippage,
+                    })
+                  : await fetchAnyToLpxCvxRoute({
+                      fromAddress: body.fromAddress,
+                      inputToken: body.inputToken,
+                      amountIn: body.amountIn,
+                      slippage: body.slippage,
+                    });
+            assertEnsoIntentTxTarget(body.intent, bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+
+          case "legacyMorphoWrap": {
+            const bundle = await fetchLegacyMorphoWrapRoute({
+              fromAddress: body.fromAddress,
+              outputToken: body.outputToken,
+              amountIn: body.amountIn,
+              slippage: body.slippage,
+            });
+            assertEnsoIntentTxTarget(body.intent, bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+
+          case "legacyMorphoZapIn": {
+            const vault = getIntentVault(body.vaultAddress);
+            if (!vault) throw new Error("vaultAddress must be a known YLD vault");
+
+            const bundle = await fetchLegacyMorphoZapInRoute({
+              fromAddress: body.fromAddress,
+              vaultAddress: body.vaultAddress,
+              amountIn: body.amountIn,
+              slippage: body.slippage,
+              underlyingToken: vault.assetAddress,
+            });
+            assertEnsoIntentTxTarget(body.intent, bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+
+          case "curveLendingRepay": {
+            const bundle = await fetchRepayBundle({
+              fromAddress: body.fromAddress,
+              vaultAddress: body.vaultAddress as `0x${string}`,
+              repayAmount: body.amountIn,
+            });
+            assertEnsoIntentTxTarget(body.intent, bundle);
+            return NextResponse.json(bundle, { headers: cors });
+          }
+
+          case "curveLendingRepayWithSwap": {
+            const bundle = await fetchRepayWithSwapBundle({
+              fromAddress: body.fromAddress,
+              vaultAddress: body.vaultAddress as `0x${string}`,
+              tokenIn: body.tokenIn,
+              amountIn: body.amountIn,
+              slippage: Number(body.slippage),
+              maxRepayAmount: body.maxRepayAmount,
+              inSoftLiquidation: body.inSoftLiquidation,
+              withdrawAmount: body.withdrawAmount,
+              withdrawTokenOut: body.withdrawTokenOut,
             });
             assertEnsoIntentTxTarget(body.intent, bundle);
             return NextResponse.json(bundle, { headers: cors });
