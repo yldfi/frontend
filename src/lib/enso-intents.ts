@@ -1,4 +1,9 @@
-import { getVaultByAddress, TOKENS, type VaultConfig } from "@/config/vaults";
+import {
+  getExternalVaultConfig,
+  getVaultByAddress,
+  TOKENS,
+  type VaultConfig,
+} from "@/config/vaults";
 import type { EnsoBundleResponse, EnsoRouteResponse } from "@/types/enso";
 import {
   ENSO_ROUTE_MULTI_SELECTOR,
@@ -33,7 +38,8 @@ export type EnsoIntentName =
   | "cvgCvxZapIn"
   | "cvgCvxZapOut"
   | "pxCvxZapIn"
-  | "pxCvxZapOut";
+  | "pxCvxZapOut"
+  | "externalVaultZapInToYld";
 
 type BaseIntentRequest = {
   fromAddress: string;
@@ -88,6 +94,12 @@ export type SpecialYldVaultZapOutIntentRequest = BaseIntentRequest & {
   outputToken: string;
 };
 
+export type ExternalVaultZapInToYldIntentRequest = BaseIntentRequest & {
+  intent: "externalVaultZapInToYld";
+  externalVaultAddress: string;
+  vaultAddress: string;
+};
+
 export type EnsoIntentRequest =
   | PlainTokenSwapIntentRequest
   | YldVaultZapInIntentRequest
@@ -95,7 +107,8 @@ export type EnsoIntentRequest =
   | YldVaultToVaultIntentRequest
   | SpecialYldVaultToVaultIntentRequest
   | SpecialYldVaultZapInIntentRequest
-  | SpecialYldVaultZapOutIntentRequest;
+  | SpecialYldVaultZapOutIntentRequest
+  | ExternalVaultZapInToYldIntentRequest;
 
 export type YldVaultToVaultIntentName =
   | YldVaultToVaultIntentRequest["intent"]
@@ -140,6 +153,7 @@ const INTENT_TX_TARGET_ALLOWLIST: Record<EnsoIntentName, readonly string[]> = {
   cvgCvxZapOut: COMMON_INTENT_TX_TARGETS,
   pxCvxZapIn: COMMON_INTENT_TX_TARGETS,
   pxCvxZapOut: COMMON_INTENT_TX_TARGETS,
+  externalVaultZapInToYld: COMMON_INTENT_TX_TARGETS,
 };
 const INTENT_CALLDATA_SELECTOR_ALLOWLIST: Record<EnsoIntentName, readonly `0x${string}`[]> = {
   plainTokenSwap: COMMON_INTENT_CALLDATA_SELECTORS,
@@ -154,6 +168,7 @@ const INTENT_CALLDATA_SELECTOR_ALLOWLIST: Record<EnsoIntentName, readonly `0x${s
   cvgCvxZapOut: COMMON_INTENT_CALLDATA_SELECTORS,
   pxCvxZapIn: COMMON_INTENT_CALLDATA_SELECTORS,
   pxCvxZapOut: COMMON_INTENT_CALLDATA_SELECTORS,
+  externalVaultZapInToYld: COMMON_INTENT_CALLDATA_SELECTORS,
 };
 
 function assertOnlyIntentFields(
@@ -307,6 +322,16 @@ function assertSpecialYldVaultZapOut(request: Record<string, unknown>): asserts 
   assertYldVaultAsset(request.vaultAddress, "vaultAddress", TOKENS.PXCVX, "pxCVX");
 }
 
+function assertExternalVaultZapInToYld(request: Record<string, unknown>): asserts request is ExternalVaultZapInToYldIntentRequest {
+  assertBaseIntentFields(request, { requireSlippage: true });
+  assertYldVault(request.vaultAddress, "vaultAddress");
+  assertAddress(request.externalVaultAddress, "externalVaultAddress");
+
+  if (!getExternalVaultConfig(request.externalVaultAddress)) {
+    failValidation("externalVaultAddress must be a known external vault");
+  }
+}
+
 export function assertValidEnsoIntentRequest(value: unknown): asserts value is EnsoIntentRequest {
   if (!isRecord(value)) {
     failValidation("Intent request body must be an object");
@@ -347,6 +372,10 @@ export function assertValidEnsoIntentRequest(value: unknown): asserts value is E
     case "pxCvxZapOut":
       assertOnlyIntentFields(value, ["vaultAddress", "outputToken"]);
       assertSpecialYldVaultZapOut(value);
+      return;
+    case "externalVaultZapInToYld":
+      assertOnlyIntentFields(value, ["externalVaultAddress", "vaultAddress"]);
+      assertExternalVaultZapInToYld(value);
       return;
     default:
       failValidation("Unknown Enso intent");

@@ -747,14 +747,6 @@ export function useUniversalZap({
             slippage,
             underlyingToken: underlying,
           });
-        } else if (inputIsExternal && targetIsPx) {
-          bundle = await fetchComposableZapInRoute({
-            fromAddress: userAddress,
-            inputToken: inputToken.address,
-            vaultAddress: outputToken.address,
-            amountIn: amountInWei,
-            slippage,
-          });
         } else if (inputToken.address.toLowerCase() === TOKENS.CVGCVX.toLowerCase() && !targetIsCvg) {
           bundle = await fetchComposableZapInRoute({
             fromAddress: userAddress,
