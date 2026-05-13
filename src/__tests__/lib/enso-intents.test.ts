@@ -566,6 +566,20 @@ describe("Enso intent validation", () => {
       route: [],
     })).not.toThrow();
 
+    expect(() => assertEnsoIntentTxTarget("specialTokenToExternalVault", {
+      tx: {
+        to: ENSO_ROUTER_EXECUTOR,
+        data: ROUTE_MULTI_CALLDATA,
+        value: "0",
+        from: USER,
+      },
+      gas: "1",
+      amountsOut: {
+        [LLAMA_AIRFORCE.UCRV]: "1",
+      },
+      route: [],
+    })).not.toThrow();
+
     expect(() => assertEnsoIntentTxTarget("legacyMorphoWrap", {
       tx: {
         to: MORPHO_BUNDLER3,
