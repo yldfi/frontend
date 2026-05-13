@@ -2408,8 +2408,7 @@ export const isYldfiVault = checkIsYldfiVault;
 
 /**
  * Bundle multiple DeFi actions into a single transaction.
- * Client-side: proxied through /api/enso/bundle (API key stays server-side).
- * Server-side: calls SDK directly.
+ * Server-side only: public clients must use named /api/enso/intent recipes.
  *
  * @param routingStrategy - "router" for standard routing via Enso executor,
  *                          "delegate" for delegateCalls from user's context
@@ -2429,32 +2428,10 @@ export async function fetchBundle(params: {
     console.log("[Enso Bundle] Actions:", JSON.stringify(params.actions, null, 2));
   }
 
-  // Client-side: proxy through our API route to keep API key server-side
   if (typeof window !== "undefined") {
-    const res = await fetch("/api/enso/bundle", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fromAddress: params.fromAddress,
-        actions: params.actions,
-        receiver: params.receiver,
-        routingStrategy: params.routingStrategy ?? "router",
-        skipQuote: params.skipQuote ?? isDev,
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
-      if (isDev) console.error("[Enso Bundle] Proxy error:", err);
-      throw new Error(err.error || `Enso bundle proxy error: ${res.status}`);
-    }
-    const result = await res.json() as EnsoBundleResponse;
-    if (isDev) {
-      console.log("[Enso Bundle] Response (via proxy):", {
-        to: result.tx.to,
-        gas: result.gas,
-      });
-    }
-    return result;
+    throw new Error(
+      "Raw Enso bundle actions cannot be submitted from the browser; use a server-owned Enso intent"
+    );
   }
 
   // Server-side: use SDK directly
