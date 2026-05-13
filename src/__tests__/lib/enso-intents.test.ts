@@ -8,7 +8,7 @@ import {
   isStandardYldVaultIntentVault,
   shouldUsePlainTokenSwapIntent,
 } from "@/lib/enso-intents";
-import { TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
+import { LLAMA_AIRFORCE, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 
 const USER = "0xa88e98bBD2Af6DDD642407cB5455f956f0C553F0";
 const OTHER = "0x66215D23B8A247C80c2D1B7beF4BefC2AB384bCE";
@@ -172,6 +172,17 @@ describe("Enso intent validation", () => {
     })).not.toThrow();
   });
 
+  it("accepts external vault zap-in intents into YLD vaults", () => {
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "externalVaultZapInToYld",
+      fromAddress: USER,
+      externalVaultAddress: LLAMA_AIRFORCE.UCRV,
+      vaultAddress: VAULT_ADDRESSES.YCVXCRV,
+      amountIn: ONE_ETHER,
+      slippage: "100",
+    })).not.toThrow();
+  });
+
   it("keeps standard zap intents limited to standard vaults", () => {
     expect(() => assertValidEnsoIntentRequest({
       intent: "yldVaultZapIn",
@@ -263,6 +274,14 @@ describe("Enso intent validation", () => {
       targetVault: VAULT_ADDRESSES.YSPXCVX,
       amountIn: ONE_ETHER,
     })).toThrow("slippage is required");
+
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "externalVaultZapInToYld",
+      fromAddress: USER,
+      externalVaultAddress: LLAMA_AIRFORCE.UCRV,
+      vaultAddress: VAULT_ADDRESSES.YCVXCRV,
+      amountIn: ONE_ETHER,
+    })).toThrow("slippage is required");
   });
 
   it("rejects zero-address and YLD-vault tokens in liquid token fields", () => {
@@ -299,6 +318,15 @@ describe("Enso intent validation", () => {
       outputToken: TOKENS.CVX,
       amountIn: ONE_ETHER,
     })).toThrow("known YLD vault");
+
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "externalVaultZapInToYld",
+      fromAddress: USER,
+      externalVaultAddress: OTHER,
+      vaultAddress: VAULT_ADDRESSES.YCVXCRV,
+      amountIn: ONE_ETHER,
+      slippage: "100",
+    })).toThrow("known external vault");
   });
 
   it("looks up migrated vault metadata without accepting the zero address", () => {
@@ -321,6 +349,20 @@ describe("Enso intent validation", () => {
       },
       gas: "1",
       amountOut: "1",
+      route: [],
+    })).not.toThrow();
+
+    expect(() => assertEnsoIntentTxTarget("externalVaultZapInToYld", {
+      tx: {
+        to: ENSO_ROUTER_EXECUTOR,
+        data: ROUTE_SINGLE_CALLDATA,
+        value: "0",
+        from: USER,
+      },
+      gas: "1",
+      amountsOut: {
+        [VAULT_ADDRESSES.YCVXCRV]: "1",
+      },
       route: [],
     })).not.toThrow();
 

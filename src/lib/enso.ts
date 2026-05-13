@@ -7482,6 +7482,18 @@ export async function fetchExternalVaultZapInRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "externalVaultZapInToYld",
+      fromAddress: params.fromAddress,
+      externalVaultAddress: params.externalVaultAddress,
+      vaultAddress: params.vaultAddress,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { getExternalVaultConfig, LLAMA_AIRFORCE } = await import("@/config/vaults");
 
   const config = getExternalVaultConfig(params.externalVaultAddress);
