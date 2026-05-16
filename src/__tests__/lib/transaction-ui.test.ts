@@ -29,11 +29,10 @@ describe("transaction-ui", () => {
     expect(isLendingTxPendingVisible("simulating")).toBe(false);
   });
 
-  it("uses action-specific mobile handoff copy before the tx hash exists", () => {
+  it("uses concise wallet confirmation copy before the tx hash exists", () => {
     expect(getPendingTxCopy(false, "Repay")).toEqual({
       title: "Preparing Transaction",
-      message:
-        "Confirm the repay transaction in your wallet. If you already confirmed on mobile, keep this page open while the wallet returns the transaction hash.",
+      message: "Confirm in your wallet. Keep this page open while the transaction submits.",
     });
   });
 

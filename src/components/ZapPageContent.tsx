@@ -381,7 +381,7 @@ export function ZapPageContent() {
       });
     }
 
-    // Keep completion visible long enough for mobile wallet app handoffs.
+    // Keep completion visible long enough for wallet app handoffs.
     clearCompletionResetTimer();
     completionResetTimerRef.current = setTimeout(
       resetCompletionState,

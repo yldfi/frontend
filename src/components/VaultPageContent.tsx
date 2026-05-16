@@ -1122,7 +1122,7 @@ export function VaultPageContent({ id }: { id: string }) {
             type: depositHash ? "deposit" : "withdraw",
             hash: currentHash,
           });
-          // Keep completion visible long enough for mobile wallet app handoffs.
+          // Keep completion visible long enough for wallet app handoffs.
           clearVaultCompletionResetTimer();
           vaultCompletionResetTimerRef.current = setTimeout(
             resetVaultCompletionState,
@@ -1142,7 +1142,7 @@ export function VaultPageContent({ id }: { id: string }) {
             type: depositHash ? "deposit" : "withdraw",
             hash: currentHash,
           });
-          // Keep completion visible long enough for mobile wallet app handoffs.
+          // Keep completion visible long enough for wallet app handoffs.
           clearVaultCompletionResetTimer();
           vaultCompletionResetTimerRef.current = setTimeout(
             resetVaultCompletionState,
@@ -1222,7 +1222,7 @@ export function VaultPageContent({ id }: { id: string }) {
             type: "zap",
             hash: zapHash,
           });
-          // Keep completion visible long enough for mobile wallet app handoffs.
+          // Keep completion visible long enough for wallet app handoffs.
           clearZapCompletionResetTimer();
           zapCompletionResetTimerRef.current = setTimeout(
             resetZapCompletionState,
@@ -1243,7 +1243,7 @@ export function VaultPageContent({ id }: { id: string }) {
             type: "zap",
             hash: zapHash,
           });
-          // Keep completion visible long enough for mobile wallet app handoffs.
+          // Keep completion visible long enough for wallet app handoffs.
           clearZapCompletionResetTimer();
           zapCompletionResetTimerRef.current = setTimeout(
             resetZapCompletionState,
@@ -2205,7 +2205,7 @@ export function VaultPageContent({ id }: { id: string }) {
                       })()}
                       <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
                         {isDebugZap
-                          ? `Your zap ${isDebugZapIn ? "in" : isDebugZapOut ? "out" : (zapDirection === "in" ? "in" : "out")} transaction is being confirmed on-chain.`
+                          ? `Zap ${isDebugZapIn ? "in" : isDebugZapOut ? "out" : (zapDirection === "in" ? "in" : "out")} confirming on-chain.`
                           : currentZapPendingCopy.message}
                       </p>
                       {(zapHash || isDebugZap) && (
