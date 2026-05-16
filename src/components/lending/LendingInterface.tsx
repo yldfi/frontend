@@ -736,10 +736,10 @@ export function LendingInterface({
     ? getPendingTxCopy(Boolean(effectiveTxState.hash), effectiveTxState.action)
     : null;
   const successTxCopy = effectiveTxState?.status === "success"
-    ? { title: `${effectiveTxState.action} Successful`, message: "Your transaction has been confirmed." }
+    ? { title: `${effectiveTxState.action} Successful`, message: "Transaction confirmed." }
     : null;
   const revertedTxCopy = effectiveTxState?.status === "reverted"
-    ? { title: `${effectiveTxState.action} Failed`, message: "Transaction reverted on-chain." }
+    ? { title: `${effectiveTxState.action} Failed`, message: "Transaction reverted." }
     : null;
   const txStateOverlay = effectiveTxState && (
     <div className="p-4">
@@ -800,7 +800,7 @@ export function LendingInterface({
             {successTxCopy?.title ?? `${effectiveTxState.action} Successful`}
           </h3>
           <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
-            {successTxCopy?.message ?? "Your transaction has been confirmed."}
+            {successTxCopy?.message ?? "Transaction confirmed."}
           </p>
           {effectiveTxState.hash && (
             <a
@@ -824,7 +824,7 @@ export function LendingInterface({
             {revertedTxCopy?.title ?? `${effectiveTxState.action} Failed`}
           </h3>
           <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
-            {revertedTxCopy?.message ?? "Transaction reverted on-chain."}
+            {revertedTxCopy?.message ?? "Transaction reverted."}
           </p>
           {effectiveTxState.hash && (
             <a
