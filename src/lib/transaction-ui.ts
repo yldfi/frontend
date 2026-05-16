@@ -16,18 +16,18 @@ export function isLendingTxPendingVisible(status: string): boolean {
 }
 
 export function getPendingTxCopy(hasHash: boolean, actionLabel = "transaction"): { title: string; message: string } {
-  const action = actionLabel.toLowerCase();
+  const action = (actionLabel || "transaction").toLowerCase();
+  const actionSentence = `${action.charAt(0).toUpperCase()}${action.slice(1)}`;
   if (hasHash) {
     return {
       title: "Awaiting Confirmation",
-      message: `Your ${action} transaction is being confirmed on-chain.`,
+      message: `${actionSentence} confirming on-chain.`,
     };
   }
 
   return {
     title: "Preparing Transaction",
-    message:
-      `Confirm the ${action} transaction in your wallet. If you already confirmed on mobile, keep this page open while the wallet returns the transaction hash.`,
+    message: "Confirm in your wallet. Keep this page open while the transaction submits.",
   };
 }
 
@@ -40,13 +40,13 @@ export function getTxActionLabel(kind: TxActionKind): string {
 export function getSuccessTxCopy(kind: TxActionKind): { title: string; message: string } {
   return {
     title: `${getTxActionLabel(kind)} Successful`,
-    message: "Your transaction has been confirmed.",
+    message: "Transaction confirmed.",
   };
 }
 
 export function getRevertedTxCopy(kind: TxActionKind): { title: string; message: string } {
   return {
     title: `${getTxActionLabel(kind)} Failed`,
-    message: "Transaction reverted on-chain.",
+    message: "Transaction reverted.",
   };
 }
