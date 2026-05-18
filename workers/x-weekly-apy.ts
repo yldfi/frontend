@@ -14,6 +14,7 @@ const OAUTH_SCOPES = [
 const REFRESH_TOKEN_KEY = "x:oauth:refresh-token";
 const OAUTH_STATE_PREFIX = "x:oauth:state:";
 const POSTED_KEY_PREFIX = "x:weekly-apy:posted:";
+const LAST_RUN_KEY = "x:weekly-apy:last-run";
 
 interface Env {
   CLOUDFLARE_ACCOUNT_ID: string;
@@ -60,7 +61,11 @@ interface XCreatePostResponse {
     id?: string;
     text?: string;
   };
+  detail?: string;
   errors?: XApiError[];
+  status?: number;
+  title?: string;
+  type?: string;
 }
 
 interface XApiError {
@@ -94,8 +99,15 @@ export default {
         dryRun: isTruthy(env.X_DRY_RUN),
         source: "cron",
       });
+      await saveLastRun(env, result);
       console.log(JSON.stringify(result));
     } catch (error) {
+      await saveLastRun(env, {
+        ok: false,
+        date: toDateKey(scheduledAt),
+        error: getErrorMessage(error),
+        source: "cron",
+      });
       console.error("weekly APY X post failed", error);
       throw error;
     }
@@ -109,16 +121,34 @@ export default {
         return json({ ok: true });
       }
 
+      if (url.pathname === "/status") {
+        if (!isAuthorized(request, env)) return unauthorized();
+
+        const scheduledAt = parseScheduledDate(url.searchParams.get("date"));
+        return json(await getStatus(env, scheduledAt));
+      }
+
       if (url.pathname === "/run") {
         if (!isAuthorized(request, env)) return unauthorized();
 
         const scheduledAt = parseScheduledDate(url.searchParams.get("date"));
-        const result = await runWeeklyPost(env, scheduledAt, {
-          dryRun: !isTruthy(url.searchParams.get("post")) && !isFalsey(url.searchParams.get("dry")),
-          force: isTruthy(url.searchParams.get("force")),
-          source: "manual",
-        });
-        return json(result);
+        try {
+          const result = await runWeeklyPost(env, scheduledAt, {
+            dryRun: !isTruthy(url.searchParams.get("post")) && !isFalsey(url.searchParams.get("dry")),
+            force: isTruthy(url.searchParams.get("force")),
+            source: "manual",
+          });
+          await saveLastRun(env, result);
+          return json(result);
+        } catch (error) {
+          await saveLastRun(env, {
+            ok: false,
+            date: toDateKey(scheduledAt),
+            error: getErrorMessage(error),
+            source: "manual",
+          });
+          throw error;
+        }
       }
 
       if (url.pathname === "/screenshot") {
@@ -149,6 +179,7 @@ export default {
         endpoints: {
           health: "/health",
           oauthStart: "/oauth/start?secret=...",
+          status: "/status?secret=...",
           screenshot: "/screenshot?secret=...",
           dryRun: "/run?secret=...",
           postNow: "/run?secret=...&post=1",
@@ -220,6 +251,39 @@ async function runWeeklyPost(env: Env, scheduledAt: Date, options: RunOptions) {
   }
 
   return result;
+}
+
+async function getStatus(env: Env, scheduledAt: Date) {
+  const dateKey = toDateKey(scheduledAt);
+  const postedKey = `${POSTED_KEY_PREFIX}${dateKey}`;
+  const kvRefreshToken = await env.SOCIAL_CACHE?.get(REFRESH_TOKEN_KEY);
+  const postedToday = await env.SOCIAL_CACHE?.get(postedKey, "json");
+  const lastRun = await env.SOCIAL_CACHE?.get(LAST_RUN_KEY, "json");
+
+  return {
+    ok: true,
+    date: dateKey,
+    hasSocialCache: Boolean(env.SOCIAL_CACHE),
+    hasKvRefreshToken: Boolean(kvRefreshToken),
+    hasFallbackRefreshTokenSecret: Boolean(env.X_REFRESH_TOKEN),
+    tokenSource: kvRefreshToken ? "kv" : env.X_REFRESH_TOKEN ? "secret" : "missing",
+    postedToday: Boolean(postedToday),
+    postedTodayRecord: postedToday || null,
+    lastRun: lastRun || null,
+  };
+}
+
+async function saveLastRun(env: Env, result: unknown): Promise<void> {
+  if (!env.SOCIAL_CACHE) return;
+
+  await env.SOCIAL_CACHE.put(
+    LAST_RUN_KEY,
+    JSON.stringify({
+      checkedAt: new Date().toISOString(),
+      result,
+    }),
+    { expirationTtl: 60 * 60 * 24 * 180 }
+  );
 }
 
 async function renderWeeklyApyImage(env: Env, scheduledAt: Date): Promise<BrowserImage> {
@@ -533,8 +597,13 @@ async function parseXJson(response: Response): Promise<unknown> {
 }
 
 function formatXError(response: Response, body: XMediaUploadResponse | XCreatePostResponse): string {
-  const apiErrors = body.errors?.map((error) => error.detail || error.title).filter(Boolean).join("; ");
-  return `${response.status}${apiErrors ? ` ${apiErrors}` : ""}`;
+  const messages = [
+    body.title,
+    body.detail,
+    ...(body.errors?.map((error) => error.detail || error.title) || []),
+  ].filter(Boolean);
+
+  return `${response.status}${messages.length ? ` ${messages.join("; ")}` : ""}`;
 }
 
 function getErrorMessage(error: unknown): string {
