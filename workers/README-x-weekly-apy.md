@@ -27,7 +27,7 @@ wrangler secret put --config workers/wrangler.x-weekly-apy.toml X_CLIENT_SECRET
 4. In the X Developer app settings, add this callback URL:
 
 ```text
-https://<worker-host>/oauth/callback
+https://yldfi-x-weekly-apy.michael-dimmock.workers.dev/oauth/callback
 ```
 
 5. Deploy the worker.
@@ -46,6 +46,13 @@ The OAuth callback stores the refresh token in `SOCIAL_CACHE`. The worker
 updates the stored token when X rotates refresh tokens.
 
 ## Manual Checks
+
+Check whether the worker is connected to X and whether today's post is marked
+as posted:
+
+```text
+https://<worker-host>/status?secret=<SOCIAL_RUN_SECRET>
+```
 
 Render a protected PNG preview:
 
