@@ -685,9 +685,9 @@ export function HomePageContent() {
                 },
                 {
                   step: "03",
-                  title: "Withdraw",
+                  title: "Earn",
                   description:
-                    "Redeem your vault shares anytime. Receive your original deposit plus accumulated yield.",
+                    "Hold vault shares while strategies compound rewards. Your position reflects accumulated yield and remains redeemable anytime.",
                 },
               ].map((item, i) => (
                 <div
