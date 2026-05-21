@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getTokenSymbol } from "@/lib/enso";
+import { applyKnownTokenMetadata, getTokenSymbol } from "@/lib/enso";
 
 describe("getTokenSymbol", () => {
   it("returns symbol for a known CUSTOM_TOKENS entry (crvUSD)", () => {
@@ -49,5 +49,25 @@ describe("getTokenSymbol", () => {
     expect(getTokenSymbol("0xb0903Ab70a7467eE5756074b31ac88aEBb8fB777")).toBe(
       "aCVX"
     );
+  });
+
+  it("normalizes stale crvUSD metadata to the local custom token entry", () => {
+    expect(
+      applyKnownTokenMetadata({
+        address: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E",
+        chainId: 1,
+        name: "Curve.Fi USD Stablecoin",
+        symbol: "crvUSD",
+        decimals: 18,
+        logoURI: "https://assets.coingecko.com/coins/images/30118/thumb/crvusd.jpeg",
+        type: "base" as const,
+      }),
+    ).toMatchObject({
+      name: "crvUSD",
+      symbol: "crvUSD",
+      decimals: 18,
+      logoURI: "/tokens/crvusd.png",
+      type: "base",
+    });
   });
 });

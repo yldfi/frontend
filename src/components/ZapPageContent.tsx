@@ -26,7 +26,7 @@ import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { useSettings } from "@/hooks/useSettings";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
 
-import { ETH_ADDRESS, applyTokenDisplayOverride } from "@/lib/enso";
+import { ETH_ADDRESS, applyKnownTokenMetadata } from "@/lib/enso";
 import { cn } from "@/lib/utils";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { getMaxEthAmount } from "@/lib/eth-gas";
@@ -56,12 +56,12 @@ const DEFAULT_OUTPUT_TOKEN: EnsoToken = {
 };
 
 function loadToken(key: string, fallback: EnsoToken): EnsoToken {
-  if (typeof window === "undefined") return fallback;
+  if (typeof window === "undefined") return applyKnownTokenMetadata(fallback);
   try {
     const saved = sessionStorage.getItem(`${STORAGE_PREFIX}-${key}`);
-    return saved ? applyTokenDisplayOverride(JSON.parse(saved) as EnsoToken) : fallback;
+    return saved ? applyKnownTokenMetadata(JSON.parse(saved) as EnsoToken) : applyKnownTokenMetadata(fallback);
   } catch {
-    return fallback;
+    return applyKnownTokenMetadata(fallback);
   }
 }
 
@@ -69,7 +69,7 @@ function saveToken(key: string, token: EnsoToken | null) {
   if (typeof window === "undefined") return;
   try {
     const storageKey = `${STORAGE_PREFIX}-${key}`;
-    if (token) sessionStorage.setItem(storageKey, JSON.stringify(token));
+    if (token) sessionStorage.setItem(storageKey, JSON.stringify(applyKnownTokenMetadata(token)));
     else sessionStorage.removeItem(storageKey);
   } catch {
     // ignore
@@ -114,15 +114,17 @@ export function ZapPageContent() {
   });
 
   const setInputToken = useCallback((t: EnsoToken) => {
-    setInputTokenState(t);
-    saveToken("input", t);
+    const token = applyKnownTokenMetadata(t);
+    setInputTokenState(token);
+    saveToken("input", token);
     setAmountState("");
     try { sessionStorage.removeItem(`${STORAGE_PREFIX}-amount`); } catch { /* ignore */ }
   }, []);
 
   const setOutputToken = useCallback((t: EnsoToken) => {
-    setOutputTokenState(t);
-    saveToken("output", t);
+    const token = applyKnownTokenMetadata(t);
+    setOutputTokenState(token);
+    saveToken("output", token);
   }, []);
 
   const setAmount = useCallback((v: string) => {

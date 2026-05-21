@@ -157,6 +157,43 @@ function TokenRow({
   );
 }
 
+function normalizeSearchQuery(query: string): string {
+  return query.trim().toLowerCase();
+}
+
+function tokenMatchesSearch(token: EnsoToken, normalizedQuery: string): boolean {
+  if (!normalizedQuery) return true;
+  return (
+    token.symbol.toLowerCase().includes(normalizedQuery) ||
+    token.name.toLowerCase().includes(normalizedQuery) ||
+    token.address.toLowerCase() === normalizedQuery
+  );
+}
+
+function getTokenSearchRank(token: EnsoToken, normalizedQuery: string): number {
+  if (!normalizedQuery) return 0;
+
+  const symbol = token.symbol.toLowerCase();
+  const name = token.name.toLowerCase();
+  const address = token.address.toLowerCase();
+
+  if (address === normalizedQuery) return 0;
+  if (symbol === normalizedQuery) return 1;
+  if (name === normalizedQuery) return 2;
+  if (symbol.startsWith(normalizedQuery)) return 3;
+  if (name.startsWith(normalizedQuery)) return 4;
+  if (symbol.includes(normalizedQuery)) return 5;
+  if (name.includes(normalizedQuery)) return 6;
+  return 7;
+}
+
+function sortTokensForSearch(tokens: EnsoToken[], normalizedQuery: string): EnsoToken[] {
+  if (!normalizedQuery) return tokens;
+  return [...tokens].sort(
+    (a, b) => getTokenSearchRank(a, normalizedQuery) - getTokenSearchRank(b, normalizedQuery),
+  );
+}
+
 export function TokenSelector({
   selectedToken,
   onSelect,
@@ -190,6 +227,7 @@ export function TokenSelector({
 
   // Filter out excluded tokens and optionally DeFi tokens
   const excludeSet = useMemo(() => new Set((excludeTokens || []).map(addr => addr.toLowerCase())), [excludeTokens]);
+  const normalizedSearchQuery = normalizeSearchQuery(searchQuery);
   const filteredTokens = tokens.filter((t) => {
     // Exclude specific token addresses
     if (excludeSet.has(t.address.toLowerCase())) {
@@ -209,7 +247,12 @@ export function TokenSelector({
     const extra = [
       ...(priorityTokens || []),
       ...FEATURED_VAULT_TOKENS,
-    ].filter(t => !seen.has(t.address.toLowerCase()) && !excludeSet.has(t.address.toLowerCase()));
+    ].filter(
+      (t) =>
+        !seen.has(t.address.toLowerCase()) &&
+        !excludeSet.has(t.address.toLowerCase()) &&
+        tokenMatchesSearch(t, normalizedSearchQuery),
+    );
     // Deduplicate extras
     const extraSeen = new Set<string>();
     const uniqueExtra = extra.filter(t => {
@@ -219,7 +262,7 @@ export function TokenSelector({
       return true;
     });
     return uniqueExtra.length > 0 ? [...filteredTokens, ...uniqueExtra] : filteredTokens;
-  }, [filteredTokens, priorityTokens, excludeSet]);
+  }, [filteredTokens, priorityTokens, excludeSet, normalizedSearchQuery]);
 
   const walletTokenAllowlist = useMemo(() => {
     const allowed = new Set<string>();
@@ -568,15 +611,9 @@ export function TokenSelector({
 
                     {/* Priority tokens (shown first, regardless of balance; filtered by search when searching) */}
                     {priorityTokens && priorityTokens.length > 0 && (() => {
-                      const query = searchQuery.toLowerCase();
                       const visible = priorityTokens.filter((t) => {
                         if (excludeSet.has(t.address.toLowerCase())) return false;
-                        if (!query) return true;
-                        return (
-                          t.symbol.toLowerCase().includes(query) ||
-                          t.name.toLowerCase().includes(query) ||
-                          t.address.toLowerCase() === query
-                        );
+                        return tokenMatchesSearch(t, normalizedSearchQuery);
                       });
                       if (visible.length === 0) return null;
                       return (
@@ -606,10 +643,11 @@ export function TokenSelector({
                         No tokens found
                       </div>
                     ) : (
-                      sortedTokens
+                      sortTokensForSearch(sortedTokens, normalizedSearchQuery)
                         .filter((token) => {
                           if (!token || !token.address || !token.symbol) return false;
                           if (excludeSet.has(token.address.toLowerCase())) return false;
+                          if (!tokenMatchesSearch(token, normalizedSearchQuery)) return false;
                           // Exclude priority tokens from regular list to avoid duplicates
                           if (priorityTokens?.some(p => p.address.toLowerCase() === token.address.toLowerCase())) {
                             return false;

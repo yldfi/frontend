@@ -143,4 +143,71 @@ describe("TokenSelector balance refresh", () => {
     });
     expect(refetchBalances).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps unrelated featured vaults out of token search results", () => {
+    const crvUsd: EnsoToken = {
+      address: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E",
+      chainId: 1,
+      name: "crvUSD",
+      symbol: "crvUSD",
+      decimals: 18,
+      logoURI: "/tokens/crvusd.png",
+      type: "base",
+    };
+    const scrvUsd: EnsoToken = {
+      address: "0x0655977FEb2f289A4aB78af67BAB0d17aAb84367",
+      chainId: 1,
+      name: "Savings crvUSD",
+      symbol: "scrvUSD",
+      decimals: 18,
+      logoURI: "/tokens/scrvusd.png",
+      type: "defi",
+    };
+    const unrelatedVault: EnsoToken = {
+      address: "0xCa960E6DF1150100586c51382f619efCCcF72706",
+      chainId: 1,
+      name: "yld yscvxCRV",
+      symbol: "yscvxCRV",
+      decimals: 18,
+      type: "defi",
+    };
+
+    mockUseEnsoTokens.mockReturnValue({
+      tokens: [crvUsd, scrvUsd],
+      allTokens: [crvUsd, scrvUsd],
+      searchQuery: "crvusd",
+      setSearchQuery: vi.fn(),
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+      importToken: vi.fn(),
+      isImported: vi.fn(() => false),
+    });
+    mockUseTokenBalances.mockReturnValue({
+      sortedTokens: [unrelatedVault, scrvUsd, crvUsd],
+      balanceMap: new Map([[unrelatedVault.address.toLowerCase(), 1n * 10n ** 18n]]),
+      priceMap: new Map(),
+      refetch: refetchBalances,
+      refetchOnchain,
+      isLoading: false,
+    } as ReturnType<typeof useTokenBalances>);
+
+    render(
+      <TokenSelector
+        selectedToken={crvUsd}
+        onSelect={vi.fn()}
+        preferOnchainBalances
+      />,
+    );
+
+    const balanceTokens = mockUseTokenBalances.mock.calls.at(-1)?.[0] ?? [];
+    expect(balanceTokens.some((token) => token.symbol === "yscvxCRV")).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: /crvUSD/ }));
+
+    expect(screen.queryByRole("button", { name: /yscvxCRV/ })).toBeNull();
+    const crvUsdRow = screen.getByRole("button", { name: /crvUSD crvUSD crvUSD/ });
+    const scrvUsdRow = screen.getByRole("button", { name: /scrvUSD scrvUSD Savings crvUSD/ });
+    expect(crvUsdRow.compareDocumentPosition(scrvUsdRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
 });
