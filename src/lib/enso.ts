@@ -7215,7 +7215,7 @@ export async function fetchErc4626ExternalVaultZapInRoute(params: {
   // Build routeInfo
   const externalUnderlyingSymbol = getTokenSymbol(params.externalVaultUnderlying);
   const targetUnderlyingSymbol = getTokenSymbol(targetUnderlying);
-  const externalUnderlyingFmt = (Number(expectedUnderlyingOutput) / 1e18).toFixed(4);
+  const externalUnderlyingFmt = formatRouteAmount(expectedUnderlyingOutput, params.externalVaultUnderlying);
   const steps: RouteStep[] = [
     createRouteStep({
       tokenAddress: params.externalVaultAddress,
@@ -9600,7 +9600,7 @@ export async function fetchAnyFromErc4626ExternalVaultRoute(params: {
     skipQuote: false,
   });
 
-  const underlyingFmt = (Number(expectedUnderlying) / 1e18).toFixed(4);
+  const underlyingFmt = formatRouteAmount(expectedUnderlying, params.externalVaultUnderlying);
   const steps: RouteStep[] = [
     { tokenSymbol: externalSymbol, action: "Exit", description: `${externalSymbol} for ${underlyingSymbol}`, protocol: protocolLabel },
   ];
@@ -9821,7 +9821,7 @@ export async function fetchAnyFromBeefyRoute(params: {
     };
   }
 
-  const underlyingFmt = (Number(expectedUnderlying) / 1e18).toFixed(4);
+  const underlyingFmt = formatRouteAmount(expectedUnderlying, params.beefyVaultUnderlying);
   const steps: RouteStep[] = [
     { tokenSymbol: params.beefyVaultSymbol, action: "Exit", description: `${params.beefyVaultSymbol} for ${underlyingSymbol}`, protocol: "Beefy" },
   ];
@@ -9980,7 +9980,7 @@ export async function fetchAnyToErc4626ExternalVaultRoute(params: {
     "0";
   const underlyingAmountFmt =
     BigInt(underlyingAmountRaw) > 0n
-      ? (Number(underlyingAmountRaw) / 1e18).toFixed(4)
+      ? formatRouteAmount(underlyingAmountRaw, params.externalVaultUnderlying)
       : undefined;
 
   const steps: RouteStep[] = [];

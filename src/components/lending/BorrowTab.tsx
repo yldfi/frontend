@@ -593,7 +593,7 @@ export function BorrowTab({
         });
         // Store intermediate amount for route display
         setSwapIntermediateAmount(
-          Number(formatUnits(underlyingAmount, 18)).toLocaleString(undefined, { maximumFractionDigits: 4 })
+          Number(formatUnits(underlyingAmount, vaultInfo.underlyingDecimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })
         );
         return fetchRoute({
           fromAddress: address,

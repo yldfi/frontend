@@ -21,7 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { ApprovalCard } from "@/components/ApprovalCard";
-import { useAccount, usePublicClient, useBalance, useGasPrice, useBlockNumber } from "wagmi";
+import { useAccount, usePublicClient, useGasPrice, useBlockNumber } from "wagmi";
 import { formatUnits, parseUnits } from "viem";
 import { useQuery } from "@tanstack/react-query";
 import type { VaultConfig } from "@/config/vaults";
@@ -43,6 +43,7 @@ import type { EnsoToken, EnsoRouteResponse } from "@/types/enso";
 import { CONTROLLER_ABI, ERC4626_ABI } from "@/lib/abis";
 import { CRVUSD_TOKEN, SCRVUSD_TOKEN } from "@/config/tokens";
 import { isLendingTxPendingVisible } from "@/lib/transaction-ui";
+import { useTokenBalances } from "@/hooks/useTokenBalances";
 
 interface RepayTabProps {
   vault: VaultConfig;
@@ -85,18 +86,28 @@ export function RepayTab({
     try { return sanitizeAmount(sessionStorage.getItem(repayStorageKey) ?? ""); } catch { return ""; }
   });
   const [hasAutoCapped, setHasAutoCapped] = useState(false);
+  const [autoCapQuotePending, setAutoCapQuotePending] = useState(false);
   const setRepayAmount = useCallback(
     (v: string) => {
       const sanitized = sanitizeAmount(v);
       setRepayAmountState(sanitized);
       setIsClosingLoan(false);
       setHasAutoCapped(false);
+      setAutoCapQuotePending(false);
       try {
         if (sanitized) sessionStorage.setItem(repayStorageKey, sanitized);
         else sessionStorage.removeItem(repayStorageKey);
       } catch { /* */ }
     },
     [repayStorageKey]
+  );
+  const setRepayAmountFromMax = useCallback(
+    (amount: string) => {
+      setRepayAmount(amount);
+      const sanitized = sanitizeAmount(amount);
+      setAutoCapQuotePending(!!sanitized && Number(sanitized) > 0);
+    },
+    [setRepayAmount]
   );
 
   // Withdraw collateral (optional)
@@ -191,16 +202,24 @@ export function RepayTab({
 
   // Read selected token balance (native ETH or ERC20)
   const isEth = repayToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
-  const { data: repayTokenBalance, refetch: refetchBalance } = useBalance({
-    address,
-    token: isEth ? undefined : (repayToken.address as `0x${string}`),
-    query: { enabled: !!address },
+  const repayBalanceTokens = useMemo(() => [repayToken], [repayToken]);
+  const {
+    balanceMap: repayBalanceMap,
+    refetch: refetchBalance,
+    refetchOnchain: refetchRepayBalanceOnchain,
+  } = useTokenBalances(repayBalanceTokens, {
+    preferOnchain: true,
   });
+  useEffect(() => {
+    if (!address || !currentBlock) return;
+    refetchRepayBalanceOnchain();
+  }, [address, currentBlock, repayToken.address, refetchRepayBalanceOnchain]);
+  const repayBalanceRaw = repayBalanceMap.get(repayToken.address.toLowerCase()) ?? 0n;
   // For ETH: reserve gas from max balance
-  const balanceFormatted = isEth && repayTokenBalance?.value
-    ? getMaxEthAmount(repayTokenBalance.value, gasPrice)
-    : repayTokenBalance?.formatted ?? "0";
-  const currentBalance = repayTokenBalance?.value ?? 0n;
+  const balanceFormatted = isEth && repayBalanceRaw > 0n
+    ? getMaxEthAmount(repayBalanceRaw, gasPrice)
+    : formatUnits(repayBalanceRaw, repayToken.decimals);
+  const currentBalance = repayBalanceRaw;
 
   const formattedBalance = useMemo(() => {
     const value = parseFloat(balanceFormatted) || 0;
@@ -294,7 +313,7 @@ export function RepayTab({
         });
         // Store intermediate amount for route display
         setRedeemIntermediateAmount(
-          Number(formatUnits(underlyingAmount, 18)).toLocaleString(undefined, { maximumFractionDigits: 4 })
+          Number(formatUnits(underlyingAmount, vaultInfo.underlyingDecimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })
         );
         return fetchRoute({
           fromAddress: address,
@@ -508,7 +527,7 @@ export function RepayTab({
 
     // For vault tokens: use underlying equivalent amount; for regular tokens: use debounced amount
     const inputAmount = vaultInfo && repayUnderlyingEquivalent
-      ? Number(formatUnits(BigInt(repayUnderlyingEquivalent), 18))
+      ? Number(formatUnits(BigInt(repayUnderlyingEquivalent), vaultInfo.underlyingDecimals))
       : Number(debouncedAmount);
     const inputUsd = inputAmount * inputPrice;
     // Output: crvUSD received × crvUSD price
@@ -747,7 +766,7 @@ export function RepayTab({
 
     // Input: collateral value (use underlying equivalent if vault token)
     const inputAmount = collateralVaultInfo && withdrawCollateralUnderlying
-      ? Number(formatUnits(BigInt(withdrawCollateralUnderlying), 18))
+      ? Number(formatUnits(BigInt(withdrawCollateralUnderlying), collateralVaultInfo.underlyingDecimals))
       : withdrawCollateralEstimate;
     const inputUsd = inputAmount * collateralPrice;
     // Output: withdrawal token value (what user receives)
@@ -904,6 +923,7 @@ export function RepayTab({
         setRepayAmountState("");
         setWithdrawAmountState("");
         setIsClosingLoan(false);
+        setAutoCapQuotePending(false);
       }, 0);
       try { sessionStorage.removeItem(repayStorageKey); } catch { /* */ }
       onTransactionSuccess();
@@ -958,6 +978,7 @@ export function RepayTab({
       setWithdrawToken(defaultWithdrawToken);
       setIsClosingLoan(false);
       setHasAutoCapped(false);
+      setAutoCapQuotePending(false);
       setSuppressQuoteDisplay(false);
       reset();
     }, 0);
@@ -977,28 +998,36 @@ export function RepayTab({
 
   // Auto-cap repay amount when swap quote exceeds debt (unless closing loan)
   // Handles the case where MAX is clicked before any exchange rate is known
-  // Fires at most once per user action (MAX click / manual input) to prevent oscillation
+  // Fires at most once per MAX selection to prevent quote polling from mutating input.
   useEffect(() => {
-    if (hasAutoCapped) return;
-    if (isClosingLoan || isCrvUsd || quoteLoading) return;
+    if (!autoCapQuotePending || hasAutoCapped) return;
+    if (isClosingLoan || isCrvUsd) {
+      const timer = setTimeout(() => setAutoCapQuotePending(false), 0);
+      return () => clearTimeout(timer);
+    }
+    if (quoteFetching) return;
     if (!estimatedCrvUsdOut || !position?.debt || !repayAmount || Number(repayAmount) === 0) return;
-    if (estimatedCrvUsdOut <= position.debt * 102n / 100n) return;
     const timer = setTimeout(() => {
+      setAutoCapQuotePending(false);
+      if (estimatedCrvUsdOut <= position.debt * 102n / 100n) return;
+
+      // Scale down proportionally: newAmount = currentAmount * (debt / estimatedOutput)
+      const debt = Number(formatUnits(position.debt, 18));
+      const estimatedOutput = Number(formatUnits(estimatedCrvUsdOut, 18));
+      const adjusted = Number(repayAmount) * (debt / estimatedOutput);
+      if (!Number.isFinite(adjusted) || adjusted <= 0) return;
+
+      const dp = Math.min(repayToken.decimals, 8);
+      const adjustedText = adjusted.toFixed(dp);
+      if (Number(adjustedText) <= 0) return;
+
       setHasAutoCapped(true);
       setSuppressQuoteDisplay(true);
+      setRepayAmountState(adjustedText);
+      try { sessionStorage.setItem(repayStorageKey, adjustedText); } catch { /* */ }
     }, 0);
-    // Scale down proportionally: newAmount = currentAmount * (debt / estimatedOutput)
-    const ratio = Number(formatUnits(position.debt, 18)) / Number(formatUnits(estimatedCrvUsdOut, 18));
-    const adjusted = Number(repayAmount) * ratio;
-    const dp = Math.min(repayToken.decimals, 8);
-    const amountTimer = setTimeout(() => {
-      setRepayAmountState(adjusted.toFixed(dp));
-    }, 0);
-    return () => {
-      clearTimeout(timer);
-      clearTimeout(amountTimer);
-    };
-  }, [estimatedCrvUsdOut, position?.debt, isClosingLoan, isCrvUsd, quoteLoading, repayAmount, repayToken.decimals, hasAutoCapped]);
+    return () => clearTimeout(timer);
+  }, [autoCapQuotePending, estimatedCrvUsdOut, position?.debt, isClosingLoan, isCrvUsd, quoteFetching, repayAmount, repayToken.decimals, repayStorageKey, hasAutoCapped]);
 
   // Clear quote suppression once the adjusted amount's quote has arrived
   useEffect(() => {
@@ -1210,6 +1239,7 @@ export function RepayTab({
             onSelect={setRepayToken}
             priorityTokens={[CRVUSD_TOKEN, SCRVUSD_TOKEN]}
             excludeDefiTokens
+            preferOnchainBalances
           />
           {isCrvUsd ? (
             <MaxButton
@@ -1217,6 +1247,7 @@ export function RepayTab({
               onSelect={setRepayAmount}
               showClose={!!position?.hasLoan}
               onClose={() => {
+                setAutoCapQuotePending(false);
                 setRepayAmountState(formatUnits(position!.debt, 18));
                 setIsClosingLoan(true);
               }}
@@ -1224,9 +1255,10 @@ export function RepayTab({
           ) : maxRepayTokenEquivalent ? (
             <MaxButton
               balance={maxRepayBalance}
-              onSelect={setRepayAmount}
+              onSelect={setRepayAmountFromMax}
               showClose={!!position?.hasLoan}
               onClose={() => {
+                setAutoCapQuotePending(false);
                 setRepayAmountState(closeTokenAmount ?? balanceFormatted);
                 setIsClosingLoan(true);
               }}

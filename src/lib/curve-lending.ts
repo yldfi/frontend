@@ -19,6 +19,7 @@ export interface VaultInfo {
   address: string;
   underlying: string;
   underlyingSymbol: string;
+  underlyingDecimals: number;
   interface: "erc4626" | "ucrv" | "beefy";
 }
 
@@ -33,6 +34,7 @@ export function getVaultInfo(tokenAddress: string): VaultInfo | null {
         address: vault.address,
         underlying: vault.assetAddress,
         underlyingSymbol: vault.assetSymbol,
+        underlyingDecimals: vault.assetDecimals,
         interface: "erc4626",
       };
     }
@@ -52,6 +54,7 @@ export function getVaultInfo(tokenAddress: string): VaultInfo | null {
       address: externalVault.address,
       underlying: externalVault.underlying,
       underlyingSymbol: externalVault.underlyingSymbol,
+      underlyingDecimals: externalVault.underlyingDecimals,
       interface: vaultInterface,
     };
   }

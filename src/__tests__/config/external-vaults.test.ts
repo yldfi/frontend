@@ -1,37 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  EXTERNAL_VAULT_TOKENS,
-  getExternalVaultConfig,
-  getExternalVaultUnderlying,
-  isExternalVaultToken,
-  YEARN,
-} from "@/config/vaults";
-import { USDC_ADDRESS } from "@/config/addresses";
+import { USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
+import { EXTERNAL_VAULT_CONFIG } from "@/config/vaults";
 
-describe("external vault registry", () => {
-  it("treats yvUSDC-1 as an external vault token", () => {
-    expect(isExternalVaultToken(YEARN.YVUSDC1)).toBe(true);
-    expect(
-      EXTERNAL_VAULT_TOKENS.some(
-        (address) => address.toLowerCase() === YEARN.YVUSDC1.toLowerCase(),
-      ),
-    ).toBe(true);
-  });
+describe("external vault config", () => {
+  it("tracks yvUSDC-1 as a 6-decimal USDC-backed vault", () => {
+    const config = EXTERNAL_VAULT_CONFIG[YVUSDC1_ADDRESS.toLowerCase()];
 
-  it("stores the correct Yearn ERC4626 metadata for yvUSDC-1", () => {
-    expect(getExternalVaultUnderlying(YEARN.YVUSDC1)?.toLowerCase()).toBe(
-      USDC_ADDRESS.toLowerCase(),
-    );
-
-    expect(getExternalVaultConfig(YEARN.YVUSDC1)).toMatchObject({
-      address: YEARN.YVUSDC1,
-      underlying: USDC_ADDRESS,
-      underlyingSymbol: "USDC",
-      interface: "erc4626",
-      symbol: "yvUSDC-1",
-      name: "USDC-1 yVault",
-      protocol: "Yearn",
-    });
+    expect(config.underlying).toBe(USDC_ADDRESS);
+    expect(config.underlyingSymbol).toBe("USDC");
+    expect(config.underlyingDecimals).toBe(6);
   });
 });

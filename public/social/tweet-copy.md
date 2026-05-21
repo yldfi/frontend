@@ -17,9 +17,11 @@ Image: `public/social/ycvxcrv-promo.png`
 ## yscvgCVX
 
 ```text
-yscvgCVX gives $CVX holders a path into automated $cvgCVX compounding.
+yscvgCVX automates @0xLiquidBoost's cvgCVX yield loop.
 
-Convert CVX to cvgCVX, deposit into the vault, and let yld handle the reward-claiming and reinvestment loop through @0xLiquidBoost.
+cvgCVX is Tangent's liquid wrapper for locked $CVX, earning vlCVX vote incentives, CVX1 earnings, and treasury boosts.
+
+yld handles the harvest and reinvestment cycle.
 
 Deposit. Compound. Earn.
 
@@ -31,9 +33,9 @@ Image: `public/social/yscvgcvx-promo.png`
 ## yscvxCRV
 
 ```text
-yscvxCRV is the simpler $cvxCRV compounder.
+Built for cvxCRV holders who want the compounding without the upkeep.
 
-Deposit cvxCRV into the vault and get automated @ConvexFinance staking, reward claiming, and reinvestment without managing the process yourself.
+yscvxCRV stakes through @ConvexFinance, harvests crvUSD rewards, and reinvests into more cvxCRV automatically.
 
 Deposit. Compound. Earn.
 
