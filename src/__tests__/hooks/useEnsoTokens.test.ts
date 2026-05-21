@@ -232,7 +232,7 @@ describe("useEnsoTokens logic", () => {
       name: "Ethereum",
       symbol: "ETH",
       decimals: 18,
-      logoURI: "https://assets.coingecko.com/coins/images/279/thumb/ethereum.png",
+      logoURI: "/tokens/eth.png",
       type: "base",
     };
 
@@ -257,7 +257,7 @@ describe("useEnsoTokens logic", () => {
     });
 
     it("has logo URI", () => {
-      expect(DEFAULT_ETH_TOKEN.logoURI).toContain("coingecko");
+      expect(DEFAULT_ETH_TOKEN.logoURI).toBe("/tokens/eth.png");
     });
   });
 
