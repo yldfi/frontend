@@ -119,18 +119,6 @@ export function RepayTab({
   );
   const debouncedWithdrawAmount = useDebouncedValue(withdrawAmount, 500);
 
-  // Clear stale repay input when loan changes (e.g. closed and reopened)
-  const prevDebt = useRef(position?.debt ?? 0n);
-  useEffect(() => {
-    const currentDebt = position?.debt ?? 0n;
-    if (currentDebt !== prevDebt.current) {
-      setRepayAmountState("");
-      setIsClosingLoan(false);
-      try { sessionStorage.removeItem(repayStorageKey); } catch { /* */ }
-    }
-    prevDebt.current = currentDebt;
-  }, [position?.debt, repayStorageKey]);
-
   // Withdrawal output token (default: vault's collateral token; can swap to other tokens)
   const defaultWithdrawToken: EnsoToken = useMemo(() => ({
     address: vault.address,
@@ -170,6 +158,35 @@ export function RepayTab({
   // Suppress rate box display while auto-cap is adjusting the amount and re-quoting
   const [suppressQuoteDisplay, setSuppressQuoteDisplay] = useState(false);
   const ethPrice = null;
+
+  const clearRepayInput = useCallback(() => {
+    setRepayAmountState("");
+    setIsClosingLoan(false);
+    setHasAutoCapped(false);
+    setAutoCapQuotePending(false);
+    setSuppressQuoteDisplay(false);
+    try { sessionStorage.removeItem(repayStorageKey); } catch { /* */ }
+  }, [repayStorageKey]);
+
+  // Clear stale repay input when the loan disappears or the connected account changes.
+  // Do not key this off raw debt: LlamaLend debt accrues between refetches.
+  const prevHasLoan = useRef(position?.hasLoan ?? false);
+  useEffect(() => {
+    const hasLoan = position?.hasLoan ?? false;
+    if (prevHasLoan.current && !hasLoan) {
+      clearRepayInput();
+    }
+    prevHasLoan.current = hasLoan;
+  }, [position?.hasLoan, clearRepayInput]);
+
+  const prevAddress = useRef<typeof address>(address);
+  useEffect(() => {
+    if (!address) return;
+    if (prevAddress.current && prevAddress.current !== address) {
+      clearRepayInput();
+    }
+    prevAddress.current = address;
+  }, [address, clearRepayInput]);
 
   // Block number + gas price for cached simulation re-open
   const { data: currentBlock } = useBlockNumber({ watch: true });
