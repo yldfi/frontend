@@ -206,6 +206,14 @@ jobs:
           # Server-side secrets (MORALIS_API_KEY, TOKEN_HOLDER_API_KEY) are
           # configured in Cloudflare dashboard, not at build time
 
+      - name: Mask Cloudflare account name
+        run: |
+          if [ -n "$CLOUDFLARE_ACCOUNT_NAME" ]; then
+            echo "::add-mask::$CLOUDFLARE_ACCOUNT_NAME"
+          fi
+        env:
+          CLOUDFLARE_ACCOUNT_NAME: ${{ secrets.CLOUDFLARE_ACCOUNT_NAME }}
+
       - name: Deploy to Cloudflare
         run: npx wrangler deploy
         env:
