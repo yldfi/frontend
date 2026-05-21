@@ -20,7 +20,7 @@ export const DEFAULT_ETH_TOKEN: EnsoToken = {
   name: "Ethereum",
   symbol: "ETH",
   decimals: 18,
-  logoURI: "https://assets.coingecko.com/coins/images/279/thumb/ethereum.png",
+  logoURI: "/tokens/eth.png",
   type: "base",
 };
 

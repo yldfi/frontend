@@ -70,7 +70,7 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useClearOnNavigation } from "@/hooks/useClearOnNavigation";
 import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { TokenSelector } from "@/components/TokenSelector";
-import { ETH_ADDRESS } from "@/lib/enso";
+import { ETH_ADDRESS, applyKnownTokenMetadata } from "@/lib/enso";
 import { getMaxEthAmount } from "@/lib/eth-gas";
 import { getVaultFormBalanceAddresses } from "@/lib/vault-form-balances";
 import { CHAINLINK_ETH_USD } from "@/config/addresses";
@@ -352,19 +352,20 @@ export function VaultPageContent({ id }: { id: string }) {
     }
   };
   const [zapInputToken, setZapInputTokenState] = useState<EnsoToken | null>(() => {
-    if (typeof window === "undefined") return DEFAULT_ETH_TOKEN;
+    if (typeof window === "undefined") return applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     try {
       const saved = sessionStorage.getItem(`yldfi-zap-input-token-${id}`);
-      return saved ? JSON.parse(saved) : DEFAULT_ETH_TOKEN;
+      return saved ? applyKnownTokenMetadata(JSON.parse(saved) as EnsoToken) : applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     } catch {
-      return DEFAULT_ETH_TOKEN;
+      return applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     }
   });
   const setZapInputToken = (token: EnsoToken | null) => {
-    setZapInputTokenState(token);
+    const normalizedToken = token ? applyKnownTokenMetadata(token) : null;
+    setZapInputTokenState(normalizedToken);
     try {
-      if (token) {
-        sessionStorage.setItem(`yldfi-zap-input-token-${id}`, JSON.stringify(token));
+      if (normalizedToken) {
+        sessionStorage.setItem(`yldfi-zap-input-token-${id}`, JSON.stringify(normalizedToken));
       } else {
         sessionStorage.removeItem(`yldfi-zap-input-token-${id}`);
       }
@@ -373,19 +374,20 @@ export function VaultPageContent({ id }: { id: string }) {
     }
   };
   const [zapOutputToken, setZapOutputTokenState] = useState<EnsoToken | null>(() => {
-    if (typeof window === "undefined") return DEFAULT_ETH_TOKEN;
+    if (typeof window === "undefined") return applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     try {
       const saved = sessionStorage.getItem(`yldfi-zap-output-token-${id}`);
-      return saved ? JSON.parse(saved) : DEFAULT_ETH_TOKEN;
+      return saved ? applyKnownTokenMetadata(JSON.parse(saved) as EnsoToken) : applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     } catch {
-      return DEFAULT_ETH_TOKEN;
+      return applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     }
   });
   const setZapOutputToken = (token: EnsoToken | null) => {
-    setZapOutputTokenState(token);
+    const normalizedToken = token ? applyKnownTokenMetadata(token) : null;
+    setZapOutputTokenState(normalizedToken);
     try {
-      if (token) {
-        sessionStorage.setItem(`yldfi-zap-output-token-${id}`, JSON.stringify(token));
+      if (normalizedToken) {
+        sessionStorage.setItem(`yldfi-zap-output-token-${id}`, JSON.stringify(normalizedToken));
       } else {
         sessionStorage.removeItem(`yldfi-zap-output-token-${id}`);
       }

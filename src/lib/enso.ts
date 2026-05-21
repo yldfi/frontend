@@ -360,7 +360,7 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
     name: "Ethereum",
     symbol: "ETH",
     decimals: 18,
-    logoURI: "https://assets.coingecko.com/coins/images/279/thumb/ethereum.png",
+    logoURI: "/tokens/eth.png",
     type: "base",
   },
   {
@@ -369,7 +369,7 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
     name: "Wrapped Ether",
     symbol: "WETH",
     decimals: 18,
-    logoURI: "https://assets.coingecko.com/coins/images/2518/thumb/weth.png",
+    logoURI: "/tokens/weth.png",
     type: "base",
   },
   {
@@ -378,7 +378,7 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
     name: "Convex CRV",
     symbol: "cvxCRV",
     decimals: 18,
-    logoURI: "https://assets.coingecko.com/coins/images/15586/thumb/convex-crv.png",
+    logoURI: "/tokens/cvxcrv.png",
     type: "base",
   },
   {
@@ -387,7 +387,7 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
     name: "crvUSD",
     symbol: "crvUSD",
     decimals: 18,
-    logoURI: "https://assets.coingecko.com/coins/images/30118/thumb/crvusd.jpeg",
+    logoURI: "/tokens/crvusd.png",
     type: "base",
   },
   // Curve Savings vault (scrvUSD) - deeply integrated partner token
@@ -507,6 +507,18 @@ export const CUSTOM_TOKENS: EnsoToken[] = [
     type: "defi" as const,
   })),
 ];
+
+export function getCustomTokenMetadata(address: string | undefined): EnsoToken | undefined {
+  if (!address) return undefined;
+  const lower = address.toLowerCase();
+  return CUSTOM_TOKENS.find((token) => token.address.toLowerCase() === lower);
+}
+
+export function applyKnownTokenMetadata<T extends EnsoToken>(token: T): T {
+  const customToken = getCustomTokenMetadata(token.address);
+  const normalized = customToken ? { ...token, ...customToken } : token;
+  return applyTokenDisplayOverride(normalized) as T;
+}
 
 // Popular token addresses for sorting priority
 export const POPULAR_TOKENS = [

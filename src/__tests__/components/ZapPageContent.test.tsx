@@ -302,6 +302,39 @@ describe("ZapPageContent", () => {
     });
   });
 
+  it("normalizes persisted known token metadata before quoting", () => {
+    sessionStorage.setItem("yldfi-universal-zap-input", JSON.stringify({
+      address: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E",
+      chainId: 1,
+      name: "Curve.Fi USD Stablecoin",
+      symbol: "crvUSD",
+      decimals: 18,
+      logoURI: "https://assets.coingecko.com/coins/images/30118/thumb/crvusd.jpeg",
+      type: "base",
+    }));
+
+    render(<ZapPageContent />);
+
+    expect(mockUseUniversalZap).toHaveBeenCalledWith(
+      expect.objectContaining({
+        inputToken: expect.objectContaining({
+          symbol: "crvUSD",
+          logoURI: "/tokens/crvusd.png",
+        }),
+      }),
+    );
+    expect(mockUseTokenBalances).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          symbol: "crvUSD",
+          logoURI: "/tokens/crvusd.png",
+        }),
+        expect.objectContaining({ symbol: "ycvxCRV" }),
+      ],
+      { preferOnchain: true },
+    );
+  });
+
   it("confirms the preview modal by sending with skipSimulation", async () => {
     mockUseSettings.mockReturnValue({
       slippage: "50",
