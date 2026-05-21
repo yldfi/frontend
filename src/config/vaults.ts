@@ -163,6 +163,7 @@ export interface ExternalVaultConfig {
   address: string;
   underlying: string;
   underlyingSymbol: string;
+  underlyingDecimals: number;
   interface: ExternalVaultInterface;
   symbol: string;
   name: string;
@@ -176,6 +177,7 @@ export const EXTERNAL_VAULT_CONFIG: Record<string, ExternalVaultConfig> = {
     address: LLAMA_AIRFORCE.UCVX,
     underlying: LLAMA_AIRFORCE.UCVX_UNDERLYING,
     underlyingSymbol: "pxCVX",
+    underlyingDecimals: 18,
     interface: "erc4626",
     symbol: "uCVX",
     name: "Union CVX",
@@ -185,6 +187,7 @@ export const EXTERNAL_VAULT_CONFIG: Record<string, ExternalVaultConfig> = {
     address: LLAMA_AIRFORCE.UCRV,
     underlying: LLAMA_AIRFORCE.UCRV_UNDERLYING,
     underlyingSymbol: "cvxCRV",
+    underlyingDecimals: 18,
     interface: "ucrv", // Custom interface: withdraw(_to, _shares)
     symbol: "uCRV",
     name: "Union CRV",
@@ -195,6 +198,7 @@ export const EXTERNAL_VAULT_CONFIG: Record<string, ExternalVaultConfig> = {
     address: CONCENTRATOR.ACVX,
     underlying: CONCENTRATOR.ACVX_UNDERLYING,
     underlyingSymbol: "CVX",
+    underlyingDecimals: 18,
     interface: "erc4626",
     symbol: "aCVX",
     name: "Aladdin CVX",
@@ -204,6 +208,7 @@ export const EXTERNAL_VAULT_CONFIG: Record<string, ExternalVaultConfig> = {
     address: CONCENTRATOR.ACRV,
     underlying: CONCENTRATOR.ACRV_UNDERLYING,
     underlyingSymbol: "cvxCRV",
+    underlyingDecimals: 18,
     interface: "erc4626",
     symbol: "aCRV",
     name: "Aladdin CRV",
@@ -214,6 +219,7 @@ export const EXTERNAL_VAULT_CONFIG: Record<string, ExternalVaultConfig> = {
     address: BEEFY.MOO_CVX_CRV,
     underlying: BEEFY.MOO_CVX_CRV_UNDERLYING,
     underlyingSymbol: "cvxCRV",
+    underlyingDecimals: 18,
     interface: "beefy", // Custom interface: withdraw(_shares)
     symbol: "mooCvxCRV",
     name: "Moo Convex CRV",
@@ -223,6 +229,7 @@ export const EXTERNAL_VAULT_CONFIG: Record<string, ExternalVaultConfig> = {
     address: BEEFY.MOO_CVX_CVX,
     underlying: BEEFY.MOO_CVX_CVX_UNDERLYING,
     underlyingSymbol: "CVX",
+    underlyingDecimals: 18,
     interface: "beefy",
     symbol: "mooCvxCVX",
     name: "Moo Convex CVX",
@@ -233,6 +240,7 @@ export const EXTERNAL_VAULT_CONFIG: Record<string, ExternalVaultConfig> = {
     address: ASYMMETRY.AFCVX,
     underlying: ASYMMETRY.AFCVX_UNDERLYING,
     underlyingSymbol: "CVX",
+    underlyingDecimals: 18,
     interface: "erc4626",
     symbol: "afCVX",
     name: "Asymmetry Finance CVX",
@@ -243,6 +251,7 @@ export const EXTERNAL_VAULT_CONFIG: Record<string, ExternalVaultConfig> = {
     address: CURVE_SAVINGS.SCRVUSD,
     underlying: CURVE_SAVINGS.SCRVUSD_UNDERLYING,
     underlyingSymbol: "crvUSD",
+    underlyingDecimals: 18,
     interface: "erc4626",
     symbol: "scrvUSD",
     name: "Savings crvUSD",
@@ -253,6 +262,7 @@ export const EXTERNAL_VAULT_CONFIG: Record<string, ExternalVaultConfig> = {
     address: YEARN.YVUSDC1,
     underlying: YEARN.YVUSDC1_UNDERLYING,
     underlyingSymbol: "USDC",
+    underlyingDecimals: 6,
     interface: "erc4626",
     symbol: "yvUSDC-1",
     name: "USDC-1 yVault",
