@@ -6,6 +6,23 @@ import { useDirectSendTransaction } from "@/hooks/useDirectSendTransaction";
 import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
 import { useTestNetwork } from "@/contexts/TestNetworkContext";
 
+export function isRecoverableFlashbotsSigningError(error: unknown): boolean {
+  const errorMsg = error instanceof Error ? error.message : String(error);
+  const normalizedErrorMsg = errorMsg.toLowerCase();
+
+  const isUnsupportedMethod =
+    normalizedErrorMsg.includes("eth_signtransaction") &&
+    (normalizedErrorMsg.includes("not supported") || normalizedErrorMsg.includes("does not exist"));
+
+  const isMissingFeeFields =
+    normalizedErrorMsg.includes("missing gasprice") ||
+    normalizedErrorMsg.includes("maxfeepergas") ||
+    normalizedErrorMsg.includes("maxpriorityfeepergas") ||
+    normalizedErrorMsg.includes("missing or invalid parameters");
+
+  return isUnsupportedMethod || isMissingFeeFields;
+}
+
 /**
  * Shared transaction sender with universal gas estimation, Flashbots MEV protection,
  * and VNet impersonation support.
@@ -82,13 +99,8 @@ export function useSendTx() {
           if (isDev) console.log("[sendTx] Flashbots hash:", hash);
           return hash;
         } catch (err) {
-          const errorMsg = err instanceof Error ? err.message : String(err);
-          // Wallet doesn't support eth_signTransaction — fall back to regular send
-          const isUnsupportedMethod =
-            errorMsg.includes("eth_signTransaction") &&
-            (errorMsg.includes("not supported") || errorMsg.includes("does not exist"));
-          if (isUnsupportedMethod) {
-            if (isDev) console.log("[sendTx] → Flashbots fallback to wallet (eth_signTransaction unsupported)");
+          if (isRecoverableFlashbotsSigningError(err)) {
+            if (isDev) console.log("[sendTx] → Flashbots fallback to wallet (signTransaction unavailable)");
             const hash = await sendTransactionAsync(txParams);
             if (isDev) console.log("[sendTx] wallet hash:", hash);
             return hash;

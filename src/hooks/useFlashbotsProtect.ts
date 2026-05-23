@@ -7,17 +7,51 @@ import { FLASHBOTS_RPC_URL } from "@/config/rpc";
 
 const FLASHBOTS_STORAGE_KEY = "yldfi_flashbots_enabled";
 
+type WalletProviderInfo = {
+  isFrame?: boolean;
+  isRabby?: boolean;
+};
+
+type BrowserWalletWindow = Window & {
+  ethereum?: WalletProviderInfo;
+  rabby?: WalletProviderInfo;
+};
+
 /**
- * Wallets that don't support eth_signTransaction (sign without broadcast)
- * These wallets can only do eth_sendTransaction (sign + broadcast combined)
+ * Wallets that should use eth_sendTransaction instead of the raw signing
+ * flow required by Flashbots Protect.
  */
 const UNSUPPORTED_WALLET_PATTERNS = [
   "frame",           // Frame wallet
+  "rabby",           // Rabby should use the normal wallet send flow
   "ledger",          // Ledger Live
   "trezor",          // Trezor Suite
   "safe",            // Safe (Gnosis Safe)
   "walletconnect",   // WalletConnect v1 (v2 may support it depending on wallet)
 ];
+
+export function isUnsupportedFlashbotsWallet({
+  connectorName,
+  connectorId,
+  ethereumProvider,
+  rabbyProvider,
+}: {
+  connectorName?: string;
+  connectorId?: string;
+  ethereumProvider?: WalletProviderInfo | null;
+  rabbyProvider?: WalletProviderInfo | null;
+}): boolean {
+  const normalizedConnectorName = connectorName?.toLowerCase() ?? "";
+  const normalizedConnectorId = connectorId?.toLowerCase() ?? "";
+  const isKnownUnsupportedConnector = UNSUPPORTED_WALLET_PATTERNS.some(
+    (pattern) => normalizedConnectorName.includes(pattern) || normalizedConnectorId.includes(pattern)
+  );
+
+  return (
+    isKnownUnsupportedConnector ||
+    Boolean(ethereumProvider?.isFrame || ethereumProvider?.isRabby || rabbyProvider?.isRabby)
+  );
+}
 
 /**
  * Hook for sending transactions via Flashbots Protect RPC
@@ -44,7 +78,7 @@ export function useFlashbotsProtect() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
-  // Detect if wallet supports eth_signTransaction
+  // Detect if wallet can use the Flashbots raw signing flow
   const isFlashbotsSupported = useMemo(() => {
     if (!connector) return true; // Assume supported until we know
 
@@ -52,14 +86,17 @@ export function useFlashbotsProtect() {
     const connectorId = connector.id?.toLowerCase() ?? "";
 
     // Also check window.ethereum for provider info (some wallets inject this)
-    const providerInfo = typeof window !== "undefined"
-      ? (window.ethereum as { isFrame?: boolean })?.isFrame
-      : false;
+    const browserWindow = typeof window !== "undefined"
+      ? (window as BrowserWalletWindow)
+      : undefined;
 
     // Check if wallet is in the unsupported list
-    const isUnsupported = UNSUPPORTED_WALLET_PATTERNS.some(
-      (pattern) => connectorName.includes(pattern) || connectorId.includes(pattern)
-    ) || providerInfo; // Frame sets isFrame = true
+    const isUnsupported = isUnsupportedFlashbotsWallet({
+      connectorName,
+      connectorId,
+      ethereumProvider: browserWindow?.ethereum,
+      rabbyProvider: browserWindow?.rabby,
+    });
 
     return !isUnsupported;
   }, [connector]);
@@ -90,15 +127,19 @@ export function useFlashbotsProtect() {
     setError(null);
 
     try {
-      // Prepare transaction with gas estimation if not provided
-      const preparedTx = {
+      // Fill nonce and fee fields before asking a wallet to sign a raw tx.
+      const preparedTx = await publicClient.prepareTransactionRequest({
         ...tx,
         account: walletClient.account,
         chain: walletClient.chain,
-      };
+      });
 
       // Sign the transaction (wallet popup)
-      const signedTx = await walletClient.signTransaction(preparedTx);
+      const signedTx = await walletClient.signTransaction({
+        ...preparedTx,
+        account: walletClient.account,
+        chain: walletClient.chain,
+      });
 
       // Submit signed transaction to Flashbots RPC
       const response = await fetch(FLASHBOTS_RPC_URL, {
