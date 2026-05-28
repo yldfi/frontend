@@ -217,7 +217,7 @@ describe("useZapActions integration", () => {
       expect(result.current.needsApproval()).toBe(true);
     });
 
-    it("calls writeContract when approve is called", () => {
+    it("calls writeContract when approve is called", async () => {
       mockUseReadContract.mockReturnValue({
         data: BigInt(0),
         refetch: mockRefetchAllowance,
@@ -225,8 +225,8 @@ describe("useZapActions integration", () => {
 
       const { result } = renderHook(() => useZapActions(mockUsdcQuote));
 
-      act(() => {
-        result.current.approve(false);
+      await act(async () => {
+        await result.current.approve(false);
       });
 
       expect(mockWriteContract).toHaveBeenCalledWith(
@@ -237,7 +237,7 @@ describe("useZapActions integration", () => {
       );
     });
 
-    it("shows approving status after approve", () => {
+    it("shows approving status after approve", async () => {
       mockUseReadContract.mockReturnValue({
         data: BigInt(0),
         refetch: mockRefetchAllowance,
@@ -245,8 +245,8 @@ describe("useZapActions integration", () => {
 
       const { result } = renderHook(() => useZapActions(mockUsdcQuote));
 
-      act(() => {
-        result.current.approve(false);
+      await act(async () => {
+        await result.current.approve(false);
       });
 
       expect(result.current.status).toBe("approving");
@@ -428,11 +428,11 @@ describe("useZapActions integration", () => {
       expect(mockSendTransaction).not.toHaveBeenCalled();
     });
 
-    it("does not approve when token is ETH", () => {
+    it("does not approve when token is ETH", async () => {
       const { result } = renderHook(() => useZapActions(mockEthQuote));
 
-      act(() => {
-        result.current.approve(false);
+      await act(async () => {
+        await result.current.approve(false);
       });
 
       expect(mockWriteContract).not.toHaveBeenCalled();

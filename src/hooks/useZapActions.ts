@@ -15,6 +15,7 @@ import type { Hash, Hex } from "viem";
 import { buildLegacyMorphoPermitTransaction, ENSO_ROUTER_EXECUTOR, ETH_ADDRESS, LEGACY_MORPHO_ADDRESS } from "@/lib/enso";
 import { FORBIDDEN_APPROVAL_SPENDER_ERROR, assertSafeApprovalSpender, isForbiddenApprovalSpender } from "@/lib/approval-safety";
 import { ERC20_APPROVAL_ABI, ERC20_PERMIT_ABI } from "@/lib/abis";
+import { shouldResetApprovalToZeroFirst } from "@/lib/approval-reset";
 import { useTestNetwork } from "@/contexts/TestNetworkContext";
 import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
 import { useSendTx } from "@/hooks/useSendTx";
@@ -52,6 +53,13 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const autoExecuteRef = useRef(false);
   const pendingOptionsRef = useRef<{ skipSimulation?: boolean; previewOnly?: boolean } | undefined>(undefined);
+  const [approvalResetFlow, setApprovalResetFlow] = useState<{
+    stage: "reset" | "approve";
+    token: `0x${string}`;
+    spender: `0x${string}`;
+    amount: bigint;
+  } | null>(null);
+  const handledApprovalHashRef = useRef<Hash | undefined>(undefined);
   const preparedPermitTxRef = useRef<{
     key: string;
     txParams: { to: `0x${string}`; data: `0x${string}`; value: bigint };
@@ -139,6 +147,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     // Error states for pre-send failures (wallet rejection, simulation failure, RPC errors)
     if (approveError || txError || simulationError) return "error";
     // Active on-chain pending states
+    if (approvalResetFlow && (isApprovalPending || isApprovalSuccess)) return "waitingApproval";
     if (isZapPending) return "waitingTx";
     if (isApprovalPending) return "waitingApproval";
     // Active action states (pre-send) — must be checked AFTER on-chain states
@@ -149,7 +158,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     if (actionState === "simulating") return "zapping";
     if (actionState === "zapping") return "zapping";
     return "idle";
-  }, [approveError, txError, simulationError, isZapReverted, isApprovalReverted, isZapSuccess, isApprovalPending, isZapPending, actionState]);
+  }, [approveError, txError, simulationError, isZapReverted, isApprovalReverted, isZapSuccess, isApprovalPending, isApprovalSuccess, isZapPending, actionState, approvalResetFlow]);
 
   // Derive error message from errors or reverts
   const error = useMemo(() => {
@@ -235,7 +244,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   }, []);
 
   // Approve tokens — exact=true uses the quote amount, exact=false uses unlimited
-  const approve = useCallback((exact: boolean) => {
+  const approve = useCallback(async (exact: boolean) => {
     if (!userAddress || isEth || !tokenAddress || !quote) return;
 
     if (isForbiddenApprovalSpender(ZAP_APPROVAL_SPENDER)) {
@@ -265,13 +274,61 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
         exact,
       });
     }
+
+    const needsZeroReset = await shouldResetApprovalToZeroFirst({
+      publicClient,
+      owner: userAddress,
+      token: tokenAddress,
+      spender: ZAP_APPROVAL_SPENDER,
+      amount,
+      currentAllowance: allowance as bigint | undefined,
+    });
+
+    if (needsZeroReset) {
+      setApprovalResetFlow({
+        stage: "reset",
+        token: tokenAddress,
+        spender: ZAP_APPROVAL_SPENDER,
+        amount,
+      });
+      writeApprove({
+        address: tokenAddress,
+        abi: ERC20_APPROVAL_ABI,
+        functionName: "approve",
+        args: [ZAP_APPROVAL_SPENDER, 0n],
+      });
+      return;
+    }
+
+    setApprovalResetFlow(null);
     writeApprove({
       address: tokenAddress,
       abi: ERC20_APPROVAL_ABI,
       functionName: "approve",
       args: [ZAP_APPROVAL_SPENDER, amount],
     });
-  }, [userAddress, isEth, tokenAddress, quote, rejectForbiddenApproval, writeApprove]);
+  }, [userAddress, isEth, tokenAddress, quote, publicClient, allowance, rejectForbiddenApproval, writeApprove]);
+
+  useEffect(() => {
+    if (!isApprovalSuccess || !approveHash || !approvalResetFlow || handledApprovalHashRef.current === approveHash) return;
+
+    handledApprovalHashRef.current = approveHash;
+
+    if (approvalResetFlow.stage === "reset") {
+      const nextFlow = { ...approvalResetFlow, stage: "approve" as const };
+      queueMicrotask(() => setApprovalResetFlow(nextFlow));
+      resetApprove();
+      writeApprove({
+        address: nextFlow.token,
+        abi: ERC20_APPROVAL_ABI,
+        functionName: "approve",
+        args: [nextFlow.spender, nextFlow.amount],
+      });
+      return;
+    }
+
+    queueMicrotask(() => setApprovalResetFlow(null));
+  }, [isApprovalSuccess, approveHash, approvalResetFlow, resetApprove, writeApprove]);
 
   const prepareTxParams = useCallback(async (): Promise<{ to: `0x${string}`; data: `0x${string}`; value: bigint }> => {
     if (!quote || !userAddress || !publicClient) {
@@ -586,6 +643,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     if (
       autoExecuteRef.current &&
       prevStatus.current === "waitingApproval" &&
+      !approvalResetFlow &&
       (status === "idle" || status === "needsApproval" || status === "approving")
     ) {
       // Approval completed — preserve original options and continue into execution.
@@ -597,7 +655,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       }, 100);
     }
     prevStatus.current = status;
-  }, [status]);
+  }, [status, approvalResetFlow]);
 
   // Public executeZap — checks approval before executing.
   // If approval is needed, sets pendingApproval and shows the approval card.
@@ -655,6 +713,8 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     autoExecuteRef.current = false;
     pendingOptionsRef.current = undefined;
     preparedPermitTxRef.current = null;
+    setApprovalResetFlow(null);
+    handledApprovalHashRef.current = undefined;
     resetApprove();
   }, [resetApprove]);
 

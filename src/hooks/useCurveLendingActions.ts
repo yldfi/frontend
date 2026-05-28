@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAccount, usePublicClient, useWaitForTransactionReceipt } from "wagmi";
 import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
@@ -12,6 +12,7 @@ import {
 } from "@/lib/curve-lending";
 import { TOKENS, getVaultByAddress } from "@/config/vaults";
 import { ERC20_APPROVAL_ABI, CONTROLLER_APPROVE_ABI } from "@/lib/abis";
+import { shouldResetApprovalToZeroFirst } from "@/lib/approval-reset";
 import { ETH_ADDRESS, ENSO_ROUTER_EXECUTOR } from "@/lib/enso";
 import { FORBIDDEN_APPROVAL_SPENDER_ERROR, assertSafeApprovalSpender, findForbiddenApproval, isForbiddenApprovalSpender } from "@/lib/approval-safety";
 import { ZAPPER_ADDRESS, ZAPPER_ABI, fetchZapperSwapData, buildExoticOutputSwapData, getDeadline } from "@/lib/zapper";
@@ -231,6 +232,13 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     total: number;
     steps: { label: string; description: string; done: boolean; spender?: string }[];
   } | null>(null);
+  const [approvalResetFlow, setApprovalResetFlow] = useState<{
+    stage: "reset" | "approve";
+    token: `0x${string}`;
+    spender: `0x${string}`;
+    amount: bigint;
+  } | null>(null);
+  const handledApprovalHashRef = useRef<`0x${string}` | undefined>(undefined);
   const [pendingInputToken, setPendingInputToken] = useState<string | null>(null);
   const [pendingController, setPendingController] = useState<`0x${string}` | null>(null);
   // Stored action to execute after all approvals in the queue complete
@@ -247,10 +255,11 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
   } = useWriteContract();
 
   // Wait for approval tx
-  const { isLoading: isApprovalPending, isSuccess: isApprovalSuccess } = useWaitForTransactionReceipt({
+  const { isLoading: isApprovalPending, isSuccess: isRawApprovalSuccess } = useWaitForTransactionReceipt({
     hash: approveHash,
     pollingInterval: 1_000,
   });
+  const isApprovalSuccess = isRawApprovalSuccess && !approvalResetFlow;
 
   // Wait for main transaction receipt
   const effectiveStatus: LendingStatus =
@@ -277,10 +286,12 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     setPendingApproval(null);
     setApprovalQueue(q => q.length === 0 ? q : []);
     setApprovalProgress(null);
+    setApprovalResetFlow(null);
     setPendingInputToken(null);
     setPendingController(null);
     pendingActionRef.current = null;
     pendingPreviewRef.current = false;
+    handledApprovalHashRef.current = undefined;
     resetApprove();
   }, [resetApprove]);
 
@@ -294,6 +305,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     setPendingApproval(null);
     setApprovalQueue([]);
     setApprovalProgress(null);
+    setApprovalResetFlow(null);
     pendingActionRef.current = null;
     pendingPreviewRef.current = false;
     setError(FORBIDDEN_APPROVAL_SPENDER_ERROR);
@@ -331,7 +343,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
 
   // Approve using the pending approval info — supports both ERC20 and controller approval
   // When exactApproval is true and amount is available, approve only the needed amount
-  const approve = useCallback((exactApproval?: boolean) => {
+  const approve = useCallback(async (exactApproval?: boolean) => {
     if (!address || !pendingApproval) return;
 
     if (isForbiddenApprovalSpender(pendingApproval.spender)) {
@@ -353,6 +365,32 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       const approvalAmount = exactApproval && pendingApproval.amount
         ? pendingApproval.amount
         : maxUint256;
+
+      const needsZeroReset = await shouldResetApprovalToZeroFirst({
+        publicClient,
+        owner: address,
+        token: pendingApproval.token,
+        spender: pendingApproval.spender,
+        amount: approvalAmount,
+      });
+
+      if (needsZeroReset) {
+        setApprovalResetFlow({
+          stage: "reset",
+          token: pendingApproval.token,
+          spender: pendingApproval.spender,
+          amount: approvalAmount,
+        });
+        writeApprove({
+          address: pendingApproval.token,
+          abi: ERC20_APPROVAL_ABI,
+          functionName: "approve",
+          args: [pendingApproval.spender, 0n],
+        });
+        return;
+      }
+
+      setApprovalResetFlow(null);
       // ERC20 approve(address, uint256)
       writeApprove({
         address: pendingApproval.token,
@@ -361,7 +399,28 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         args: [pendingApproval.spender, approvalAmount],
       });
     }
-  }, [address, pendingApproval, rejectForbiddenApproval, writeApprove]);
+  }, [address, pendingApproval, publicClient, rejectForbiddenApproval, writeApprove]);
+
+  useEffect(() => {
+    if (!isRawApprovalSuccess || !approveHash || !approvalResetFlow || handledApprovalHashRef.current === approveHash) return;
+
+    handledApprovalHashRef.current = approveHash;
+
+    if (approvalResetFlow.stage === "reset") {
+      const nextFlow = { ...approvalResetFlow, stage: "approve" as const };
+      queueMicrotask(() => setApprovalResetFlow(nextFlow));
+      resetApprove();
+      writeApprove({
+        address: nextFlow.token,
+        abi: ERC20_APPROVAL_ABI,
+        functionName: "approve",
+        args: [nextFlow.spender, nextFlow.amount],
+      });
+      return;
+    }
+
+    queueMicrotask(() => setApprovalResetFlow(null));
+  }, [isRawApprovalSuccess, approveHash, approvalResetFlow, resetApprove, writeApprove]);
 
   // Execute the pending bundle after approval
   const executeAfterApproval = useCallback(async () => {
