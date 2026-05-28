@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAccount, usePublicClient, useWaitForTransactionReceipt } from "wagmi";
 import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
@@ -51,6 +51,7 @@ const CONTROLLER_LIQUIDATE_ABI = [
 ] as const;
 
 import { ERC20_APPROVAL_ABI, ERC4626_ABI, CURVE_GET_DY_ABI } from "@/lib/abis";
+import { shouldResetApprovalToZeroFirst } from "@/lib/approval-reset";
 import type { SimulationResult } from "@/types/enso";
 import { useTestNetwork } from "@/contexts/TestNetworkContext";
 import { runVNetSimulation } from "@/lib/vnet-simulation";
@@ -233,6 +234,13 @@ export function useZapperActions(): UseZapperActionsResult {
     total: number;
     steps: { label: string; description: string; done: boolean; spender?: string }[];
   } | null>(null);
+  const [approvalResetFlow, setApprovalResetFlow] = useState<{
+    stage: "reset" | "approve";
+    token: `0x${string}`;
+    spender: `0x${string}`;
+    amount: bigint;
+  } | null>(null);
+  const handledApprovalHashRef = useRef<`0x${string}` | undefined>(undefined);
   // Track whether the original call requested previewOnly — set synchronously before returning null
   const pendingPreviewRef = useRef(false);
 
@@ -244,10 +252,11 @@ export function useZapperActions(): UseZapperActionsResult {
     isError: isApproveError,
   } = useWriteContract();
 
-  const { isLoading: isApprovalPending, isSuccess: isApprovalSuccess } = useWaitForTransactionReceipt({
+  const { isLoading: isApprovalPending, isSuccess: isRawApprovalSuccess } = useWaitForTransactionReceipt({
     hash: approveHash,
     pollingInterval: 1_000,
   });
+  const isApprovalSuccess = isRawApprovalSuccess && !approvalResetFlow;
 
   const effectiveStatus: ZapperStatus =
     isApproveError && status === "approving" ? "needsApproval" : status;
@@ -271,7 +280,9 @@ export function useZapperActions(): UseZapperActionsResult {
     setPendingApproval(null);
     setApprovalQueue(q => q.length === 0 ? q : []);
     setApprovalProgress(null);
+    setApprovalResetFlow(null);
     pendingPreviewRef.current = false;
+    handledApprovalHashRef.current = undefined;
     resetApprove();
   }, [resetApprove]);
 
@@ -284,12 +295,13 @@ export function useZapperActions(): UseZapperActionsResult {
     setPendingApproval(null);
     setApprovalQueue([]);
     setApprovalProgress(null);
+    setApprovalResetFlow(null);
     pendingPreviewRef.current = false;
     setError(FORBIDDEN_APPROVAL_SPENDER_ERROR);
     setStatus("error");
   }, []);
 
-  const approve = useCallback((exactAmount?: boolean) => {
+  const approve = useCallback(async (exactAmount?: boolean) => {
     if (!address || !pendingApproval) return;
 
     if (isForbiddenApprovalSpender(pendingApproval.spender)) {
@@ -304,6 +316,31 @@ export function useZapperActions(): UseZapperActionsResult {
       if (process.env.NODE_ENV === "development") {
         console.log(`[Approve TX] ERC20 ${pendingApproval.tokenSymbol} (${pendingApproval.token}) → spender ${pendingApproval.spender} | amount: ${amount === maxUint256 ? "MAX_UINT256" : amount.toString()} | exact: ${!!exactAmount}`);
       }
+      const needsZeroReset = await shouldResetApprovalToZeroFirst({
+        publicClient,
+        owner: address,
+        token: pendingApproval.token,
+        spender: pendingApproval.spender,
+        amount,
+      });
+
+      if (needsZeroReset) {
+        setApprovalResetFlow({
+          stage: "reset",
+          token: pendingApproval.token,
+          spender: pendingApproval.spender,
+          amount,
+        });
+        writeApprove({
+          address: pendingApproval.token,
+          abi: ERC20_APPROVAL_ABI,
+          functionName: "approve",
+          args: [pendingApproval.spender, 0n],
+        });
+        return;
+      }
+
+      setApprovalResetFlow(null);
       writeApprove({
         address: pendingApproval.token,
         abi: ERC20_APPROVAL_ABI,
@@ -322,7 +359,28 @@ export function useZapperActions(): UseZapperActionsResult {
         args: [pendingApproval.spender, true],
       });
     }
-  }, [address, pendingApproval, rejectForbiddenApproval, writeApprove]);
+  }, [address, pendingApproval, publicClient, rejectForbiddenApproval, writeApprove]);
+
+  useEffect(() => {
+    if (!isRawApprovalSuccess || !approveHash || !approvalResetFlow || handledApprovalHashRef.current === approveHash) return;
+
+    handledApprovalHashRef.current = approveHash;
+
+    if (approvalResetFlow.stage === "reset") {
+      const nextFlow = { ...approvalResetFlow, stage: "approve" as const };
+      queueMicrotask(() => setApprovalResetFlow(nextFlow));
+      resetApprove();
+      writeApprove({
+        address: nextFlow.token,
+        abi: ERC20_APPROVAL_ABI,
+        functionName: "approve",
+        args: [nextFlow.spender, nextFlow.amount],
+      });
+      return;
+    }
+
+    queueMicrotask(() => setApprovalResetFlow(null));
+  }, [isRawApprovalSuccess, approveHash, approvalResetFlow, resetApprove, writeApprove]);
 
   const simulateAndExecute = useCallback(async (
     txData: PendingTx,
