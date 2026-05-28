@@ -214,7 +214,7 @@ describe("useZapActions preview fallback", () => {
     expect(mockUsdcQuote.tx.to).not.toBe(ENSO_ROUTER_EXECUTOR);
   });
 
-  it("approves the Enso router executor spender instead of quote tx target", () => {
+  it("approves the Enso router executor spender instead of quote tx target", async () => {
     mockUseReadContract.mockReturnValue({
       data: BigInt(0),
       refetch: vi.fn(),
@@ -222,8 +222,8 @@ describe("useZapActions preview fallback", () => {
 
     const { result } = renderHook(() => useZapActions(mockUsdcQuote));
 
-    act(() => {
-      result.current.approve(false);
+    await act(async () => {
+      await result.current.approve(false);
     });
 
     expect(mockWriteApprove).toHaveBeenCalledWith(
@@ -231,6 +231,40 @@ describe("useZapActions preview fallback", () => {
         address: mockUsdcToken.address,
         functionName: "approve",
         args: [ENSO_ROUTER_EXECUTOR, maxUint256],
+      })
+    );
+  });
+
+  it("resets CRV approval to zero before increasing an existing allowance", async () => {
+    const mockCrvToken: EnsoToken = {
+      address: "0xD533a949740bb3306d119CC777fa900bA034cd52",
+      chainId: 1,
+      name: "Curve DAO Token",
+      symbol: "CRV",
+      decimals: 18,
+      type: "base",
+    };
+    const mockCrvQuote: ZapQuote = {
+      ...mockUsdcQuote,
+      inputToken: mockCrvToken,
+      inputAmount: "140.266541374971961815",
+    };
+    mockUseReadContract.mockReturnValue({
+      data: 92_838_401_930_596_493_924n,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useReadContract>);
+
+    const { result } = renderHook(() => useZapActions(mockCrvQuote));
+
+    await act(async () => {
+      await result.current.approve(true);
+    });
+
+    expect(mockWriteApprove).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: mockCrvToken.address,
+        functionName: "approve",
+        args: [ENSO_ROUTER_EXECUTOR, 0n],
       })
     );
   });

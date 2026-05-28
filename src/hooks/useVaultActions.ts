@@ -5,6 +5,7 @@ import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWri
 import { parseUnits, maxUint256, encodeFunctionData } from "viem";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { ERC20_APPROVAL_ABI, VAULT_ABI } from "@/lib/abis";
+import { shouldResetApprovalToZeroFirst } from "@/lib/approval-reset";
 import type { SimulationResult } from "@/types/enso";
 import { useTestNetwork } from "@/contexts/TestNetworkContext";
 import { useSendTx } from "@/hooks/useSendTx";
@@ -55,6 +56,13 @@ export function useVaultActions(
   const [depositHash, setDepositHash] = useState<`0x${string}` | undefined>();
   const [withdrawHash, setWithdrawHash] = useState<`0x${string}` | undefined>();
   const [txError, setTxError] = useState<Error | null>(null);
+  const [approvalResetFlow, setApprovalResetFlow] = useState<{
+    stage: "reset" | "approve";
+    token: `0x${string}`;
+    spender: `0x${string}`;
+    amount: bigint;
+  } | null>(null);
+  const handledApprovalHashRef = useRef<`0x${string}` | undefined>(undefined);
 
   // Wait for transactions - poll every 1 second until confirmed
   const { isLoading: isApprovalPending, isSuccess: isApprovalSuccess, data: approvalReceipt } = useWaitForTransactionReceipt({
@@ -102,6 +110,7 @@ export function useVaultActions(
     // This handles the case where a tx is mined but reverts on-chain
     if (isApprovalReverted || isDepositReverted || isWithdrawReverted) return "reverted";
     if (isDepositSuccess || isWithdrawSuccess) return "success";
+    if (approvalResetFlow && (isApprovalPending || isApprovalSuccess)) return "waitingApproval";
     if (isApprovalSuccess) return "idle";
     // Error states for pre-send failures (wallet rejection, simulation failure, RPC errors)
     if (approveError || txError || simulationError) return "error";
@@ -117,7 +126,7 @@ export function useVaultActions(
   }, [
     approveError, txError, simulationError,
     isApprovalReverted, isDepositReverted, isWithdrawReverted,
-    isDepositSuccess, isWithdrawSuccess, isApprovalSuccess,
+    isDepositSuccess, isWithdrawSuccess, isApprovalSuccess, approvalResetFlow,
     isApprovalPending, isDepositPending, isWithdrawPending,
     actionState
   ]);
@@ -152,7 +161,7 @@ export function useVaultActions(
   }, [allowance, decimals]);
 
   // Approve (exact or unlimited)
-  const approve = useCallback((exactAmount?: bigint) => {
+  const approve = useCallback(async (exactAmount?: bigint) => {
     if (!userAddress) return;
     setActionState("approving");
 
@@ -166,13 +175,61 @@ export function useVaultActions(
         exact: !!exactAmount,
       });
     }
+
+    const needsZeroReset = await shouldResetApprovalToZeroFirst({
+      publicClient,
+      owner: userAddress,
+      token: tokenAddress,
+      spender: vaultAddress,
+      amount,
+      currentAllowance: allowance as bigint | undefined,
+    });
+
+    if (needsZeroReset) {
+      setApprovalResetFlow({
+        stage: "reset",
+        token: tokenAddress,
+        spender: vaultAddress,
+        amount,
+      });
+      writeApprove({
+        address: tokenAddress,
+        abi: ERC20_APPROVAL_ABI,
+        functionName: "approve",
+        args: [vaultAddress, 0n],
+      });
+      return;
+    }
+
+    setApprovalResetFlow(null);
     writeApprove({
       address: tokenAddress,
       abi: ERC20_APPROVAL_ABI,
       functionName: "approve",
       args: [vaultAddress, amount],
     });
-  }, [userAddress, tokenAddress, vaultAddress, writeApprove]);
+  }, [userAddress, tokenAddress, vaultAddress, publicClient, allowance, writeApprove]);
+
+  useEffect(() => {
+    if (!isApprovalSuccess || !approveHash || !approvalResetFlow || handledApprovalHashRef.current === approveHash) return;
+
+    handledApprovalHashRef.current = approveHash;
+
+    if (approvalResetFlow.stage === "reset") {
+      const nextFlow = { ...approvalResetFlow, stage: "approve" as const };
+      queueMicrotask(() => setApprovalResetFlow(nextFlow));
+      resetApprove();
+      writeApprove({
+        address: nextFlow.token,
+        abi: ERC20_APPROVAL_ABI,
+        functionName: "approve",
+        args: [nextFlow.spender, nextFlow.amount],
+      });
+      return;
+    }
+
+    queueMicrotask(() => setApprovalResetFlow(null));
+  }, [isApprovalSuccess, approveHash, approvalResetFlow, resetApprove, writeApprove]);
 
   // Run simulation + eth_call in parallel for a vault call
   // Three-way: mainnet → REST API, tenderly VNet → RPC sim, anvil → eth_call only
@@ -467,6 +524,8 @@ export function useVaultActions(
     setDepositHash(undefined);
     setWithdrawHash(undefined);
     pendingTx.current = null;
+    setApprovalResetFlow(null);
+    handledApprovalHashRef.current = undefined;
     resetApprove();
   }, [resetApprove]);
 
