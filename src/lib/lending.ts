@@ -36,10 +36,22 @@ export function computeLeverage(collateralValueUsd: number, debtValueUsd: number
 
 /**
  * Compute net APY for a leveraged lending position.
- * netAPY = (collateralApy * leverage) - (borrowApy * (leverage - 1))
+ * netAPY = (collateralApy * earningLeverage) - (borrowApy * (leverage - 1))
+ *
+ * `collateralYieldRatio` is the share of total collateral value that still
+ * earns collateral APY. During soft-liquidation, crvUSD in the AMM counts
+ * toward position value but no longer earns vault staking rewards.
  */
-export function computeNetApy(collateralApy: number, borrowApy: number, leverage: number): number {
-  return (collateralApy * leverage) - (borrowApy * (leverage - 1));
+export function computeNetApy(
+  collateralApy: number,
+  borrowApy: number,
+  leverage: number,
+  collateralYieldRatio: number = 1
+): number {
+  const safeYieldRatio = Number.isFinite(collateralYieldRatio)
+    ? Math.min(Math.max(collateralYieldRatio, 0), 1)
+    : 0;
+  return (collateralApy * leverage * safeYieldRatio) - (borrowApy * (leverage - 1));
 }
 
 /**
@@ -84,12 +96,17 @@ export function buildLendingPositionDisplay(
   const debtNum = Number(formatUnits(debt, 18)); // crvUSD is always 18 decimals
   const stablecoinNum = Number(formatUnits(stablecoin, 18));
 
-  // Total collateral value: vault token value + stablecoin in AMM (from soft-liquidation)
-  const collateralValueUsd = collateralNum * collateralPriceUsd + stablecoinNum;
+  // Total position value includes vault token collateral plus crvUSD in AMM
+  // bands. Only the remaining vault token collateral earns vault APY.
+  const yieldBearingCollateralValueUsd = collateralNum * collateralPriceUsd;
+  const collateralValueUsd = yieldBearingCollateralValueUsd + stablecoinNum;
   const debtValueUsd = debtNum;
 
   const leverage = computeLeverage(collateralValueUsd, debtValueUsd);
-  const netApy = computeNetApy(collateralApy, borrowApy, leverage);
+  const collateralYieldRatio = collateralValueUsd > 0
+    ? yieldBearingCollateralValueUsd / collateralValueUsd
+    : 0;
+  const netApy = computeNetApy(collateralApy, borrowApy, leverage, collateralYieldRatio);
 
   return {
     collateralFormatted: formatNumber(collateralNum, collateralNum >= 1000 ? 2 : 4),

@@ -20,6 +20,7 @@ import { useVaultCache } from "@/hooks/useVaultCache";
 import { LoadingDots } from "@/components/LoadingDots";
 import { useSettings } from "@/hooks/useSettings";
 import { trackLendingTabSwitch } from "@/lib/analytics";
+import { computeNetApy } from "@/lib/lending";
 import {
   getPendingTxCopy,
   TX_REVERTED_VISIBLE_MS,
@@ -611,20 +612,46 @@ export function LendingInterface({
     return Number(formatUnits(newColl, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 });
   }, [position, childCollateralDelta, vault.decimals]);
 
-  // Total collateral value in crvUSD: includes both vault token + stablecoin in AMM bands (soft-liquidation)
-  const totalCollateralValue = useMemo(() => {
+  // Collateral value in crvUSD. Soft-liquidation creates crvUSD in AMM bands:
+  // it counts toward position value, but only vault-token collateral earns APY.
+  const yieldBearingCollateralValue = useMemo(() => {
     if (!position?.hasLoan || oraclePrice === 0n) return 0;
-    const vaultTokenValue = Number(formatUnits(position.collateral * oraclePrice / (10n ** BigInt(vault.decimals)), 18));
-    const stablecoinValue = Number(formatUnits(position.stablecoin, 18));
-    return vaultTokenValue + stablecoinValue;
+    return Number(formatUnits(position.collateral * oraclePrice / (10n ** BigInt(vault.decimals)), 18));
   }, [position, vault.decimals, oraclePrice]);
 
-  const effectiveLeverage = useMemo(() => {
+  const totalCollateralValue = useMemo(() => {
+    if (!position?.hasLoan || oraclePrice === 0n) return 0;
+    const stablecoinValue = Number(formatUnits(position.stablecoin, 18));
+    return yieldBearingCollateralValue + stablecoinValue;
+  }, [position, oraclePrice, yieldBearingCollateralValue]);
+
+  const currentLeverage = useMemo(() => {
     if (!position?.hasLoan || totalCollateralValue <= 0) return null;
     const debt = Number(formatUnits(position.debt, 18));
     if (totalCollateralValue <= debt) return null;
-    return (totalCollateralValue / (totalCollateralValue - debt)).toFixed(2);
+    return totalCollateralValue / (totalCollateralValue - debt);
   }, [position, totalCollateralValue]);
+
+  const effectiveLeverage = useMemo(() => {
+    return currentLeverage == null ? null : currentLeverage.toFixed(2);
+  }, [currentLeverage]);
+
+  const currentCollateralYieldRatio = useMemo(() => {
+    return totalCollateralValue > 0 ? yieldBearingCollateralValue / totalCollateralValue : 0;
+  }, [yieldBearingCollateralValue, totalCollateralValue]);
+
+  const projectedCollateralYieldRatio = useMemo(() => {
+    if (!position?.hasLoan || oraclePrice === 0n) return currentCollateralYieldRatio;
+    const projectedCollateral = childCollateralDelta !== null
+      ? position.collateral + childCollateralDelta
+      : position.collateral;
+    const projectedYieldBearingValue = projectedCollateral > 0n
+      ? Number(formatUnits(projectedCollateral * oraclePrice / (10n ** BigInt(vault.decimals)), 18))
+      : 0;
+    const stablecoinValue = Number(formatUnits(position.stablecoin, 18));
+    const projectedTotalValue = projectedYieldBearingValue + stablecoinValue;
+    return projectedTotalValue > 0 ? projectedYieldBearingValue / projectedTotalValue : 0;
+  }, [position, oraclePrice, vault.decimals, childCollateralDelta, currentCollateralYieldRatio]);
 
   // Max leverage for current bands setting based on A, loan_discount, and N
   const maxLeverage = useMemo(() => {
@@ -644,23 +671,23 @@ export function LendingInterface({
     return Math.round(1 / (1 - effectiveFactor) * 100) / 100;
   }, [ammParams, position, childBands]);
 
-  // Net APY on equity: leverage * collateralAPY - (leverage - 1) * borrowAPY
+  // Net APY on equity. In soft-liquidation, crvUSD in AMM bands no longer
+  // earns vault APY, so only the remaining vault-token share contributes yield.
   const currentNetAPY = useMemo(() => {
-    if (collateralAPY == null || currentBorrowAPY == null || !effectiveLeverage) return null;
-    const lev = parseFloat(effectiveLeverage);
-    return lev * collateralAPY - (lev - 1) * currentBorrowAPY;
-  }, [collateralAPY, currentBorrowAPY, effectiveLeverage]);
+    if (collateralAPY == null || currentBorrowAPY == null || currentLeverage == null) return null;
+    return computeNetApy(collateralAPY, currentBorrowAPY, currentLeverage, currentCollateralYieldRatio);
+  }, [collateralAPY, currentBorrowAPY, currentLeverage, currentCollateralYieldRatio]);
 
   const projectedNetAPY = useMemo(() => {
     if (collateralAPY == null) return null;
     const projBorrow = projectedBorrowAPY ?? currentBorrowAPY;
     if (projBorrow == null) return null;
-    const projLev = childEstimatedLeverage ?? (effectiveLeverage ? parseFloat(effectiveLeverage) : null);
+    const projLev = childEstimatedLeverage ?? currentLeverage;
     if (projLev == null) return null;
     // Only show projected if something actually changed
-    if (projectedBorrowAPY === null && childEstimatedLeverage === null) return null;
-    return projLev * collateralAPY - (projLev - 1) * projBorrow;
-  }, [collateralAPY, currentBorrowAPY, projectedBorrowAPY, effectiveLeverage, childEstimatedLeverage]);
+    if (projectedBorrowAPY === null && childEstimatedLeverage === null && childCollateralDelta === null) return null;
+    return computeNetApy(collateralAPY, projBorrow, projLev, projectedCollateralYieldRatio);
+  }, [collateralAPY, currentBorrowAPY, projectedBorrowAPY, currentLeverage, childEstimatedLeverage, childCollateralDelta, projectedCollateralYieldRatio]);
 
   const hasLoan = position?.hasLoan ?? false;
 

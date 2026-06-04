@@ -82,6 +82,11 @@ describe("computeNetApy", () => {
     // 10*1.5 - 5*(1.5-1) = 15 - 2.5 = 12.5
     expect(computeNetApy(10, 5, 1.5)).toBe(12.5);
   });
+
+  it("scales collateral APY by the yield-bearing collateral share", () => {
+    // 10*2*0.5 - 5*(2-1) = 10 - 5 = 5
+    expect(computeNetApy(10, 5, 2, 0.5)).toBe(5);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -172,5 +177,37 @@ describe("buildLendingPositionDisplay", () => {
     // netApy = 2*2 - 10*1 = -6
     expect(result.netApy).toBe(-6);
     expect(result.netApyFormatted).toBe("-6.00%");
+  });
+
+  it("does not apply collateral APY to crvUSD sold down in soft-liquidation", () => {
+    const collateral = parseUnits("8280.22", 18);
+    const stablecoin = parseUnits("3376.89", 18);
+    const debt = parseUnits("6519.57", 18);
+    const collateralPriceUsd = 1;
+    const collateralApy = 29.66;
+    const borrowApy = 7.14;
+
+    const result = buildLendingPositionDisplay(
+      collateral,
+      debt,
+      collateralPriceUsd,
+      collateralApy,
+      borrowApy,
+      18,
+      stablecoin,
+    );
+
+    const yieldBearingCollateralValue = 8280.22;
+    const totalCollateralValue = yieldBearingCollateralValue + 3376.89;
+    const equity = totalCollateralValue - 6519.57;
+    const expectedNet =
+      (yieldBearingCollateralValue / equity) * collateralApy -
+      (6519.57 / equity) * borrowApy;
+    const oldUnweightedNet = computeNetApy(collateralApy, borrowApy, result.leverage);
+
+    expect(result.leverage).toBeCloseTo(totalCollateralValue / equity, 4);
+    expect(result.netApy).toBeCloseTo(expectedNet, 4);
+    expect(result.netApy).toBeLessThan(oldUnweightedNet);
+    expect(result.netApyFormatted).toBe("+38.74%");
   });
 });
