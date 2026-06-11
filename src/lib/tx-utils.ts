@@ -80,6 +80,8 @@ export const CUSTOM_ERROR_SELECTORS: Record<string, string> = {
 
 export const CURVE_DEBT_TOO_HIGH_MESSAGE =
   "Curve rejected this partial repay: Debt too high. Repay more debt or close the loan.";
+export const SWAP_OUTPUT_BELOW_MINIMUM_MESSAGE =
+  "Swap output below minimum. Increase the amount or slippage.";
 
 // ---------------------------------------------------------------------------
 // Unified error parser — merges all detection from 4 former implementations
@@ -93,6 +95,16 @@ export function parseErrorMessage(error: unknown, defaultMsg?: string): string {
 
   if (lower.includes("debt too high")) {
     return CURVE_DEBT_TOO_HIGH_MESSAGE;
+  }
+
+  if (lower.includes("no swap route could produce enough")) {
+    return "No swap route could produce enough crvUSD for this close. Increase the amount, increase slippage, or use crvUSD.";
+  }
+  if (lower.includes("no swap route could be quoted")) {
+    return "No swap route could be quoted for this transaction. Increase the amount, increase slippage, or use a different token.";
+  }
+  if (lower.includes("could not quote shortcuts") || lower.includes("could not quote")) {
+    return "No swap route could be quoted for this transaction. Increase the amount, increase slippage, or use a different token.";
   }
 
   // User rejection
@@ -113,7 +125,7 @@ export function parseErrorMessage(error: unknown, defaultMsg?: string): string {
 
   // Slippage
   if (lower.includes("slippage") || lower.includes("insufficient_output")) {
-    return "Price moved too much. Try increasing slippage.";
+    return SWAP_OUTPUT_BELOW_MINIMUM_MESSAGE;
   }
 
   // Health check (Curve lending)
@@ -126,7 +138,7 @@ export function parseErrorMessage(error: unknown, defaultMsg?: string): string {
   if (ensoPrefixMatch) {
     const ensoMsg = ensoPrefixMatch[1].toLowerCase();
     if (ensoMsg.includes("condition not met") || ensoMsg.includes("return amount is not enough")) {
-      return "Swap output below minimum. Try increasing slippage.";
+      return SWAP_OUTPUT_BELOW_MINIMUM_MESSAGE;
     }
     if (ensoMsg.includes("call failed")) return "Swap route failed. Try increasing slippage or use a different token.";
     if (ensoMsg === "unknown") return "Swap failed during transaction. Try refreshing the quote or increasing slippage.";
@@ -141,7 +153,7 @@ export function parseErrorMessage(error: unknown, defaultMsg?: string): string {
       if (process.env.NODE_ENV === "development") console.log("[Enso error]", { step: parsed.step, target: parsed.target, message: parsed.message });
       const msg = parsed.message.toLowerCase();
       if (msg.includes("condition not met") || msg.includes("return amount is not enough")) {
-        return "Swap output below minimum. Try increasing slippage.";
+        return SWAP_OUTPUT_BELOW_MINIMUM_MESSAGE;
       }
       if (msg.includes("call failed")) {
         return "Swap route failed. Try increasing slippage or use a different token.";
@@ -158,7 +170,7 @@ export function parseErrorMessage(error: unknown, defaultMsg?: string): string {
       if (process.env.NODE_ENV === "development") console.log("[SwapFailed → Enso error]", { step: parsed.step, target: parsed.target, message: parsed.message });
       const msg = parsed.message.toLowerCase();
       if (msg.includes("condition not met") || msg.includes("return amount is not enough")) {
-        return "Swap output below minimum. Try increasing slippage.";
+        return SWAP_OUTPUT_BELOW_MINIMUM_MESSAGE;
       }
       if (msg.includes("call failed")) {
         return "Swap route failed. Try increasing slippage or use a different token.";
@@ -182,7 +194,7 @@ export function parseErrorMessage(error: unknown, defaultMsg?: string): string {
 
   // Generic Enso/DEX assertion failures (when hex parsing fails)
   if (lower.includes("condition not met") || lower.includes("return amount is not enough")) {
-    return "Swap output below minimum. Try increasing slippage.";
+    return SWAP_OUTPUT_BELOW_MINIMUM_MESSAGE;
   }
   if (lower.includes("call failed")) {
     return "Swap route failed. Try increasing slippage or use a different token.";

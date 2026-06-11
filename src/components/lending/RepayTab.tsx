@@ -65,6 +65,13 @@ function formatCrvUsdAmount(amount: bigint): string {
   });
 }
 
+function getCloseInputBufferMultiplier(slippage: string): number {
+  const slippageBps = Number(slippage);
+  const safeSlippageBps = Number.isFinite(slippageBps) && slippageBps > 0 ? slippageBps : 0;
+  // Close has a hard full-debt min. Add the active slippage plus a small route/debt buffer.
+  return 1 + (safeSlippageBps + 100) / 10_000;
+}
+
 export function RepayTab({
   vault,
   position,
@@ -546,14 +553,14 @@ export function RepayTab({
     return balanceFormatted;
   })();
 
-  // Amount needed to close the loan with a non-crvUSD token
-  // maxRepayTokenEquivalent has a 0.5% haircut for partial repay — add ~1.5% buffer for close
-  // (0.5% to undo haircut + 1% for swap spread/slippage), capped at user's balance
+  // Amount needed to close the loan with a non-crvUSD token.
+  // maxRepayTokenEquivalent is intentionally haircutted for partial repay, so Close adds
+  // the active slippage plus a small route/debt buffer and caps at the wallet balance.
   const closeTokenAmount = (() => {
     if (!maxRepayTokenEquivalent || !position?.debt || position.debt === 0n) return null;
     const base = parseFloat(maxRepayTokenEquivalent);
     if (base <= 0) return null;
-    const withBuffer = base * 1.015;
+    const withBuffer = base * getCloseInputBufferMultiplier(slippage);
     const balance = parseFloat(balanceFormatted) || 0;
     const capped = Math.min(withBuffer, balance);
     return capped.toFixed(Math.min(repayToken.decimals, 8));
@@ -1172,6 +1179,12 @@ export function RepayTab({
     const hasWithdrawal = !isClosingLoan && withdrawAmountWei > 0n;
 
     try {
+      if (closeRepayNeedsMoreMessage) {
+        toast.error(closeRepayNeedsMoreMessage);
+        trackTransactionError("repay", vault.id, closeRepayNeedsMoreMessage);
+        return;
+      }
+
       if (isCrvUsd && !hasWithdrawal) {
         // Path A: direct controller.repay() — no withdrawal, no bundle needed
         const repayWei = parseUnits(repayAmount, 18);
@@ -1265,6 +1278,33 @@ export function RepayTab({
     Number(withdrawAmount) > 0 &&
     (withdrawSwapLoading || withdrawQuoteFetching);
 
+  const isCloseSwap =
+    isClosingLoan &&
+    !isCrvUsd &&
+    !!repayAmount &&
+    Number(repayAmount) > 0;
+
+  const closeRepayNeedsMore = !!(
+    isCloseSwap &&
+    position?.debt &&
+    estimatedCrvUsdOut !== null &&
+    estimatedCrvUsdOut < position.debt
+  );
+
+  const closeRepayQuotePending = !!(
+    isCloseSwap &&
+    (
+      debouncedAmount !== repayAmount ||
+      quoteFetching ||
+      quoteLoading ||
+      estimatedCrvUsdOut === null
+    )
+  );
+
+  const closeRepayNeedsMoreMessage = closeRepayNeedsMore && position?.debt && estimatedCrvUsdOut !== null
+    ? `This amount is expected to produce ${formatCrvUsdAmount(estimatedCrvUsdOut)} crvUSD, but closing requires at least ${formatCrvUsdAmount(position.debt)} crvUSD. Increase the amount or use crvUSD.`
+    : null;
+
   const needsZapperForRepay = withdrawAmountWei > 0n;
 
   const isFormValid =
@@ -1273,6 +1313,8 @@ export function RepayTab({
     position?.hasLoan &&
     !hasInsufficientBalance &&
     !isBelowMinimumPartialRepay &&
+    !closeRepayNeedsMore &&
+    !closeRepayQuotePending &&
     (isCrvUsd || isVaultWithCrvUsdUnderlying || (!isCrvUsd && !quoteLoading)) &&
     (!needsZapperForRepay || zappersEnabled);
 
@@ -1283,6 +1325,8 @@ export function RepayTab({
     if (status === "waitingTx") return <>Waiting for confirmation<LoadingDots /></>;
     if (hasInsufficientBalance) return "Insufficient balance";
     if (isBelowMinimumPartialRepay && minimumPartialRepayFormatted) return `Repay at least ${minimumPartialRepayFormatted} crvUSD`;
+    if (closeRepayNeedsMore) return "Increase amount to close";
+    if (closeRepayQuotePending) return <>Checking close quote<LoadingDots /></>;
     const hasWithdrawal = withdrawAmountWei > 0n;
 
     if (isCrvUsd) {
@@ -1369,7 +1413,11 @@ export function RepayTab({
               showClose={!!position?.hasLoan}
               onClose={() => {
                 setAutoCapQuotePending(false);
-                setRepayAmountState(closeTokenAmount ?? balanceFormatted);
+                const amount = closeTokenAmount ?? balanceFormatted;
+                setRepayAmountState(amount);
+                try {
+                  if (amount) sessionStorage.setItem(repayStorageKey, amount);
+                } catch { /* */ }
                 setIsClosingLoan(true);
               }}
             />
@@ -1448,7 +1496,7 @@ export function RepayTab({
                 </span>
                 <span className="mono">
                   {isClosingLoan
-                    ? `${Number(formatUnits(position.debt, 18)).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })} / ${Number(formatUnits(position.debt, 18)).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })} crvUSD`
+                    ? `${!isCrvUsd ? "~" : ""}${Number(formatUnits(isCrvUsd ? position.debt : estimatedCrvUsdOut, 18)).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })} / ${Number(formatUnits(position.debt, 18)).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })} crvUSD`
                     : `~${Number(formatUnits(estimatedCrvUsdOut, 18)).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })} / ${Number(formatUnits(position.debt, 18)).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })} crvUSD`
                   }
                 </span>
@@ -1636,6 +1684,13 @@ export function RepayTab({
         <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-500 text-xs flex items-center gap-2">
           <AlertTriangle size={14} className="shrink-0" />
           Curve requires at least {minimumPartialRepayFormatted} crvUSD for this partial repay. Repay more or close the loan.
+        </div>
+      )}
+
+      {closeRepayNeedsMoreMessage && (
+        <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-500 text-xs flex items-center gap-2">
+          <AlertTriangle size={14} className="shrink-0" />
+          {closeRepayNeedsMoreMessage}
         </div>
       )}
 
@@ -1860,7 +1915,7 @@ export function RepayTab({
                         : undefined
                   }
                   isLoading={quoteLoading}
-                  closingLoan={isClosingLoan && position?.hasLoan ? {
+                  closingLoan={isClosingLoan && position?.hasLoan && !closeRepayNeedsMore && !closeRepayQuotePending ? {
                     collateralReturned: Number(formatUnits(position.collateral, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 }),
                     collateralSymbol: vault.symbol,
                   } : undefined}

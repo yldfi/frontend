@@ -6,7 +6,7 @@ import { useAccount, useBlockNumber, useGasPrice, usePublicClient } from "wagmi"
 
 import { RepayTab } from "@/components/lending/RepayTab";
 import { CRVUSD_ADDRESS } from "@/config/addresses";
-import { CURVE_CONTROLLERS, VAULT_ADDRESSES, VAULTS } from "@/config/vaults";
+import { CURVE_CONTROLLERS, TOKENS, VAULT_ADDRESSES, VAULTS } from "@/config/vaults";
 import { useCurveLendingActions } from "@/hooks/useCurveLendingActions";
 import type { LendingPosition } from "@/hooks/useCurveLendingPosition";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
@@ -41,14 +41,46 @@ vi.mock("@/hooks/useTokenBalances", () => ({
 }));
 
 vi.mock("@/components/TokenSelector", () => ({
-  TokenSelector: ({ selectedToken }: { selectedToken: { symbol: string } }) => (
-    <button type="button">{selectedToken.symbol}</button>
+  TokenSelector: ({
+    selectedToken,
+    onSelect,
+  }: {
+    selectedToken: { symbol: string };
+    onSelect?: (token: { address: string; chainId: number; name: string; symbol: string; decimals: number; logoURI: string; type: "base" }) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={() => onSelect?.({
+        address: "0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7",
+        chainId: 1,
+        name: "Convex CRV",
+        symbol: "cvxCRV",
+        decimals: 18,
+        logoURI: "",
+        type: "base",
+      })}
+    >
+      {selectedToken.symbol}
+    </button>
   ),
 }));
 
 vi.mock("@/components/MaxButton", () => ({
-  MaxButton: ({ onSelect, balance }: { onSelect: (amount: string) => void; balance: string }) => (
-    <button type="button" onClick={() => onSelect(balance)}>MAX</button>
+  MaxButton: ({
+    onSelect,
+    balance,
+    showClose,
+    onClose,
+  }: {
+    onSelect: (amount: string) => void;
+    balance: string;
+    showClose?: boolean;
+    onClose?: () => void;
+  }) => (
+    <div>
+      <button type="button" onClick={() => onSelect(balance)}>MAX</button>
+      {showClose && <button type="button" onClick={onClose}>CLOSE</button>}
+    </div>
   ),
   MaxButtonSkeleton: () => <button type="button" disabled>MAX</button>,
 }));
@@ -92,6 +124,8 @@ const mockUseTokenBalances = vi.mocked(useTokenBalances);
 
 const vault = VAULTS.ycvxcrv;
 const controllerAddress = CURVE_CONTROLLERS[VAULT_ADDRESSES.YCVXCRV];
+const WAD = 10n ** 18n;
+let settingsSlippage = "50";
 
 function makePosition(debt: bigint, hasLoan = true): LendingPosition {
   return {
@@ -124,6 +158,7 @@ describe("RepayTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionStorage.clear();
+    settingsSlippage = "50";
 
     mockUseAccount.mockReturnValue({
       address: "0x1234567890123456789012345678901234567890",
@@ -145,8 +180,8 @@ describe("RepayTab", () => {
       refetch: vi.fn(),
     } as unknown as ReturnType<typeof useQuery>);
 
-    mockUseSettings.mockReturnValue({
-      slippage: "50",
+    mockUseSettings.mockImplementation(() => ({
+      slippage: settingsSlippage,
       updateSlippage: vi.fn(),
       showSlippageModal: false,
       setShowSlippageModal: vi.fn(),
@@ -159,7 +194,7 @@ describe("RepayTab", () => {
       zappersEnabled: false,
       setZappersEnabled: vi.fn(),
       setShowSimulationPreview: vi.fn(),
-    });
+    }));
 
     mockUseCurveLendingActions.mockReturnValue({
       repayDirect: vi.fn(),
@@ -183,7 +218,10 @@ describe("RepayTab", () => {
 
     mockUseTokenBalances.mockReturnValue({
       sortedTokens: [],
-      balanceMap: new Map([[CRVUSD_ADDRESS.toLowerCase(), 10_000n * 10n ** 18n]]),
+      balanceMap: new Map([
+        [CRVUSD_ADDRESS.toLowerCase(), 10_000n * 10n ** 18n],
+        [TOKENS.CVXCRV.toLowerCase(), 10_000n * 10n ** 18n],
+      ]),
       priceMap: new Map(),
       refetch: vi.fn(),
       refetchOnchain: vi.fn(),
@@ -272,5 +310,92 @@ describe("RepayTab", () => {
 
     expect(screen.getByText(/Curve requires at least 1,300 crvUSD/)).toBeTruthy();
     expect((screen.getByRole("button", { name: /Repay at least 1,300 crvUSD/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("uses the active slippage when sizing a swap-token close", async () => {
+    settingsSlippage = "300";
+    mockUseQuery.mockImplementation((options) => {
+      const queryKey = (options as { queryKey?: unknown[] }).queryKey;
+      if (queryKey?.[0] === "repay-max-token" && queryKey[1] === TOKENS.CVXCRV) {
+        return {
+          data: "100",
+          isLoading: false,
+          isFetching: false,
+          error: null,
+          refetch: vi.fn(),
+        } as unknown as ReturnType<typeof useQuery>;
+      }
+      if (queryKey?.[0] === "repay-swap-quote") {
+        return {
+          data: { amountOut: (1_001n * WAD).toString() },
+          isLoading: false,
+          isFetching: false,
+          error: null,
+          refetch: vi.fn(),
+        } as unknown as ReturnType<typeof useQuery>;
+      }
+      return {
+        data: undefined,
+        isLoading: false,
+        isFetching: false,
+        error: null,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useQuery>;
+    });
+
+    renderRepayTab(makePosition(1_000n * WAD));
+
+    fireEvent.click(screen.getByRole("button", { name: "crvUSD" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "cvxCRV" })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "CLOSE" }));
+
+    expect((screen.getByPlaceholderText("0.0") as HTMLInputElement).value).toBe("104.00000000");
+  });
+
+  it("blocks swap-token close when the live quote cannot cover the full debt", async () => {
+    settingsSlippage = "300";
+    mockUseQuery.mockImplementation((options) => {
+      const queryKey = (options as { queryKey?: unknown[] }).queryKey;
+      if (queryKey?.[0] === "repay-max-token" && queryKey[1] === TOKENS.CVXCRV) {
+        return {
+          data: "100",
+          isLoading: false,
+          isFetching: false,
+          error: null,
+          refetch: vi.fn(),
+        } as unknown as ReturnType<typeof useQuery>;
+      }
+      if (queryKey?.[0] === "repay-swap-quote") {
+        return {
+          data: { amountOut: (990n * WAD).toString() },
+          isLoading: false,
+          isFetching: false,
+          error: null,
+          refetch: vi.fn(),
+        } as unknown as ReturnType<typeof useQuery>;
+      }
+      return {
+        data: undefined,
+        isLoading: false,
+        isFetching: false,
+        error: null,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useQuery>;
+    });
+
+    renderRepayTab(makePosition(1_000n * WAD));
+
+    fireEvent.click(screen.getByRole("button", { name: "crvUSD" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "cvxCRV" })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "CLOSE" }));
+
+    expect(screen.getByText(/expected to produce 990 crvUSD/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Increase amount to close" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
