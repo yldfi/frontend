@@ -360,7 +360,7 @@ export function RewardsPageContent() {
               <div className="flex items-center gap-2 flex-wrap text-sm text-[var(--muted-foreground)] mb-5">
                 <span>
                   {ycvxDeprecated
-                    ? "This campaign remains available for existing positions and claims. New ycvxCRV deposits and new LlamaLend loans are hidden in the UI because Curve is winding down the connected lending market."
+                    ? "Existing positions and claims remain available. New ycvxCRV deposits and LlamaLend loans are hidden."
                     : "Earn crvUSD by borrowing against ycvxCRV. The more you borrow, the more you earn."}
                 </span>
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[var(--muted)] text-[var(--foreground)] mono">
@@ -392,7 +392,7 @@ export function RewardsPageContent() {
                       </div>
                       <div className="text-xs text-[var(--muted-foreground)]">
                         {ycvxDeprecated
-                          ? "Withdrawals remain available. yscvxCRV keeps staked cvxCRV exposure without routing 15% of yield to the deprecated LlamaLend market."
+                          ? "yscvxCRV keeps staked cvxCRV exposure without the LlamaLend yield route."
                           : "Deposit cvxCRV to receive ycvxCRV yield-bearing vault tokens."}
                       </div>
                     </div>
