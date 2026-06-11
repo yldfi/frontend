@@ -14,6 +14,18 @@ yldfi.co/vaults/ycvxcrv
 
 Image: `public/social/ycvxcrv-promo.png`
 
+## ycvxCRV LlamaLend v1 Sunset
+
+```text
+Following the Curve DAO decision to sunset ycvxCRV collateral on LlamaLend v1, yld has disabled new ycvxCRV deposits and zap-ins via the UI.
+
+Withdrawals remain available. To keep earning yield from staked cvxCRV, exchange to the yld yscvxCRV vault.
+
+yldfi.co/vaults/yscvxcrv
+```
+
+Image: `public/social/ycvxcrv-sunset-promo.png`
+
 ## yscvgCVX
 
 ```text
