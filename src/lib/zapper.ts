@@ -1,8 +1,8 @@
 // LlamaLendZapper contract integration
 // Enables leveraged Curve LlamaLend operations via Enso Router swaps
 
-import { fetchRoute, fetchBundle, ENSO_SHORTCUTS, ENSO_ROUTER_EXECUTOR, getLpxCvxToCvxSwapRate } from "@/lib/enso";
-import { calculateMinDy } from "@/lib/curve";
+import { fetchRoute, fetchBundle, ENSO_SHORTCUTS, ENSO_ROUTER_EXECUTOR, getCvgCvxSwapRate, getLpxCvxToCvxSwapRate } from "@/lib/enso";
+import { calculateMinDy, getCurveGetDyFactory } from "@/lib/curve";
 import { TOKENS, TANGENT, PIREX } from "@/config/vaults";
 import { CRVUSD_ADDRESS } from "@/config/addresses";
 import type { EnsoBundleAction } from "@/types/enso";
@@ -738,6 +738,13 @@ export async function buildExoticOutputSwapData(params: {
   let expectedOut: string;
 
   if (params.type === "cvgCvx") {
+    const conservativeCvx = calculateMinDy(BigInt(cvxRoute.amountOut), params.slippage);
+    const expectedCvgCvx = await getCvgCvxSwapRate(conservativeCvx.toString());
+    if (expectedCvgCvx === 0n) {
+      throw new Error("Failed to estimate Curve CVX1→cvgCVX swap output");
+    }
+    const minDyCvgCvx = calculateMinDy(expectedCvgCvx, params.slippage);
+
     // cvgCVX path: crvUSD -> CVX -> CVX1 (mint 1:1) -> cvgCVX (Curve exchange) -> ZAPPER
     actions = [
       // 0: routeMulti -- swap crvUSD (already in ENSO_SHORTCUTS from Zapper's routeSingle pull) -> CVX
@@ -768,7 +775,7 @@ export async function buildExoticOutputSwapData(params: {
       // 5: Curve exchange CVX1 -> cvgCVX (stableswap, int128 indices: 0=CVX1, 1=cvgCVX)
       {
         protocol: "enso", action: "call",
-        args: { address: TANGENT.CVX1_CVGCVX_POOL.toLowerCase(), method: "exchange", abi: "function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) returns (uint256)", args: ["0", "1", { useOutputOfCallAt: 1 }, "0"] },
+        args: { address: TANGENT.CVX1_CVGCVX_POOL.toLowerCase(), method: "exchange", abi: "function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) returns (uint256)", args: ["0", "1", { useOutputOfCallAt: 1 }, minDyCvgCvx.toString()] },
       },
       // 6: Transfer cvgCVX to ZAPPER_ADDRESS
       {
@@ -777,10 +784,20 @@ export async function buildExoticOutputSwapData(params: {
       },
     ];
 
-    // CVX -> CVX1 is 1:1, then CVX1 -> cvgCVX via Curve pool
-    // Conservative estimate: use CVX amount as approximation (pool is near 1:1)
-    expectedOut = cvxRoute.amountOut;
+    expectedOut = expectedCvgCvx.toString();
   } else {
+    const conservativeCvx = calculateMinDy(BigInt(cvxRoute.amountOut), params.slippage);
+    const expectedLpxCvx = await getCurveGetDyFactory(
+      PIREX.LPXCVX_CVX_POOL,
+      PIREX.POOL_INDEX.CVX,
+      PIREX.POOL_INDEX.LPXCVX,
+      conservativeCvx.toString(),
+    );
+    if (!expectedLpxCvx || expectedLpxCvx === 0n) {
+      throw new Error("Failed to estimate Curve CVX→lpxCVX swap output");
+    }
+    const minDyLpxCvx = calculateMinDy(expectedLpxCvx, params.slippage);
+
     // pxCVX path: crvUSD -> CVX -> lpxCVX (Curve CryptoSwap) -> pxCVX (unwrap) -> ZAPPER
     actions = [
       // 0: routeMulti -- swap crvUSD -> CVX
@@ -801,7 +818,7 @@ export async function buildExoticOutputSwapData(params: {
       // 3: Curve exchange CVX -> lpxCVX (CryptoSwap, uint256 indices)
       {
         protocol: "enso", action: "call",
-        args: { address: PIREX.LPXCVX_CVX_POOL.toLowerCase(), method: "exchange", abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)", args: [String(PIREX.POOL_INDEX.CVX), String(PIREX.POOL_INDEX.LPXCVX), { useOutputOfCallAt: 1 }, "0"] },
+        args: { address: PIREX.LPXCVX_CVX_POOL.toLowerCase(), method: "exchange", abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) payable returns (uint256)", args: [String(PIREX.POOL_INDEX.CVX), String(PIREX.POOL_INDEX.LPXCVX), { useOutputOfCallAt: 1 }, minDyLpxCvx.toString()] },
       },
       // 4: Approve lpxCVX -> LPXCVX contract (for unwrap)
       {
@@ -820,9 +837,7 @@ export async function buildExoticOutputSwapData(params: {
       },
     ];
 
-    // CVX -> lpxCVX via Curve, then lpxCVX -> pxCVX 1:1 unwrap
-    // Conservative estimate: use CVX amount as approximation
-    expectedOut = cvxRoute.amountOut;
+    expectedOut = expectedLpxCvx.toString();
   }
 
   // Build and return bundle

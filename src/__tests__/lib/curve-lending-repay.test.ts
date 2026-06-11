@@ -344,11 +344,11 @@ describe("fetchRepayWithSwapBundle", () => {
       amountIn: "1000000000000000000",
     };
 
-    it("normal repay: 2 actions (route + curve-lending/repay)", async () => {
+    it("normal repay: 3 actions (route + min output guard + curve-lending/repay)", async () => {
       await fetchRepayWithSwapBundle(BASE_PARAMS);
 
       const actions = capturedActions();
-      expect(actions).toHaveLength(2);
+      expect(actions).toHaveLength(3);
 
       // Action 0: route WETH → crvUSD
       expect(actions[0].protocol).toBe("enso");
@@ -356,34 +356,43 @@ describe("fetchRepayWithSwapBundle", () => {
       expect(actions[0].args.tokenIn).toBe(WETH);
       expect(actions[0].args.tokenOut).toBe(CRVUSD);
       expect(actions[0].args.amountIn).toBe("1000000000000000000");
+      expect(actions[0].args.minAmountOut).toBe(MOCK_ROUTE_RESPONSE.amountOut);
 
-      // Action 1: curve-lending/repay
-      expect(actions[1].protocol).toBe("curve-lending");
-      expect(actions[1].action).toBe("repay");
-      expect(actions[1].args.amountIn).toEqual({ useOutputOfCallAt: 0 });
-      expect(actions[1].args.primaryAddress).toBe(CONTROLLER);
-      expect(actions[1].args.onBehalfOf).toBe(USER);
+      // Action 1: enforce crvUSD minimum output before repay
+      expect(actions[1].protocol).toBe("enso");
+      expect(actions[1].action).toBe("minamountout");
+      expect(actions[1].args.amountOut).toEqual({ useOutputOfCallAt: 0 });
+      expect(actions[1].args.minAmountOut).toBe(MOCK_ROUTE_RESPONSE.amountOut);
+
+      // Action 2: curve-lending/repay
+      expect(actions[2].protocol).toBe("curve-lending");
+      expect(actions[2].action).toBe("repay");
+      expect(actions[2].args.amountIn).toEqual({ useOutputOfCallAt: 0 });
+      expect(actions[2].args.primaryAddress).toBe(CONTROLLER);
+      expect(actions[2].args.onBehalfOf).toBe(USER);
     });
 
-    it("soft-liquidation: 3 actions (route + approve + direct repay)", async () => {
+    it("soft-liquidation: 4 actions (route + min output guard + approve + direct repay)", async () => {
       await fetchRepayWithSwapBundle({ ...BASE_PARAMS, inSoftLiquidation: true });
 
       const actions = capturedActions();
-      expect(actions).toHaveLength(3);
+      expect(actions).toHaveLength(4);
 
       // Action 0: route
       expect(actions[0].action).toBe("route");
-      // Action 1: approve
-      expect(actions[1].protocol).toBe("erc20");
-      expect(actions[1].action).toBe("approve");
-      expect(actions[1].args.token).toBe(CRVUSD);
-      expect(actions[1].args.spender).toBe(CONTROLLER);
-      expect(actions[1].args.amount).toEqual({ useOutputOfCallAt: 0 });
-      // Action 2: direct repay
-      expect(actions[2].protocol).toBe("enso");
-      expect(actions[2].args.method).toBe("repay");
-      expect(actions[2].args.address).toBe(CONTROLLER.toLowerCase());
-      expect(actions[2].args.args).toEqual([{ useOutputOfCallAt: 0 }, USER]);
+      // Action 1: min output guard
+      expect(actions[1].action).toBe("minamountout");
+      // Action 2: approve
+      expect(actions[2].protocol).toBe("erc20");
+      expect(actions[2].action).toBe("approve");
+      expect(actions[2].args.token).toBe(CRVUSD);
+      expect(actions[2].args.spender).toBe(CONTROLLER);
+      expect(actions[2].args.amount).toEqual({ useOutputOfCallAt: 0 });
+      // Action 3: direct repay
+      expect(actions[3].protocol).toBe("enso");
+      expect(actions[3].args.method).toBe("repay");
+      expect(actions[3].args.address).toBe(CONTROLLER.toLowerCase());
+      expect(actions[3].args.args).toEqual([{ useOutputOfCallAt: 0 }, USER]);
     });
   });
 
@@ -403,8 +412,8 @@ describe("fetchRepayWithSwapBundle", () => {
       });
 
       const actions = capturedActions();
-      // Regular ERC20 soft-liq = 3 actions total (route + 2 direct repay)
-      const directRepayActions = actions.slice(1);
+      // Regular ERC20 soft-liq = route + min output guard + 2 direct repay actions
+      const directRepayActions = actions.slice(2);
       expect(directRepayActions).toHaveLength(2);
 
       // First: erc20/approve
@@ -426,7 +435,7 @@ describe("fetchRepayWithSwapBundle", () => {
       });
 
       const actions = capturedActions();
-      const approveAction = actions[1];
+      const approveAction = actions[2];
       expect(approveAction.args.spender).toBe(CONTROLLER);
     });
 
@@ -440,7 +449,7 @@ describe("fetchRepayWithSwapBundle", () => {
       });
 
       const actions = capturedActions();
-      const repayAction = actions[2];
+      const repayAction = actions[3];
       expect(repayAction.args.abi).toBe("function repay(uint256 _d_debt, address _for)");
       expect(repayAction.args.args).toHaveLength(2);
     });
@@ -461,10 +470,10 @@ describe("fetchRepayWithSwapBundle", () => {
       });
 
       const actions = capturedActions();
-      // Regular ERC20 normal = 2 (route + repay) + 1 (remove_collateral) = 3
-      expect(actions).toHaveLength(3);
+      // Regular ERC20 normal = route + min output guard + repay + remove_collateral
+      expect(actions).toHaveLength(4);
 
-      const removeAction = actions[2];
+      const removeAction = actions[3];
       expect(removeAction.protocol).toBe("enso");
       expect(removeAction.action).toBe("call");
       expect(removeAction.args.method).toBe("remove_collateral");
@@ -485,18 +494,18 @@ describe("fetchRepayWithSwapBundle", () => {
       });
 
       const actions = capturedActions();
-      // 2 (route + repay) + 1 (remove_collateral) + 1 (route collateral→token) = 4
-      expect(actions).toHaveLength(4);
+      // route + min output guard + repay + remove_collateral + route collateral→token
+      expect(actions).toHaveLength(5);
 
       // remove_collateral
-      expect(actions[2].args.method).toBe("remove_collateral");
+      expect(actions[3].args.method).toBe("remove_collateral");
 
       // route collateral → withdrawTokenOut
-      expect(actions[3].protocol).toBe("enso");
-      expect(actions[3].action).toBe("route");
-      expect(actions[3].args.tokenIn).toBe(VAULT_ADDRESSES.YCVXCRV);
-      expect(actions[3].args.tokenOut).toBe(SOME_TOKEN);
-      expect(actions[3].args.amountIn).toBe("500000000000000000");
+      expect(actions[4].protocol).toBe("enso");
+      expect(actions[4].action).toBe("route");
+      expect(actions[4].args.tokenIn).toBe(VAULT_ADDRESSES.YCVXCRV);
+      expect(actions[4].args.tokenOut).toBe(SOME_TOKEN);
+      expect(actions[4].args.amountIn).toBe("500000000000000000");
     });
 
     it("with withdrawAmount + withdrawTokenOut same as vault: only remove_collateral (no route)", async () => {
@@ -510,9 +519,9 @@ describe("fetchRepayWithSwapBundle", () => {
       });
 
       const actions = capturedActions();
-      // 2 (route + repay) + 1 (remove_collateral) = 3 — no route appended
-      expect(actions).toHaveLength(3);
-      expect(actions[2].args.method).toBe("remove_collateral");
+      // route + min output guard + repay + remove_collateral — no route appended
+      expect(actions).toHaveLength(4);
+      expect(actions[3].args.method).toBe("remove_collateral");
     });
   });
 
