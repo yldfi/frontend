@@ -5565,10 +5565,11 @@ export async function fetchCvgCvxZapOutRoute(params: {
     expectedCvgCvxOutput
   );
 
-  // Step 3: Calculate min_dy with slippage (fallback to 0 if get_dy fails)
-  const minDy = expectedCvx1Output
-    ? calculateMinDy(expectedCvx1Output, slippageBps)
-    : "0";
+  // Step 3: Calculate min_dy with slippage. Fail closed if get_dy fails.
+  if (!expectedCvx1Output) {
+    throw new Error("Cannot estimate CVX1 output for cvgCVX zap out");
+  }
+  const minDy = calculateMinDy(expectedCvx1Output, slippageBps);
 
   if (outputIsCvx) {
     // Output is CVX - skip the final route step
@@ -5687,10 +5688,6 @@ export async function fetchCvgCvxZapOutRoute(params: {
   // extract its weiroll data, then execute it with CVX already in ENSO_SHORTCUTS.
   // Security: CVX is TRANSFERRED to ENSO_SHORTCUTS (not approved), consumed atomically
   // in the same tx via routeMulti. No persistent approvals for ENSO_SHORTCUTS.
-  if (!expectedCvx1Output) {
-    throw new Error("Cannot estimate CVX1 output for cvgCVX zap out");
-  }
-
   // Pre-fetch standalone route for CVX → output token
   // routeMulti sends output to fromAddress (user), so route directly to final token
   // (no WETH unwrap needed — Enso handles ETH output natively in standalone routes)
