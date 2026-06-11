@@ -60,6 +60,26 @@ async function devEthCall(
   }
 }
 
+function getSimulationErrorMessage(
+  ethCallError: string | undefined,
+  richerResult?: { ok: boolean; errorMessage?: string; result?: SimulationResult | null },
+): string {
+  const resultError = richerResult?.result?.errorMessage;
+  const richerMessage = richerResult && !richerResult.ok
+    ? richerResult.errorMessage ?? (typeof resultError === "string" ? resultError : resultError?.message)
+    : undefined;
+  const lowerEthCallError = ethCallError?.toLowerCase().trim();
+  const ethCallIsGeneric =
+    !lowerEthCallError ||
+    lowerEthCallError === "execution reverted" ||
+    lowerEthCallError.includes("execution reverted") ||
+    lowerEthCallError.includes("eth_call failed") ||
+    lowerEthCallError === "enso:unknown";
+
+  if (richerMessage && ethCallIsGeneric) return richerMessage;
+  return ethCallError || richerMessage || "Simulation failed";
+}
+
 export type LendingStatus =
   | "idle"
   | "building" // Building the transaction bundle
@@ -502,7 +522,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
 
         if (!ethCallResult.ok) {
-          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          const errorMsg = getSimulationErrorMessage(ethCallResult.errorMessage, tenderlyResult);
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return;
@@ -533,7 +553,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
 
         if (!ethCallResult.ok) {
-          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          const errorMsg = getSimulationErrorMessage(ethCallResult.errorMessage, vnetResult);
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return;
@@ -740,7 +760,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         if (tenderlyResult.result) setSimulationResult(tenderlyResult.result);
 
         if (!ethCallResult.ok) {
-          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          const errorMsg = getSimulationErrorMessage(ethCallResult.errorMessage, tenderlyResult);
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return tenderlyResult.result;
@@ -775,7 +795,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
 
         if (!ethCallResult.ok) {
-          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          const errorMsg = getSimulationErrorMessage(ethCallResult.errorMessage, vnetResult);
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return vnetResult.result;
@@ -933,7 +953,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         if (tenderlyResult.result) setSimulationResult(tenderlyResult.result);
 
         if (!ethCallResult.ok) {
-          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          const errorMsg = getSimulationErrorMessage(ethCallResult.errorMessage, tenderlyResult);
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return tenderlyResult.result;
@@ -968,7 +988,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
 
         if (!ethCallResult.ok) {
-          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          const errorMsg = getSimulationErrorMessage(ethCallResult.errorMessage, vnetResult);
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return vnetResult.result;
@@ -1470,7 +1490,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         if (tenderlyResult.result) setSimulationResult(tenderlyResult.result);
 
         if (!ethCallResult.ok) {
-          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          const errorMsg = getSimulationErrorMessage(ethCallResult.errorMessage, tenderlyResult);
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return tenderlyResult.result;
@@ -1505,7 +1525,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
 
         if (!ethCallResult.ok) {
-          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          const errorMsg = getSimulationErrorMessage(ethCallResult.errorMessage, vnetResult);
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return vnetResult.result;
@@ -1635,7 +1655,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         if (tenderlyResult.result) setSimulationResult(tenderlyResult.result);
 
         if (!ethCallResult.ok) {
-          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          const errorMsg = getSimulationErrorMessage(ethCallResult.errorMessage, tenderlyResult);
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return tenderlyResult.result;
@@ -1670,7 +1690,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
 
         if (!ethCallResult.ok) {
-          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          const errorMsg = getSimulationErrorMessage(ethCallResult.errorMessage, vnetResult);
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return vnetResult.result;
@@ -2068,7 +2088,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         if (tenderlyResult.result) setSimulationResult(tenderlyResult.result);
 
         if (!ethCallResult.ok) {
-          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          const errorMsg = getSimulationErrorMessage(ethCallResult.errorMessage, tenderlyResult);
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return tenderlyResult.result;
@@ -2103,7 +2123,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
 
         if (!ethCallResult.ok) {
-          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          const errorMsg = getSimulationErrorMessage(ethCallResult.errorMessage, vnetResult);
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return vnetResult.result;
@@ -2418,7 +2438,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         if (tenderlyResult.result) setSimulationResult(tenderlyResult.result);
 
         if (!ethCallResult.ok) {
-          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          const errorMsg = getSimulationErrorMessage(ethCallResult.errorMessage, tenderlyResult);
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return tenderlyResult.result;
@@ -2453,7 +2473,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         }
 
         if (!ethCallResult.ok) {
-          const errorMsg = ethCallResult.errorMessage || "Simulation failed";
+          const errorMsg = getSimulationErrorMessage(ethCallResult.errorMessage, vnetResult);
           setError(parseErrorMessage(new Error(errorMsg)));
           setStatus("error");
           return vnetResult.result;

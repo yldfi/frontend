@@ -1,5 +1,7 @@
 import { formatUnits } from "viem";
 
+const CURVE_SECONDS_PER_YEAR = 365 * 86400;
+
 export interface LendingPositionDisplay {
   /** Formatted collateral amount (e.g., "37,565.33") */
   collateralFormatted: string;
@@ -52,6 +54,18 @@ export function computeNetApy(
     ? Math.min(Math.max(collateralYieldRatio, 0), 1)
     : 0;
   return (collateralApy * leverage * safeYieldRatio) - (borrowApy * (leverage - 1));
+}
+
+/**
+ * Convert Curve monetary policy per-second raw rate to APR percentage.
+ * Curve policies scale rates by 1e18 and annualize over 365 days.
+ */
+export function curveBorrowRateToApr(rawRate: bigint): number {
+  return Number(rawRate) * CURVE_SECONDS_PER_YEAR / 1e18 * 100;
+}
+
+export function aprToApy(aprPercent: number): number {
+  return (Math.exp(aprPercent / 100) - 1) * 100;
 }
 
 /**

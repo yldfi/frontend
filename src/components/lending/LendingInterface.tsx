@@ -17,10 +17,11 @@ import { Check, X, ExternalLink, ArrowRight, ChevronLeft, Gift } from "lucide-re
 import { cn } from "@/lib/utils";
 import { CACHE_TIMES } from "@/config/query";
 import { useVaultCache } from "@/hooks/useVaultCache";
+import { useCurveMarketRates } from "@/hooks/useCurveMarketRates";
 import { LoadingDots } from "@/components/LoadingDots";
 import { useSettings } from "@/hooks/useSettings";
 import { trackLendingTabSwitch } from "@/lib/analytics";
-import { computeNetApy } from "@/lib/lending";
+import { aprToApy, computeNetApy, curveBorrowRateToApr } from "@/lib/lending";
 import {
   getPendingTxCopy,
   TX_REVERTED_VISIBLE_MS,
@@ -54,24 +55,6 @@ interface LendingPanelProps {
 }
 
 type Tab = "collateral" | "borrow" | "repay" | "leverage";
-
-// Market rate data for semilog model
-interface MarketRates {
-  minRate: number; // APR %
-  maxRate: number; // APR %
-  totalDebt: bigint;
-  totalAssets: bigint;
-  utilization: number; // 0-1
-}
-
-const SECONDS_PER_YEAR = 365.25 * 86400;
-
-// Semilog interest rate model: rate = minRate * (maxRate / minRate) ^ utilization
-function semilogBorrowAPR(utilization: number, minRate: number, maxRate: number): number {
-  if (minRate <= 0 || maxRate <= 0 || utilization < 0) return 0;
-  const util = Math.min(utilization, 1);
-  return minRate * Math.pow(maxRate / minRate, util);
-}
 
 // LTV indicator with soft/hard liquidation thresholds
 // Shows LTV value and soft/hard liquidation thresholds, all in muted grey
@@ -156,49 +139,22 @@ export function LendingInterface({
     readDiscounts();
   }, [publicClient, controllerAddress]);
 
-  // Market rate data for semilog borrow APR model
-  const rateAbi = [
-    { name: "factory", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
-    { name: "monetary_policy", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
-    { name: "total_debt", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
-    { name: "min_rate", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
-    { name: "max_rate", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
-    { name: "totalAssets", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
+  const policyRatePreviewAbi = [
+    { name: "future_rate", type: "function", stateMutability: "view", inputs: [{ name: "_for", type: "address" }, { name: "d_reserves", type: "int256" }, { name: "d_debt", type: "int256" }], outputs: [{ name: "", type: "uint256" }] },
   ] as const;
 
-  const { data: marketRates } = useQuery({
-    queryKey: ["curveMarketRates", controllerAddress],
-    queryFn: async (): Promise<MarketRates> => {
-      const pc = publicClient!;
-      // Get vault and monetary policy addresses from controller
-      const [vaultAddr, policyAddr, totalDebt] = await Promise.all([
-        pc.readContract({ address: controllerAddress, abi: rateAbi, functionName: "factory" }),
-        pc.readContract({ address: controllerAddress, abi: rateAbi, functionName: "monetary_policy" }),
-        pc.readContract({ address: controllerAddress, abi: rateAbi, functionName: "total_debt" }),
-      ]);
-      // Read min/max rates from monetary policy and totalAssets from vault
-      const [minRateRaw, maxRateRaw, totalAssets] = await Promise.all([
-        pc.readContract({ address: policyAddr, abi: rateAbi, functionName: "min_rate" }),
-        pc.readContract({ address: policyAddr, abi: rateAbi, functionName: "max_rate" }),
-        pc.readContract({ address: vaultAddr, abi: rateAbi, functionName: "totalAssets" }),
-      ]);
-      const minRate = Number(minRateRaw) * SECONDS_PER_YEAR / 1e18 * 100;
-      const maxRate = Number(maxRateRaw) * SECONDS_PER_YEAR / 1e18 * 100;
-      const utilization = totalAssets > 0n ? Number(totalDebt) / Number(totalAssets) : 0;
-      return { minRate, maxRate, totalDebt, totalAssets, utilization };
-    },
-    enabled: !!publicClient,
-    ...CACHE_TIMES.SEMI_REALTIME,
-  });
+  // Market rate data from the active Curve monetary policy.
+  const marketStats = useCurveMarketRates(controllerAddress);
+  const marketRates = marketStats?.raw ?? null;
 
   const currentBorrowAPR = useMemo(() => {
     if (!marketRates) return null;
-    return semilogBorrowAPR(marketRates.utilization, marketRates.minRate, marketRates.maxRate);
+    return marketRates.currentBorrowApr;
   }, [marketRates]);
 
   const currentBorrowAPY = useMemo(() => {
     if (currentBorrowAPR == null) return null;
-    return (Math.exp(currentBorrowAPR / 100) - 1) * 100;
+    return aprToApy(currentBorrowAPR);
   }, [currentBorrowAPR]);
 
   // Collateral APY from cache (on-chain convertToAssets now vs 24h ago)
@@ -474,18 +430,33 @@ export function LendingInterface({
     }
   }, [isDragging, handleDrag, handleDragEnd]);
 
-  // Projected borrow APR/APY based on child tab's debt delta
-  const projectedBorrowAPR = useMemo(() => {
-    if (!marketRates || childDebtDelta === null || childDebtDelta === 0n) return null;
-    const newDebt = marketRates.totalDebt + childDebtDelta;
-    if (newDebt < 0n) return null;
-    const newUtil = marketRates.totalAssets > 0n ? Number(newDebt) / Number(marketRates.totalAssets) : 0;
-    return semilogBorrowAPR(newUtil, marketRates.minRate, marketRates.maxRate);
-  }, [marketRates, childDebtDelta]);
+  // Projected borrow APR/APY based on child tab's debt delta.
+  // Delegate to the active Curve monetary policy instead of assuming a model.
+  const { data: projectedBorrowAPR = null } = useQuery({
+    queryKey: ["curveProjectedBorrowRate", controllerAddress, childDebtDelta?.toString() ?? "0", marketRates?.policyAddress],
+    queryFn: async (): Promise<number | null> => {
+      if (!publicClient || !marketRates || childDebtDelta === null || childDebtDelta === 0n) return null;
+      const newDebt = marketRates.totalDebt + childDebtDelta;
+      if (newDebt < 0n) return null;
+      try {
+        const rawRate = await publicClient.readContract({
+          address: marketRates.policyAddress,
+          abi: policyRatePreviewAbi,
+          functionName: "future_rate",
+          args: [controllerAddress, -childDebtDelta, childDebtDelta],
+        });
+        return curveBorrowRateToApr(rawRate);
+      } catch {
+        return marketRates.currentBorrowApr;
+      }
+    },
+    enabled: !!publicClient && !!marketRates && childDebtDelta !== null && childDebtDelta !== 0n,
+    ...CACHE_TIMES.SEMI_REALTIME,
+  });
 
   const projectedBorrowAPY = useMemo(() => {
     if (projectedBorrowAPR == null) return null;
-    return (Math.exp(projectedBorrowAPR / 100) - 1) * 100;
+    return aprToApy(projectedBorrowAPR);
   }, [projectedBorrowAPR]);
 
 
@@ -641,7 +612,8 @@ export function LendingInterface({
   }, [yieldBearingCollateralValue, totalCollateralValue]);
 
   const projectedCollateralYieldRatio = useMemo(() => {
-    if (!position?.hasLoan || oraclePrice === 0n) return currentCollateralYieldRatio;
+    if (!position?.hasLoan) return 1;
+    if (oraclePrice === 0n) return currentCollateralYieldRatio;
     const projectedCollateral = childCollateralDelta !== null
       ? position.collateral + childCollateralDelta
       : position.collateral;
@@ -1140,7 +1112,7 @@ export function LendingInterface({
               {collateralAPY != null && (projectedBorrowAPY ?? currentBorrowAPY) != null && displayDebtDelta > 0n && (() => {
                 const lev = displayLeverage;
                 const borrow = projectedBorrowAPY ?? currentBorrowAPY!;
-                const net = lev * collateralAPY - (lev - 1) * borrow;
+                const net = computeNetApy(collateralAPY, borrow, lev, position?.hasLoan ? projectedCollateralYieldRatio : 1);
                 return (
                   <div className={cn("text-[10px] mt-0.5", net >= 0 ? "text-green-500" : "text-red-500")}>
                     {net >= 0 ? "+" : ""}{net.toFixed(2)}% NET

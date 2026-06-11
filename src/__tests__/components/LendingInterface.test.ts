@@ -1,19 +1,5 @@
 import { describe, it, expect } from "vitest";
 
-// Re-implement unexported pure functions from LendingInterface.tsx for testing
-// (follows avatar.test.ts pattern — test the logic, not the component)
-
-// Semilog interest rate model: rate = minRate * (maxRate / minRate) ^ utilization
-function semilogBorrowAPR(
-  utilization: number,
-  minRate: number,
-  maxRate: number
-): number {
-  if (minRate <= 0 || maxRate <= 0 || utilization < 0) return 0;
-  const util = Math.min(utilization, 1);
-  return minRate * Math.pow(maxRate / minRate, util);
-}
-
 // Health bar color function
 function getColor(h: number): string {
   if (h <= 0) return "#ef4444";
@@ -25,73 +11,6 @@ function getColor(h: number): string {
 }
 
 describe("LendingInterface", () => {
-  describe("semilogBorrowAPR", () => {
-    it("returns minRate at utilization = 0", () => {
-      expect(semilogBorrowAPR(0, 2, 200)).toBe(2);
-    });
-
-    it("returns maxRate at utilization = 1", () => {
-      expect(semilogBorrowAPR(1, 2, 200)).toBe(200);
-    });
-
-    it("returns geometric mean at utilization = 0.5", () => {
-      const result = semilogBorrowAPR(0.5, 2, 200);
-      // geometric mean of 2 and 200 = sqrt(2 * 200) = 20
-      expect(result).toBeCloseTo(20, 5);
-    });
-
-    it("returns 0 when minRate <= 0", () => {
-      expect(semilogBorrowAPR(0.5, 0, 200)).toBe(0);
-      expect(semilogBorrowAPR(0.5, -1, 200)).toBe(0);
-    });
-
-    it("returns 0 when maxRate <= 0", () => {
-      expect(semilogBorrowAPR(0.5, 2, 0)).toBe(0);
-      expect(semilogBorrowAPR(0.5, 2, -5)).toBe(0);
-    });
-
-    it("returns 0 when utilization < 0", () => {
-      expect(semilogBorrowAPR(-0.1, 2, 200)).toBe(0);
-    });
-
-    it("clamps utilization to 1", () => {
-      const atOne = semilogBorrowAPR(1, 2, 200);
-      const above = semilogBorrowAPR(1.5, 2, 200);
-      expect(above).toBe(atOne);
-    });
-
-    it("returns minRate when minRate equals maxRate", () => {
-      const result = semilogBorrowAPR(0.5, 10, 10);
-      // 10 * (10/10)^0.5 = 10 * 1 = 10
-      expect(result).toBe(10);
-    });
-
-    it("is monotonically increasing with utilization", () => {
-      const points = [0, 0.1, 0.2, 0.3, 0.5, 0.7, 0.9, 1.0];
-      const rates = points.map((u) => semilogBorrowAPR(u, 2, 200));
-      for (let i = 1; i < rates.length; i++) {
-        expect(rates[i]).toBeGreaterThanOrEqual(rates[i - 1]);
-      }
-    });
-
-    it("handles very small rates", () => {
-      const result = semilogBorrowAPR(0.5, 0.01, 0.1);
-      // geometric mean of 0.01 and 0.1 = sqrt(0.01 * 0.1) ≈ 0.0316
-      expect(result).toBeCloseTo(Math.sqrt(0.01 * 0.1), 5);
-    });
-
-    it("handles very large rates", () => {
-      const result = semilogBorrowAPR(1, 1, 10000);
-      expect(result).toBe(10000);
-    });
-
-    it("returns exactly 0 for all zero-guard paths", () => {
-      expect(semilogBorrowAPR(0, 0, 0)).toBe(0);
-      expect(semilogBorrowAPR(-1, 0, 0)).toBe(0);
-      expect(semilogBorrowAPR(0, -1, -1)).toBe(0);
-    });
-  });
-
   describe("getColor", () => {
     it("returns red for health = 0", () => {
       expect(getColor(0)).toBe("#ef4444");

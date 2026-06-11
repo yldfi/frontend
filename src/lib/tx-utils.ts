@@ -78,6 +78,9 @@ export const CUSTOM_ERROR_SELECTORS: Record<string, string> = {
   "0xd9d027cc": "Swap failed during transaction. Try refreshing the quote or increasing slippage.",
 };
 
+export const CURVE_DEBT_TOO_HIGH_MESSAGE =
+  "Curve rejected this partial repay: Debt too high. Repay more debt or close the loan.";
+
 // ---------------------------------------------------------------------------
 // Unified error parser — merges all detection from 4 former implementations
 // ---------------------------------------------------------------------------
@@ -87,6 +90,10 @@ export function parseErrorMessage(error: unknown, defaultMsg?: string): string {
 
   const errorStr = String(error);
   const lower = errorStr.toLowerCase();
+
+  if (lower.includes("debt too high")) {
+    return CURVE_DEBT_TOO_HIGH_MESSAGE;
+  }
 
   // User rejection
   if (lower.includes("user rejected") || lower.includes("user denied") || lower.includes("user declined")) {
