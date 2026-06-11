@@ -457,6 +457,8 @@ export async function POST(
               amountIn: body.amountIn,
               slippage: Number(body.slippage),
               inSoftLiquidation: body.inSoftLiquidation,
+              closeLoan: body.closeLoan,
+              maxRepayAmount: body.maxRepayAmount,
             });
             assertEnsoIntentTxTarget(body.intent, bundle);
             return NextResponse.json(bundle, { headers: cors });

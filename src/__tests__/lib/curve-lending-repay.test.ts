@@ -60,6 +60,8 @@ const ENSO_SHORTCUTS = "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003";
 const CRVUSD = "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E";
 const CONTROLLER = CURVE_CONTROLLERS[VAULT_ADDRESSES.YCVXCRV];
 const USER = "0xUserAddress";
+const MAX_UINT256 = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+const MAX_INT256 = "57896044618658097711785492504343953926634992332820282019728792003956564819967";
 
 const MOCK_ROUTE_RESPONSE = {
   tx: { to: "0xrouter", data: "0xmockroutedata", value: "0" },
@@ -200,12 +202,12 @@ describe("fetchRepayWithSwapBundle", () => {
       expect(actions[6].args.token).toBe(CRVUSD);
       expect(actions[6].args.spender).toBe(CONTROLLER);
 
-      // Action 7: enso/call repay(uint256,address)
+      // Action 7: enso/call repay(uint256,address,int256)
       expect(actions[7].protocol).toBe("enso");
       expect(actions[7].action).toBe("call");
       expect(actions[7].args.method).toBe("repay");
-      expect(actions[7].args.abi).toBe("function repay(uint256 _d_debt, address _for)");
-      expect(actions[7].args.args).toEqual([{ useOutputOfCallAt: 5 }, USER]);
+      expect(actions[7].args.abi).toBe("function repay(uint256 _d_debt, address _for, int256 max_active_band)");
+      expect(actions[7].args.args).toEqual([{ useOutputOfCallAt: 5 }, USER, MAX_INT256]);
     });
 
     it("throws when getLpxCvxToCvxSwapRate returns 0n", async () => {
@@ -270,7 +272,7 @@ describe("fetchRepayWithSwapBundle", () => {
       expect(actions[2].protocol).toBe("enso");
       expect(actions[2].action).toBe("call");
       expect(actions[2].args.method).toBe("repay");
-      expect(actions[2].args.args).toEqual([{ useOutputOfCallAt: 0 }, USER]);
+      expect(actions[2].args.args).toEqual([{ useOutputOfCallAt: 0 }, USER, MAX_INT256]);
     });
   });
 
@@ -326,8 +328,34 @@ describe("fetchRepayWithSwapBundle", () => {
       expect(actions[2].args.spender).toBe(CONTROLLER);
       // Action 3: direct repay
       expect(actions[3].args.method).toBe("repay");
-      expect(actions[3].args.abi).toBe("function repay(uint256 _d_debt, address _for)");
-      expect(actions[3].args.args).toEqual([{ useOutputOfCallAt: 1 }, USER]);
+      expect(actions[3].args.abi).toBe("function repay(uint256 _d_debt, address _for, int256 max_active_band)");
+      expect(actions[3].args.args).toEqual([{ useOutputOfCallAt: 1 }, USER, MAX_INT256]);
+    });
+
+    it("close loan: guards cvxCRV route output, repays max debt, and refunds crvUSD dust", async () => {
+      await fetchRepayWithSwapBundle({
+        ...BASE_PARAMS,
+        closeLoan: true,
+        maxRepayAmount: "1200000000000000000",
+      });
+
+      const actions = capturedActions();
+      expect(actions).toHaveLength(7);
+
+      expect(actions[0].action).toBe("redeem");
+      expect(actions[1].action).toBe("route");
+      expect(actions[1].args.minAmountOut).toBe("1200000000000000000");
+      expect(actions[2].action).toBe("minamountout");
+      expect(actions[2].args.amountOut).toEqual({ useOutputOfCallAt: 1 });
+      expect(actions[2].args.minAmountOut).toBe("1200000000000000000");
+      expect(actions[3].action).toBe("approve");
+      expect(actions[4].args.method).toBe("repay");
+      expect(actions[4].args.args).toEqual([MAX_UINT256, USER, MAX_INT256]);
+      expect(actions[5].action).toBe("balance");
+      expect(actions[6].action).toBe("transfer");
+      expect(actions[6].args.receiver).toBe(USER);
+      expect(actions.some((action) => action.protocol === "curve-lending")).toBe(false);
+      expect(actions.some((action) => action.args?.method === "remove_collateral")).toBe(false);
     });
   });
 
@@ -392,7 +420,46 @@ describe("fetchRepayWithSwapBundle", () => {
       expect(actions[3].protocol).toBe("enso");
       expect(actions[3].args.method).toBe("repay");
       expect(actions[3].args.address).toBe(CONTROLLER.toLowerCase());
-      expect(actions[3].args.args).toEqual([{ useOutputOfCallAt: 0 }, USER]);
+      expect(actions[3].args.args).toEqual([{ useOutputOfCallAt: 0 }, USER, MAX_INT256]);
+    });
+
+    it("close loan: swaps to at least debt, repays max debt, and refunds crvUSD dust", async () => {
+      await fetchRepayWithSwapBundle({
+        ...BASE_PARAMS,
+        closeLoan: true,
+        maxRepayAmount: "1200000000000000000",
+      });
+
+      const actions = capturedActions();
+      expect(actions).toHaveLength(6);
+
+      expect(actions[0].action).toBe("route");
+      expect(actions[0].args.minAmountOut).toBe("1200000000000000000");
+      expect(actions[1].action).toBe("minamountout");
+      expect(actions[1].args.minAmountOut).toBe("1200000000000000000");
+
+      expect(actions[2].protocol).toBe("erc20");
+      expect(actions[2].action).toBe("approve");
+      expect(actions[2].args.token).toBe(CRVUSD);
+      expect(actions[2].args.spender).toBe(CONTROLLER);
+      expect(actions[2].args.amount).toEqual({ useOutputOfCallAt: 0 });
+
+      expect(actions[3].protocol).toBe("enso");
+      expect(actions[3].action).toBe("call");
+      expect(actions[3].args.method).toBe("repay");
+      expect(actions[3].args.abi).toBe("function repay(uint256 _d_debt, address _for, int256 max_active_band)");
+      expect(actions[3].args.args).toEqual([MAX_UINT256, USER, MAX_INT256]);
+
+      expect(actions[4].protocol).toBe("enso");
+      expect(actions[4].action).toBe("balance");
+      expect(actions[4].args.token).toBe(CRVUSD);
+      expect(actions[5].protocol).toBe("erc20");
+      expect(actions[5].action).toBe("transfer");
+      expect(actions[5].args.token).toBe(CRVUSD);
+      expect(actions[5].args.amount).toEqual({ useOutputOfCallAt: 4 });
+      expect(actions[5].args.receiver).toBe(USER);
+      expect(actions.some((action) => action.protocol === "curve-lending")).toBe(false);
+      expect(actions.some((action) => action.args?.method === "remove_collateral")).toBe(false);
     });
   });
 
@@ -439,7 +506,7 @@ describe("fetchRepayWithSwapBundle", () => {
       expect(approveAction.args.spender).toBe(CONTROLLER);
     });
 
-    it("repay ABI is 2-arg: repay(uint256 _d_debt, address _for)", async () => {
+    it("repay ABI includes max_active_band", async () => {
       await fetchRepayWithSwapBundle({
         fromAddress: USER,
         vaultAddress: VAULT_ADDRESSES.YCVXCRV as `0x${string}`,
@@ -450,8 +517,8 @@ describe("fetchRepayWithSwapBundle", () => {
 
       const actions = capturedActions();
       const repayAction = actions[3];
-      expect(repayAction.args.abi).toBe("function repay(uint256 _d_debt, address _for)");
-      expect(repayAction.args.args).toHaveLength(2);
+      expect(repayAction.args.abi).toBe("function repay(uint256 _d_debt, address _for, int256 max_active_band)");
+      expect(repayAction.args.args).toHaveLength(3);
     });
   });
 

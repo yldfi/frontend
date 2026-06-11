@@ -1169,7 +1169,7 @@ export function RepayTab({
 
     trackLendingRepayInitiated(vault.id, repayAmount);
 
-    const hasWithdrawal = withdrawAmountWei > 0n;
+    const hasWithdrawal = !isClosingLoan && withdrawAmountWei > 0n;
 
     try {
       if (isCrvUsd && !hasWithdrawal) {
@@ -1205,9 +1205,10 @@ export function RepayTab({
       } else {
         // Path C: Enso bundle — handles vault tokens (redeem + repay) and regular tokens (swap + repay)
         // Optionally includes withdrawal via withdrawAmount param
-        const swapOptions: { previewOnly?: boolean; tokenSymbol?: string; inSoftLiquidation?: boolean; withdrawAmount?: string; withdrawTokenOut?: string; withdrawTokenSymbol?: string } = {
+        const swapOptions: { previewOnly?: boolean; tokenSymbol?: string; inSoftLiquidation?: boolean; closeLoan?: boolean; maxRepayAmount?: string; withdrawAmount?: string; withdrawTokenOut?: string; withdrawTokenSymbol?: string } = {
           tokenSymbol: repayToken.symbol,
           inSoftLiquidation: position?.inSoftLiquidation,
+          ...(isClosingLoan ? { closeLoan: true, maxRepayAmount: position.debt.toString() } : {}),
           ...(hasWithdrawal ? { withdrawAmount: withdrawAmountWei.toString() } : {}),
           ...(hasWithdrawal && isWithdrawSwap ? { withdrawTokenOut: withdrawToken.address, withdrawTokenSymbol: withdrawToken.symbol } : {}),
         };

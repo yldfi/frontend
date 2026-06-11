@@ -23,6 +23,7 @@ import {
   assertEnsoIntentTxTargetForIntent,
   assertNoForbiddenFields,
   assertOnlyFields,
+  assertPositiveAmount,
   assertTokenAddress,
   failValidation,
   isRecord,
@@ -189,6 +190,8 @@ export type CurveLendingRepayWithSwapIntentRequest = BaseIntentRequest & {
   vaultAddress: string;
   tokenIn: string;
   inSoftLiquidation?: boolean;
+  closeLoan?: boolean;
+  maxRepayAmount?: string;
 };
 
 export type EnsoIntentRequest =
@@ -618,6 +621,13 @@ function assertCurveLendingRepayWithSwap(request: Record<string, unknown>): asse
   assertCurveLendingVault(request.vaultAddress, "vaultAddress");
   assertTokenAddress(request.tokenIn, "tokenIn");
   assertOptionalBoolean(request.inSoftLiquidation, "inSoftLiquidation");
+  assertOptionalBoolean(request.closeLoan, "closeLoan");
+  if (request.maxRepayAmount !== undefined) {
+    if (request.closeLoan !== true) {
+      failValidation("maxRepayAmount requires closeLoan");
+    }
+    assertPositiveAmount(request.maxRepayAmount);
+  }
 }
 
 export function assertValidEnsoIntentRequest(value: unknown): asserts value is EnsoIntentRequest {
@@ -714,6 +724,8 @@ export function assertValidEnsoIntentRequest(value: unknown): asserts value is E
         "vaultAddress",
         "tokenIn",
         "inSoftLiquidation",
+        "closeLoan",
+        "maxRepayAmount",
       ]);
       assertCurveLendingRepayWithSwap(value);
       return;

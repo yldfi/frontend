@@ -323,7 +323,28 @@ describe("Enso intent validation", () => {
   });
 
   it("keeps curve repay-with-swap intent limited to repay semantics", () => {
-    for (const field of ["maxRepayAmount", "withdrawAmount", "withdrawTokenOut"]) {
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "curveLendingRepayWithSwap",
+      fromAddress: USER,
+      vaultAddress: VAULT_ADDRESSES.YCVXCRV,
+      tokenIn: TOKENS.CVX,
+      amountIn: ONE_ETHER,
+      slippage: "100",
+      closeLoan: true,
+      maxRepayAmount: ONE_ETHER,
+    })).not.toThrow();
+
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "curveLendingRepayWithSwap",
+      fromAddress: USER,
+      vaultAddress: VAULT_ADDRESSES.YCVXCRV,
+      tokenIn: TOKENS.CVX,
+      amountIn: ONE_ETHER,
+      slippage: "100",
+      maxRepayAmount: ONE_ETHER,
+    })).toThrow("maxRepayAmount requires closeLoan");
+
+    for (const field of ["withdrawAmount", "withdrawTokenOut"]) {
       expect(() => assertValidEnsoIntentRequest({
         intent: "curveLendingRepayWithSwap",
         fromAddress: USER,
