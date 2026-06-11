@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
+  aprToApy,
   computeLeverage,
   computeNetApy,
+  curveBorrowRateToApr,
   buildLendingPositionDisplay,
 } from "@/lib/lending";
 import { parseUnits } from "viem";
@@ -86,6 +88,20 @@ describe("computeNetApy", () => {
   it("scales collateral APY by the yield-bearing collateral share", () => {
     // 10*2*0.5 - 5*(2-1) = 10 - 5 = 5
     expect(computeNetApy(10, 5, 2, 0.5)).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Curve rate conversion
+// ---------------------------------------------------------------------------
+describe("Curve rate conversion", () => {
+  it("annualizes Curve raw per-second rates with a 365-day year", () => {
+    // ycvxCRV policy rate observed after market deprecation controller update.
+    expect(curveBorrowRateToApr(4481580318n)).toBeCloseTo(14.1331116908448, 8);
+  });
+
+  it("converts APR percentage to continuously compounded APY percentage", () => {
+    expect(aprToApy(14.11)).toBeCloseTo(15.153979620685787, 8);
   });
 });
 

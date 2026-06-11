@@ -57,6 +57,14 @@ interface RepayTabProps {
   onSwitchTab?: (tab: string) => void;
 }
 
+const MIN_REPAY_SEARCH_STEP = 10n ** 16n; // 0.01 crvUSD
+
+function formatCrvUsdAmount(amount: bigint): string {
+  return Number(formatUnits(amount, 18)).toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+  });
+}
+
 export function RepayTab({
   vault,
   position,
@@ -381,6 +389,63 @@ export function RepayTab({
     if (!swapQuote?.amountOut) return null;
     return BigInt(swapQuote.amountOut);
   }, [swapQuote, redeemPreview, isVaultWithCrvUsdUnderlying]);
+
+  const roundedDebtForMinimumQuery = position?.debt
+    ? (position.debt / MIN_REPAY_SEARCH_STEP).toString()
+    : null;
+
+  const { data: minimumPartialRepayWei = null } = useQuery({
+    queryKey: [
+      "minimum-partial-repay",
+      controllerAddress,
+      address,
+      roundedDebtForMinimumQuery,
+      position?.collateral?.toString(),
+      position?.N,
+    ],
+    queryFn: async (): Promise<bigint | null> => {
+      if (!publicClient || !address || !position?.hasLoan || position.debt <= MIN_REPAY_SEARCH_STEP) return null;
+      const debt = position.debt;
+
+      const canKeepLoanOpenAfterRepay = async (repayWei: bigint): Promise<boolean> => {
+        if (repayWei <= 0n || repayWei >= debt) return false;
+        try {
+          await publicClient.readContract({
+            address: controllerAddress,
+            abi: CONTROLLER_ABI,
+            functionName: "health_calculator",
+            args: [address, 0n, -repayWei, false, 0n],
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      let low = 1n;
+      let high = (debt - 1n) / MIN_REPAY_SEARCH_STEP;
+      if (high < low) return null;
+
+      if (!await canKeepLoanOpenAfterRepay(high * MIN_REPAY_SEARCH_STEP)) {
+        return null;
+      }
+
+      while (low < high) {
+        const mid = (low + high) / 2n;
+        if (await canKeepLoanOpenAfterRepay(mid * MIN_REPAY_SEARCH_STEP)) {
+          high = mid;
+        } else {
+          low = mid + 1n;
+        }
+      }
+
+      return low * MIN_REPAY_SEARCH_STEP;
+    },
+    enabled: !!publicClient && !!address && !!position?.hasLoan && !position?.inSoftLiquidation,
+    staleTime: 60_000,
+    refetchInterval: false,
+    retry: false,
+  });
 
   const exchangeRate = useMemo(() => {
     if (!debouncedAmount || Number(debouncedAmount) === 0) return null;
@@ -873,6 +938,31 @@ export function RepayTab({
     }
   }, [repayAmount, repayToken.decimals, currentBalance]);
 
+  const enteredRepayCrvUsdWei = useMemo(() => {
+    if (isCrvUsd && repayAmount && Number(repayAmount) > 0) {
+      try {
+        return parseUnits(repayAmount, 18);
+      } catch {
+        return null;
+      }
+    }
+    return estimatedCrvUsdOut;
+  }, [isCrvUsd, repayAmount, estimatedCrvUsdOut]);
+
+  const minimumPartialRepayFormatted = minimumPartialRepayWei
+    ? formatCrvUsdAmount(minimumPartialRepayWei)
+    : null;
+
+  const isBelowMinimumPartialRepay =
+    !isClosingLoan &&
+    withdrawAmountWei === 0n &&
+    !!position?.debt &&
+    !!enteredRepayCrvUsdWei &&
+    !!minimumPartialRepayWei &&
+    enteredRepayCrvUsdWei > 0n &&
+    enteredRepayCrvUsdWei < position.debt &&
+    enteredRepayCrvUsdWei < minimumPartialRepayWei;
+
   // Report debt delta to parent (negative = repaying)
   useEffect(() => {
     if (isCrvUsd && repayAmount && Number(repayAmount) > 0) {
@@ -1181,6 +1271,7 @@ export function RepayTab({
     Number(repayAmount) > 0 &&
     position?.hasLoan &&
     !hasInsufficientBalance &&
+    !isBelowMinimumPartialRepay &&
     (isCrvUsd || isVaultWithCrvUsdUnderlying || (!isCrvUsd && !quoteLoading)) &&
     (!needsZapperForRepay || zappersEnabled);
 
@@ -1190,6 +1281,7 @@ export function RepayTab({
     if (status === "executing") return <>Confirm in wallet<LoadingDots /></>;
     if (status === "waitingTx") return <>Waiting for confirmation<LoadingDots /></>;
     if (hasInsufficientBalance) return "Insufficient balance";
+    if (isBelowMinimumPartialRepay && minimumPartialRepayFormatted) return `Repay at least ${minimumPartialRepayFormatted} crvUSD`;
     const hasWithdrawal = withdrawAmountWei > 0n;
 
     if (isCrvUsd) {
@@ -1536,6 +1628,13 @@ export function RepayTab({
         <div className="p-2 rounded-lg bg-blue-500/10 border border-blue-500/30 text-blue-500 text-xs flex items-center gap-2">
           <ArrowRightLeft size={14} className="shrink-0" />
           Not enough crvUSD to close. Switch to another token (e.g. ETH, USDC) to swap and close in one transaction.
+        </div>
+      )}
+
+      {isBelowMinimumPartialRepay && minimumPartialRepayFormatted && (
+        <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-500 text-xs flex items-center gap-2">
+          <AlertTriangle size={14} className="shrink-0" />
+          Curve requires at least {minimumPartialRepayFormatted} crvUSD for this partial repay. Repay more or close the loan.
         </div>
       )}
 
