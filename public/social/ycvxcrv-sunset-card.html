@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=1200, initial-scale=1" />
+    <title>ycvxCRV LlamaLend Sunset Card</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      :root {
+        --background: #09090b;
+        --foreground: #fafafa;
+        --muted: #a1a1aa;
+        --border: #3f3f46;
+        --panel: rgba(24, 24, 27, 0.86);
+        --accent: #f59e0b;
+      }
+
+      html,
+      body {
+        width: 1200px;
+        height: 675px;
+        margin: 0;
+        overflow: hidden;
+        background: var(--background);
+        color: var(--foreground);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      .card {
+        position: relative;
+        width: 1200px;
+        height: 675px;
+        overflow: hidden;
+        background:
+          linear-gradient(90deg, rgba(9, 9, 11, 0.9), rgba(9, 9, 11, 0.64) 52%, rgba(9, 9, 11, 0.42)),
+          url("./hero-network-bg.png"),
+          var(--background);
+        background-position: center;
+        background-size: cover;
+      }
+
+      .card::after {
+        content: "";
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        height: 5px;
+        background: linear-gradient(90deg, #f59e0b, #ef4444, #22c55e, #06b6d4, #3b82f6);
+      }
+
+      .topline,
+      .bottomline {
+        position: absolute;
+        z-index: 5;
+        right: 64px;
+        left: 64px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .topline {
+        top: 54px;
+      }
+
+      .bottomline {
+        bottom: 42px;
+        color: var(--muted);
+        font-size: 18px;
+        line-height: 1;
+      }
+
+      .bottomline strong {
+        color: var(--foreground);
+        font-weight: 500;
+      }
+
+      .brand-lockup {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .brand-lockup img {
+        width: 58px;
+        height: 58px;
+      }
+
+      .brand-word,
+      .mono {
+        font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+      }
+
+      .brand-word {
+        display: block;
+        color: var(--foreground);
+        font-size: 28px;
+        line-height: 1;
+        font-weight: 500;
+        letter-spacing: 0;
+      }
+
+      .brand-tagline {
+        display: block;
+        margin-top: 9px;
+        color: var(--muted);
+        font-size: 20px;
+        line-height: 1;
+        font-weight: 400;
+        letter-spacing: 0;
+      }
+
+      .date {
+        color: var(--muted);
+        font-size: 17px;
+        line-height: 1;
+        font-weight: 500;
+      }
+
+      .hero {
+        position: absolute;
+        z-index: 2;
+        top: 154px;
+        left: 64px;
+        width: 610px;
+      }
+
+      .eyebrow {
+        margin: 0 0 22px;
+        color: var(--muted);
+        font-size: 17px;
+        line-height: 1;
+        font-weight: 500;
+        letter-spacing: 0;
+      }
+
+      h1 {
+        margin: 0;
+        color: var(--foreground);
+        font-size: 78px;
+        line-height: 0.98;
+        font-weight: 500;
+        letter-spacing: 0;
+      }
+
+      h1 span,
+      h1 em {
+        display: block;
+        font-style: normal;
+      }
+
+      h1 em {
+        color: var(--accent);
+      }
+
+      .support {
+        margin: 30px 0 0;
+        max-width: 570px;
+        color: var(--muted);
+        font-size: 24px;
+        line-height: 1.32;
+        font-weight: 400;
+        letter-spacing: 0;
+      }
+
+      .logo-feature {
+        position: absolute;
+        z-index: 3;
+        top: 148px;
+        right: 74px;
+        width: 356px;
+        text-align: center;
+      }
+
+      .logo-disc {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 296px;
+        height: 296px;
+        margin: 0 auto;
+        border: 1px solid rgba(63, 63, 70, 0.78);
+        border-radius: 999px;
+        background:
+          radial-gradient(circle at 50% 45%, rgba(245, 158, 11, 0.22), rgba(24, 24, 27, 0.66) 58%, rgba(9, 9, 11, 0.2)),
+          rgba(24, 24, 27, 0.58);
+      }
+
+      .logo-disc img {
+        width: 178px;
+        height: 178px;
+      }
+
+      .logo-feature strong {
+        display: block;
+        margin-top: 28px;
+        color: var(--foreground);
+        font-size: 52px;
+        line-height: 1;
+        font-weight: 500;
+        letter-spacing: 0;
+      }
+
+      .logo-feature p {
+        margin: 18px auto 0;
+        max-width: 320px;
+        color: var(--muted);
+        font-size: 22px;
+        line-height: 1.32;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <header class="topline">
+        <div class="brand-lockup">
+          <img src="../logo-128.png" alt="" />
+          <div>
+            <span class="brand-word">yld</span>
+            <span class="brand-tagline">Automated yield optimization</span>
+          </div>
+        </div>
+        <span class="date mono">Curve DAO update</span>
+      </header>
+
+      <section class="hero">
+        <p class="eyebrow mono">LlamaLend v1 collateral sunset</p>
+        <h1>
+          <span>ycvxCRV</span>
+          <em>deposits</em>
+          <span>disabled via UI.</span>
+        </h1>
+        <p class="support">Withdrawals remain available. For staked cvxCRV yield, exchange to the yld yscvxCRV vault.</p>
+      </section>
+
+      <aside class="logo-feature">
+        <div class="logo-disc">
+          <img src="../ycvxcrv-128.png" alt="" />
+        </div>
+        <strong>ycvxCRV</strong>
+        <p>For staked cvxCRV yield, exchange to yld yscvxCRV.</p>
+      </aside>
+
+      <footer class="bottomline">
+        <span>DAO proposal linked in app</span>
+        <strong>yldfi.co/vaults/yscvxcrv</strong>
+      </footer>
+    </main>
+  </body>
+</html>
