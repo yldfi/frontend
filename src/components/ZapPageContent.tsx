@@ -31,7 +31,7 @@ import { ETH_ADDRESS, applyKnownTokenMetadata } from "@/lib/enso";
 import { cn } from "@/lib/utils";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { getMaxEthAmount } from "@/lib/eth-gas";
-import { VAULTS } from "@/config/vaults";
+import { VAULTS, isVaultEntryDisabled } from "@/config/vaults";
 import {
   getPendingTxCopy,
   getRevertedTxCopy,
@@ -45,14 +45,22 @@ import type { EnsoToken } from "@/types/enso";
 
 const STORAGE_PREFIX = "yldfi-universal-zap";
 
-// Default output: ycvxCRV vault (primary use case)
+const ENTRY_DISABLED_VAULT_ADDRESSES = Object.values(VAULTS)
+  .filter(isVaultEntryDisabled)
+  .map((vault) => vault.address.toLowerCase());
+
+function isEntryDisabledOutput(address: string): boolean {
+  return ENTRY_DISABLED_VAULT_ADDRESSES.includes(address.toLowerCase());
+}
+
+// Default output: active cvxCRV strategy vault. ycvxCRV v1 is deprecated/exit-only.
 const DEFAULT_OUTPUT_TOKEN: EnsoToken = {
-  address: VAULTS.ycvxcrv.address,
+  address: VAULTS.yscvxcrv.address,
   chainId: 1,
-  name: VAULTS.ycvxcrv.name,
-  symbol: VAULTS.ycvxcrv.symbol,
-  decimals: VAULTS.ycvxcrv.decimals,
-  logoURI: VAULTS.ycvxcrv.logoSmall,
+  name: VAULTS.yscvxcrv.name,
+  symbol: VAULTS.yscvxcrv.symbol,
+  decimals: VAULTS.yscvxcrv.decimals,
+  logoURI: VAULTS.yscvxcrv.logoSmall,
   type: "defi",
 };
 
@@ -140,12 +148,25 @@ export function ZapPageContent() {
   }, []);
 
   const swapTokens = useCallback(() => {
+    if (isEntryDisabledOutput(inputToken.address)) {
+      toast.error(`${inputToken.symbol} is deprecated and exit-only. It cannot be selected as a zap output.`);
+      return;
+    }
     setInputTokenState(outputToken);
     setOutputTokenState(inputToken);
     saveToken("input", outputToken);
     saveToken("output", inputToken);
     setAmount("");
   }, [inputToken, outputToken, setAmount]);
+
+  useEffect(() => {
+    if (!isEntryDisabledOutput(outputToken.address)) return;
+    const timer = setTimeout(() => {
+      setOutputTokenState(applyKnownTokenMetadata(DEFAULT_OUTPUT_TOKEN));
+      saveToken("output", DEFAULT_OUTPUT_TOKEN);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [outputToken.address]);
 
   // Input balance — same source as TokenSelector (Enso API on mainnet, on-chain
   // multicall on test network) so the displayed balance stays consistent when
@@ -491,7 +512,7 @@ export function ZapPageContent() {
                     <TokenSelector
                       selectedToken={outputToken}
                       onSelect={setOutputToken}
-                      excludeTokens={[inputToken.address]}
+                      excludeTokens={[inputToken.address, ...ENTRY_DISABLED_VAULT_ADDRESSES]}
                       preferOnchainBalances
                     />
                   </div>

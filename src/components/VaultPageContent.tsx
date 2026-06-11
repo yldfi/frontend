@@ -75,7 +75,19 @@ import { ETH_ADDRESS, applyKnownTokenMetadata } from "@/lib/enso";
 import { getMaxEthAmount } from "@/lib/eth-gas";
 import { getVaultFormBalanceAddresses } from "@/lib/vault-form-balances";
 import { CHAINLINK_ETH_USD } from "@/config/addresses";
-import { getVault, getVaultByAddress, TOKENS, VAULT_UNDERLYING_TOKENS, VAULTS, EXTERNAL_VAULT_TOKENS, CURVE_CONTROLLERS, CURVE_SAVINGS } from "@/config/vaults";
+import {
+  getVault,
+  getVaultByAddress,
+  TOKENS,
+  VAULT_UNDERLYING_TOKENS,
+  VAULTS,
+  EXTERNAL_VAULT_TOKENS,
+  CURVE_CONTROLLERS,
+  CURVE_SAVINGS,
+  isExitOnlyVault,
+  isLendingDisabledWithoutPosition,
+  isVaultEntryDisabled,
+} from "@/config/vaults";
 import { VaultInfoCard } from "@/components/VaultInfoCard";
 import type { EnsoToken, ZapDirection, SimulationAssetChange } from "@/types/enso";
 import {
@@ -103,10 +115,15 @@ import {
 } from "@/lib/analytics";
 import { toast } from "sonner";
 
+const ENTRY_DISABLED_VAULT_ADDRESSES = Object.values(VAULTS)
+  .filter(isVaultEntryDisabled)
+  .map((vault) => vault.address.toLowerCase());
+
 export function VaultPageContent({ id }: { id: string }) {
   const vault = getVault(id);
   const router = useRouter();
   const vaultData = useVaultData(vault?.address as `0x${string}`);
+  const exitOnlyVault = isExitOnlyVault(vault);
   const [vaultSelectorOpen, setVaultSelectorOpen] = useState(false);
   const vaultSelectorRef = useRef<HTMLDivElement>(null);
 
@@ -422,13 +439,26 @@ export function VaultPageContent({ id }: { id: string }) {
   useEffect(() => {
     if (prevIdRef.current !== null && prevIdRef.current !== id) {
       // Navigation to different vault - reset to deposit and zap in
-      setActiveTabState("deposit");
-      setZapDirectionState("in");
+      setActiveTabState(exitOnlyVault ? "withdraw" : "deposit");
+      setZapDirectionState(exitOnlyVault ? "out" : "in");
       setAmount("");
       setZapAmountState("");
     }
     prevIdRef.current = id;
-  }, [id, setAmount]);
+  }, [exitOnlyVault, id, setAmount]);
+
+  useEffect(() => {
+    if (!exitOnlyVault) return;
+    const timer = setTimeout(() => {
+      if (activeTab === "deposit") {
+        setActiveTabState("withdraw");
+      }
+      if (activeTab === "zap" && zapDirection === "in") {
+        setZapDirectionState("out");
+      }
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [activeTab, exitOnlyVault, zapDirection]);
 
   // Guard: reset zap input/output tokens if they match the vault or underlying tokens
   // (can happen from stale localStorage values)
@@ -611,6 +641,11 @@ export function VaultPageContent({ id }: { id: string }) {
     userAddress
   );
   const onChainRates = useCurveMarketRates(controllerAddress);
+  const showLendingEntry =
+    !!vault &&
+    vault.type === "vault" &&
+    !!controllerAddress &&
+    (!isLendingDisabledWithoutPosition(vault) || Boolean(lendingPosition?.hasLoan));
 
   // Merkl rewards earnings
   const { data: merklData } = useMerklRewards(1);
@@ -724,7 +759,7 @@ export function VaultPageContent({ id }: { id: string }) {
     underlyingToken: vault?.assetAddress ?? "",
     slippage: zapSlippage,
     underlyingTokenPrice: underlyingPrice, // For illiquid tokens like cvgCVX
-    paused: showSimulationModal || showPriceImpactModal || explorerOpen || zapInProgress,
+    paused: showSimulationModal || showPriceImpactModal || explorerOpen || zapInProgress || (exitOnlyVault && zapDirection === "in"),
   });
 
   // Zap actions (approve + execute)
@@ -1021,6 +1056,10 @@ export function VaultPageContent({ id }: { id: string }) {
     if (!inputAmount || hasInsufficientBalance || !vault) return;
 
     if (activeTab === "deposit") {
+      if (exitOnlyVault) {
+        toast.error(`${vault.symbol} is deprecated and exit-only. Withdraw or zap out instead.`);
+        return;
+      }
       if (requiresApproval) {
         trackApprovalInitiated(vault.assetSymbol, id);
         // Set multi-step state for approval + deposit
@@ -1393,8 +1432,18 @@ export function VaultPageContent({ id }: { id: string }) {
                                 "font-medium flex-1",
                                 isSelected && "text-[var(--accent)]"
                               )}>
-                                {v.name}
+                                <span className="block">{v.name}</span>
+                                {v.displayVersion && (
+                                  <span className="mono block text-[10px] text-[var(--muted-foreground)] mt-0.5">
+                                    {v.displayVersion}
+                                  </span>
+                                )}
                               </span>
+                              {v.deprecated && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/10 text-yellow-500 border border-yellow-500/20">
+                                  {v.deprecated.badge}
+                                </span>
+                              )}
                               {isSelected && (
                                 <Check size={16} className="text-[var(--accent)]" />
                               )}
@@ -1405,13 +1454,63 @@ export function VaultPageContent({ id }: { id: string }) {
                     )}
                   </div>
                 </div>
+                {(vault.displayVersion || vault.deprecated) && (
+                  <div className="flex flex-wrap items-center gap-2 mb-4">
+                    {vault.displayVersion && (
+                      <span className="mono text-xs px-2 py-1 rounded border border-[var(--border)] bg-[var(--muted)]/40 text-[var(--muted-foreground)]">
+                        {vault.displayVersion}
+                      </span>
+                    )}
+                    {vault.deprecated && (
+                      <span className="text-xs px-2 py-1 rounded border border-yellow-500/20 bg-yellow-500/10 text-yellow-500 font-medium">
+                        {vault.deprecated.badge}
+                      </span>
+                    )}
+                  </div>
+                )}
                 <p className="text-[var(--muted-foreground)] max-w-xl leading-relaxed">
                   {vault.longDescription}
                 </p>
               </div>
 
+              {vault.deprecated && (
+                <div className="border border-yellow-500/20 bg-yellow-500/5 rounded-lg px-4 py-3">
+                  <div className="flex items-start gap-3">
+                    <Clock size={16} className="text-yellow-500 mt-0.5 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-yellow-500">{vault.deprecated.label}</p>
+                      <p className="text-sm text-[var(--muted-foreground)] mt-1 leading-relaxed">
+                        {vault.deprecated.details}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-3 mt-2">
+                        {vault.deprecated.forumUrl && (
+                          <a
+                            href={vault.deprecated.forumUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-xs text-[var(--foreground)] hover:text-[var(--accent)] transition-colors"
+                          >
+                            Deprecation plan <ExternalLink size={11} />
+                          </a>
+                        )}
+                        {vault.deprecated.voteUrl && (
+                          <a
+                            href={vault.deprecated.voteUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-xs text-[var(--foreground)] hover:text-[var(--accent)] transition-colors"
+                          >
+                            DAO proposal <ExternalLink size={11} />
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Lending Position / Borrow CTA */}
-              {vault.type === "vault" && controllerAddress && (() => {
+              {showLendingEntry && (() => {
                 if (lendingPosition?.hasLoan && (onChainRates || curveVault)) {
                   const collateralApy = cachedApy ?? yearnVault?.apy ?? 0;
                   const borrowApy = onChainRates?.borrowApy ?? (curveVault ? (Math.exp(curveVault.rates.borrowApr) - 1) * 100 : 0);
@@ -1497,7 +1596,7 @@ export function VaultPageContent({ id }: { id: string }) {
               })()}
 
               {/* Rewards Banner */}
-              {vault.id === "ycvxcrv" && (isCampaignLive || totalEarnedUsd > 0) && (
+              {vault.id === "ycvxcrv" && (!vault.deprecated || totalEarnedUsd > 0) && (isCampaignLive || totalEarnedUsd > 0) && (
                 <Link
                   href="/rewards"
                   className="block border border-green-400/20 bg-green-400/5 rounded-md px-4 group hover:border-green-400/40 transition-colors"
@@ -1692,7 +1791,7 @@ export function VaultPageContent({ id }: { id: string }) {
                         </div>
                       </div>
                       {/* Borrow button - only for vault type with LlamaLend market */}
-                      {vault.type === "vault" && CURVE_CONTROLLERS[vault.address as keyof typeof CURVE_CONTROLLERS] && (
+                      {showLendingEntry && (
                         <button
                           onClick={handleCollateralClick}
                           className="collateral-link shrink-0"
@@ -1713,7 +1812,7 @@ export function VaultPageContent({ id }: { id: string }) {
                   <div className="p-5 pb-0">
                     <div className="flex border-b border-[var(--border)]">
                       {(["deposit", "withdraw", "zap"] as const).map((tab) => {
-                        const isDisabled = false;
+                        const isDisabled = exitOnlyVault && tab === "deposit";
                         return (
                           <button
                             key={tab}
@@ -1737,7 +1836,7 @@ export function VaultPageContent({ id }: { id: string }) {
                                 ? "text-[var(--foreground)]"
                                 : !isDisabled && "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                             )}
-                            title={isDisabled ? "Vault not yet deployed" : undefined}
+                            title={isDisabled ? "This deprecated vault is exit-only" : undefined}
                           >
                             {tab}
                             {!isDisabled && activeTab === tab && (
@@ -2268,13 +2367,17 @@ export function VaultPageContent({ id }: { id: string }) {
                       {/* Direction Toggle + Settings */}
                       <div className="flex items-center gap-1 p-1 rounded-lg bg-[var(--muted)] border border-[var(--border)]">
                         <button
+                          disabled={exitOnlyVault}
                           onClick={() => {
+                            if (exitOnlyVault) return;
                             setZapDirection("in");
                             setZapAmount("");
                           }}
                           className={cn(
                             "flex-1 flex items-center justify-center gap-1.5 py-2 rounded-md text-sm font-medium transition-all",
-                            zapDirection === "in"
+                            exitOnlyVault
+                              ? "text-[var(--muted-foreground)]/50 cursor-not-allowed"
+                              : zapDirection === "in"
                               ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm"
                               : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                           )}
@@ -2398,7 +2501,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               <TokenSelector
                                 selectedToken={zapOutputToken}
                                 onSelect={handleZapOutputTokenChange}
-                                excludeTokens={[...excludedZapAddresses, ...EXTERNAL_VAULT_TOKENS.filter(a => a.toLowerCase() !== CURVE_SAVINGS.SCRVUSD.toLowerCase())]}
+                                excludeTokens={[...excludedZapAddresses, ...ENTRY_DISABLED_VAULT_ADDRESSES, ...EXTERNAL_VAULT_TOKENS.filter(a => a.toLowerCase() !== CURVE_SAVINGS.SCRVUSD.toLowerCase())]}
                               />
                             </div>
                           </div>
@@ -2498,10 +2601,10 @@ export function VaultPageContent({ id }: { id: string }) {
                               executeZap();
                             }
                           }}
-                          disabled={showZapApprovalCard || !zapQuote || zapIsLoading || zapQuoteLoading || isSimulatingPreview || showSimulationModal || hasZapInsufficientBalance}
+                          disabled={showZapApprovalCard || !zapQuote || zapIsLoading || zapQuoteLoading || isSimulatingPreview || showSimulationModal || hasZapInsufficientBalance || (exitOnlyVault && zapDirection === "in")}
                           className={cn(
                             "w-full py-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-base",
-                            showZapApprovalCard || !zapQuote || zapIsLoading || zapQuoteLoading || isSimulatingPreview || showSimulationModal || (zapAmount && hasZapInsufficientBalance)
+                            showZapApprovalCard || !zapQuote || zapIsLoading || zapQuoteLoading || isSimulatingPreview || showSimulationModal || (zapAmount && hasZapInsufficientBalance) || (exitOnlyVault && zapDirection === "in")
                               ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
                               : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer"
                           )}
@@ -2512,6 +2615,8 @@ export function VaultPageContent({ id }: { id: string }) {
                             <>Confirm in wallet<LoadingDots /></>
                           ) : zapQuoteLoading ? (
                             <>Getting quote<LoadingDots /></>
+                          ) : exitOnlyVault && zapDirection === "in" ? (
+                            "Zap in disabled"
                           ) : !zapAmount || Number(zapAmount) === 0 ? (
                             "Enter amount"
                           ) : hasZapInsufficientBalance ? (

@@ -289,7 +289,7 @@ describe("ZapPageContent", () => {
     expect(mockUseTokenBalances).toHaveBeenCalledWith(
       [
         expect.objectContaining({ symbol: "ETH" }),
-        expect.objectContaining({ symbol: "ycvxCRV" }),
+        expect.objectContaining({ symbol: "yscvxCRV" }),
       ],
       { preferOnchain: true },
     );
@@ -329,7 +329,7 @@ describe("ZapPageContent", () => {
           symbol: "crvUSD",
           logoURI: "/tokens/crvusd.png",
         }),
-        expect.objectContaining({ symbol: "ycvxCRV" }),
+        expect.objectContaining({ symbol: "yscvxCRV" }),
       ],
       { preferOnchain: true },
     );
