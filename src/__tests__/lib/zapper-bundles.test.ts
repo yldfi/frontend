@@ -4,16 +4,19 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mock setup (vi.hoisted pattern)
 // ============================================================================
 
-const { mockFetchRoute, mockFetchBundle, mockGetLpxCvxToCvxSwapRate } = vi.hoisted(() => ({
+const { mockFetchRoute, mockFetchBundle, mockGetCvgCvxSwapRate, mockGetLpxCvxToCvxSwapRate, mockGetCurveGetDyFactory } = vi.hoisted(() => ({
   mockFetchRoute: vi.fn(),
   mockFetchBundle: vi.fn(),
+  mockGetCvgCvxSwapRate: vi.fn(),
   mockGetLpxCvxToCvxSwapRate: vi.fn(),
+  mockGetCurveGetDyFactory: vi.fn(),
 }));
 
 // Mock @/lib/enso — the functions buildVaultInputSwapBundle/buildExoticOutputSwapData import
 vi.mock("@/lib/enso", () => ({
   fetchRoute: mockFetchRoute,
   fetchBundle: mockFetchBundle,
+  getCvgCvxSwapRate: mockGetCvgCvxSwapRate,
   getLpxCvxToCvxSwapRate: mockGetLpxCvxToCvxSwapRate,
   ENSO_SHORTCUTS: "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003",
   ENSO_ROUTER_EXECUTOR: "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf",
@@ -33,6 +36,7 @@ vi.mock("viem", () => ({
 // Mock @/lib/curve — calculateMinDy
 vi.mock("@/lib/curve", () => ({
   calculateMinDy: vi.fn((amount: bigint, _bps: number) => amount.toString()),
+  getCurveGetDyFactory: mockGetCurveGetDyFactory,
 }));
 
 import { buildVaultInputSwapBundle, buildExoticOutputSwapData, ZAPPER_ADDRESS } from "@/lib/zapper";
@@ -66,6 +70,8 @@ describe("buildExoticOutputSwapData", () => {
     vi.clearAllMocks();
     mockFetchRoute.mockResolvedValue(MOCK_ROUTE_RESPONSE);
     mockFetchBundle.mockResolvedValue(MOCK_BUNDLE_RESPONSE);
+    mockGetCvgCvxSwapRate.mockResolvedValue(950000000000000000n);
+    mockGetCurveGetDyFactory.mockResolvedValue(930000000000000000n);
   });
 
   it("cvgCvx path: routes crvUSD→CVX then mints CVX1 and Curve exchanges to cvgCVX", async () => {
@@ -91,12 +97,13 @@ describe("buildExoticOutputSwapData", () => {
 
     // Action 5 should be Curve exchange CVX1→cvgCVX
     expect(bundleCall.actions[5].args.method).toBe("exchange");
+    expect(bundleCall.actions[5].args.args[3]).toBe("950000000000000000");
     // Action 6 should transfer cvgCVX to ZAPPER_ADDRESS
     expect(bundleCall.actions[6].action).toBe("transfer");
     expect(bundleCall.skipQuote).toBe(true);
 
     expect(result.swapData).toBe("0xmockbundledata");
-    expect(result.expectedOut).toBe(MOCK_ROUTE_RESPONSE.amountOut);
+    expect(result.expectedOut).toBe("950000000000000000");
   });
 
   it("pxCvx path: routes crvUSD→CVX then Curve swaps to lpxCVX and unwraps to pxCVX", async () => {
@@ -111,9 +118,10 @@ describe("buildExoticOutputSwapData", () => {
     expect(bundleCall.actions).toHaveLength(7);
     // Action 3 should be Curve exchange CVX→lpxCVX
     expect(bundleCall.actions[3].args.method).toBe("exchange");
+    expect(bundleCall.actions[3].args.args[3]).toBe("930000000000000000");
     // Action 5 should unwrap lpxCVX→pxCVX
     expect(bundleCall.actions[5].args.method).toBe("unwrap");
-    expect(result.expectedOut).toBe(MOCK_ROUTE_RESPONSE.amountOut);
+    expect(result.expectedOut).toBe("930000000000000000");
   });
 
   it("action structure: addresses lowercased, balanceOf ref at index 1", async () => {
@@ -159,6 +167,8 @@ describe("buildExoticOutputSwapData", () => {
       vi.clearAllMocks();
       mockFetchRoute.mockResolvedValue(MOCK_ROUTE_RESPONSE);
       mockFetchBundle.mockResolvedValue(MOCK_BUNDLE_RESPONSE);
+      mockGetCvgCvxSwapRate.mockResolvedValue(950000000000000000n);
+      mockGetCurveGetDyFactory.mockResolvedValue(930000000000000000n);
 
       await buildExoticOutputSwapData({ amountIn: "1000000000000000000", type, slippage: 100 });
 

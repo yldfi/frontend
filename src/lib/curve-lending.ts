@@ -4,7 +4,7 @@
 import type { EnsoBundleAction, EnsoBundleResponse } from "@/types/enso";
 import { CURVE_CONTROLLERS, VAULTS, EXTERNAL_VAULT_CONFIG, TOKENS, PIREX } from "@/config/vaults";
 import { calculateMinDy } from "@/lib/curve";
-import { getLpxCvxToCvxSwapRate } from "@/lib/enso";
+import { fetchRoute, getLpxCvxToCvxSwapRate } from "@/lib/enso";
 import { previewRedeem } from "@/lib/curve/rpc";
 import { CRVUSD_ADDRESS } from "@/config/addresses";
 
@@ -89,6 +89,30 @@ async function fetchRepayRouterBundle(params: {
     routingStrategy: "router",
     skipQuote: true,
   });
+}
+
+async function estimateRouteMinAmountOut(params: {
+  fromAddress: string;
+  tokenIn: string;
+  tokenOut: string;
+  amountIn: string;
+  slippageBps: number;
+}): Promise<string> {
+  const amountOut = params.tokenIn.toLowerCase() === params.tokenOut.toLowerCase()
+    ? params.amountIn
+    : (await fetchRoute({
+        fromAddress: params.fromAddress,
+        tokenIn: params.tokenIn,
+        tokenOut: params.tokenOut,
+        amountIn: params.amountIn,
+        slippage: params.slippageBps.toString(),
+      })).amountOut;
+
+  if (!amountOut || BigInt(amountOut) <= 0n) {
+    throw new Error(`Failed to estimate route output for ${params.tokenIn} → ${params.tokenOut}`);
+  }
+
+  return calculateMinDy(BigInt(amountOut), params.slippageBps).toString();
 }
 
 /**
@@ -204,6 +228,7 @@ export async function fetchRepayWithSwapBundle(params: {
   }
 
   const slippage = (params.slippage ?? 100).toString();
+  const slippageBps = params.slippage ?? 100;
 
   // Check if tokenIn is a vault (yldfi or external) - if so, redeem first then swap underlying
   const vaultInfo = getVaultInfo(params.tokenIn);
@@ -223,7 +248,6 @@ export async function fetchRepayWithSwapBundle(params: {
       if (expectedCvx === 0n) {
         throw new Error("Failed to estimate Curve lpxCVX→CVX swap output");
       }
-      const slippageBps = params.slippage ?? 100;
       const minDyCvx = calculateMinDy(expectedCvx, slippageBps);
 
       const actions: EnsoBundleAction[] = [
@@ -493,7 +517,15 @@ export async function fetchRepayWithSwapBundle(params: {
     });
   }
 
-  // Regular token flow: swap → repay
+  // Regular token flow: swap → min crvUSD output guard → repay
+  const minCrvusdOut = await estimateRouteMinAmountOut({
+    fromAddress: params.fromAddress,
+    tokenIn: params.tokenIn,
+    tokenOut: CRVUSD,
+    amountIn: params.amountIn,
+    slippageBps,
+  });
+
   const actions: EnsoBundleAction[] = [
     // 1. Route/swap input token to crvUSD
     {
@@ -503,12 +535,20 @@ export async function fetchRepayWithSwapBundle(params: {
         tokenIn: params.tokenIn,
         tokenOut: CRVUSD,
         amountIn: params.amountIn,
-        slippage,
+        minAmountOut: minCrvusdOut,
+      },
+    },
+    {
+      protocol: "enso",
+      action: "minamountout",
+      args: {
+        amountOut: { useOutputOfCallAt: 0 },
+        minAmountOut: minCrvusdOut,
       },
     },
   ];
 
-  // 2. Repay debt
+  // 3. Repay debt
   if (params.inSoftLiquidation) {
     actions.push(...buildDirectRepayActions(controllerAddress, params.fromAddress, { useOutputOfCallAt: 0 }));
   } else {
