@@ -78,6 +78,19 @@ async function fetchBundle(params: {
   return ensoFetchBundle(params);
 }
 
+async function fetchRepayRouterBundle(params: {
+  fromAddress: string;
+  actions: EnsoBundleAction[];
+}): Promise<EnsoBundleResponse> {
+  // Repay bundles are built before the UI can request ERC20 allowance.
+  // Keep approval and transaction simulation checks in the client flow.
+  return fetchBundle({
+    ...params,
+    routingStrategy: "router",
+    skipQuote: true,
+  });
+}
+
 /**
  * Repay crvUSD debt
  * If repaying full amount, this closes the position
@@ -119,10 +132,9 @@ export async function fetchRepayBundle(params: {
     },
   ];
 
-  return fetchBundle({
+  return fetchRepayRouterBundle({
     fromAddress: params.fromAddress,
     actions,
-    routingStrategy: "router",
   });
 }
 
@@ -324,10 +336,9 @@ export async function fetchRepayWithSwapBundle(params: {
         }
       }
 
-      return fetchBundle({
+      return fetchRepayRouterBundle({
         fromAddress: params.fromAddress,
         actions,
-        routingStrategy: "router",
       });
     }
 
@@ -417,10 +428,9 @@ export async function fetchRepayWithSwapBundle(params: {
         }
       }
 
-      return fetchBundle({
+      return fetchRepayRouterBundle({
         fromAddress: params.fromAddress,
         actions,
-        routingStrategy: "router",
       });
     }
 
@@ -477,10 +487,9 @@ export async function fetchRepayWithSwapBundle(params: {
       }
     }
 
-    return fetchBundle({
+    return fetchRepayRouterBundle({
       fromAddress: params.fromAddress,
       actions,
-      routingStrategy: "router",
     });
   }
 
@@ -540,10 +549,9 @@ export async function fetchRepayWithSwapBundle(params: {
     }
   }
 
-  return fetchBundle({
+  return fetchRepayRouterBundle({
     fromAddress: params.fromAddress,
     actions,
-    routingStrategy: "router",
   });
 }
 
