@@ -3,6 +3,16 @@ export type TxActionKind = "deposit" | "withdraw" | "zap";
 export const TX_SUCCESS_VISIBLE_MS = 10_000;
 export const TX_REVERTED_VISIBLE_MS = 45_000;
 
+export interface TxAssetDetails {
+  fromAmount: string;
+  fromSymbol: string;
+  fromLogo?: string;
+  toAmount: string;
+  toSymbol: string;
+  toLogo?: string;
+  message?: string;
+}
+
 export function isVaultTxPendingVisible(status: string): boolean {
   return status === "depositing" || status === "withdrawing" || status === "waitingTx";
 }
@@ -49,4 +59,27 @@ export function getRevertedTxCopy(kind: TxActionKind): { title: string; message:
     title: `${getTxActionLabel(kind)} Failed`,
     message: "Transaction reverted.",
   };
+}
+
+export function isSameTxAssetPair(details: Pick<TxAssetDetails, "fromSymbol" | "toSymbol">): boolean {
+  return details.fromSymbol.trim().toLowerCase() === details.toSymbol.trim().toLowerCase();
+}
+
+export function formatTxAssetAmount(amount: string): string {
+  const normalized = amount.trim();
+  if (!normalized || normalized === "~" || normalized.includes("→") || /[a-zA-Z]/.test(normalized)) {
+    return amount;
+  }
+
+  const numeric = Number(normalized.replaceAll(",", ""));
+  if (!Number.isFinite(numeric)) return amount;
+
+  const abs = Math.abs(numeric);
+  const maximumFractionDigits = abs > 0 && abs < 0.01 ? 6 : abs < 1 ? 4 : 4;
+  const minimumFractionDigits = abs > 0 && abs < 1 ? 2 : 0;
+
+  return numeric.toLocaleString(undefined, {
+    maximumFractionDigits,
+    minimumFractionDigits,
+  });
 }
