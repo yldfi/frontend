@@ -26,7 +26,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   ];
 
   // Vault pages
-  const vaultIds = ["ycvxcrv", "yscvxcrv"];
+  const vaultIds = ["yscvxcrv"];
   const vaultPages = vaultIds.map((id) => ({
     url: `${baseUrl}/vaults/${id}`,
     lastModified: new Date(),

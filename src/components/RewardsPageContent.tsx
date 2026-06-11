@@ -5,13 +5,13 @@ import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagm
 import { formatUnits } from "viem";
 import Link from "next/link";
 import Image from "next/image";
-import { Gift, Clock, CheckCircle2, ArrowUpRight, Check, ChevronRight } from "lucide-react";
+import { Gift, Clock, CheckCircle2, ArrowUpRight, Check, ChevronRight, AlertTriangle } from "lucide-react";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
 import { LoadingDots } from "@/components/LoadingDots";
 import { useMerklRewards, useMerklOpportunities, getMerklOpportunityUrl, type MerklReward } from "@/hooks/useMerklRewards";
 import { useVaultBalance } from "@/hooks/useVaultBalance";
 import { useCurveLendingPosition } from "@/hooks/useCurveLendingPosition";
-import { VAULT_ADDRESSES } from "@/config/vaults";
+import { VAULT_ADDRESSES, VAULTS } from "@/config/vaults";
 import { formatUsd } from "@/lib/utils";
 import { toast } from "sonner";
 import { Header } from "@/components/Header";
@@ -186,6 +186,8 @@ export function RewardsPageContent() {
   const { data: opportunities } = useMerklOpportunities();
   const yldOpportunity = opportunities?.find((o) => o.name === "Yld Borrow crvUSD");
   const merklUrl = yldOpportunity ? getMerklOpportunityUrl(yldOpportunity) : "https://app.merkl.fr";
+  const ycvxVault = VAULTS.ycvxcrv;
+  const ycvxDeprecated = Boolean(ycvxVault.deprecated);
 
   // Check eligibility: user holds ycvxCRV
   const { balance: ycvxcrvBalance } = useVaultBalance(VAULT_ADDRESSES.YCVXCRV as `0x${string}`);
@@ -320,14 +322,27 @@ export function RewardsPageContent() {
                 <Image src="/ycvxcrv-64.png" alt="ycvxCRV" width={40} height={40} className="rounded-full" />
                 <div className="flex-1">
                   <h3 className="font-medium leading-normal">
-                    Borrow against ycvxCRV on{" "}
-                    <Link href="/vaults/ycvxcrv/lending" className="hover:text-[var(--accent)] transition-colors">
-                      <Image src="/curve-logo.png" alt="Curve" width={14} height={14} className="rounded-full inline align-middle" />
-                      {" "}Curve LlamaLend{" "}
-                      <ArrowUpRight className="w-3 h-3 inline align-middle" />
-                    </Link>
+                    ycvxCRV borrow rewards{" "}
+                    {hasBorrowPosition ? (
+                      <Link href="/vaults/ycvxcrv/lending" className="hover:text-[var(--accent)] transition-colors">
+                        <Image src="/curve-logo.png" alt="Curve" width={14} height={14} className="rounded-full inline align-middle" />
+                        {" "}Manage loan{" "}
+                        <ArrowUpRight className="w-3 h-3 inline align-middle" />
+                      </Link>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[var(--muted-foreground)]">
+                        <Image src="/curve-logo.png" alt="Curve" width={14} height={14} className="rounded-full inline align-middle" />
+                        {" "}Curve LlamaLend
+                      </span>
+                    )}
                   </h3>
                   <div className="flex items-center gap-2 mt-0.5">
+                    {ycvxDeprecated && ycvxVault.deprecated && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-500/10 text-yellow-500">
+                        <AlertTriangle className="w-3 h-3" />
+                        {ycvxVault.deprecated.badge}
+                      </span>
+                    )}
                     <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
                       isLive ? "bg-green-400/10 text-green-400" : isUpcoming ? "bg-yellow-400/10 text-yellow-400" : "bg-gray-400/10 text-gray-400"
                     }`}>
@@ -343,7 +358,11 @@ export function RewardsPageContent() {
               </div>
 
               <div className="flex items-center gap-2 flex-wrap text-sm text-[var(--muted-foreground)] mb-5">
-                <span>Earn crvUSD by borrowing against ycvxCRV. The more you borrow, the more you earn.</span>
+                <span>
+                  {ycvxDeprecated
+                    ? "This campaign remains available for existing positions and claims. New ycvxCRV deposits and new LlamaLend loans are disabled."
+                    : "Earn crvUSD by borrowing against ycvxCRV. The more you borrow, the more you earn."}
+                </span>
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[var(--muted)] text-[var(--foreground)] mono">
                   <Clock className="w-3 h-3" />
                   {startDate} → {endDate}
@@ -353,7 +372,7 @@ export function RewardsPageContent() {
               {/* Steps */}
               <div className="mb-5">
                 <div className="text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wider mb-3">
-                  How to become eligible
+                  {ycvxDeprecated ? "Available actions" : "How to become eligible"}
                 </div>
                 <div className="space-y-3">
                   <Link href="/vaults/ycvxcrv" className="flex items-start gap-3 group">
@@ -368,34 +387,54 @@ export function RewardsPageContent() {
                     )}
                     <div className="flex-1">
                       <div className="text-sm font-medium group-hover:text-[var(--accent)] transition-colors flex items-center gap-1.5">
-                        Deposit cvxCRV into the ycvxCRV vault
+                        {ycvxDeprecated ? "Withdraw or zap out of ycvxCRV_v1" : "Deposit cvxCRV into the ycvxCRV vault"}
                         <ArrowUpRight className="w-3 h-3" />
                       </div>
                       <div className="text-xs text-[var(--muted-foreground)]">
-                        Deposit cvxCRV to receive ycvxCRV yield-bearing vault tokens.
+                        {ycvxDeprecated
+                          ? "The vault is exit-only; deposits and zap-ins are disabled."
+                          : "Deposit cvxCRV to receive ycvxCRV yield-bearing vault tokens."}
                       </div>
                     </div>
                   </Link>
-                  <Link href="/vaults/ycvxcrv/lending" className="flex items-start gap-3 group">
-                    {hasBorrowPosition ? (
-                      <span className="flex-shrink-0 w-6 h-6 rounded-full bg-green-400/20 flex items-center justify-center">
-                        <Check className="w-3.5 h-3.5 text-green-400" />
+                  {ycvxDeprecated && !hasBorrowPosition ? (
+                    <div className="flex items-start gap-3">
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full bg-yellow-500/15 flex items-center justify-center">
+                        <AlertTriangle className="w-3.5 h-3.5 text-yellow-500" />
                       </span>
-                    ) : (
-                      <span className="flex-shrink-0 w-6 h-6 rounded-full bg-[var(--muted)] flex items-center justify-center text-xs font-medium">
-                        2
-                      </span>
-                    )}
-                    <div className="flex-1">
-                      <div className="text-sm font-medium group-hover:text-[var(--accent)] transition-colors flex items-center gap-1.5">
-                        Open a LlamaLend loan and borrow crvUSD
-                        <ArrowUpRight className="w-3 h-3" />
-                      </div>
-                      <div className="text-xs text-[var(--muted-foreground)]">
-                        Use your ycvxCRV as collateral to borrow crvUSD. The more you borrow, the more you earn.
+                      <div className="flex-1">
+                        <div className="text-sm font-medium text-yellow-500">
+                          New ycvxCRV loans are disabled
+                        </div>
+                        <div className="text-xs text-[var(--muted-foreground)]">
+                          Holders without an existing LlamaLend position can withdraw or zap out, but cannot open a new borrow position.
+                        </div>
                       </div>
                     </div>
-                  </Link>
+                  ) : (
+                    <Link href="/vaults/ycvxcrv/lending" className="flex items-start gap-3 group">
+                      {hasBorrowPosition ? (
+                        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-green-400/20 flex items-center justify-center">
+                          <Check className="w-3.5 h-3.5 text-green-400" />
+                        </span>
+                      ) : (
+                        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-[var(--muted)] flex items-center justify-center text-xs font-medium">
+                          2
+                        </span>
+                      )}
+                      <div className="flex-1">
+                        <div className="text-sm font-medium group-hover:text-[var(--accent)] transition-colors flex items-center gap-1.5">
+                          {ycvxDeprecated ? "Manage existing LlamaLend loan" : "Open a LlamaLend loan and borrow crvUSD"}
+                          <ArrowUpRight className="w-3 h-3" />
+                        </div>
+                        <div className="text-xs text-[var(--muted-foreground)]">
+                          {ycvxDeprecated
+                            ? "Repay, close, or manage collateral for your existing ycvxCRV_v1 position."
+                            : "Use your ycvxCRV as collateral to borrow crvUSD. The more you borrow, the more you earn."}
+                        </div>
+                      </div>
+                    </Link>
+                  )}
                 </div>
               </div>
             </div>
