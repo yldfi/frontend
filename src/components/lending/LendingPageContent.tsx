@@ -177,11 +177,6 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                 </span>
               )}
             </div>
-            {vault.displayVersion && (
-              <p className="mono text-xs text-[var(--muted-foreground)] mt-2">
-                {vault.displayVersion}
-              </p>
-            )}
           </div>
 
           <div ref={gridRef} className="grid lg:grid-cols-5 gap-2 lg:gap-12">
@@ -229,9 +224,9 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                 <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 flex items-start gap-2 text-yellow-500 text-sm">
                   <AlertTriangle size={16} className="mt-0.5 shrink-0" />
                   <div>
-                    <div className="font-medium">Deprecated v1 market</div>
+                    <div className="font-medium">Deprecated market</div>
                     <div className="text-xs mt-0.5 text-[var(--muted-foreground)]">
-                      New borrow positions are disabled. Existing borrowers can repay, close, or manage collateral.
+                      New borrow positions are hidden in this UI because Curve is winding down the connected LlamaLend market. Existing borrowers can repay, close, or manage collateral.
                     </div>
                   </div>
                 </div>

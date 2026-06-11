@@ -53,7 +53,7 @@ function isEntryDisabledOutput(address: string): boolean {
   return ENTRY_DISABLED_VAULT_ADDRESSES.includes(address.toLowerCase());
 }
 
-// Default output: active cvxCRV strategy vault. ycvxCRV v1 is deprecated/exit-only.
+// Default output: active cvxCRV strategy vault. ycvxCRV is deprecated for new UI entry.
 const DEFAULT_OUTPUT_TOKEN: EnsoToken = {
   address: VAULTS.yscvxcrv.address,
   chainId: 1,
@@ -149,7 +149,7 @@ export function ZapPageContent() {
 
   const swapTokens = useCallback(() => {
     if (isEntryDisabledOutput(inputToken.address)) {
-      toast.error(`${inputToken.symbol} is deprecated and exit-only. It cannot be selected as a zap output.`);
+      toast.error(`New ${inputToken.symbol} entry is hidden in the UI. Exchange to yscvxCRV instead.`);
       return;
     }
     setInputTokenState(outputToken);
