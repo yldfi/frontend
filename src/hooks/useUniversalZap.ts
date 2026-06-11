@@ -273,7 +273,7 @@ export function useUniversalZap({
       const inputIsExternal = isExternalVaultToken(inputToken.address);
 
       if (outputVault && isVaultEntryDisabled(outputVault)) {
-        throw new Error(`${outputVault.symbol} is deprecated and exit-only. Withdraw or zap out instead.`);
+        throw new Error(`New ${outputVault.symbol} entry is hidden in the UI. Exchange to yscvxCRV instead.`);
       }
 
       const outputDecimals = outputToken.decimals ?? 18;

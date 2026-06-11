@@ -1057,7 +1057,7 @@ export function VaultPageContent({ id }: { id: string }) {
 
     if (activeTab === "deposit") {
       if (exitOnlyVault) {
-        toast.error(`${vault.symbol} is deprecated and exit-only. Withdraw or zap out instead.`);
+        toast.error(`New ${vault.symbol} entry is hidden in the UI. Exchange to yscvxCRV instead.`);
         return;
       }
       if (requiresApproval) {
@@ -1433,11 +1433,6 @@ export function VaultPageContent({ id }: { id: string }) {
                                 isSelected && "text-[var(--accent)]"
                               )}>
                                 <span className="block">{v.name}</span>
-                                {v.displayVersion && (
-                                  <span className="mono block text-[10px] text-[var(--muted-foreground)] mt-0.5">
-                                    {v.displayVersion}
-                                  </span>
-                                )}
                               </span>
                               {v.deprecated && (
                                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/10 text-yellow-500 border border-yellow-500/20">
@@ -1454,18 +1449,11 @@ export function VaultPageContent({ id }: { id: string }) {
                     )}
                   </div>
                 </div>
-                {(vault.displayVersion || vault.deprecated) && (
+                {vault.deprecated && (
                   <div className="flex flex-wrap items-center gap-2 mb-4">
-                    {vault.displayVersion && (
-                      <span className="mono text-xs px-2 py-1 rounded border border-[var(--border)] bg-[var(--muted)]/40 text-[var(--muted-foreground)]">
-                        {vault.displayVersion}
-                      </span>
-                    )}
-                    {vault.deprecated && (
-                      <span className="text-xs px-2 py-1 rounded border border-yellow-500/20 bg-yellow-500/10 text-yellow-500 font-medium">
-                        {vault.deprecated.badge}
-                      </span>
-                    )}
+                    <span className="text-xs px-2 py-1 rounded border border-yellow-500/20 bg-yellow-500/10 text-yellow-500 font-medium">
+                      {vault.deprecated.badge}
+                    </span>
                   </div>
                 )}
                 <p className="text-[var(--muted-foreground)] max-w-xl leading-relaxed">
@@ -1836,7 +1824,7 @@ export function VaultPageContent({ id }: { id: string }) {
                                 ? "text-[var(--foreground)]"
                                 : !isDisabled && "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                             )}
-                            title={isDisabled ? "This deprecated vault is exit-only" : undefined}
+                            title={isDisabled ? "New entry is hidden in this UI" : undefined}
                           >
                             {tab}
                             {!isDisabled && activeTab === tab && (

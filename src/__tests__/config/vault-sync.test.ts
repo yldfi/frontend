@@ -43,8 +43,8 @@ describe("vault address sync", () => {
 });
 
 describe("vault lifecycle flags", () => {
-  it("marks ycvxCRV v1 as deprecated and exit-only", () => {
-    expect(VAULTS.ycvxcrv.displayVersion).toBe("ycvxCRV_v1");
+  it("marks ycvxCRV_v1 as deprecated for new UI entry", () => {
+    expect(VAULTS.ycvxcrv.internalVersion).toBe("ycvxCRV_v1");
     expect(VAULTS.ycvxcrv.deprecated?.badge).toBe("Deprecated");
     expect(isExitOnlyVault(VAULTS.ycvxcrv)).toBe(true);
     expect(isVaultEntryDisabled(VAULTS.ycvxcrv)).toBe(true);

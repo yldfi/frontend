@@ -360,7 +360,7 @@ export function RewardsPageContent() {
               <div className="flex items-center gap-2 flex-wrap text-sm text-[var(--muted-foreground)] mb-5">
                 <span>
                   {ycvxDeprecated
-                    ? "This campaign remains available for existing positions and claims. New ycvxCRV deposits and new LlamaLend loans are disabled."
+                    ? "This campaign remains available for existing positions and claims. New ycvxCRV deposits and new LlamaLend loans are hidden in the UI because Curve is winding down the connected lending market."
                     : "Earn crvUSD by borrowing against ycvxCRV. The more you borrow, the more you earn."}
                 </span>
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[var(--muted)] text-[var(--foreground)] mono">
@@ -387,12 +387,12 @@ export function RewardsPageContent() {
                     )}
                     <div className="flex-1">
                       <div className="text-sm font-medium group-hover:text-[var(--accent)] transition-colors flex items-center gap-1.5">
-                        {ycvxDeprecated ? "Withdraw or zap out of ycvxCRV_v1" : "Deposit cvxCRV into the ycvxCRV vault"}
+                        {ycvxDeprecated ? "Exchange ycvxCRV for yscvxCRV" : "Deposit cvxCRV into the ycvxCRV vault"}
                         <ArrowUpRight className="w-3 h-3" />
                       </div>
                       <div className="text-xs text-[var(--muted-foreground)]">
                         {ycvxDeprecated
-                          ? "The vault is exit-only; deposits and zap-ins are disabled."
+                          ? "Withdrawals remain available. yscvxCRV keeps staked cvxCRV exposure without routing 15% of yield to the deprecated LlamaLend market."
                           : "Deposit cvxCRV to receive ycvxCRV yield-bearing vault tokens."}
                       </div>
                     </div>
@@ -407,7 +407,7 @@ export function RewardsPageContent() {
                           New ycvxCRV loans are disabled
                         </div>
                         <div className="text-xs text-[var(--muted-foreground)]">
-                          Holders without an existing LlamaLend position can withdraw or zap out, but cannot open a new borrow position.
+                          Holders without an existing LlamaLend position can withdraw or exchange to yscvxCRV, but cannot open a new borrow position.
                         </div>
                       </div>
                     </div>
@@ -429,7 +429,7 @@ export function RewardsPageContent() {
                         </div>
                         <div className="text-xs text-[var(--muted-foreground)]">
                           {ycvxDeprecated
-                            ? "Repay, close, or manage collateral for your existing ycvxCRV_v1 position."
+                            ? "Repay, close, or manage collateral for your existing ycvxCRV position."
                             : "Use your ycvxCRV as collateral to borrow crvUSD. The more you borrow, the more you earn."}
                         </div>
                       </div>

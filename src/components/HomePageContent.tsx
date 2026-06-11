@@ -39,7 +39,6 @@ const vaultConfigs = Object.values(VAULTS)
     chain: vault.chain,
     contractAddress: vault.address,
     badges: vault.badges,
-    displayVersion: vault.displayVersion,
     deprecated: vault.deprecated,
     type: vault.type,
     fee: vault.fees.performance,
@@ -500,11 +499,6 @@ export function HomePageContent() {
                         <h3 className="text-xl font-semibold group-hover:text-[var(--accent)] transition-colors">
                           {vault.name}
                         </h3>
-                        {vault.displayVersion && (
-                          <p className="mono text-[11px] text-[var(--muted-foreground)] mt-0.5">
-                            {vault.displayVersion}
-                          </p>
-                        )}
                       </div>
                     </div>
                     <p className="text-sm text-[var(--muted-foreground)] mb-3 leading-relaxed line-clamp-2">
@@ -598,11 +592,6 @@ export function HomePageContent() {
                         <h3 className="text-lg font-medium group-hover:text-[var(--accent)] transition-colors">
                           {vault.name}
                         </h3>
-                        {vault.displayVersion && (
-                          <p className="mono text-[11px] text-[var(--muted-foreground)] mt-0.5">
-                            {vault.displayVersion}
-                          </p>
-                        )}
                         <div className="flex items-center gap-2.5 mt-1">
                           {vault.deprecated && (
                             <span className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 rounded whitespace-nowrap">
