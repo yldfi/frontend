@@ -375,7 +375,7 @@ export function RewardsPageContent() {
                   {ycvxDeprecated ? "Available actions" : "How to become eligible"}
                 </div>
                 <div className="space-y-3">
-                  <Link href="/vaults/ycvxcrv" className="flex items-start gap-3 group">
+                  <Link href={ycvxDeprecated ? "/vaults/yscvxcrv" : "/vaults/ycvxcrv"} className="flex items-start gap-3 group">
                     {hasYcvxcrv ? (
                       <span className="flex-shrink-0 w-6 h-6 rounded-full bg-green-400/20 flex items-center justify-center">
                         <Check className="w-3.5 h-3.5 text-green-400" />
@@ -392,7 +392,7 @@ export function RewardsPageContent() {
                       </div>
                       <div className="text-xs text-[var(--muted-foreground)]">
                         {ycvxDeprecated
-                          ? "yscvxCRV keeps staked cvxCRV exposure without the LlamaLend yield route."
+                          ? "Use the yld yscvxCRV vault to continue earning yield from staked cvxCRV."
                           : "Deposit cvxCRV to receive ycvxCRV yield-bearing vault tokens."}
                       </div>
                     </div>

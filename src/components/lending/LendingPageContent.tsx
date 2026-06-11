@@ -226,7 +226,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                   <div>
                     <div className="font-medium">Deprecated market</div>
                     <div className="text-xs mt-0.5 text-[var(--muted-foreground)]">
-                      New borrow positions are hidden. Existing borrowers can repay, close, or manage collateral.
+                      Curve DAO is sunsetting ycvxCRV collateral on LlamaLend v1. Existing borrowers can repay, close, or manage collateral.
                     </div>
                   </div>
                 </div>
