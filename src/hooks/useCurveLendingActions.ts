@@ -178,7 +178,7 @@ export interface UseCurveLendingActionsResult {
     amountIn: string,
     decimals?: number,
     slippage?: number,
-    options?: { previewOnly?: boolean; tokenSymbol?: string; inSoftLiquidation?: boolean; withdrawAmount?: string; withdrawTokenOut?: string; withdrawTokenSymbol?: string }
+    options?: { previewOnly?: boolean; tokenSymbol?: string; inSoftLiquidation?: boolean; closeLoan?: boolean; maxRepayAmount?: string; withdrawAmount?: string; withdrawTokenOut?: string; withdrawTokenSymbol?: string }
   ) => Promise<SimulationResult | null>;
   repayAndWithdraw: (
     controllerAddress: `0x${string}`,
@@ -2709,7 +2709,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     amountIn: string,
     decimals: number = 18,
     slippage: number = 100,
-    options?: { previewOnly?: boolean; tokenSymbol?: string; inSoftLiquidation?: boolean; withdrawAmount?: string; withdrawTokenOut?: string; withdrawTokenSymbol?: string }
+    options?: { previewOnly?: boolean; tokenSymbol?: string; inSoftLiquidation?: boolean; closeLoan?: boolean; maxRepayAmount?: string; withdrawAmount?: string; withdrawTokenOut?: string; withdrawTokenSymbol?: string }
   ): Promise<SimulationResult | null> => {
     if (!address || !publicClient) return null;
     const { parseUnits } = await import("viem");
@@ -2717,7 +2717,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
     const controllerAddress = CURVE_CONTROLLERS[vaultAddress as keyof typeof CURVE_CONTROLLERS];
     if (controllerAddress) setPendingController(controllerAddress as `0x${string}`);
 
-    const hasWithdrawal = options?.withdrawAmount && options.withdrawAmount !== "0";
+    const hasWithdrawal = !options?.closeLoan && options?.withdrawAmount && options.withdrawAmount !== "0";
     const isWithdrawSwap = options?.withdrawTokenOut && options.withdrawTokenOut.toLowerCase() !== vaultAddress.toLowerCase();
     const withdrawAmountWei = hasWithdrawal ? BigInt(options!.withdrawAmount!) : 0n;
 
@@ -2894,6 +2894,8 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
         amountIn: amountWei.toString(),
         slippage,
         inSoftLiquidation: options?.inSoftLiquidation,
+        closeLoan: options?.closeLoan,
+        maxRepayAmount: options?.maxRepayAmount,
       }),
       tokenIn, // The token being swapped is the input
       amountWei,
