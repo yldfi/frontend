@@ -9,6 +9,8 @@ import { previewRedeem } from "@/lib/curve/rpc";
 import { CRVUSD_ADDRESS } from "@/config/addresses";
 
 const CRVUSD = CRVUSD_ADDRESS;
+const MAX_UINT256 = "115792089237316195423570985008687907853269984665640564039457584007913129639935";
+const MAX_INT256 = "57896044618658097711785492504343953926634992332820282019728792003956564819967";
 
 function shouldUseIntentProxy(): boolean {
   return typeof window !== "undefined" && process.env.NODE_ENV !== "test";
@@ -64,6 +66,7 @@ export function getVaultInfo(tokenAddress: string): VaultInfo | null {
 
 // remove_collateral ABI - 2-param version for router mode (msg.sender != user)
 const CONTROLLER_REMOVE_COLLATERAL_FOR_ABI = "function remove_collateral(uint256 collateral, address _for)";
+const CONTROLLER_REPAY_WITH_BAND_ABI = "function repay(uint256 _d_debt, address _for, int256 max_active_band)";
 
 // Import the fetchBundle function from enso.ts
 // We'll use dynamic import to avoid circular dependencies
@@ -113,6 +116,16 @@ async function estimateRouteMinAmountOut(params: {
   }
 
   return calculateMinDy(BigInt(amountOut), params.slippageBps).toString();
+}
+
+function getCloseMinCrvUsdOut(params: { closeLoan?: boolean; maxRepayAmount?: string }): string | undefined {
+  if (!params.closeLoan || !params.maxRepayAmount) return undefined;
+  return BigInt(params.maxRepayAmount) > 0n ? params.maxRepayAmount : undefined;
+}
+
+function maxAmountString(amount: string, minimum?: string): string {
+  if (!minimum) return amount;
+  return BigInt(minimum) > BigInt(amount) ? minimum : amount;
 }
 
 /**
@@ -173,6 +186,7 @@ function buildDirectRepayActions(
   controllerAddress: string,
   fromAddress: string,
   crvUsdAmountRef: { useOutputOfCallAt: number },
+  options?: { closeLoan?: boolean },
 ): EnsoBundleAction[] {
   return [
     {
@@ -190,11 +204,29 @@ function buildDirectRepayActions(
       args: {
         address: controllerAddress.toLowerCase(),
         method: "repay",
-        abi: "function repay(uint256 _d_debt, address _for)",
-        args: [crvUsdAmountRef, fromAddress],
+        abi: CONTROLLER_REPAY_WITH_BAND_ABI,
+        args: [options?.closeLoan ? MAX_UINT256 : crvUsdAmountRef, fromAddress, MAX_INT256],
       },
     },
   ];
+}
+
+function appendCrvUsdRefundActions(actions: EnsoBundleAction[], fromAddress: string): void {
+  actions.push({
+    protocol: "enso",
+    action: "balance",
+    args: { token: CRVUSD },
+  });
+  const balanceActionIndex = actions.length - 1;
+  actions.push({
+    protocol: "erc20",
+    action: "transfer",
+    args: {
+      token: CRVUSD,
+      amount: { useOutputOfCallAt: balanceActionIndex },
+      receiver: fromAddress,
+    },
+  });
 }
 
 export async function fetchRepayWithSwapBundle(params: {
@@ -204,6 +236,7 @@ export async function fetchRepayWithSwapBundle(params: {
   amountIn: string; // Amount of tokenIn
   slippage?: number; // Slippage in basis points (default 100 = 1%)
   maxRepayAmount?: string; // Optional cap on repay amount (for closing loans)
+  closeLoan?: boolean; // Use Curve full-repay branch, returning all remaining collateral
   inSoftLiquidation?: boolean; // Use direct repay() call instead of curve-lending/repay
   withdrawAmount?: string; // Optional: collateral wei to withdraw after repay
   withdrawTokenOut?: string; // If different from collateral, swap after withdrawal
@@ -218,6 +251,8 @@ export async function fetchRepayWithSwapBundle(params: {
       amountIn: params.amountIn,
       slippage: String(params.slippage ?? 100),
       inSoftLiquidation: params.inSoftLiquidation,
+      closeLoan: params.closeLoan,
+      maxRepayAmount: params.maxRepayAmount,
       receiver: params.fromAddress,
     });
   }
@@ -229,6 +264,7 @@ export async function fetchRepayWithSwapBundle(params: {
 
   const slippage = (params.slippage ?? 100).toString();
   const slippageBps = params.slippage ?? 100;
+  const closeMinCrvUsdOut = getCloseMinCrvUsdOut(params);
 
   // Check if tokenIn is a vault (yldfi or external) - if so, redeem first then swap underlying
   const vaultInfo = getVaultInfo(params.tokenIn);
@@ -318,11 +354,20 @@ export async function fetchRepayWithSwapBundle(params: {
             tokenOut: CRVUSD,
             amountIn: { useOutputOfCallAt: 4 }, // Use output from Curve exchange
             slippage,
+            ...(closeMinCrvUsdOut ? { minAmountOut: closeMinCrvUsdOut } : {}),
           },
         },
+        ...(closeMinCrvUsdOut ? [{
+          protocol: "enso" as const,
+          action: "minamountout" as const,
+          args: {
+            amountOut: { useOutputOfCallAt: 5 },
+            minAmountOut: closeMinCrvUsdOut,
+          },
+        }] : []),
         // Action 6+: Repay debt
-        ...(params.inSoftLiquidation
-          ? buildDirectRepayActions(controllerAddress, params.fromAddress, { useOutputOfCallAt: 5 })
+        ...(params.inSoftLiquidation || params.closeLoan
+          ? buildDirectRepayActions(controllerAddress, params.fromAddress, { useOutputOfCallAt: 5 }, { closeLoan: params.closeLoan })
           : [{
               protocol: "curve-lending" as const,
               action: "repay" as const,
@@ -335,8 +380,12 @@ export async function fetchRepayWithSwapBundle(params: {
             }]),
       ];
 
+      if (params.closeLoan) {
+        appendCrvUsdRefundActions(actions, params.fromAddress);
+      }
+
       // Optional: withdraw collateral after repay
-      if (params.withdrawAmount && params.withdrawAmount !== "0") {
+      if (!params.closeLoan && params.withdrawAmount && params.withdrawAmount !== "0") {
         actions.push({
           protocol: "enso",
           action: "call",
@@ -410,10 +459,21 @@ export async function fetchRepayWithSwapBundle(params: {
 
     // 2. If underlying is already crvUSD (e.g., scrvUSD), skip swap and repay directly
     if (vaultInfo.underlying.toLowerCase() === CRVUSD.toLowerCase()) {
-      if (params.inSoftLiquidation) {
+      if (closeMinCrvUsdOut) {
+        actions.push({
+          protocol: "enso",
+          action: "minamountout",
+          args: {
+            amountOut: { useOutputOfCallAt: 0 },
+            minAmountOut: closeMinCrvUsdOut,
+          },
+        });
+      }
+
+      if (params.inSoftLiquidation || params.closeLoan) {
         // During soft-liquidation, use direct repay() call — curve-lending/repay uses
         // repay_extended() which reverts (assert ns[0] > cb.active_band)
-        actions.push(...buildDirectRepayActions(controllerAddress, params.fromAddress, { useOutputOfCallAt: 0 }));
+        actions.push(...buildDirectRepayActions(controllerAddress, params.fromAddress, { useOutputOfCallAt: 0 }, { closeLoan: params.closeLoan }));
       } else {
         actions.push({
           protocol: "curve-lending",
@@ -427,8 +487,12 @@ export async function fetchRepayWithSwapBundle(params: {
         });
       }
 
+      if (params.closeLoan) {
+        appendCrvUsdRefundActions(actions, params.fromAddress);
+      }
+
       // Optional: withdraw collateral after repay
-      if (params.withdrawAmount && params.withdrawAmount !== "0") {
+      if (!params.closeLoan && params.withdrawAmount && params.withdrawAmount !== "0") {
         actions.push({
           protocol: "enso",
           action: "call",
@@ -467,27 +531,43 @@ export async function fetchRepayWithSwapBundle(params: {
         tokenOut: CRVUSD,
         amountIn: { useOutputOfCallAt: 0 }, // Use output from redeem
         slippage,
+        ...(closeMinCrvUsdOut ? { minAmountOut: closeMinCrvUsdOut } : {}),
       },
     });
+    const crvUsdRouteActionIndex = actions.length - 1;
+    if (closeMinCrvUsdOut) {
+      actions.push({
+        protocol: "enso",
+        action: "minamountout",
+        args: {
+          amountOut: { useOutputOfCallAt: crvUsdRouteActionIndex },
+          minAmountOut: closeMinCrvUsdOut,
+        },
+      });
+    }
 
     // 4. Repay debt
-    if (params.inSoftLiquidation) {
-      actions.push(...buildDirectRepayActions(controllerAddress, params.fromAddress, { useOutputOfCallAt: 1 }));
+    if (params.inSoftLiquidation || params.closeLoan) {
+      actions.push(...buildDirectRepayActions(controllerAddress, params.fromAddress, { useOutputOfCallAt: crvUsdRouteActionIndex }, { closeLoan: params.closeLoan }));
     } else {
       actions.push({
         protocol: "curve-lending",
         action: "repay",
         args: {
           tokenIn: CRVUSD,
-          amountIn: { useOutputOfCallAt: 1 },
+          amountIn: { useOutputOfCallAt: crvUsdRouteActionIndex },
           primaryAddress: controllerAddress,
           onBehalfOf: params.fromAddress,
         },
       });
     }
 
+    if (params.closeLoan) {
+      appendCrvUsdRefundActions(actions, params.fromAddress);
+    }
+
     // Optional: withdraw collateral after repay
-    if (params.withdrawAmount && params.withdrawAmount !== "0") {
+    if (!params.closeLoan && params.withdrawAmount && params.withdrawAmount !== "0") {
       actions.push({
         protocol: "enso",
         action: "call",
@@ -518,13 +598,14 @@ export async function fetchRepayWithSwapBundle(params: {
   }
 
   // Regular token flow: swap → min crvUSD output guard → repay
-  const minCrvusdOut = await estimateRouteMinAmountOut({
+  const routeMinCrvusdOut = await estimateRouteMinAmountOut({
     fromAddress: params.fromAddress,
     tokenIn: params.tokenIn,
     tokenOut: CRVUSD,
     amountIn: params.amountIn,
     slippageBps,
   });
+  const minCrvusdOut = maxAmountString(routeMinCrvusdOut, closeMinCrvUsdOut);
 
   const actions: EnsoBundleAction[] = [
     // 1. Route/swap input token to crvUSD
@@ -549,8 +630,8 @@ export async function fetchRepayWithSwapBundle(params: {
   ];
 
   // 3. Repay debt
-  if (params.inSoftLiquidation) {
-    actions.push(...buildDirectRepayActions(controllerAddress, params.fromAddress, { useOutputOfCallAt: 0 }));
+  if (params.inSoftLiquidation || params.closeLoan) {
+    actions.push(...buildDirectRepayActions(controllerAddress, params.fromAddress, { useOutputOfCallAt: 0 }, { closeLoan: params.closeLoan }));
   } else {
     actions.push({
       protocol: "curve-lending",
@@ -564,8 +645,12 @@ export async function fetchRepayWithSwapBundle(params: {
     });
   }
 
+  if (params.closeLoan) {
+    appendCrvUsdRefundActions(actions, params.fromAddress);
+  }
+
   // Optional: withdraw collateral after repay
-  if (params.withdrawAmount && params.withdrawAmount !== "0") {
+  if (!params.closeLoan && params.withdrawAmount && params.withdrawAmount !== "0") {
     actions.push({
       protocol: "enso",
       action: "call",
