@@ -19,6 +19,7 @@ import { CACHE_TIMES } from "@/config/query";
 import { useVaultCache } from "@/hooks/useVaultCache";
 import { useCurveMarketRates } from "@/hooks/useCurveMarketRates";
 import { LoadingDots } from "@/components/LoadingDots";
+import { TxAssetDetailsPill } from "@/components/TxAssetDetailsPill";
 import { useSettings } from "@/hooks/useSettings";
 import { trackLendingTabSwitch } from "@/lib/analytics";
 import { aprToApy, computeNetApy, curveBorrowRateToApr } from "@/lib/lending";
@@ -757,22 +758,7 @@ export function LendingInterface({
                 </div>
               );
             }
-            const isSameToken = d.fromSymbol === d.toSymbol && d.fromLogo === d.toLogo;
-            return isSameToken ? (
-              <p className="text-sm text-[var(--muted-foreground)] mb-3">
-                {effectiveTxState.action} {d.fromAmount} {d.fromSymbol}
-              </p>
-            ) : (
-              <div className="flex items-center gap-2 mb-3 px-4 py-2 bg-[var(--muted)] rounded-lg">
-                <Image src={d.fromLogo} alt={d.fromSymbol} width={20} height={20} className="w-5 h-5 rounded-full" />
-                <span className="mono text-sm">{d.fromAmount} {d.fromSymbol}</span>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[var(--muted-foreground)]">
-                  <path d="M5 12h14M12 5l7 7-7 7"/>
-                </svg>
-                <Image src={d.toLogo} alt={d.toSymbol} width={20} height={20} className="w-5 h-5 rounded-full" />
-                <span className="mono text-sm">{d.toAmount} {d.toSymbol}</span>
-              </div>
-            );
+            return <TxAssetDetailsPill details={d} actionLabel={effectiveTxState.action} />;
           })()}
           <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
             {pendingTxCopy?.message}

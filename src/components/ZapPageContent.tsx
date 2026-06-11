@@ -18,6 +18,7 @@ import { LoadingDots } from "@/components/LoadingDots";
 import { RouteDisplay } from "@/components/RouteDisplay";
 import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
+import { TxAssetDetailsPill } from "@/components/TxAssetDetailsPill";
 
 import { useUniversalZap } from "@/hooks/useUniversalZap";
 import { useZapActions } from "@/hooks/useZapActions";
@@ -550,23 +551,7 @@ export function ZapPageContent() {
                     </div>
                     <h3 className="text-lg font-medium mb-2">{pendingCopy.title}</h3>
                     {pendingTxDetails && (
-                      <div className="flex items-center gap-2 mb-3 px-4 py-2 bg-[var(--muted)] rounded-lg max-w-full">
-                        {pendingTxDetails.fromLogo ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={pendingTxDetails.fromLogo} alt={pendingTxDetails.fromSymbol} className="w-5 h-5 rounded-full" />
-                        ) : null}
-                        <span className="mono text-sm truncate">
-                          {pendingTxDetails.fromAmount} {pendingTxDetails.fromSymbol}
-                        </span>
-                        <ArrowRightLeft size={14} className="text-[var(--muted-foreground)] shrink-0" />
-                        {pendingTxDetails.toLogo ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={pendingTxDetails.toLogo} alt={pendingTxDetails.toSymbol} className="w-5 h-5 rounded-full" />
-                        ) : null}
-                        <span className="mono text-sm truncate">
-                          {pendingTxDetails.toAmount} {pendingTxDetails.toSymbol}
-                        </span>
-                      </div>
+                      <TxAssetDetailsPill details={pendingTxDetails} actionLabel="Zap" />
                     )}
                     <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
                       {pendingCopy.message}

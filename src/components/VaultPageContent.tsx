@@ -13,6 +13,7 @@ import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
 import { ApprovalCard } from "@/components/ApprovalCard";
 import { LoadingDots } from "@/components/LoadingDots";
+import { TxAssetDetailsPill } from "@/components/TxAssetDetailsPill";
 
 // Parse Enso API errors into user-friendly messages
 function parseQuoteError(error: Error | null): string {
@@ -1810,16 +1811,13 @@ export function VaultPageContent({ id }: { id: string }) {
                             <Clock className="w-3.5 h-3.5" />
                           </div>
                           {pendingTxDetails && (
-                            <div className="flex items-center gap-1.5 text-sm text-[var(--muted-foreground)]">
-                              <span>Deposit</span>
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={pendingTxDetails.fromLogo} alt={pendingTxDetails.fromSymbol} className="w-4 h-4 rounded-full" />
-                              <span className="mono">{pendingTxDetails.fromAmount} {pendingTxDetails.fromSymbol}</span>
-                              <span>→</span>
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={pendingTxDetails.toLogo} alt={pendingTxDetails.toSymbol} className="w-4 h-4 rounded-full" />
-                              <span className="mono">{pendingTxDetails.toAmount} {pendingTxDetails.toSymbol}</span>
-                            </div>
+                            <TxAssetDetailsPill
+                              details={pendingTxDetails}
+                              actionLabel="Deposit"
+                              className="mb-0 bg-transparent px-0 py-0 text-[var(--muted-foreground)]"
+                              iconClassName="w-4 h-4"
+                              textClassName="text-sm"
+                            />
                           )}
                         </div>
                       </div>
@@ -1855,16 +1853,13 @@ export function VaultPageContent({ id }: { id: string }) {
                             <div className="w-6 h-6 flex-shrink-0 rounded-full bg-[var(--accent)] flex items-center justify-center text-[var(--background)]">
                               <LoadingDots />
                             </div>
-                            <div className="flex items-center gap-1.5 text-sm">
-                              <span>Deposit</span>
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={pendingTxDetails.fromLogo} alt={pendingTxDetails.fromSymbol} className="w-4 h-4 rounded-full" />
-                              <span className="mono">{pendingTxDetails.fromAmount} {pendingTxDetails.fromSymbol}</span>
-                              <span>→</span>
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={pendingTxDetails.toLogo} alt={pendingTxDetails.toSymbol} className="w-4 h-4 rounded-full" />
-                              <span className="mono">{pendingTxDetails.toAmount} {pendingTxDetails.toSymbol}</span>
-                            </div>
+                            <TxAssetDetailsPill
+                              details={pendingTxDetails}
+                              actionLabel="Deposit"
+                              className="mb-0 bg-transparent px-0 py-0"
+                              iconClassName="w-4 h-4"
+                              textClassName="text-sm"
+                            />
                           </div>
                         </div>
                       )}
@@ -1872,17 +1867,10 @@ export function VaultPageContent({ id }: { id: string }) {
                       {!pendingMultiStep && (() => {
                         const details = (isDebugDeposit || isDebugWithdraw) ? debugTxDetails : pendingTxDetails;
                         return details && (
-                          <div className="flex items-center gap-2 mb-3 px-4 py-2 bg-[var(--muted)] rounded-lg">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={details.fromLogo} alt={details.fromSymbol} className="w-5 h-5 rounded-full" />
-                            <span className="mono text-sm">{details.fromAmount} {details.fromSymbol}</span>
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[var(--muted-foreground)]">
-                              <path d="M5 12h14M12 5l7 7-7 7" />
-                            </svg>
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={details.toLogo} alt={details.toSymbol} className="w-5 h-5 rounded-full" />
-                            <span className="mono text-sm">{details.toAmount} {details.toSymbol}</span>
-                          </div>
+                          <TxAssetDetailsPill
+                            details={details}
+                            actionLabel={isDebugDeposit || (!isDebugWithdraw && currentVaultAction === "deposit") ? "Deposit" : "Withdraw"}
+                          />
                         );
                       })()}
                       <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
@@ -2192,17 +2180,7 @@ export function VaultPageContent({ id }: { id: string }) {
                       {(() => {
                         const details = isDebugZap ? debugTxDetails : pendingTxDetails;
                         return details && (
-                          <div className="flex items-center gap-2 mb-3 px-4 py-2 bg-[var(--muted)] rounded-lg">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={details.fromLogo} alt={details.fromSymbol} className="w-5 h-5 rounded-full" />
-                            <span className="mono text-sm">{details.fromAmount} {details.fromSymbol}</span>
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[var(--muted-foreground)]">
-                              <path d="M5 12h14M12 5l7 7-7 7" />
-                            </svg>
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={details.toLogo} alt={details.toSymbol} className="w-5 h-5 rounded-full" />
-                            <span className="mono text-sm">{details.toAmount} {details.toSymbol}</span>
-                          </div>
+                          <TxAssetDetailsPill details={details} actionLabel="Zap" />
                         );
                       })()}
                       <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">

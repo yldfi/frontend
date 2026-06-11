@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatTxAssetAmount,
   getPendingTxCopy,
+  isSameTxAssetPair,
   isLendingTxPendingVisible,
   isVaultTxPendingVisible,
   isZapTxPendingVisible,
@@ -39,5 +41,16 @@ describe("transaction-ui", () => {
   it("keeps success visible briefly but leaves failures longer", () => {
     expect(TX_SUCCESS_VISIBLE_MS).toBe(10_000);
     expect(TX_REVERTED_VISIBLE_MS).toBeGreaterThan(TX_SUCCESS_VISIBLE_MS);
+  });
+
+  it("collapses same-symbol transaction details even when logos differ", () => {
+    expect(isSameTxAssetPair({
+      fromSymbol: "ycvxCRV",
+      toSymbol: "YCVXCRV",
+    })).toBe(true);
+  });
+
+  it("formats long precision amounts for transaction cards", () => {
+    expect(formatTxAssetAmount("41677.287086380694305179")).toBe("41,677.2871");
   });
 });
