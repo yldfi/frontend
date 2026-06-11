@@ -49,7 +49,7 @@ vi.mock("@/lib/zapper", () => ({
   ZAPPER_ADDRESS: "0xED653FF2410A4686a0B69Fc4C0D1c0cccDFddb83",
 }));
 
-import { fetchRepayWithSwapBundle } from "@/lib/curve-lending";
+import { fetchRepayBundle, fetchRepayWithSwapBundle } from "@/lib/curve-lending";
 import { TOKENS, VAULT_ADDRESSES, CURVE_CONTROLLERS, PIREX, CURVE_SAVINGS } from "@/config/vaults";
 
 // ============================================================================
@@ -76,14 +76,43 @@ const MOCK_BUNDLE_RESPONSE = {
 
 /** Helper: extract the actions array passed to fetchBundle (the first arg). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function capturedActions(): any[] {
+function capturedBundleParams(): any {
   expect(mockEnsoFetchBundle).toHaveBeenCalledTimes(1);
-  return mockEnsoFetchBundle.mock.calls[0][0].actions;
+  return mockEnsoFetchBundle.mock.calls[0][0];
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function capturedActions(): any[] {
+  return capturedBundleParams().actions;
 }
 
 // ============================================================================
 // Test suite
 // ============================================================================
+
+describe("fetchRepayBundle", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchRoute.mockResolvedValue(MOCK_ROUTE_RESPONSE);
+    mockEnsoFetchBundle.mockResolvedValue(MOCK_BUNDLE_RESPONSE);
+    mockGetLpxCvxToCvxSwapRate.mockResolvedValue(940000000000000000n);
+  });
+
+  it("builds a router bundle with Enso quote simulation skipped", async () => {
+    await fetchRepayBundle({
+      fromAddress: USER,
+      vaultAddress: VAULT_ADDRESSES.YCVXCRV as `0x${string}`,
+      repayAmount: "1000000000000000000",
+    });
+
+    const bundleCall = capturedBundleParams();
+    expect(bundleCall.routingStrategy).toBe("router");
+    expect(bundleCall.skipQuote).toBe(true);
+    expect(bundleCall.actions).toHaveLength(1);
+    expect(bundleCall.actions[0].protocol).toBe("curve-lending");
+    expect(bundleCall.actions[0].action).toBe("repay");
+  });
+});
 
 describe("fetchRepayWithSwapBundle", () => {
   beforeEach(() => {
@@ -107,6 +136,10 @@ describe("fetchRepayWithSwapBundle", () => {
 
     it("normal repay: produces 7 actions (redeem + approve + wrap + approve + exchange + route + curve-lending/repay)", async () => {
       await fetchRepayWithSwapBundle(BASE_PARAMS);
+
+      const bundleCall = capturedBundleParams();
+      expect(bundleCall.routingStrategy).toBe("router");
+      expect(bundleCall.skipQuote).toBe(true);
 
       const actions = capturedActions();
       expect(actions).toHaveLength(7);
