@@ -270,7 +270,7 @@ describe("parseErrorMessage", () => {
   // Slippage
   it("detects 'slippage'", () => {
     expect(parseErrorMessage("Slippage exceeded limit")).toBe(
-      "Price moved too much. Try increasing slippage."
+      "Swap output below minimum. Increase the amount or slippage."
     );
   });
 
@@ -285,7 +285,7 @@ describe("parseErrorMessage", () => {
     // — in practice, "insufficient_output" always contains "insufficient",
     // so slippage is only triggered by the "slippage" keyword or other paths.
     expect(parseErrorMessage("Error: slippage exceeded")).toBe(
-      "Price moved too much. Try increasing slippage."
+      "Swap output below minimum. Increase the amount or slippage."
     );
   });
 
@@ -298,10 +298,22 @@ describe("parseErrorMessage", () => {
     expect(parseErrorMessage("execution reverted: Debt too high")).toBe(CURVE_DEBT_TOO_HIGH_MESSAGE);
   });
 
+  it("preserves close-specific Enso quote failures", () => {
+    expect(parseErrorMessage("Error: No swap route could produce enough crvUSD for this close. Increase the amount, increase slippage, or use crvUSD.")).toBe(
+      "No swap route could produce enough crvUSD for this close. Increase the amount, increase slippage, or use crvUSD."
+    );
+  });
+
+  it("maps raw Enso quote failures to a route message", () => {
+    expect(parseErrorMessage("API Error: Could not quote shortcuts for route 0xTokenA -> 0xTokenB on network 1")).toBe(
+      "No swap route could be quoted for this transaction. Increase the amount, increase slippage, or use a different token."
+    );
+  });
+
   // Enso prefix: enso:Message
   it("handles enso:Condition not met prefix", () => {
     expect(parseErrorMessage("enso:Condition not met")).toBe(
-      "Swap output below minimum. Try increasing slippage."
+      "Swap output below minimum. Increase the amount or slippage."
     );
   });
 
@@ -329,7 +341,7 @@ describe("parseErrorMessage", () => {
     const innerHex = buildEnsoErrorHex(2, target, "Condition not met").slice(8); // strip selector
     const error = `custom error 0xef3dcb2f: ${innerHex}`;
     expect(parseErrorMessage(error)).toBe(
-      "Swap output below minimum. Try increasing slippage."
+      "Swap output below minimum. Increase the amount or slippage."
     );
   });
 
@@ -366,7 +378,7 @@ describe("parseErrorMessage", () => {
     const swapFailedHex = buildSwapFailedHex(innerEnso);
     const error = `custom error 0xd9d027cc: ${swapFailedHex.slice(8)}`;
     expect(parseErrorMessage(error)).toBe(
-      "Swap output below minimum. Try increasing slippage."
+      "Swap output below minimum. Increase the amount or slippage."
     );
   });
 
@@ -410,7 +422,7 @@ describe("parseErrorMessage", () => {
   // Condition not met / call failed as plain text (no hex)
   it("detects 'condition not met' in plain text", () => {
     expect(parseErrorMessage("Transaction reverted: condition not met")).toBe(
-      "Swap output below minimum. Try increasing slippage."
+      "Swap output below minimum. Increase the amount or slippage."
     );
   });
 
@@ -497,7 +509,7 @@ describe("parseErrorMessage", () => {
   // Plain string
   it("handles plain string directly", () => {
     expect(parseErrorMessage("slippage tolerance exceeded")).toBe(
-      "Price moved too much. Try increasing slippage."
+      "Swap output below minimum. Increase the amount or slippage."
     );
   });
 });

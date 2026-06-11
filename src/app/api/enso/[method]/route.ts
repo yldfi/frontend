@@ -35,6 +35,17 @@ function getCorsHeaders(request: NextRequest): Record<string, string> {
   };
 }
 
+function getFriendlyEnsoError(message: string, body?: Record<string, unknown>): string {
+  const lower = message.toLowerCase();
+  if (lower.includes("could not quote shortcuts") || lower.includes("could not quote")) {
+    if (body?.closeLoan === true) {
+      return "No swap route could produce enough crvUSD for this close. Increase the amount, increase slippage, or use crvUSD.";
+    }
+    return "No swap route could be quoted for this transaction. Increase the amount, increase slippage, or use a different token.";
+  }
+  return message;
+}
+
 import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
 
 const isRateLimited = createRateLimiter(120);
@@ -565,7 +576,7 @@ export async function POST(
   } catch (error: unknown) {
     const err = error as { statusCode?: number; message?: string; response?: { data?: unknown } };
     const status = err.statusCode || 500;
-    const message = err.message || "Enso API error";
+    const message = getFriendlyEnsoError(err.message || "Enso API error", body);
     console.error(`[Enso Proxy] ${method} error:`, err.response?.data ?? message);
     return NextResponse.json({ error: message }, { status, headers: cors });
   }
