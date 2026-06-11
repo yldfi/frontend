@@ -119,6 +119,20 @@ const ENTRY_DISABLED_VAULT_ADDRESSES = Object.values(VAULTS)
   .filter(isVaultEntryDisabled)
   .map((vault) => vault.address.toLowerCase());
 
+const YSCVXCRV_VAULT_PATH = "/vaults/yscvxcrv";
+
+function YcvxCrvDeprecationNotice() {
+  return (
+    <>
+      Due to the Curve DAO decision to sunset ycvxCRV collateral on LlamaLend v1, yld has disabled deposits and zap-ins to this vault via the UI. To continue earning yield from staked cvxCRV, exchange to the{" "}
+      <Link href={YSCVXCRV_VAULT_PATH} className="text-[var(--foreground)] hover:text-[var(--accent)] transition-colors underline underline-offset-2">
+        yld yscvxCRV vault
+      </Link>
+      .
+    </>
+  );
+}
+
 export function VaultPageContent({ id }: { id: string }) {
   const vault = getVault(id);
   const router = useRouter();
@@ -1457,7 +1471,7 @@ export function VaultPageContent({ id }: { id: string }) {
                   </div>
                 )}
                 <p className="text-[var(--muted-foreground)] max-w-xl leading-relaxed">
-                  {vault.longDescription}
+                  {vault.id === "ycvxcrv" ? <YcvxCrvDeprecationNotice /> : vault.longDescription}
                 </p>
               </div>
 
@@ -1468,7 +1482,7 @@ export function VaultPageContent({ id }: { id: string }) {
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-yellow-500">{vault.deprecated.label}</p>
                       <p className="text-sm text-[var(--muted-foreground)] mt-1 leading-relaxed">
-                        {vault.deprecated.details}
+                        {vault.id === "ycvxcrv" ? <YcvxCrvDeprecationNotice /> : vault.deprecated.details}
                       </p>
                       <div className="flex flex-wrap items-center gap-3 mt-2">
                         {vault.deprecated.forumUrl && (

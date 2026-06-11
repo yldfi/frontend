@@ -446,7 +446,7 @@ export const VAULTS: Record<string, VaultConfig> = {
     description:
       "Auto-compounding cvxCRV staking rewards via Convex",
     longDescription:
-      "ycvxCRV compounds cvxCRV via yscvxCRV and routes 15% of yield to Curve LlamaLend lenders. Because that market is winding down, new UI entry is hidden. Withdraw or exchange to yscvxCRV.",
+      "Due to the Curve DAO decision to sunset ycvxCRV collateral on LlamaLend v1, yld has disabled deposits and zap-ins to this vault via the UI. To continue earning yield from staked cvxCRV, exchange to the yld yscvxCRV vault.",
     strategy: "cvxCRV Compounder",
     badges: ["Convex", "cvxCRV", "Compounder", "Collateral (LlamaLend)"],
     logo: "/ycvxcrv-128.png",
@@ -463,8 +463,8 @@ export const VAULTS: Record<string, VaultConfig> = {
     deprecated: {
       label: "Deprecated",
       badge: "Deprecated",
-      reason: "Curve is deprecating the connected LlamaLend market.",
-      details: "Curve is winding down the linked LlamaLend market. Withdraw or exchange ycvxCRV for yscvxCRV; new deposits, zap-ins, and borrows are hidden.",
+      reason: "Curve DAO is sunsetting ycvxCRV collateral on LlamaLend v1.",
+      details: "Due to the Curve DAO decision to sunset ycvxCRV collateral on LlamaLend v1, yld has disabled deposits and zap-ins to this vault via the UI. To continue earning yield from staked cvxCRV, exchange to the yld yscvxCRV vault.",
       forumUrl: "https://gov.curve.finance/t/llamalend-v1-market-deprecation-plan/11075",
       voteUrl: "https://www.curve.finance/dao/ethereum/proposals/1422-ownership",
       exitOnly: true,
