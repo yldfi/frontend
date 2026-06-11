@@ -669,6 +669,7 @@ export function LendingInterface({
     if (!debugSoftLiq || !position) return position;
     return { ...position, inSoftLiquidation: true };
   }, [position, debugSoftLiq]);
+  const deprecatedMarket = Boolean(vault.deprecated?.disableLendingWithoutPosition);
 
   // Reset off leverage tab when zappers are disabled (unless in soft-liq, where it becomes "liquidate")
   useEffect(() => {
@@ -678,12 +679,26 @@ export function LendingInterface({
     }
   }, [zappersEnabled, activeTab, effectivePosition?.inSoftLiquidation, setActiveTab]);
 
+  const managementTabs = useMemo(() => {
+    const tabs: Tab[] = deprecatedMarket
+      ? ["repay", "collateral"]
+      : ["borrow", "leverage", "repay", "collateral"];
+    return tabs.filter((tab) => tab !== "leverage" || zappersEnabled || effectivePosition?.inSoftLiquidation);
+  }, [deprecatedMarket, effectivePosition?.inSoftLiquidation, zappersEnabled]);
+
+  useEffect(() => {
+    if (!hasLoan) return;
+    if (managementTabs.includes(activeTab)) return;
+    const timer = setTimeout(() => setActiveTab(managementTabs[0] ?? "repay"), 0);
+    return () => clearTimeout(timer);
+  }, [activeTab, hasLoan, managementTabs, setActiveTab]);
+
   // Reset to "borrow" tab when a loan is first created
   // Tracks hasLoan transitions: false→true triggers tab switch to "borrow"
   const prevHasLoan = useRef(hasLoan);
   useEffect(() => {
     if (hasLoan && !prevHasLoan.current) {
-      setActiveTab("borrow");
+      setActiveTab(deprecatedMarket ? "repay" : "borrow");
     }
     // Safety net: if loan closed (true→false) while a pending overlay is showing,
     // the tab component unmounted before reporting success — auto-clear the overlay
@@ -692,7 +707,7 @@ export function LendingInterface({
       setTimeout(() => setActiveTxState(null), TX_SUCCESS_VISIBLE_MS);
     }
     prevHasLoan.current = hasLoan;
-  }, [hasLoan, activeTxState, setActiveTab]);
+  }, [deprecatedMarket, hasLoan, activeTxState, setActiveTab]);
 
   // New loan source choice (Curve vs yld)
   const [loanSource, setLoanSourceState] = useState<"choice" | "yldfi">(() => {
@@ -966,6 +981,30 @@ export function LendingInterface({
 
   // --- No Loan View: Choice screen or NewLoanForm ---
   if (!hasLoan) {
+    if (deprecatedMarket) {
+      return (
+        <div className="bg-[var(--background)] border border-[var(--border)] rounded-xl p-6 space-y-3 flex-1 flex flex-col justify-center text-center">
+          <div className="mx-auto w-12 h-12 rounded-full bg-yellow-500/10 flex items-center justify-center text-yellow-500">
+            <X size={20} />
+          </div>
+          <h3 className="text-lg font-medium">Market deprecated</h3>
+          <p className="text-sm text-[var(--muted-foreground)]">
+            New borrow positions are disabled for {vault.symbol}. Existing borrowers can still repay and close their loan.
+          </p>
+          {vault.deprecated?.forumUrl && (
+            <a
+              href={vault.deprecated.forumUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center gap-1 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors"
+            >
+              Deprecation plan <ExternalLink size={12} />
+            </a>
+          )}
+        </div>
+      );
+    }
+
     // Choice screen: Curve Finance vs yld
     if (loanSource === "choice") {
       return (
@@ -1267,6 +1306,11 @@ export function LendingInterface({
       {!effectiveTxState && (
         <div className="px-4 pt-3 pb-1 flex items-center gap-2">
           <span className="text-sm font-medium">Position</span>
+          {vault.deprecated && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-500 font-medium">
+              {vault.deprecated.badge}
+            </span>
+          )}
           {effectivePosition?.inSoftLiquidation && (
             effectivePosition.health <= 0 ? (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-500 font-medium">
@@ -1465,7 +1509,7 @@ export function LendingInterface({
       {!effectiveTxState && (
         <div className="p-4 pb-0">
           <div className="flex border-b border-[var(--border)]">
-            {(["borrow", "leverage", "repay", "collateral"] as const).filter((t) => t !== "leverage" || zappersEnabled || effectivePosition?.inSoftLiquidation).map((tab) => (
+            {managementTabs.map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -1502,7 +1546,7 @@ export function LendingInterface({
                 onSwitchTab={(t) => setActiveTab(t as Tab)}
               />
             )}
-            {activeTab === "borrow" && (
+            {!deprecatedMarket && activeTab === "borrow" && (
               <BorrowTab
                 vault={vault}
                 position={effectivePosition}
@@ -1529,7 +1573,7 @@ export function LendingInterface({
                 onSwitchTab={(t) => setActiveTab(t as Tab)}
               />
             )}
-            {activeTab === "leverage" && (
+            {!deprecatedMarket && activeTab === "leverage" && (
               <LeverageTab
                 vault={vault}
                 userBalance={userBalance}

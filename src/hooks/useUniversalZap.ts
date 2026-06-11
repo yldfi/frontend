@@ -52,6 +52,7 @@ import {
   getVaultByAddress,
   isExternalVaultToken,
   getExternalVaultConfig as getExternalVaultConfigFn,
+  isVaultEntryDisabled,
 } from "@/config/vaults";
 import { useVaultCache } from "@/hooks/useVaultCache";
 import { PUBLIC_RPC_URLS } from "@/config/rpc";
@@ -270,6 +271,10 @@ export function useUniversalZap({
       const inputIsYld = !!inputVault && isYldfiVault(inputToken.address);
       const outputIsYld = !!outputVault && isYldfiVault(outputToken.address);
       const inputIsExternal = isExternalVaultToken(inputToken.address);
+
+      if (outputVault && isVaultEntryDisabled(outputVault)) {
+        throw new Error(`${outputVault.symbol} is deprecated and exit-only. Withdraw or zap out instead.`);
+      }
 
       const outputDecimals = outputToken.decimals ?? 18;
 

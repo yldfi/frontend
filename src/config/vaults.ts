@@ -352,6 +352,20 @@ export interface VaultConfig {
   // Protocol
   chain: string;
   version: string;
+  displayVersion?: string;
+
+  // Lifecycle / availability
+  deprecated?: {
+    label: string;
+    badge: string;
+    reason: string;
+    details: string;
+    forumUrl?: string;
+    voteUrl?: string;
+    exitOnly: boolean;
+    hideUnlessHolder: boolean;
+    disableLendingWithoutPosition: boolean;
+  };
 
   // Visibility
   hidden?: boolean; // Hide from UI but still accessible via direct URL
@@ -446,6 +460,18 @@ export const VAULTS: Record<string, VaultConfig> = {
     },
     chain: "Ethereum",
     version: "v3",
+    displayVersion: "ycvxCRV_v1",
+    deprecated: {
+      label: "Deprecated",
+      badge: "Deprecated",
+      reason: "Curve is deprecating this LlamaLend v1 market.",
+      details: "The ycvxCRV v1 vault is exit-only. Withdraw or zap out of ycvxCRV; new deposits, zap-ins, and new borrow positions are disabled.",
+      forumUrl: "https://gov.curve.finance/t/llamalend-v1-market-deprecation-plan/11075",
+      voteUrl: "https://www.curve.finance/dao/ethereum/proposals/1422-ownership",
+      exitOnly: true,
+      hideUnlessHolder: true,
+      disableLendingWithoutPosition: true,
+    },
   },
   yscvxcrv: {
     id: "yscvxcrv",
@@ -565,6 +591,28 @@ export function getVault(id: string): VaultConfig | undefined {
 export function getVaultByAddress(address: string): VaultConfig | undefined {
   const normalizedAddress = address.toLowerCase();
   return Object.values(VAULTS).find((v) => v.address.toLowerCase() === normalizedAddress);
+}
+
+type VaultLifecycleInput = { deprecated?: VaultConfig["deprecated"] } | undefined | null;
+
+export function isDeprecatedVault(vault: VaultLifecycleInput): boolean {
+  return Boolean(vault?.deprecated);
+}
+
+export function isExitOnlyVault(vault: VaultLifecycleInput): boolean {
+  return Boolean(vault?.deprecated?.exitOnly);
+}
+
+export function isVaultHiddenUnlessHolder(vault: VaultLifecycleInput): boolean {
+  return Boolean(vault?.deprecated?.hideUnlessHolder);
+}
+
+export function isLendingDisabledWithoutPosition(vault: VaultLifecycleInput): boolean {
+  return Boolean(vault?.deprecated?.disableLendingWithoutPosition);
+}
+
+export function isVaultEntryDisabled(vault: VaultLifecycleInput): boolean {
+  return isExitOnlyVault(vault);
 }
 
 // Get all vault addresses as array

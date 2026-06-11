@@ -58,16 +58,6 @@ const WEEKLY_APY_VAULTS = [
     underlying: "cvxCRV",
   },
   {
-    address: VAULT_ADDRESSES.YCVXCRV,
-    icon: "/ycvxcrv-128.png",
-    label: "Curve Llamalend",
-    protocolLogo: "/curve-logo.png",
-    symbol: "ycvxCRV",
-    symbolPrefix: "y",
-    symbolSuffix: "cvxCRV",
-    underlying: "cvxCRV",
-  },
-  {
     address: VAULT_ADDRESSES.YSCVGCVX,
     icon: "/yscvgcvx-128.png",
     label: "LiquidBoost",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useBlockNumber } from "wagmi";
 import { useEnsoTokens } from "@/hooks/useEnsoTokens";
@@ -9,7 +9,7 @@ import { useTokenBalances } from "@/hooks/useTokenBalances";
 import { formatUnits, isAddress } from "viem";
 import { cn } from "@/lib/utils";
 import { CUSTOM_TOKENS, POPULAR_TOKENS } from "@/lib/enso";
-import { VAULTS, CURVE_SAVINGS, YEARN } from "@/config/vaults";
+import { VAULTS, CURVE_SAVINGS, YEARN, isVaultHiddenUnlessHolder } from "@/config/vaults";
 import type { EnsoToken } from "@/types/enso";
 import { LoadingDots } from "@/components/LoadingDots";
 import { ExternalLink, Copy, Check } from "lucide-react";
@@ -44,6 +44,12 @@ const FEATURED_VAULT_TOKENS: EnsoToken[] = Object.values(VAULTS)
     chainId: 1,
     type: "defi" as const,
   }));
+
+const HIDE_UNLESS_HOLDER_VAULT_ADDRESSES = new Set(
+  Object.values(VAULTS)
+    .filter(isVaultHiddenUnlessHolder)
+    .map((v) => v.address.toLowerCase()),
+);
 
 // Tokens that should always be selectable regardless of excludeDefiTokens
 // (our vaults + partner vaults we deeply integrate with)
@@ -286,6 +292,29 @@ export function TokenSelector({
     includeWalletTokens: !searchQuery.trim() && !excludeDefiTokens,
     walletTokenAllowlist,
   });
+
+  const selectableVaultTokens = useMemo(
+    () =>
+      FEATURED_VAULT_TOKENS.filter((token) => {
+        const address = token.address.toLowerCase();
+        if (excludeSet.has(address)) return false;
+        if (!HIDE_UNLESS_HOLDER_VAULT_ADDRESSES.has(address)) return true;
+        if (selectedToken?.address?.toLowerCase() === address) return true;
+        return (balanceMap.get(address) ?? 0n) > 0n;
+      }),
+    [balanceMap, excludeSet, selectedToken?.address],
+  );
+
+  const shouldHideHolderOnlyToken = useCallback((token: Pick<EnsoToken, "address">): boolean => {
+    const address = token.address.toLowerCase();
+    return (
+      HIDE_UNLESS_HOLDER_VAULT_ADDRESSES.has(address) &&
+      selectedToken?.address?.toLowerCase() !== address &&
+      (balanceMap.get(address) ?? 0n) === 0n
+    );
+  }, [balanceMap, selectedToken?.address]);
+
+  const shouldHideImportedToken = importedToken ? shouldHideHolderOnlyToken(importedToken) : false;
 
   useEffect(() => {
     if (!isOpen) {
@@ -552,15 +581,12 @@ export function TokenSelector({
               <div className="flex-1 overflow-y-auto">
                 {activeTab === "vaults" ? (
                   /* Vaults tab */
-                  FEATURED_VAULT_TOKENS.filter(
-                    (t) => !excludeSet.has(t.address.toLowerCase())
-                  ).length === 0 ? (
+                  selectableVaultTokens.length === 0 ? (
                     <div className="text-center py-8 text-[var(--muted-foreground)]">
                       No vaults available
                     </div>
                   ) : (
-                    FEATURED_VAULT_TOKENS
-                      .filter((t) => !excludeSet.has(t.address.toLowerCase()))
+                    selectableVaultTokens
                       .map((token) => (
                         <TokenRow
                           key={token.address}
@@ -584,7 +610,7 @@ export function TokenSelector({
                   /* Tokens tab - loaded */
                   <>
                     {/* Show imported token option when user pastes an address */}
-                    {isSearchAddress && !isImportedTokenInList && (
+                    {isSearchAddress && !isImportedTokenInList && !shouldHideImportedToken && (
                       <div className="border-b border-[var(--border)]">
                         {importLoading ? (
                           <div className="flex items-center justify-center p-3">
@@ -613,6 +639,7 @@ export function TokenSelector({
                     {priorityTokens && priorityTokens.length > 0 && (() => {
                       const visible = priorityTokens.filter((t) => {
                         if (excludeSet.has(t.address.toLowerCase())) return false;
+                        if (shouldHideHolderOnlyToken(t)) return false;
                         return tokenMatchesSearch(t, normalizedSearchQuery);
                       });
                       if (visible.length === 0) return null;
@@ -648,6 +675,7 @@ export function TokenSelector({
                           if (!token || !token.address || !token.symbol) return false;
                           if (excludeSet.has(token.address.toLowerCase())) return false;
                           if (!tokenMatchesSearch(token, normalizedSearchQuery)) return false;
+                          if (shouldHideHolderOnlyToken(token)) return false;
                           // Exclude priority tokens from regular list to avoid duplicates
                           if (priorityTokens?.some(p => p.address.toLowerCase() === token.address.toLowerCase())) {
                             return false;

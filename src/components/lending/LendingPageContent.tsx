@@ -7,7 +7,7 @@ import Image from "next/image";
 import { ChevronRight, AlertTriangle, ExternalLink, Info, Activity, Coins, TrendingUp, ArrowUpRight } from "lucide-react";
 import { useAccount } from "wagmi";
 import { formatUnits } from "viem";
-import { getVault, CURVE_CONTROLLERS, CURVE_SAVINGS } from "@/config/vaults";
+import { getVault, CURVE_CONTROLLERS, CURVE_SAVINGS, isLendingDisabledWithoutPosition } from "@/config/vaults";
 import { useSettings } from "@/hooks/useSettings";
 import { useMerklRewards, useMerklOpportunities } from "@/hooks/useMerklRewards";
 import { formatUsd } from "@/lib/utils";
@@ -109,7 +109,10 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
     "yldfi-loan-source",
   ], "yldfi-lending-is-refresh");
 
-  const shouldRedirect = !vault || !controllerAddress;
+  const shouldRedirect =
+    !vault ||
+    !controllerAddress ||
+    (isLendingDisabledWithoutPosition(vault) && !positionLoading && !position?.hasLoan);
 
   useEffect(() => {
     if (shouldRedirect) {
@@ -168,7 +171,17 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
               <h2 className="text-3xl md:text-4xl font-medium tracking-tight">
                 {vault.name} <span className="text-[var(--muted-foreground)]">LlamaLend</span>
               </h2>
+              {vault.deprecated && (
+                <span className="text-xs px-2 py-1 rounded border border-yellow-500/20 bg-yellow-500/10 text-yellow-500 font-medium">
+                  {vault.deprecated.badge}
+                </span>
+              )}
             </div>
+            {vault.displayVersion && (
+              <p className="mono text-xs text-[var(--muted-foreground)] mt-2">
+                {vault.displayVersion}
+              </p>
+            )}
           </div>
 
           <div ref={gridRef} className="grid lg:grid-cols-5 gap-2 lg:gap-12">
@@ -210,6 +223,19 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                   onVolumeProfilePeriodChange={setVpPeriod}
                 />
               </div>
+
+              {/* Soft-liquidation warning */}
+              {vault.deprecated && (
+                <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 flex items-start gap-2 text-yellow-500 text-sm">
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                  <div>
+                    <div className="font-medium">Deprecated v1 market</div>
+                    <div className="text-xs mt-0.5 text-[var(--muted-foreground)]">
+                      New borrow positions are disabled. Existing borrowers can repay, close, or manage collateral.
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Soft-liquidation warning */}
               {position?.inSoftLiquidation && (

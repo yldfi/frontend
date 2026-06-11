@@ -17,7 +17,12 @@ import { useMultiplePricePerShare } from "@/hooks/usePricePerShare";
 import { useVaultCache } from "@/hooks/useVaultCache";
 import { useCvxCrvPrice } from "@/hooks/useCvxCrvPrice";
 import { useCurveLendingPosition, formatHealth } from "@/hooks/useCurveLendingPosition";
-import { VAULTS, VAULT_ADDRESSES, CURVE_CONTROLLERS } from "@/config/vaults";
+import {
+  VAULTS,
+  VAULT_ADDRESSES,
+  CURVE_CONTROLLERS,
+  isVaultHiddenUnlessHolder,
+} from "@/config/vaults";
 import { useMerklRewards, useMerklOpportunities } from "@/hooks/useMerklRewards";
 import { trackCtaClick, trackExternalLinkClick } from "@/lib/analytics";
 
@@ -34,6 +39,8 @@ const vaultConfigs = Object.values(VAULTS)
     chain: vault.chain,
     contractAddress: vault.address,
     badges: vault.badges,
+    displayVersion: vault.displayVersion,
+    deprecated: vault.deprecated,
     type: vault.type,
     fee: vault.fees.performance,
     feeBreakdown: vault.feeBreakdown,
@@ -259,15 +266,19 @@ export function HomePageContent() {
 
   const vaultsUnsorted = vaultConfigs.map((config) => {
     const balance = balanceByAddress[config.contractAddress.toLowerCase()];
+    const hasVaultBalance = (balance?.balance ?? 0n) > 0n;
     return {
       ...config,
       tvl: getTvlForVault(config.id),
       apy: getApyForVault(config.id),
       holdings: balance?.formattedUsd ?? "$0",
       holdingsUsd: balance?.usdValue ?? 0,
-      hasHoldings: (balance?.usdValue ?? 0) > 0,
+      hasHoldings: hasVaultBalance || (balance?.usdValue ?? 0) > 0,
       lendingPosition: lendingPositionByVaultId[config.id] ?? null,
     };
+  }).filter((vault) => {
+    if (!isVaultHiddenUnlessHolder(vault)) return true;
+    return vault.hasHoldings || Boolean(vault.lendingPosition?.hasLoan);
   });
 
   // Sort vaults based on selected option (descending - highest first)
@@ -300,7 +311,7 @@ export function HomePageContent() {
   // Stats with live data
   const stats = [
     { label: "Total Value Locked", value: isLoading ? "..." : totalTvlFormatted },
-    { label: "Vaults", value: vaultConfigs.length.toString() },
+    { label: "Vaults", value: vaults.length.toString() },
     { label: "Avg APY", value: isLoading ? "..." : `${avgApy.toFixed(1)}%` },
   ];
 
@@ -485,16 +496,29 @@ export function HomePageContent() {
                         height={40}
                         className="rounded-full"
                       />
-                      <h3 className="text-xl font-semibold group-hover:text-[var(--accent)] transition-colors">
-                        {vault.name}
-                      </h3>
+                      <div className="min-w-0">
+                        <h3 className="text-xl font-semibold group-hover:text-[var(--accent)] transition-colors">
+                          {vault.name}
+                        </h3>
+                        {vault.displayVersion && (
+                          <p className="mono text-[11px] text-[var(--muted-foreground)] mt-0.5">
+                            {vault.displayVersion}
+                          </p>
+                        )}
+                      </div>
                     </div>
                     <p className="text-sm text-[var(--muted-foreground)] mb-3 leading-relaxed line-clamp-2">
                       {vault.description}
                     </p>
                     <div className="flex items-center gap-2.5 mb-4">
+                      {vault.deprecated && (
+                        <span className="inline-flex items-center px-2 py-1 text-[11px] font-medium bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 rounded whitespace-nowrap">
+                          {vault.deprecated.badge}
+                        </span>
+                      )}
                       {vault.badges?.filter((b) => b !== "Compounder").map((badge) => (
                         badge === "Collateral (LlamaLend)" ? (
+                          vault.deprecated && !vault.lendingPosition?.hasLoan ? null : (
                           <button
                             key={badge}
                             onClick={(e) => { e.preventDefault(); e.stopPropagation(); trackCtaClick("borrow_against_vault", "home"); router.push(`/vaults/${vault.id}/lending`); }}
@@ -513,17 +537,18 @@ export function HomePageContent() {
                                 {(() => { const h = formatHealth(vault.lendingPosition.health); const hoverColor = h.status === "healthy" ? "group-hover/badge:text-green-500" : h.status === "warning" ? "group-hover/badge:text-yellow-500" : "group-hover/badge:text-red-400"; return <span className={`hidden lg:inline-flex items-center gap-0.5 ${h.color} ${hoverColor} transition-colors`}><HeartPulse size={10} /><span className="mono">{h.value.toFixed(0)}%</span></span>; })()}
                               </>
                             ) : (
-                              <span>Borrow</span>
+                              <span>{vault.deprecated ? "Manage loan" : "Borrow"}</span>
                             )}
                             <ArrowUpRight size={10} />
                           </button>
+                          )
                         ) : (
                           <span key={badge} className="inline-flex items-center px-2 py-1 text-[11px] font-medium bg-[var(--muted)] text-white rounded border border-transparent whitespace-nowrap">
                             {badge}
                           </span>
                         )
                       ))}
-                      {vault.hasRewards && (isCampaignLive || totalEarnedUsd > 0) && (
+                      {vault.hasRewards && (!vault.deprecated || totalEarnedUsd > 0) && (isCampaignLive || totalEarnedUsd > 0) && (
                         <button
                           onClick={(e) => { e.preventDefault(); e.stopPropagation(); trackCtaClick("rewards_banner", "home"); router.push("/rewards"); }}
                           className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium bg-green-400/10 text-green-400 border border-green-400/20 rounded whitespace-nowrap hover:bg-green-400/20 transition-colors"
@@ -573,9 +598,20 @@ export function HomePageContent() {
                         <h3 className="text-lg font-medium group-hover:text-[var(--accent)] transition-colors">
                           {vault.name}
                         </h3>
+                        {vault.displayVersion && (
+                          <p className="mono text-[11px] text-[var(--muted-foreground)] mt-0.5">
+                            {vault.displayVersion}
+                          </p>
+                        )}
                         <div className="flex items-center gap-2.5 mt-1">
+                          {vault.deprecated && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 rounded whitespace-nowrap">
+                              {vault.deprecated.badge}
+                            </span>
+                          )}
                           {vault.badges?.filter((b) => b !== "Compounder").map((badge) => (
                             badge === "Collateral (LlamaLend)" ? (
+                              vault.deprecated && !vault.lendingPosition?.hasLoan ? null : (
                               <button
                                 key={badge}
                                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); trackCtaClick("borrow_against_vault", "home"); router.push(`/vaults/${vault.id}/lending`); }}
@@ -594,17 +630,18 @@ export function HomePageContent() {
                                     {(() => { const h = formatHealth(vault.lendingPosition.health); const hoverColor = h.status === "healthy" ? "group-hover/badge:text-green-500" : h.status === "warning" ? "group-hover/badge:text-yellow-500" : "group-hover/badge:text-red-400"; return <span className={`hidden lg:inline-flex items-center gap-0.5 ${h.color} ${hoverColor} transition-colors`}><HeartPulse size={10} /><span className="mono">{h.value.toFixed(0)}%</span></span>; })()}
                                   </>
                                 ) : (
-                                  <span>Borrow against {vault.name}</span>
+                                  <span>{vault.deprecated ? "Manage loan" : `Borrow against ${vault.name}`}</span>
                                 )}
                                 <ArrowUpRight size={10} />
                               </button>
+                              )
                             ) : (
                               <span key={badge} className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-[var(--muted)] text-white rounded border border-transparent whitespace-nowrap">
                                 {badge}
                               </span>
                             )
                           ))}
-                          {vault.hasRewards && (isCampaignLive || totalEarnedUsd > 0) && (
+                          {vault.hasRewards && (!vault.deprecated || totalEarnedUsd > 0) && (isCampaignLive || totalEarnedUsd > 0) && (
                             <button
                               onClick={(e) => { e.preventDefault(); e.stopPropagation(); trackCtaClick("rewards_banner", "home"); router.push("/rewards"); }}
                               className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium bg-green-400/10 text-green-400 border border-green-400/20 rounded whitespace-nowrap hover:bg-green-400/20 transition-colors"
