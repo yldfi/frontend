@@ -242,4 +242,35 @@ describe("RepayTab", () => {
 
     expect((screen.getByPlaceholderText("0.0") as HTMLInputElement).value).toBe("");
   });
+
+  it("blocks partial repay below Curve's minimum valid repay amount", () => {
+    mockUseQuery.mockImplementation((options) => {
+      const queryKey = (options as { queryKey?: unknown[] }).queryKey;
+      if (queryKey?.[0] === "minimum-partial-repay") {
+        return {
+          data: 1_300n * 10n ** 18n,
+          isLoading: false,
+          isFetching: false,
+          error: null,
+          refetch: vi.fn(),
+        } as unknown as ReturnType<typeof useQuery>;
+      }
+      return {
+        data: undefined,
+        isLoading: false,
+        isFetching: false,
+        error: null,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useQuery>;
+    });
+
+    renderRepayTab(makePosition(7_104n * 10n ** 18n));
+
+    fireEvent.change(screen.getByPlaceholderText("0.0"), {
+      target: { value: "100" },
+    });
+
+    expect(screen.getByText(/Curve requires at least 1,300 crvUSD/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: /Repay at least 1,300 crvUSD/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
 });
