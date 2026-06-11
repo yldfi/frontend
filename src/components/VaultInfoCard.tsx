@@ -328,8 +328,8 @@ export function VaultInfoCard({ address, chainId = 1, title, detailsContent }: V
     if (typeof window !== "undefined") window.localStorage.setItem(TAB_KEY, next);
   };
 
-  const hasApy = (apyQuery.data?.length ?? 0) > 0;
-  const hasTvl = (tvlQuery.data?.length ?? 0) > 0;
+  const hasApy = apyRanged.some((p) => p.apy !== null);
+  const hasTvl = tvlRanged.length > 0;
 
   return (
     <div className="rounded-xl border border-[var(--border)] overflow-hidden">
@@ -376,7 +376,7 @@ export function VaultInfoCard({ address, chainId = 1, title, detailsContent }: V
                 <PerformanceChart apyData={apyRanged} />
               ) : (
                 <div className="h-[320px] flex items-center justify-center text-xs text-[var(--muted-foreground)]">
-                  No performance history available
+                  No performance history available for selected range
                 </div>
               )}
             </>
@@ -390,7 +390,7 @@ export function VaultInfoCard({ address, chainId = 1, title, detailsContent }: V
                 <TvlChart tvlData={tvlRanged} />
               ) : (
                 <div className="h-[320px] flex items-center justify-center text-xs text-[var(--muted-foreground)]">
-                  No TVL history available
+                  No TVL history available for selected range
                 </div>
               )}
             </>
