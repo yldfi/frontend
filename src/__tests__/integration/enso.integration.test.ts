@@ -41,6 +41,8 @@ import {
   ETH_ADDRESS,
   CVXCRV_ADDRESS,
   ENSO_ROUTER,
+  ENSO_ROUTER_V1,
+  ENSO_ROUTER_V2,
   CUSTOM_TOKENS,
   POPULAR_TOKENS,
   YLDFI_VAULT_ADDRESSES,
@@ -63,8 +65,13 @@ describe("enso.ts integration", () => {
       expect(CVXCRV_ADDRESS).toBe("0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7");
     });
 
-    it("exports ENSO_ROUTER", () => {
+    it("exports legacy ENSO_ROUTER alias as Router V1", () => {
       expect(ENSO_ROUTER).toBe("0x80EbA3855878739F4710233A8a19d89Bdd2ffB8E");
+      expect(ENSO_ROUTER_V1).toBe(ENSO_ROUTER);
+    });
+
+    it("exports ENSO_ROUTER_V2 as current approval spender", () => {
+      expect(ENSO_ROUTER_V2).toBe("0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf");
     });
 
     it("exports CUSTOM_TOKENS with required tokens", () => {

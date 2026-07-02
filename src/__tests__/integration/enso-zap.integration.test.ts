@@ -97,11 +97,10 @@ function isValidBundle(result: { tx?: { to: string; data: string } }): boolean {
 const SIMULATION_RPC_URL = process.env.DEBUG_RPC_URL || process.env.NEXT_PUBLIC_ALCHEMY_RPC_URL;
 const SIMULATION_RPC_AUTH = process.env.DEBUG_RPC_AUTH;
 
-// Enso contracts that may call transferFrom on user's tokens
-// All need allowance for simulation to succeed
+// Enso contracts involved in routes. Router V2 is the user approval spender.
 // These MUST match the addresses in src/lib/enso.ts
-const ENSO_ROUTER = "0x80EbA3855878739F4710233A8a19d89Bdd2ffB8E"; // EnsoShortcutRouter - for approvals
-const ENSO_ROUTER_EXECUTOR = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf"; // Enso Router - holds tokens during bundle execution
+const ENSO_ROUTER = "0x80EbA3855878739F4710233A8a19d89Bdd2ffB8E"; // Router V1 / legacy EnsoShortcutRouter
+const ENSO_ROUTER_V2 = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf"; // Router V2 / current approval spender
 const ENSO_SHORTCUTS = "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003"; // EnsoShortcuts - executes calls, msg.sender for external contracts
 
 // CVX1 (wrapped CVX) - used in cvgCVX routes
@@ -296,7 +295,7 @@ async function getUsdcBlacklistSlot(address: string): Promise<string> {
  * Also handles related tokens (e.g., CVX1 when CVX is input)
  * For vault tokens, also overrides intermediate tokens in the route (CVX, CVX1)
  *
- * Key insight: Enso bundles execute through ENSO_ROUTER_EXECUTOR, which holds tokens
+ * Key insight: Enso bundles execute through Router V2, which holds tokens
  * during bundle execution. We need to override balances for BOTH the holder AND the executor.
  */
 async function buildStateOverrides(
@@ -349,7 +348,7 @@ async function buildStateOverrides(
     const balanceSlot = await getBalanceSlot(tokenAddr, address);
     const allowanceSlotShortcuts = await getAllowanceSlot(tokenAddr, address, ENSO_SHORTCUTS);
     const allowanceSlotRouter = await getAllowanceSlot(tokenAddr, address, ENSO_ROUTER);
-    const allowanceSlotExecutor = await getAllowanceSlot(tokenAddr, address, ENSO_ROUTER_EXECUTOR);
+    const allowanceSlotExecutor = await getAllowanceSlot(tokenAddr, address, ENSO_ROUTER_V2);
 
     // Use LARGE_BALANCE for balance (to avoid overflow) and MAX_UINT256 for allowances
     const newOverrides: Record<string, string> = {
@@ -376,7 +375,7 @@ async function buildStateOverrides(
     // Override for the holder
     const ownerOverrides = await addOverridesForAddress(tokenAddr, owner);
     // Also override for the Enso executor (holds tokens during bundle execution)
-    const executorOverrides = await addOverridesForAddress(tokenAddr, ENSO_ROUTER_EXECUTOR, ownerOverrides);
+    const executorOverrides = await addOverridesForAddress(tokenAddr, ENSO_ROUTER_V2, ownerOverrides);
     // Also override for the Enso shortcuts contract
     const shortcutsOverrides = await addOverridesForAddress(tokenAddr, ENSO_SHORTCUTS, executorOverrides);
     // Also override for the Enso router (entry point for bundles)
@@ -450,7 +449,7 @@ async function buildStateOverrides(
     const addressesToUnblock = [
       owner,
       ENSO_ROUTER,
-      ENSO_ROUTER_EXECUTOR,
+      ENSO_ROUTER_V2,
       ENSO_SHORTCUTS,
       // Common DEX/router addresses that may be in the route and blacklisted
       // Curve pools often used by Enso for USDC routes
@@ -827,7 +826,7 @@ async function simulateBundle(params: {
     }
 
     // Build state overrides for ERC20 tokens
-    // Sets allowances for both Enso Shortcuts and Router Executor
+    // Sets allowances for both Enso Shortcuts and Router V2
     let stateOverrides: Record<string, { stateDiff: Record<string, string> }> | undefined;
     const ETH_LOWER = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
     if (params.tokenIn && params.tokenIn.toLowerCase() !== ETH_LOWER) {

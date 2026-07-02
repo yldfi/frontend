@@ -11,7 +11,7 @@ import {
 
 import { useZapActions } from "@/hooks/useZapActions";
 import {
-  ENSO_ROUTER_EXECUTOR,
+  ENSO_ROUTER_V2,
   LEGACY_MORPHO_ADDRESS,
   MORPHO_BUNDLER3_ADDRESS,
   MORPHO_GENERAL_ADAPTER1_ADDRESS,
@@ -202,19 +202,19 @@ describe("useZapActions preview fallback", () => {
     mockSendTx.mockResolvedValue("0xabcdef1234567890");
   });
 
-  it("checks ERC20 allowance against Enso router executor instead of quote tx target", () => {
+  it("checks ERC20 allowance against Enso Router V2 instead of quote tx target", () => {
     renderHook(() => useZapActions(mockUsdcQuote));
 
     expect(mockUseReadContract).toHaveBeenCalledWith(
       expect.objectContaining({
         functionName: "allowance",
-        args: [userAddress, ENSO_ROUTER_EXECUTOR],
+        args: [userAddress, ENSO_ROUTER_V2],
       })
     );
-    expect(mockUsdcQuote.tx.to).not.toBe(ENSO_ROUTER_EXECUTOR);
+    expect(mockUsdcQuote.tx.to).not.toBe(ENSO_ROUTER_V2);
   });
 
-  it("approves the Enso router executor spender instead of quote tx target", async () => {
+  it("approves the Enso Router V2 spender instead of quote tx target", async () => {
     mockUseReadContract.mockReturnValue({
       data: BigInt(0),
       refetch: vi.fn(),
@@ -230,7 +230,7 @@ describe("useZapActions preview fallback", () => {
       expect.objectContaining({
         address: mockUsdcToken.address,
         functionName: "approve",
-        args: [ENSO_ROUTER_EXECUTOR, maxUint256],
+        args: [ENSO_ROUTER_V2, maxUint256],
       })
     );
   });
@@ -264,12 +264,12 @@ describe("useZapActions preview fallback", () => {
       expect.objectContaining({
         address: mockCrvToken.address,
         functionName: "approve",
-        args: [ENSO_ROUTER_EXECUTOR, 0n],
+        args: [ENSO_ROUTER_V2, 0n],
       })
     );
   });
 
-  it("shows pending approval for the Enso router executor spender", async () => {
+  it("shows pending approval for the Enso Router V2 spender", async () => {
     mockUseReadContract.mockReturnValue({
       data: BigInt(0),
       refetch: vi.fn(),
@@ -282,11 +282,11 @@ describe("useZapActions preview fallback", () => {
     });
 
     expect(result.current.pendingApproval).toMatchObject({
-      spender: ENSO_ROUTER_EXECUTOR,
+      spender: ENSO_ROUTER_V2,
       spenderName: "Enso Router",
     });
     expect(result.current.approvalProgress?.steps[0]).toMatchObject({
-      spender: ENSO_ROUTER_EXECUTOR,
+      spender: ENSO_ROUTER_V2,
     });
   });
 

@@ -13,7 +13,7 @@ import {
 import { TOKENS, getVaultByAddress } from "@/config/vaults";
 import { ERC20_APPROVAL_ABI, CONTROLLER_APPROVE_ABI } from "@/lib/abis";
 import { shouldResetApprovalToZeroFirst } from "@/lib/approval-reset";
-import { ETH_ADDRESS, ENSO_ROUTER_EXECUTOR } from "@/lib/enso";
+import { ETH_ADDRESS, ENSO_ROUTER_V2 } from "@/lib/enso";
 import { FORBIDDEN_APPROVAL_SPENDER_ERROR, assertSafeApprovalSpender, findForbiddenApproval, isForbiddenApprovalSpender } from "@/lib/approval-safety";
 import { ZAPPER_ADDRESS, ZAPPER_ABI, fetchZapperSwapData, buildExoticOutputSwapData, getDeadline } from "@/lib/zapper";
 import { CRVUSD_ADDRESS, WETH_ADDRESS } from "@/config/addresses";
@@ -709,7 +709,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       // Users must approve the ROUTER (not ENSO_SHORTCUTS) as the spender.
       // Complex flows that need mid-bundle transferFrom handle their own
       // approvals and pass inputAmount=0n to skip this check.
-      const spender = ENSO_ROUTER_EXECUTOR as `0x${string}`;
+      const spender = ENSO_ROUTER_V2 as `0x${string}`;
       assertSafeApprovalSpender(spender);
 
       // Check allowance against the Router
@@ -2885,7 +2885,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
       return queueApprovalsOrRun(allApprovals, runBundle);
     }
 
-    // Repay-only path (no withdrawal) — safe via ENSO_ROUTER_EXECUTOR
+    // Repay-only path (no withdrawal) — safe via ENSO_ROUTER_V2
     return executeBundle(
       () => fetchRepayWithSwapBundle({
         fromAddress: address,

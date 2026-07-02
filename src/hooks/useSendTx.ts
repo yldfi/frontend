@@ -76,11 +76,13 @@ export function useSendTx() {
           if (isDev) {
             console.log(`[sendTx] gas estimate: ${estimate} → limit: ${gas} (130%)`);
           }
-        } catch {
-          // Estimation failed — leave undefined so wallet estimates
+        } catch (estimateError) {
+          // Estimation failed locally; sending without a gas limit delegates the
+          // same failing estimation to the wallet, which often hides the revert.
           if (isDev) {
-            console.log("[sendTx] gas estimation failed, relying on wallet");
+            console.log("[sendTx] gas estimation failed", estimateError);
           }
+          throw estimateError instanceof Error ? estimateError : new Error(String(estimateError));
         }
       }
 

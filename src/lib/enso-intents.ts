@@ -7,8 +7,8 @@ import {
 } from "@/config/vaults";
 import type { EnsoBundleResponse, EnsoRouteResponse } from "@/types/enso";
 import {
-  ENSO_ROUTER,
-  ENSO_ROUTER_EXECUTOR,
+  ENSO_ROUTER_V1,
+  ENSO_ROUTER_V2,
   ENSO_SHORTCUTS,
   LEGACY_MORPHO,
   MORPHO_BUNDLER3,
@@ -246,7 +246,7 @@ const SPECIAL_INPUT_TOKENS = new Set([
   TOKENS.PXCVX.toLowerCase(),
   TOKENS.LPXCVX.toLowerCase(),
 ]);
-const COMMON_INTENT_TX_TARGETS = [ENSO_ROUTER, ENSO_ROUTER_EXECUTOR] as const;
+const COMMON_INTENT_TX_TARGETS = [ENSO_ROUTER_V1, ENSO_ROUTER_V2] as const;
 const COMMON_INTENT_CALLDATA_SELECTORS = [ENSO_ROUTE_SINGLE_SELECTOR] as const;
 const SERVER_BUNDLE_CALLDATA_SELECTORS = [
   ENSO_ROUTE_SINGLE_SELECTOR,

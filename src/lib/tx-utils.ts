@@ -112,8 +112,17 @@ export function parseErrorMessage(error: unknown, defaultMsg?: string): string {
     return "Transaction cancelled";
   }
 
+  // ERC20 allowance failures
+  if (
+    lower.includes("insufficient allowance") ||
+    lower.includes("transfer amount exceeds allowance") ||
+    (lower.includes("erc20") && lower.includes("exceeds allowance"))
+  ) {
+    return "Token approval is missing or too low. Approve the token for Enso Router and try again.";
+  }
+
   // Insufficient balance / funds
-  if (lower.includes("transfer amount exceeds balance") || lower.includes("erc20: transfer amount exceeds")) {
+  if (lower.includes("transfer amount exceeds balance")) {
     return "Transaction would fail: swap conditions changed, try refreshing the quote";
   }
   if (lower.includes("insufficient") || lower.includes("exceeds balance")) {

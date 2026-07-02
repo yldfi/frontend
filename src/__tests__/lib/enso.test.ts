@@ -8,6 +8,7 @@ describe("lib/enso", () => {
   const ETH_ADDRESS = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
   const CVXCRV_ADDRESS = "0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7";
   const ENSO_ROUTER = "0x80EbA3855878739F4710233A8a19d89Bdd2ffB8E";
+  const ENSO_ROUTER_V2 = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf";
 
   const YLDFI_VAULT_ADDRESSES = {
     ycvxCRV: "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86",
@@ -306,9 +307,13 @@ describe("lib/enso", () => {
     });
   });
 
-  describe("ENSO_ROUTER constant", () => {
-    it("is the correct router address", () => {
+  describe("ENSO_ROUTER constants", () => {
+    it("keeps ENSO_ROUTER as the legacy Router V1 alias", () => {
       expect(ENSO_ROUTER).toBe("0x80EbA3855878739F4710233A8a19d89Bdd2ffB8E");
+    });
+
+    it("uses ENSO_ROUTER_V2 for the current approval spender", () => {
+      expect(ENSO_ROUTER_V2).toBe("0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf");
     });
   });
 

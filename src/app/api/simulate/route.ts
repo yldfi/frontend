@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPublicClient, encodeAbiParameters, http, keccak256, pad, parseAbiParameters, toHex, type Chain } from "viem";
 import { TOKENS, VAULT_ADDRESSES, CURVE_CONTROLLERS, getVaultByAddress, LLAMA_AIRFORCE, CONCENTRATOR, CURVE_SAVINGS, ASYMMETRY } from "@/config/vaults";
-import { fetchTokenPricesDirect, ENSO_ROUTER, ENSO_ROUTER_EXECUTOR, MORPHO_BUNDLER3_ADDRESS } from "@/lib/enso";
+import { fetchTokenPricesDirect, ENSO_ROUTER_V2, MORPHO_BUNDLER3_ADDRESS } from "@/lib/enso";
 import { CRVUSD_ADDRESS, USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
 import { ZAPPER_ADDRESS } from "@/lib/zapper";
 import { ERC4626_ABI } from "@/lib/abis";
@@ -649,7 +649,7 @@ export async function POST(request: NextRequest) {
 
   // Build allowlist of simulation targets: Enso router + Morpho bundler + vaults + controllers + zappers
   const allowedTargets = new Set<string>([
-    ENSO_ROUTER_EXECUTOR.toLowerCase(),
+    ENSO_ROUTER_V2.toLowerCase(),
     MORPHO_BUNDLER3_ADDRESS.toLowerCase(),
     ZAPPER_ADDRESS.toLowerCase(),
     ...Object.values(VAULT_ADDRESSES).map((a) => a.toLowerCase()),
@@ -722,7 +722,7 @@ export async function POST(request: NextRequest) {
         [TOKENS.CVX]: {
           storage: {
             [computeERC20BalanceSlot(body.from)]: toStorageValue(MAX_UINT256),
-            [computeERC20AllowanceSlot(body.from, ENSO_ROUTER)]: toStorageValue(MAX_UINT256),
+            [computeERC20AllowanceSlot(body.from, ENSO_ROUTER_V2)]: toStorageValue(MAX_UINT256),
           },
         },
       }
