@@ -157,10 +157,11 @@ export function SlippageModal({
           <div className="flex items-center gap-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="https://docs.tenderly.co/logos/tenderly/tenderly-symbol.svg"
+              src="/tenderly-symbol.png"
               alt="Tenderly"
               width={20}
               height={20}
+              className="h-5 w-5 shrink-0 object-contain"
             />
             <span className="text-sm font-medium">Tenderly Simulation</span>
           </div>
