@@ -1,7 +1,7 @@
 // LlamaLendZapper contract integration
 // Enables leveraged Curve LlamaLend operations via Enso Router swaps
 
-import { fetchRoute, fetchBundle, ENSO_SHORTCUTS, ENSO_ROUTER_EXECUTOR, getCvgCvxSwapRate, getLpxCvxToCvxSwapRate } from "@/lib/enso";
+import { fetchRoute, fetchBundle, ENSO_SHORTCUTS, ENSO_ROUTER_V2, getCvgCvxSwapRate, getLpxCvxToCvxSwapRate } from "@/lib/enso";
 import { calculateMinDy, getCurveGetDyFactory } from "@/lib/curve";
 import { TOKENS, TANGENT, PIREX } from "@/config/vaults";
 import { CRVUSD_ADDRESS } from "@/config/addresses";
@@ -627,7 +627,7 @@ export async function buildVaultInputSwapBundle(params: {
       protocol: "enso",
       action: "call",
       args: {
-        address: ENSO_ROUTER_EXECUTOR.toLowerCase(),
+        address: ENSO_ROUTER_V2.toLowerCase(),
         method: "routeMulti",
         abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)",
         args: [[], innerSwapData],
@@ -671,7 +671,7 @@ export async function buildVaultInputSwapBundle(params: {
     // Action 4: exchange lpxCVX → CVX (CryptoSwap uses uint256 indices)
     actions.push({ protocol: "enso", action: "call", args: { address: PIREX.LPXCVX_CVX_POOL.toLowerCase(), method: "exchange", abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) returns (uint256)", args: [String(PIREX.POOL_INDEX.LPXCVX), String(PIREX.POOL_INDEX.CVX), { useOutputOfCallAt: 0 }, minDyCvx.toString()] } });
     // Action 5: routeMulti — CVX already in ENSO_SHORTCUTS → target token
-    actions.push({ protocol: "enso", action: "call", args: { address: ENSO_ROUTER_EXECUTOR.toLowerCase(), method: "routeMulti", abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)", args: [[], innerSwapData] } });
+    actions.push({ protocol: "enso", action: "call", args: { address: ENSO_ROUTER_V2.toLowerCase(), method: "routeMulti", abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)", args: [[], innerSwapData] } });
 
     const bundle = await fetchBundle({
       fromAddress: ZAPPER_ADDRESS,
@@ -750,7 +750,7 @@ export async function buildExoticOutputSwapData(params: {
       // 0: routeMulti -- swap crvUSD (already in ENSO_SHORTCUTS from Zapper's routeSingle pull) -> CVX
       {
         protocol: "enso", action: "call",
-        args: { address: ENSO_ROUTER_EXECUTOR.toLowerCase(), method: "routeMulti", abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)", args: [[], innerSwapData] },
+        args: { address: ENSO_ROUTER_V2.toLowerCase(), method: "routeMulti", abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)", args: [[], innerSwapData] },
       },
       // 1: Get CVX balance at ENSO_SHORTCUTS
       {
@@ -803,7 +803,7 @@ export async function buildExoticOutputSwapData(params: {
       // 0: routeMulti -- swap crvUSD -> CVX
       {
         protocol: "enso", action: "call",
-        args: { address: ENSO_ROUTER_EXECUTOR.toLowerCase(), method: "routeMulti", abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)", args: [[], innerSwapData] },
+        args: { address: ENSO_ROUTER_V2.toLowerCase(), method: "routeMulti", abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)", args: [[], innerSwapData] },
       },
       // 1: Get CVX balance at ENSO_SHORTCUTS
       {

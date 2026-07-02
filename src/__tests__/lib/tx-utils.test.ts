@@ -252,9 +252,15 @@ describe("parseErrorMessage", () => {
     );
   });
 
-  it("detects 'ERC20: transfer amount exceeds'", () => {
+  it("detects 'ERC20: transfer amount exceeds allowance'", () => {
     expect(parseErrorMessage("erc20: transfer amount exceeds allowance")).toBe(
-      "Transaction would fail: swap conditions changed, try refreshing the quote"
+      "Token approval is missing or too low. Approve the token for Enso Router and try again."
+    );
+  });
+
+  it("detects 'ERC20: insufficient allowance'", () => {
+    expect(parseErrorMessage("execution reverted: ERC20: insufficient allowance")).toBe(
+      "Token approval is missing or too low. Approve the token for Enso Router and try again."
     );
   });
 

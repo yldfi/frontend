@@ -12,7 +12,7 @@ import {
 import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
 import { parseSignature, parseUnits, maxUint256 } from "viem";
 import type { Hash, Hex } from "viem";
-import { buildLegacyMorphoPermitTransaction, ENSO_ROUTER_EXECUTOR, ETH_ADDRESS, LEGACY_MORPHO_ADDRESS } from "@/lib/enso";
+import { buildLegacyMorphoPermitTransaction, ENSO_ROUTER_V2, ETH_ADDRESS, LEGACY_MORPHO_ADDRESS } from "@/lib/enso";
 import { FORBIDDEN_APPROVAL_SPENDER_ERROR, assertSafeApprovalSpender, isForbiddenApprovalSpender } from "@/lib/approval-safety";
 import { ERC20_APPROVAL_ABI, ERC20_PERMIT_ABI } from "@/lib/abis";
 import { shouldResetApprovalToZeroFirst } from "@/lib/approval-reset";
@@ -24,7 +24,7 @@ import type { PendingApproval, ApprovalProgress } from "@/types/approval";
 import { runVNetSimulation } from "@/lib/vnet-simulation";
 import { parseErrorMessage, anvilCall } from "@/lib/tx-utils";
 
-const ZAP_APPROVAL_SPENDER = ENSO_ROUTER_EXECUTOR as `0x${string}`;
+const ZAP_APPROVAL_SPENDER = ENSO_ROUTER_V2 as `0x${string}`;
 
 export type ZapStatus =
   | "idle"
@@ -75,7 +75,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   const usesLegacyMorphoPermit = !!quote?.legacyMorphoPermit;
   const tokenAddress = quote?.inputToken.address as `0x${string}` | undefined;
 
-  // User ERC20 approvals must target Enso's router executor. quote.tx.to is the
+  // User ERC20 approvals must target Enso Router V2. quote.tx.to is the
   // transaction entry point and may differ from the token spender.
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
     address: tokenAddress,

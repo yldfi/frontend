@@ -7,8 +7,8 @@ import { encodeFunctionData, parseAbi } from "viem";
 import type { Hex } from "viem";
 import type { EnsoToken, EnsoTokensResponse, EnsoRouteResponse, EnsoBundleAction, EnsoBundleResponse, RouteInfo, RouteStep, CustomBundleResponse, LegacyMorphoPermitCall, LegacyMorphoPermitRequest } from "@/types/enso";
 import {
-  ENSO_ROUTER as ENSO_ROUTER_ADDRESS,
-  ENSO_ROUTER_EXECUTOR as ENSO_ROUTER_EXECUTOR_ADDRESS,
+  ENSO_ROUTER_V1 as ENSO_ROUTER_V1_ADDRESS,
+  ENSO_ROUTER_V2 as ENSO_ROUTER_V2_ADDRESS,
   ENSO_SHORTCUTS as ENSO_SHORTCUTS_ADDRESS,
 } from "@/lib/enso-addresses";
 import { LLAMA_AIRFORCE as STATIC_LLAMA_AIRFORCE, TOKENS, VAULTS, VAULT_ADDRESSES, CURVE_SAVINGS, isYldfiVault as checkIsYldfiVault } from "@/config/vaults";
@@ -140,7 +140,7 @@ const MORPHO_ADAPTER_ABI = parseAbi([
   "function erc20TransferFrom(address token, address receiver, uint256 amount)",
   "function morphoWrapperDepositFor(address receiver, uint256 amount)",
 ]);
-const ENSO_ROUTER_EXECUTOR_ABI = parseAbi([
+const ENSO_ROUTER_V2_ABI = parseAbi([
   "function routeMulti((uint8 tokenType, bytes data)[] tokensIn, bytes data) payable returns (bytes)",
 ]);
 
@@ -214,9 +214,9 @@ function createLegacyMorphoPermitRequest(params: {
   if (params.innerEnsoData) {
     calls.push(
       morphoBundlerCall(
-        ENSO_ROUTER_EXECUTOR,
+        ENSO_ROUTER_V2,
         encodeFunctionData({
-          abi: ENSO_ROUTER_EXECUTOR_ABI,
+          abi: ENSO_ROUTER_V2_ABI,
           functionName: "routeMulti",
           args: [[], params.innerEnsoData],
         }),
@@ -276,13 +276,16 @@ export function buildLegacyMorphoPermitTransaction(params: {
 // cvxCRV token address - exported for backwards compatibility
 export const CVXCRV_ADDRESS = TOKENS.CVXCRV;
 
-// Enso router contract addresses
-// Old EnsoShortcutRouter
-export const ENSO_ROUTER = ENSO_ROUTER_ADDRESS;
-// Enso Router Executor — the CORRECT spender for user token approvals.
-// Enso's own /wallet/approve endpoint returns this address as the spender.
-// The Router pulls tokens via safeTransferFrom(msg.sender, enso, amount) in tokensIn.
-export const ENSO_ROUTER_EXECUTOR = ENSO_ROUTER_EXECUTOR_ADDRESS;
+// Enso router contract addresses.
+// Router V1: legacy EnsoShortcutRouter.
+export const ENSO_ROUTER_V1 = ENSO_ROUTER_V1_ADDRESS;
+// Router V2: current EnsoRouter and the correct spender for user token approvals.
+// Enso's /wallet/approve endpoint returns this address as the spender for router strategy.
+// The Router pulls tokens via safeTransferFrom(msg.sender, shortcuts, amount) in tokensIn.
+export const ENSO_ROUTER_V2 = ENSO_ROUTER_V2_ADDRESS;
+// Backwards-compatible aliases. Prefer ENSO_ROUTER_V1 / ENSO_ROUTER_V2 in new code.
+export const ENSO_ROUTER = ENSO_ROUTER_V1;
+export const ENSO_ROUTER_EXECUTOR = ENSO_ROUTER_V2;
 // EnsoShortcuts contract — shared singleton execution context.
 // This is msg.sender when Enso calls external contracts via the "call" action.
 // Used as a DESTINATION for tokens during bundle execution (e.g., mint/unwrap to here).
@@ -291,7 +294,7 @@ export const ENSO_ROUTER_EXECUTOR = ENSO_ROUTER_EXECUTOR_ADDRESS;
 // ENSO_SHORTCUTS is a shared contract — anyone can submit weiroll commands through
 // the Router that execute in ENSO_SHORTCUTS' context. If a user approves
 // ENSO_SHORTCUTS, their tokens can be drained via crafted routeMulti commands.
-// For user approvals, use ENSO_ROUTER_EXECUTOR (the Router) instead.
+// For user approvals, use ENSO_ROUTER_V2 (the Router) instead.
 // For complex flows needing mid-bundle token pulls, use the LlamaLendZapper contract.
 export const ENSO_SHORTCUTS = ENSO_SHORTCUTS_ADDRESS;
 const HYBRID_EXTRA_BUFFER_BPS = Number(process.env.ENSO_HYBRID_EXTRA_BUFFER_BPS ?? "200");
@@ -3185,7 +3188,7 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
       action: "approve",
       args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: { useOutputOfCallAt: 1 } },
     },
-    // Action 3: Wrap CVX → CVX1 (mint to ENSO_SHORTCUTS, not ENSO_ROUTER_EXECUTOR)
+    // Action 3: Wrap CVX → CVX1 (mint to ENSO_SHORTCUTS, not ENSO_ROUTER_V2)
     // CVX1 must go to ENSO_SHORTCUTS because Curve.exchange does transferFrom(msg.sender, ...)
     // and the Shortcuts contract is the one executing the Curve call
     {
@@ -4930,7 +4933,7 @@ async function buildSwapOnlyBundle(
   // Key insights:
   // 1. The route action outputs the CVX amount, which we reference with useOutputOfCallAt:0
   // 2. CVX → CVX1 is 1:1, so we can use the same output reference for CVX1 amounts
-  // 3. CVX1 must be minted to ENSO_SHORTCUTS (not ENSO_ROUTER_EXECUTOR) because the
+  // 3. CVX1 must be minted to ENSO_SHORTCUTS (not ENSO_ROUTER_V2) because the
   //    Curve exchange is executed BY the Shortcuts contract, and Curve.exchange does
   //    transferFrom(msg.sender, ...) to pull CVX1 from the caller
   //
@@ -5053,7 +5056,7 @@ async function buildMintOnlyBundle(
           address: TANGENT.CVGCVX_CONTRACT,
           method: "mint",
           abi: "function mint(address to, uint256 amount, bool isLock) returns (uint256)",
-          args: [ENSO_ROUTER_EXECUTOR, params.amountIn, true],
+          args: [ENSO_ROUTER_V2, params.amountIn, true],
         },
       },
       // Action 2: Approve cvgCVX → vault
@@ -5256,7 +5259,7 @@ async function buildHybridBundle(
           address: TANGENT.CVGCVX_CONTRACT,
           method: "mint",
           abi: "function mint(address to, uint256 amount, bool isLock) returns (uint256)",
-          args: [ENSO_ROUTER_EXECUTOR, mintAmount.toString(), true],
+          args: [ENSO_ROUTER_V2, mintAmount.toString(), true],
         },
       },
 
@@ -5381,7 +5384,7 @@ async function buildEthHybridBundle(
       args: {
         token: TOKENS.CVX,
         bps: feeBps,
-        receiver: ENSO_ROUTER_EXECUTOR, // Mint path CVX stays here
+        receiver: ENSO_ROUTER_V2, // Mint path CVX stays here
         amount: { useOutputOfCallAt: 0 },
       },
     },
@@ -5444,7 +5447,7 @@ async function buildEthHybridBundle(
         address: TANGENT.CVGCVX_CONTRACT,
         method: "mint",
         abi: "function mint(address to, uint256 amount, bool isLock) returns (uint256)",
-        args: [ENSO_ROUTER_EXECUTOR, { useOutputOfCallAt: 6 }, true],
+        args: [ENSO_ROUTER_V2, { useOutputOfCallAt: 6 }, true],
       },
     },
 
@@ -5719,7 +5722,7 @@ export async function fetchCvgCvxZapOutRoute(params: {
       protocol: "enso",
       action: "call",
       args: {
-        address: ENSO_ROUTER_EXECUTOR.toLowerCase(),
+        address: ENSO_ROUTER_V2.toLowerCase(),
         method: "routeMulti",
         abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)",
         args: [[], innerSwapData],
@@ -9695,7 +9698,7 @@ export async function fetchAnyFromUCrvRoute(params: {
       protocol: "enso",
       action: "call",
       args: {
-        address: ENSO_ROUTER_EXECUTOR.toLowerCase(),
+        address: ENSO_ROUTER_V2.toLowerCase(),
         method: "routeMulti",
         abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)",
         args: [[], innerSwapData],
@@ -9804,7 +9807,7 @@ export async function fetchAnyFromBeefyRoute(params: {
       protocol: "enso",
       action: "call",
       args: {
-        address: ENSO_ROUTER_EXECUTOR.toLowerCase(),
+        address: ENSO_ROUTER_V2.toLowerCase(),
         method: "routeMulti",
         abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)",
         args: [[], innerSwapData],
@@ -11081,7 +11084,7 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
       protocol: "enso",
       action: "call",
       args: {
-        address: ENSO_ROUTER_EXECUTOR.toLowerCase(),
+        address: ENSO_ROUTER_V2.toLowerCase(),
         method: "routeMulti",
         abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)",
         args: [[], innerSwapData],

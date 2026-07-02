@@ -13,7 +13,7 @@ import { CURVE_CONTROLLERS, LLAMA_AIRFORCE, TOKENS, VAULT_ADDRESSES } from "@/co
 const USER = "0xa88e98bBD2Af6DDD642407cB5455f956f0C553F0";
 const OTHER = "0x66215D23B8A247C80c2D1B7beF4BefC2AB384bCE";
 const ONE_ETHER = "1000000000000000000";
-const ENSO_ROUTER_EXECUTOR = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf";
+const ENSO_ROUTER_V2 = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf";
 const ENSO_SHORTCUTS = "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003";
 const MORPHO_BUNDLER3 = "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245";
 const LEGACY_MORPHO = "0x9994E35Db50125E0DF82e4c2dde62496CE330999";
@@ -538,7 +538,7 @@ describe("Enso intent validation", () => {
   it("allows only per-intent Enso router transaction targets in intent responses", () => {
     expect(() => assertEnsoIntentTxTarget("cvgCvxZapOut", {
       tx: {
-        to: ENSO_ROUTER_EXECUTOR,
+        to: ENSO_ROUTER_V2,
         data: ROUTE_SINGLE_CALLDATA,
         value: "0",
       },
@@ -549,7 +549,7 @@ describe("Enso intent validation", () => {
 
     expect(() => assertEnsoIntentTxTarget("externalVaultZapInToYld", {
       tx: {
-        to: ENSO_ROUTER_EXECUTOR,
+        to: ENSO_ROUTER_V2,
         data: ROUTE_SINGLE_CALLDATA,
         value: "0",
         from: USER,
@@ -563,7 +563,7 @@ describe("Enso intent validation", () => {
 
     expect(() => assertEnsoIntentTxTarget("anyToExternalVault", {
       tx: {
-        to: ENSO_ROUTER_EXECUTOR,
+        to: ENSO_ROUTER_V2,
         data: ROUTE_SINGLE_CALLDATA,
         value: "0",
         from: USER,
@@ -577,7 +577,7 @@ describe("Enso intent validation", () => {
 
     expect(() => assertEnsoIntentTxTarget("yldVaultToExternalVault", {
       tx: {
-        to: ENSO_ROUTER_EXECUTOR,
+        to: ENSO_ROUTER_V2,
         data: ROUTE_SINGLE_CALLDATA,
         value: "0",
         from: USER,
@@ -591,7 +591,7 @@ describe("Enso intent validation", () => {
 
     expect(() => assertEnsoIntentTxTarget("curveLendingRepayWithSwap", {
       tx: {
-        to: ENSO_ROUTER_EXECUTOR,
+        to: ENSO_ROUTER_V2,
         data: ROUTE_SINGLE_CALLDATA,
         value: "0",
         from: USER,
@@ -603,7 +603,7 @@ describe("Enso intent validation", () => {
 
     expect(() => assertEnsoIntentTxTarget("specialTokenToExternalVault", {
       tx: {
-        to: ENSO_ROUTER_EXECUTOR,
+        to: ENSO_ROUTER_V2,
         data: ROUTE_MULTI_CALLDATA,
         value: "0",
         from: USER,
@@ -666,7 +666,7 @@ describe("Enso intent validation", () => {
   it("rejects malformed Enso intent response payloads before returning them", () => {
     expect(() => assertEnsoIntentTxTarget("plainTokenSwap", {
       tx: {
-        to: ENSO_ROUTER_EXECUTOR,
+        to: ENSO_ROUTER_V2,
         data: "not-hex",
         value: "0",
       },
@@ -677,7 +677,7 @@ describe("Enso intent validation", () => {
 
     expect(() => assertEnsoIntentTxTarget("plainTokenSwap", {
       tx: {
-        to: ENSO_ROUTER_EXECUTOR,
+        to: ENSO_ROUTER_V2,
         data: ROUTE_SINGLE_CALLDATA,
         value: "0",
         from: USER,
@@ -693,7 +693,7 @@ describe("Enso intent validation", () => {
   it("rejects unexpected or undecodable Enso router calldata", () => {
     expect(() => assertEnsoIntentTxTarget("plainTokenSwap", {
       tx: {
-        to: ENSO_ROUTER_EXECUTOR,
+        to: ENSO_ROUTER_V2,
         data: ROUTE_MULTI_CALLDATA,
         value: "0",
       },
@@ -704,7 +704,7 @@ describe("Enso intent validation", () => {
 
     expect(() => assertEnsoIntentTxTarget("plainTokenSwap", {
       tx: {
-        to: ENSO_ROUTER_EXECUTOR,
+        to: ENSO_ROUTER_V2,
         data: "0xdeadbeef",
         value: "0",
       },
@@ -715,7 +715,7 @@ describe("Enso intent validation", () => {
 
     expect(() => assertEnsoIntentTxTarget("plainTokenSwap", {
       tx: {
-        to: ENSO_ROUTER_EXECUTOR,
+        to: ENSO_ROUTER_V2,
         data: "0xb94c3609",
         value: "0",
       },

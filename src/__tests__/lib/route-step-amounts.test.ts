@@ -67,7 +67,7 @@ import {
   fetchSpecialTokenToIlliquidRoute,
   fetchVaultToVaultRoute,
   fetchYldVaultToIlliquidRoute,
-  ENSO_ROUTER_EXECUTOR,
+  ENSO_ROUTER_V2,
   ENSO_SHORTCUTS,
   ETH_ADDRESS,
   LEGACY_MORPHO_ADDRESS,
@@ -266,7 +266,7 @@ describe("route step amounts", () => {
     expect(result.legacyMorphoPermit?.postPermitCalls).toHaveLength(3);
     expect(result.legacyMorphoPermit?.postPermitCalls[0].to).toBe(MORPHO_GENERAL_ADAPTER1_ADDRESS);
     expect(result.legacyMorphoPermit?.postPermitCalls[1].to).toBe(MORPHO_GENERAL_ADAPTER1_ADDRESS);
-    expect(result.legacyMorphoPermit?.postPermitCalls[2].to).toBe(ENSO_ROUTER_EXECUTOR);
+    expect(result.legacyMorphoPermit?.postPermitCalls[2].to).toBe(ENSO_ROUTER_V2);
     expect(result.amountsOut[ETH_ADDRESS.toLowerCase()]).toBe("1110269870387989");
     expect(result.priceImpact).toBe(33);
     expect(result.gas).toBe("528151");
@@ -362,7 +362,7 @@ describe("route step amounts", () => {
     expect(result.legacyMorphoPermit?.postPermitCalls).toHaveLength(3);
     expect(result.legacyMorphoPermit?.postPermitCalls[0].to).toBe(MORPHO_GENERAL_ADAPTER1_ADDRESS);
     expect(result.legacyMorphoPermit?.postPermitCalls[1].to).toBe(MORPHO_GENERAL_ADAPTER1_ADDRESS);
-    expect(result.legacyMorphoPermit?.postPermitCalls[2].to).toBe(ENSO_ROUTER_EXECUTOR);
+    expect(result.legacyMorphoPermit?.postPermitCalls[2].to).toBe(ENSO_ROUTER_V2);
     expect(result.amountsOut[TOKENS.CVXCRV.toLowerCase()]).toBe("27538222472939391973");
     expect(result.amountsOut[VAULT_ADDRESSES.YCVXCRV.toLowerCase()]).toBe("25000000000000000000");
     expect(result.gas).toBe("571888");
