@@ -123,7 +123,7 @@ jobs:
           DEBUG_RPC_AUTH: ${{ secrets.DEBUG_RPC_AUTH }}
 
       - name: Upload coverage reports
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         if: always()
         with:
           files: ./coverage/lcov.info
