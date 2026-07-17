@@ -82,6 +82,8 @@ export const CURVE_DEBT_TOO_HIGH_MESSAGE =
   "Curve rejected this partial repay: Debt too high. Repay more debt or close the loan.";
 export const SWAP_OUTPUT_BELOW_MINIMUM_MESSAGE =
   "Swap output below minimum. Increase the amount or slippage.";
+export const RPC_UNREACHABLE_MESSAGE =
+  "Could not reach the network RPC. Check your connection (or local fork) and try again.";
 
 // ---------------------------------------------------------------------------
 // Unified error parser — merges all detection from 4 former implementations
@@ -110,6 +112,22 @@ export function parseErrorMessage(error: unknown, defaultMsg?: string): string {
   // User rejection
   if (lower.includes("user rejected") || lower.includes("user denied") || lower.includes("user declined")) {
     return "Transaction cancelled";
+  }
+
+  // RPC/network unreachable — viem UnknownRpcError/HttpRequestError via wagmi,
+  // raw fetch failures from the direct test-network send path ("Failed to fetch"
+  // in Chrome, "Load failed" in Safari, "fetch failed" from undici)
+  if (
+    lower.includes("an unknown rpc error") ||
+    lower.includes("http request failed") ||
+    lower.includes("failed to fetch") ||
+    lower.includes("fetch failed") ||
+    lower.includes("load failed") ||
+    lower.includes("connection refused") ||
+    lower.includes("econnrefused") ||
+    lower.includes("took too long to respond")
+  ) {
+    return RPC_UNREACHABLE_MESSAGE;
   }
 
   // ERC20 allowance failures
