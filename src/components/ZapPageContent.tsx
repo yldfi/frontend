@@ -105,6 +105,7 @@ export function ZapPageContent() {
     toggleRoute,
   } = useSettings();
   const [isSimulatingPreview, setIsSimulatingPreview] = useState(false);
+  const [rateInverted, setRateInverted] = useState(false);
 
   // Token state
   const [inputToken, setInputTokenState] = useState<EnsoToken>(() =>
@@ -523,10 +524,17 @@ export function ZapPageContent() {
                   <div className="flex items-center justify-between py-1">
                     <span className="text-[var(--muted-foreground)]">Rate</span>
                     {quote ? (
-                      <span className="mono flex items-center gap-1">
-                        1 {inputToken.symbol} = {quote.exchangeRate.toFixed(4)} {outputToken.symbol}
+                      <button
+                        type="button"
+                        onClick={() => setRateInverted(v => !v)}
+                        className="flex items-center gap-1 mono hover:text-[var(--accent)] transition-colors"
+                      >
+                        {rateInverted
+                          ? <>1 {outputToken.symbol} = {(1 / quote.exchangeRate).toFixed(4)} {inputToken.symbol}</>
+                          : <>1 {inputToken.symbol} = {quote.exchangeRate.toFixed(4)} {outputToken.symbol}</>
+                        }
                         <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
-                      </span>
+                      </button>
                     ) : (
                       <span className="mono">—</span>
                     )}
