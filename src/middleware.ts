@@ -249,11 +249,12 @@ const maintenancePageHtml = `<!DOCTYPE html>
 </body>
 </html>`;
 
-// API endpoints that should bypass geo-blocking (for CI/testing and programmatic access)
-const GEO_EXEMPT_API_PATHS = [
+// Paths that should bypass geo-blocking (social cards for X, CI/testing, programmatic access)
+const GEO_EXEMPT_PATHS = [
   "/api/token-holders",
   "/api/simulate",
   "/api/vaults", // DefiLlama adapter
+  "/social/weekly-apy", // X social card (rendered by Browser Rendering)
 ];
 
 export function middleware(request: NextRequest) {
@@ -275,7 +276,7 @@ export function middleware(request: NextRequest) {
 
   // MAINTENANCE MODE — block everything except static assets and exempt APIs
   if (MAINTENANCE_MODE) {
-    if (GEO_EXEMPT_API_PATHS.some((path) => pathname.startsWith(path))) {
+    if (GEO_EXEMPT_PATHS.some((path) => pathname.startsWith(path))) {
       return NextResponse.next();
     }
     return new NextResponse(maintenancePageHtml, {
@@ -293,7 +294,7 @@ export function middleware(request: NextRequest) {
   const country = request.headers.get("cf-ipcountry") || "";
 
   // Allow geo-exempt API endpoints (for CI/testing)
-  if (GEO_EXEMPT_API_PATHS.some((path) => pathname.startsWith(path))) {
+  if (GEO_EXEMPT_PATHS.some((path) => pathname.startsWith(path))) {
     return NextResponse.next();
   }
 
