@@ -7,6 +7,7 @@ import { CookieConsent } from "@/components/CookieConsent";
 import { GoogleAnalytics } from "@/components/GoogleAnalytics";
 import { BetaBanner } from "@/components/BetaBanner";
 import { TestNetworkBanner } from "@/components/TestNetworkBanner";
+import { RpcStatusBanner } from "@/components/RpcStatusBanner";
 
 const Providers = dynamic(
   () => import("@/components/Providers").then((mod) => mod.Providers),
@@ -25,6 +26,7 @@ export function ClientProviders({ children }: { children: ReactNode }) {
     <Providers>
       <BetaBanner />
       <TestNetworkBanner />
+      <RpcStatusBanner />
       {children}
       <CookieConsent />
       {gaId && <GoogleAnalytics gaId={gaId} />}
