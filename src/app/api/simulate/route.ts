@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createPublicClient, encodeAbiParameters, http, keccak256, pad, parseAbiParameters, toHex, type Chain } from "viem";
+import { createPublicClient, encodeAbiParameters, formatUnits, http, keccak256, pad, parseAbiParameters, toHex, type Chain } from "viem";
 import { TOKENS, VAULT_ADDRESSES, CURVE_CONTROLLERS, getVaultByAddress, LLAMA_AIRFORCE, CONCENTRATOR, CURVE_SAVINGS, ASYMMETRY } from "@/config/vaults";
 import { fetchTokenPricesDirect, ENSO_ROUTER_V2, MORPHO_BUNDLER3_ADDRESS } from "@/lib/enso";
 import { CRVUSD_ADDRESS, USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
@@ -232,6 +232,16 @@ const VAULT_COLLATERAL_TOKENS = new Set([
 
 // crvUSD address imported from @/config/addresses
 
+// Canonical casing for well-known token symbols — Tenderly's own token_info.symbol
+// is sourced from its metadata service and can disagree with the on-chain symbol()
+// casing (e.g. returns "cvx" for CVX).
+const KNOWN_TOKEN_SYMBOLS: Record<string, string> = {
+  [TOKENS.CVX.toLowerCase()]: "CVX",
+  [TOKENS.CVXCRV.toLowerCase()]: "cvxCRV",
+  [TOKENS.CVGCVX.toLowerCase()]: "cvgCVX",
+  [TOKENS.PXCVX.toLowerCase()]: "pxCVX",
+};
+
 function processAssetChanges(
   assetChanges: TenderlyAssetChange[] | undefined,
   userAddress: string
@@ -246,6 +256,21 @@ function processAssetChanges(
     const to = change.to?.toLowerCase() ?? "";
     const tokenAddress = change.token_info?.contract_address?.toLowerCase() ?? "";
     const isCrvUsd = tokenAddress === CRVUSD_ADDRESS.toLowerCase();
+    const symbol = KNOWN_TOKEN_SYMBOLS[tokenAddress] ?? getVaultByAddress(tokenAddress)?.symbol ?? change.token_info?.symbol;
+
+    // Derive amount from raw_amount/decimals ourselves rather than trusting
+    // Tenderly's own precomputed `amount` — for tokens Tenderly hasn't indexed
+    // yet (e.g. a just-deployed vault), it comes back as "0" while raw_amount
+    // is still correct, which silently drops the row as dust downstream.
+    const amount = (() => {
+      try {
+        const raw = BigInt(change.raw_amount ?? "0");
+        if (raw === 0n) return "0";
+        return formatUnits(raw, change.token_info?.decimals ?? 18);
+      } catch {
+        return change.amount ?? "0";
+      }
+    })();
 
     const isUserSending = from === normalizedUser;
     const isUserReceiving = to === normalizedUser;
@@ -259,8 +284,8 @@ function processAssetChanges(
     if (isCrvUsd && isToController && !isFromController) {
       result.push({
         type: "repay",
-        symbol: change.token_info?.symbol ?? "crvUSD",
-        amount: change.amount ?? "0",
+        symbol: symbol ?? "crvUSD",
+        amount,
         rawAmount: change.raw_amount ?? "0",
         address: change.token_info?.contract_address ?? "",
         decimals: change.token_info?.decimals ?? 18,
@@ -275,8 +300,8 @@ function processAssetChanges(
     if (isCrvUsd && (isFromController || isMint)) {
       result.push({
         type: "borrow",
-        symbol: change.token_info?.symbol ?? "crvUSD",
-        amount: change.amount ?? "0",
+        symbol: symbol ?? "crvUSD",
+        amount,
         rawAmount: change.raw_amount ?? "0",
         address: change.token_info?.contract_address ?? "",
         decimals: change.token_info?.decimals ?? 18,
@@ -294,8 +319,8 @@ function processAssetChanges(
     if (isVaultCollateral && isToAmm) {
       result.push({
         type: "deposit",
-        symbol: change.token_info?.symbol ?? "???",
-        amount: change.amount ?? "0",
+        symbol: symbol ?? "???",
+        amount,
         rawAmount: change.raw_amount ?? "0",
         address: change.token_info?.contract_address ?? "",
         decimals: change.token_info?.decimals ?? 18,
@@ -309,8 +334,8 @@ function processAssetChanges(
     if (isVaultCollateral && isFromAmm) {
       result.push({
         type: "receive",
-        symbol: change.token_info?.symbol ?? "???",
-        amount: change.amount ?? "0",
+        symbol: symbol ?? "???",
+        amount,
         rawAmount: change.raw_amount ?? "0",
         address: change.token_info?.contract_address ?? "",
         decimals: change.token_info?.decimals ?? 18,
@@ -325,8 +350,8 @@ function processAssetChanges(
 
     result.push({
       type: isUserSending ? "send" : "receive",
-      symbol: change.token_info?.symbol ?? "???",
-      amount: change.amount ?? "0",
+      symbol: symbol ?? "???",
+      amount,
       rawAmount: change.raw_amount ?? "0",
       address: change.token_info?.contract_address ?? "",
       decimals: change.token_info?.decimals ?? 18,
