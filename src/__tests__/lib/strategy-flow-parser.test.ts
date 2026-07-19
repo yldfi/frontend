@@ -123,6 +123,54 @@ contract PxCVXCompounder is BaseStrategy {
 }
 `;
 
+// Mirrors the real deployed ysCVX strategy (0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e):
+// asset is validated via `if (_asset != address(POOL.stakingToken())) revert(...)`
+// (not the `require(_asset == address(X))` style the other snippets use), and
+// the reward token constant CVXCRV shares a name prefix with the asset's own
+// family, which used to make the parser misdetect the asset as cvxCRV.
+const CVX_COMPOUNDER_SNIPPET = `
+contract CVXCompounder is BaseStrategy, AuctionSwapper {
+    using SafeERC20 for IERC20;
+
+    ICvxRewardPool public constant CVX_REWARD_POOL = ICvxRewardPool(0xCF50b810E57Ac33B91dCF525C6ddd9881B139332);
+    address public constant CVXCRV = 0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7;
+
+    constructor(address _asset, string memory _name) BaseStrategy(_asset, _name) {
+        if (_asset != address(CVX_REWARD_POOL.stakingToken())) revert InvalidAsset();
+        IERC20(_asset).forceApprove(address(CVX_REWARD_POOL), type(uint256).max);
+    }
+
+    function _deployFunds(uint256 _amount) internal override {
+        CVX_REWARD_POOL.stake(_amount);
+    }
+
+    function _freeFunds(uint256 _amount) internal override {
+        CVX_REWARD_POOL.withdraw(Math.min(_amount, CVX_REWARD_POOL.balanceOf(address(this))), false);
+    }
+
+    function _harvestAndReport() internal override returns (uint256 _totalAssets) {
+        // Claim cvxCRV rewards
+        CVX_REWARD_POOL.getReward(address(this), false, false);
+        uint256 idleBalance = asset.balanceOf(address(this));
+        if (idleBalance > 0 && !TokenizedStrategy.isShutdown()) {
+            _deployFunds(idleBalance);
+        }
+        _totalAssets = CVX_REWARD_POOL.balanceOf(address(this)) + asset.balanceOf(address(this));
+    }
+
+    function kickable(address _token) public view override returns (uint256) {
+        if (_token != CVXCRV) return 0;
+        return super.kickable(_token);
+    }
+}
+
+contract AuctionSwapper is BaseSwapper {
+    address public auction;
+    bool public useAuction;
+    function kickAuction(address _from) external virtual returns (uint256) {}
+}
+`;
+
 describe("Strategy Flow Parser", () => {
   describe("CvxCrvCompounder (AuctionSwapper inheritance)", () => {
     it("should parse correctly", () => {
@@ -262,6 +310,51 @@ describe("Strategy Flow Parser", () => {
 
       // pxCVX sits directly in strategy, no external staking
       expect(result.config!.yieldSource.depositFn).toBe("hold");
+    });
+  });
+
+  describe("CVXCompounder (asset validated via pool.stakingToken(), not require(_asset==))", () => {
+    it("detects CVX as the asset, not the cvxCRV reward-token constant", () => {
+      const result = parseStrategySource(
+        CVX_COMPOUNDER_SNIPPET,
+        "0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e",
+        "CVXCompounder",
+        "v0.8.28"
+      );
+
+      expect(result.success).toBe(true);
+      // Regression: the parser used to have no "CVX" case at all and only
+      // matched the require(_asset == address(X)) constructor style, so it
+      // fell through to a whole-source scan and grabbed "cvxCRV" (the reward
+      // token constant) as the asset instead — mislabeling the entire vault
+      // as "yscvxCRV" everywhere in the generated diagram.
+      expect(result.config!.asset.symbol).toBe("CVX");
+    });
+
+    it("reports cvxCRV as the sole reward token, not CVX and CRV separately", () => {
+      const result = parseStrategySource(
+        CVX_COMPOUNDER_SNIPPET,
+        "0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e",
+        "CVXCompounder",
+        "v0.8.28"
+      );
+
+      // Regression: with the asset misdetected as "cvxCRV", the real reward
+      // (cvxCRV) got skipped as "same as asset" and the generic CRV/CVX
+      // substring matches were added instead, showing "CRV + CVX" as two
+      // separate rewards.
+      expect(result.config!.rewards.tokens).toEqual(["cvxCRV"]);
+    });
+
+    it("detects the auction compounding mechanism", () => {
+      const result = parseStrategySource(
+        CVX_COMPOUNDER_SNIPPET,
+        "0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e",
+        "CVXCompounder",
+        "v0.8.28"
+      );
+
+      expect(result.config!.compounding.mechanism).toBe("auction");
     });
   });
 });
