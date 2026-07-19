@@ -405,8 +405,8 @@ export const VAULTS: Record<string, VaultConfig> = {
   },
   yscvx: {
     id: "yscvx",
-    name: "yscvx",
-    symbol: "yscvx",
+    name: "ysCVX",
+    symbol: "ysCVX",
     address: VAULT_ADDRESSES.YSCVX,
     type: "strategy",
     asset: "CVX",
