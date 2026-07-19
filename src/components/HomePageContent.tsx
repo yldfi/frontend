@@ -149,9 +149,10 @@ export function HomePageContent() {
   const { price: cvxCrvPriceOnChain } = useCvxCrvPrice();
   // Fall back to cache only if on-chain price not available yet
   const cvxCrvPrice = cvxCrvPriceOnChain || cacheData?.cvxCrvPrice || 0;
-  // cvgCVX and pxCVX still use cache (no on-chain oracle hooks yet)
+  // cvgCVX, pxCVX and CVX still use cache (no on-chain oracle hooks yet)
   const cvgCvxPrice = cacheData?.cvgCvxPrice ?? 0;
   const pxCvxPrice = 0; // TODO: uncomment when yspxcvx is live — cacheData?.pxCvxPrice ?? 0
+  const cvxPrice = cacheData?.cvxPrice ?? 0;
 
   // Fetch lending position for vaults with LlamaLend markets
   const { position: ycvxcrvLendingPosition } = useCurveLendingPosition(
@@ -181,12 +182,14 @@ export function HomePageContent() {
     VAULT_ADDRESSES.YSCVXCRV,
     VAULT_ADDRESSES.YSCVGCVX,
     VAULT_ADDRESSES.YSPXCVX,
+    VAULT_ADDRESSES.YSCVX,
   ]);
 
   const ycvxcrvPricePerShare = pricePerShareData[0]?.pricePerShare ?? 1;
   const yscvxcrvPricePerShare = pricePerShareData[1]?.pricePerShare ?? 1;
   const yscvgcvxPricePerShare = pricePerShareData[2]?.pricePerShare ?? 1;
   const yspxcvxPricePerShare = pricePerShareData[3]?.pricePerShare ?? 1;
+  const yscvxPricePerShare = pricePerShareData[4]?.pricePerShare ?? 1;
 
   // Fetch user vault balances
   const { balances } = useMultipleVaultBalances([
@@ -210,6 +213,11 @@ export function HomePageContent() {
       pricePerShare: yspxcvxPricePerShare,
       assetPriceUsd: pxCvxPrice,
     },
+    {
+      address: VAULT_ADDRESSES.YSCVX,
+      pricePerShare: yscvxPricePerShare,
+      assetPriceUsd: cvxPrice,
+    },
   ]);
 
   // Use cache for fast initial load, Yearn API for APY
@@ -221,12 +229,14 @@ export function HomePageContent() {
   const yscvxcrvNetApy = cacheData?.yscvxcrv?.apy ?? yscvxcrvVault?.apy ?? 0;
   const yscvgcvxNetApy = cacheData?.yscvgcvx?.apy ?? yscvgcvxVault?.apy ?? 0;
   const yspxcvxNetApy = yspxcvxVault?.apy ?? 0;
+  const yscvxNetApy = cacheData?.yscvx?.apy ?? 0;
 
   // Use cached TVL (fast) or fall back to Yearn API TVL
   const ycvxcrvTvl = cacheData?.ycvxcrv?.tvlUsd ?? ycvxcrvVault?.tvl ?? 0;
   const yscvxcrvTvl = cacheData?.yscvxcrv?.tvlUsd ?? yscvxcrvVault?.tvl ?? 0;
   const yscvgcvxTvl = cacheData?.yscvgcvx?.tvlUsd ?? 0;
   const yspxcvxTvl = yspxcvxVault?.tvl ?? 0; // TODO: uncomment when yspxcvx is live — cacheData?.yspxcvx?.tvlUsd ?? ...
+  const yscvxTvl = cacheData?.yscvx?.tvlUsd ?? 0;
 
   // Get TVL for each vault by ID
   const getTvlForVault = (id: string): number => {
@@ -235,6 +245,7 @@ export function HomePageContent() {
       case "yscvxcrv": return yscvxcrvTvl;
       case "yscvgcvx": return yscvgcvxTvl;
       case "yspxcvx": return yspxcvxTvl;
+      case "yscvx": return yscvxTvl;
       default: return 0;
     }
   };
@@ -246,6 +257,7 @@ export function HomePageContent() {
       case "yscvxcrv": return yscvxcrvNetApy;
       case "yscvgcvx": return yscvgcvxNetApy;
       case "yspxcvx": return yspxcvxNetApy;
+      case "yscvx": return yscvxNetApy;
       default: return 0;
     }
   };
@@ -256,6 +268,7 @@ export function HomePageContent() {
     [VAULT_ADDRESSES.YSCVXCRV.toLowerCase()]: balances[1],
     [VAULT_ADDRESSES.YSCVGCVX.toLowerCase()]: balances[2],
     [VAULT_ADDRESSES.YSPXCVX.toLowerCase()]: balances[3],
+    [VAULT_ADDRESSES.YSCVX.toLowerCase()]: balances[4],
   };
 
   // Lending position lookup by vault ID
@@ -295,7 +308,7 @@ export function HomePageContent() {
   });
 
   // Total TVL across all vaults
-  const totalTvl = yscvxcrvTvl + yscvgcvxTvl + yspxcvxTvl;
+  const totalTvl = yscvxcrvTvl + yscvgcvxTvl + yspxcvxTvl + yscvxTvl;
   const totalTvlFormatted = totalTvl >= 1_000_000
     ? `$${(totalTvl / 1_000_000).toFixed(2)}M`
     : totalTvl >= 1_000
