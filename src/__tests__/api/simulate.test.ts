@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { encodeAbiParameters, keccak256, parseAbiParameters } from "viem";
+import { encodeAbiParameters, formatUnits, keccak256, parseAbiParameters } from "viem";
 
 // ---- Re-implement pure logic from src/app/api/simulate/route.ts ----
 
@@ -156,6 +156,11 @@ const CURVE_AMM_ADDRESSES = new Set([
 const VAULT_COLLATERAL_TOKENS = new Set([
   "0x95f19b19aff698169a1a0bbc28a2e47b14cb9a86",
 ]);
+// Canonical casing for well-known token symbols — Tenderly's own token_info.symbol
+// can disagree with the on-chain symbol() casing (e.g. returns "cvx" for CVX).
+const KNOWN_TOKEN_SYMBOLS: Record<string, string> = {
+  "0x4e3fbd56cd56c3e72c1403e103b45db9da5b9d2b": "CVX",
+};
 
 function processAssetChanges(
   assetChanges: TenderlyAssetChange[] | undefined,
@@ -172,6 +177,21 @@ function processAssetChanges(
     const tokenAddress =
       change.token_info?.contract_address?.toLowerCase() ?? "";
     const isCrvUsd = tokenAddress === CRVUSD_ADDRESS.toLowerCase();
+    const symbol = KNOWN_TOKEN_SYMBOLS[tokenAddress] ?? change.token_info?.symbol;
+
+    // Derive amount from raw_amount/decimals ourselves rather than trusting
+    // Tenderly's own precomputed `amount` — for tokens Tenderly hasn't indexed
+    // yet (e.g. a just-deployed vault), it comes back as "0" while raw_amount
+    // is still correct, which silently drops the row as dust downstream.
+    const amount = (() => {
+      try {
+        const raw = BigInt(change.raw_amount ?? "0");
+        if (raw === 0n) return "0";
+        return formatUnits(raw, change.token_info?.decimals ?? 18);
+      } catch {
+        return change.amount ?? "0";
+      }
+    })();
 
     const isUserSending = from === normalizedUser;
     const isUserReceiving = to === normalizedUser;
@@ -183,8 +203,8 @@ function processAssetChanges(
     if (isCrvUsd && isToController && !isFromController) {
       result.push({
         type: "repay",
-        symbol: change.token_info?.symbol ?? "crvUSD",
-        amount: change.amount ?? "0",
+        symbol: symbol ?? "crvUSD",
+        amount,
         rawAmount: change.raw_amount ?? "0",
         address: change.token_info?.contract_address ?? "",
         decimals: change.token_info?.decimals ?? 18,
@@ -197,8 +217,8 @@ function processAssetChanges(
     if (isCrvUsd && (isFromController || isMint)) {
       result.push({
         type: "borrow",
-        symbol: change.token_info?.symbol ?? "crvUSD",
-        amount: change.amount ?? "0",
+        symbol: symbol ?? "crvUSD",
+        amount,
         rawAmount: change.raw_amount ?? "0",
         address: change.token_info?.contract_address ?? "",
         decimals: change.token_info?.decimals ?? 18,
@@ -215,8 +235,8 @@ function processAssetChanges(
     if (isVaultCollateral && isToAmm) {
       result.push({
         type: "deposit",
-        symbol: change.token_info?.symbol ?? "???",
-        amount: change.amount ?? "0",
+        symbol: symbol ?? "???",
+        amount,
         rawAmount: change.raw_amount ?? "0",
         address: change.token_info?.contract_address ?? "",
         decimals: change.token_info?.decimals ?? 18,
@@ -229,8 +249,8 @@ function processAssetChanges(
     if (isVaultCollateral && isFromAmm) {
       result.push({
         type: "receive",
-        symbol: change.token_info?.symbol ?? "???",
-        amount: change.amount ?? "0",
+        symbol: symbol ?? "???",
+        amount,
         rawAmount: change.raw_amount ?? "0",
         address: change.token_info?.contract_address ?? "",
         decimals: change.token_info?.decimals ?? 18,
@@ -244,8 +264,8 @@ function processAssetChanges(
 
     result.push({
       type: isUserSending ? "send" : "receive",
-      symbol: change.token_info?.symbol ?? "???",
-      amount: change.amount ?? "0",
+      symbol: symbol ?? "???",
+      amount,
       rawAmount: change.raw_amount ?? "0",
       address: change.token_info?.contract_address ?? "",
       decimals: change.token_info?.decimals ?? 18,
@@ -715,6 +735,74 @@ describe("Simulate API", () => {
         USER
       );
       expect(changes[0].dollarValue).toBe("42.50");
+    });
+
+    it("derives amount from raw_amount when Tenderly's own amount is 0 (unindexed token)", () => {
+      // Tenderly returns amount:"0" for tokens it hasn't seen before (e.g. a
+      // freshly-deployed vault) even though raw_amount/decimals are correct —
+      // this silently dropped the row as dust before the fix.
+      const changes = processAssetChanges(
+        [
+          makeChange({
+            from: "0xSender",
+            to: USER,
+            amount: "0",
+            raw_amount: "210504506594801098457",
+          }),
+        ],
+        USER
+      );
+      expect(changes).toHaveLength(1);
+      expect(changes[0].amount).toBe("210.504506594801098457");
+    });
+
+    it("falls back to Tenderly's amount when raw_amount is genuinely 0", () => {
+      const changes = processAssetChanges(
+        [
+          makeChange({
+            from: "0xSender",
+            to: USER,
+            amount: "0",
+            raw_amount: "0",
+          }),
+        ],
+        USER
+      );
+      expect(changes[0].amount).toBe("0");
+    });
+
+    it("derives amount from raw_amount on the send leg too (e.g. withdraw burning shares)", () => {
+      // Same Tenderly quirk can hit either leg of a tx — withdraw burns vault
+      // shares (a "send" from the user) before returning the underlying asset.
+      const changes = processAssetChanges(
+        [
+          makeChange({
+            from: USER,
+            to: "0xRecipient",
+            amount: "0",
+            raw_amount: "210504506594801098457",
+          }),
+        ],
+        USER
+      );
+      expect(changes).toHaveLength(1);
+      expect(changes[0].type).toBe("send");
+      expect(changes[0].amount).toBe("210.504506594801098457");
+    });
+
+    it("overrides Tenderly's lowercase CVX symbol with canonical casing", () => {
+      const changes = processAssetChanges(
+        [
+          makeChange({
+            tokenAddress: "0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B",
+            symbol: "cvx",
+            from: USER,
+            to: "0xRecipient",
+          }),
+        ],
+        USER
+      );
+      expect(changes[0].symbol).toBe("CVX");
     });
   });
 
