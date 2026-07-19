@@ -105,6 +105,7 @@ interface Env {
   RPC_URL?: string;
   ALCHEMY_RPC_URL?: string;
   INFURA_RPC_URL?: string;
+  ENSO_API_KEY?: string;
 }
 
 type LogLevel = "info" | "warn" | "error";
@@ -384,11 +385,12 @@ interface KongResponse {
 /**
  * Fetch token price from Enso API (corrected URL format)
  */
-async function getTokenPrice(tokenAddress: string): Promise<number> {
+async function getTokenPrice(tokenAddress: string, apiKey: string | undefined): Promise<number> {
+  if (!apiKey) return 0;
   try {
     const response = await fetchWithRetry(
       `https://api.enso.finance/api/v1/prices/1/${tokenAddress}`,
-      undefined,
+      { headers: { Authorization: `Bearer ${apiKey}` } },
       2
     );
     if (response.ok) {
@@ -455,10 +457,10 @@ async function fetchVaultData(env: Env, logger: Logger) {
     fetchKongVaults(),
     getVaultData(YSPXCVX_VAULT, rpcUrls, logger),
     getVaultData(YSCVX_VAULT, rpcUrls, logger),
-    getTokenPrice(CVXCRV_TOKEN),
-    getTokenPrice(CVGCVX_TOKEN),
-    getTokenPrice(PXCVX_TOKEN),
-    getTokenPrice(CVX_TOKEN),
+    getTokenPrice(CVXCRV_TOKEN, env.ENSO_API_KEY),
+    getTokenPrice(CVGCVX_TOKEN, env.ENSO_API_KEY),
+    getTokenPrice(PXCVX_TOKEN, env.ENSO_API_KEY),
+    getTokenPrice(CVX_TOKEN, env.ENSO_API_KEY),
   ]);
 
   // Kong is critical — if it fails, throw so we don't overwrite cache with empty data
