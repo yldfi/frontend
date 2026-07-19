@@ -276,6 +276,26 @@ function extractYieldSource(source: string, _contractBody: string): YieldSourceI
 }
 
 /**
+ * Loose substring match for identifiers that aren't a plain token constant
+ * (e.g. a pool variable like CVX_REWARD_POOL). Checked in most-specific-first
+ * order so a CVX derivative isn't misread as plain CVX.
+ */
+function inferSymbolFromName(name: string): string | null {
+  const lower = name.toLowerCase();
+  if (lower.includes("pxcvx")) return "pxCVX";
+  if (lower.includes("cvxcrv")) return "cvxCRV";
+  if (lower.includes("cvgcvx")) return "cvgCVX";
+  if (lower.includes("cvx")) return "CVX";
+  if (lower.includes("wsteth")) return "wstETH";
+  if (lower.includes("steth")) return "stETH";
+  if (lower.includes("weth")) return "WETH";
+  if (lower.includes("dai")) return "DAI";
+  if (lower.includes("usdc")) return "USDC";
+  if (lower.includes("usdt")) return "USDT";
+  return null;
+}
+
+/**
  * Extract asset information
  */
 function extractAsset(
@@ -287,6 +307,7 @@ function extractAsset(
     { pattern: /pxCVX|PXCVX/i, symbol: "pxCVX" },
     { pattern: /cvxCRV/i, symbol: "cvxCRV" },
     { pattern: /cvgCVX/i, symbol: "cvgCVX" },
+    { pattern: /\bCVX\b/, symbol: "CVX" },
     { pattern: /yCRV/i, symbol: "yCRV" },
     { pattern: /yPRISMA/i, symbol: "yPRISMA" },
     { pattern: /wstETH/i, symbol: "wstETH" },
@@ -297,8 +318,15 @@ function extractAsset(
     { pattern: /\bUSDT\b/, symbol: "USDT" },
   ];
 
-  // Check constructor for asset requirement
-  const constructorMatch = source.match(/require\s*\(\s*_asset\s*==\s*address\s*\(\s*(\w+)\s*\)/);
+  // Check constructor for asset requirement — try both common validation
+  // styles: `require(_asset == address(X))` and `if (_asset != address(X…))
+  // revert(...)`. This is far more reliable than scanning the whole file for
+  // ANY token mention, which false-positives when a strategy's reward-token
+  // constant (e.g. CVXCRV) appears more prominently in the source than its
+  // actual asset (e.g. CVX, which had no case here at all).
+  const constructorMatch =
+    source.match(/require\s*\(\s*_asset\s*==\s*address\s*\(\s*(\w+)/) ||
+    source.match(/if\s*\(\s*_asset\s*!=\s*address\s*\(\s*(\w+)/);
   if (constructorMatch) {
     const varName = constructorMatch[1];
     // Look up what this constant/variable refers to
@@ -306,6 +334,12 @@ function extractAsset(
       if (pattern.test(varName)) {
         return { symbol, address: "" };
       }
+    }
+    // Not a plain token constant (e.g. a pool like CVX_REWARD_POOL) — infer
+    // from the identifier's name before falling back to the whole-source scan.
+    const inferred = inferSymbolFromName(varName);
+    if (inferred) {
+      return { symbol: inferred, address: "" };
     }
   }
 
