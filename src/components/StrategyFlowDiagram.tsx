@@ -580,14 +580,19 @@ function AuctionNode({ data }: { data: AuctionNodeData }) {
             </svg>
           </div>
 
-          {/* Target asset (right side) */}
+          {/* Target asset (right side) — minWidth set above the reward pills'
+              50px floor so it reads as visually larger/more prominent
+              regardless of how short the target symbol happens to be,
+              instead of relying on padding-vs-minWidth math that only
+              coincidentally differs from the reward pills for some tokens */}
           <div
-            className="px-3 py-2 rounded text-[11px] font-mono border font-semibold"
+            className="px-3 py-2 rounded text-[11px] font-mono border font-semibold text-center"
             style={{
               background: "var(--background)",
               color: "#a855f7",
               borderColor: "#a855f7",
               borderStyle: data.isAnimating ? "dashed" : "solid",
+              minWidth: "70px",
             }}
           >
             {data.targetAsset}
