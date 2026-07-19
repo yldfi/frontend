@@ -288,9 +288,9 @@ export function getExternalVaultUnderlying(address: string): string | undefined 
 
 // Vault addresses
 export const VAULT_ADDRESSES = {
-  // CVX vaults (not yet deployed - update when deployed)
-  YCVX: "0x0000000000000000000000000000000000000000" as const,
-  YSCVX: "0x0000000000000000000000000000000000000000" as const,
+  // CVX vaults
+  YCVX: "0x0000000000000000000000000000000000000000" as const, // meta-vault not yet deployed
+  YSCVX: "0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e" as const,
   // cvxCRV vaults
   YCVXCRV: "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86" as const,
   YSCVXCRV: "0xCa960E6DF1150100586c51382f619efCCcF72706" as const,
@@ -428,7 +428,6 @@ export const VAULTS: Record<string, VaultConfig> = {
     },
     chain: "Ethereum",
     version: "v3",
-    hidden: true, // Not yet deployed
   },
   // cvxCRV vaults
   ycvxcrv: {
