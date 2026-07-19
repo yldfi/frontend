@@ -16,6 +16,8 @@ import { useMultipleVaultBalances } from "@/hooks/useVaultBalance";
 import { useMultiplePricePerShare } from "@/hooks/usePricePerShare";
 import { useVaultCache } from "@/hooks/useVaultCache";
 import { useCvxCrvPrice } from "@/hooks/useCvxCrvPrice";
+import { useCvxPrice } from "@/hooks/useCvxPrice";
+import { useCvgCvxPrice } from "@/hooks/useCvgCvxPrice";
 import { useCurveLendingPosition, formatHealth } from "@/hooks/useCurveLendingPosition";
 import {
   VAULTS,
@@ -145,14 +147,16 @@ export function HomePageContent() {
   const yscvgcvxVault = formatYearnVaultData(yscvgcvxData?.vault, yscvgcvxData?.vaultStrategies);
   const yspxcvxVault = formatYearnVaultData(yspxcvxData?.vault, yspxcvxData?.vaultStrategies);
 
-  // Use on-chain cvxCRV price (like vault detail page) to avoid $0 on cache miss
+  // Use on-chain prices (avoids $0 on cache miss), falling back to cache only
+  // if the on-chain read isn't available yet
   const { price: cvxCrvPriceOnChain } = useCvxCrvPrice();
-  // Fall back to cache only if on-chain price not available yet
+  const { price: cvxPriceOnChain } = useCvxPrice();
+  const { price: cvgCvxPriceOnChain } = useCvgCvxPrice();
   const cvxCrvPrice = cvxCrvPriceOnChain || cacheData?.cvxCrvPrice || 0;
-  // cvgCVX, pxCVX and CVX still use cache (no on-chain oracle hooks yet)
-  const cvgCvxPrice = cacheData?.cvgCvxPrice ?? 0;
+  const cvxPrice = cvxPriceOnChain || cacheData?.cvxPrice || 0;
+  const cvgCvxPrice = cvgCvxPriceOnChain || cacheData?.cvgCvxPrice || 0;
+  // pxCVX still has no on-chain oracle hook
   const pxCvxPrice = 0; // TODO: uncomment when yspxcvx is live — cacheData?.pxCvxPrice ?? 0
-  const cvxPrice = cacheData?.cvxPrice ?? 0;
 
   // Fetch lending position for vaults with LlamaLend markets
   const { position: ycvxcrvLendingPosition } = useCurveLendingPosition(

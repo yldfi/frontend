@@ -62,6 +62,8 @@ import { useVaultBalance } from "@/hooks/useVaultBalance";
 import { useVaultData, formatFee } from "@/hooks/useVaultData";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { useCvxCrvPrice } from "@/hooks/useCvxCrvPrice";
+import { useCvxPrice } from "@/hooks/useCvxPrice";
+import { useCvgCvxPrice } from "@/hooks/useCvgCvxPrice";
 import { usePricePerShare } from "@/hooks/usePricePerShare";
 import { useVaultCache } from "@/hooks/useVaultCache";
 import { useVaultActions } from "@/hooks/useVaultActions";
@@ -676,27 +678,38 @@ export function VaultPageContent({ id }: { id: string }) {
   const rewardApr = rewardOpportunity?.apr;
   const isCampaignLive = rewardOpportunity?.status === "LIVE";
 
-  // Fetch cvxCRV price from on-chain oracles
-  const { price: cvxCrvPrice } = useCvxCrvPrice();
+  // Fetch cvxCRV/CVX/cvgCVX prices from on-chain oracles (cache is the fallback)
+  const { price: cvxCrvPriceOnChain } = useCvxCrvPrice();
+  const { price: cvxPriceOnChain } = useCvxPrice();
+  const { price: cvgCvxPriceOnChain } = useCvgCvxPrice();
 
   // Fetch vault cache for all underlying prices and on-chain APYs
   const { data: vaultCache } = useVaultCache();
+
+  const cvxCrvPrice = cvxCrvPriceOnChain || vaultCache?.cvxCrvPrice || 0;
+  const cvxPrice = cvxPriceOnChain || vaultCache?.cvxPrice || 0;
+  const cvgCvxPrice = cvgCvxPriceOnChain || vaultCache?.cvgCvxPrice || 0;
 
   // On-chain APY from cache (convertToAssets now vs 24h ago), fallback to Kong
   const cachedApy = vault ? (vaultCache as Record<string, { apy?: number | null }> | undefined)?.[vault.id]?.apy : null;
   const displayApy = cachedApy != null ? `${cachedApy.toFixed(2)}%` : displayApyFormatted;
 
-  // Get the correct underlying price based on vault's asset
+  // Get the correct underlying price based on vault's asset. No catch-all
+  // default — an asset symbol with no case here should read as $0 (visibly
+  // broken) rather than silently inherit an unrelated token's price.
   const getUnderlyingPrice = (): number => {
-    if (!vault) return cvxCrvPrice;
+    if (!vault) return 0;
     switch (vault.assetSymbol) {
       case "cvgCVX":
-        return vaultCache?.cvgCvxPrice ?? 0;
+        return cvgCvxPrice;
       case "pxCVX":
         return vaultCache?.pxCvxPrice ?? 0;
+      case "CVX":
+        return cvxPrice;
       case "cvxCRV":
-      default:
         return cvxCrvPrice;
+      default:
+        return 0;
     }
   };
   const underlyingPrice = getUnderlyingPrice();

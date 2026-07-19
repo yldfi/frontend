@@ -39,6 +39,31 @@ describe("VaultPageContent logic", () => {
     });
   });
 
+  describe("underlying price selection", () => {
+    // getUnderlyingPrice() is a closure inside the component (not exported),
+    // so this guards its wiring via source assertions rather than execution —
+    // same pattern used above for the balance-address wiring.
+    it("has an explicit case per vault asset and no misleading fallback price", () => {
+      const source = readFileSync(join(process.cwd(), "src/components/VaultPageContent.tsx"), "utf-8");
+      const fnMatch = source.match(/const getUnderlyingPrice = \(\): number => \{[\s\S]*?\n  \};/);
+      expect(fnMatch).not.toBeNull();
+      const fn = fnMatch![0];
+
+      // Every deployed vault asset symbol must have its own case — regression
+      // guard for the bug where CVX (no case) silently fell through to the
+      // cvxCRV price ($0.09 instead of ~$1.20, an ~8% instead of correct value).
+      for (const vault of Object.values(VAULTS)) {
+        if (vault.hidden) continue;
+        expect(fn).toContain(`case "${vault.assetSymbol}"`);
+      }
+
+      // No vault context and no matching case must both read as $0, not
+      // silently inherit an unrelated token's price.
+      expect(fn).toMatch(/if \(!vault\) return 0;/);
+      expect(fn).toMatch(/default:\s*\n\s*return 0;/);
+    });
+  });
+
   describe("vaultsData configuration", () => {
     const YCVXCRV_ADDRESS = "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86";
     const YSCVXCRV_ADDRESS = "0x27B5739e22ad9033bcBf192059122d163b60349D";
