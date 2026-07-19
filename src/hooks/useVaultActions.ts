@@ -345,6 +345,41 @@ export function useVaultActions(
       return simResult.result ?? null;
     }
 
+    // Tenderly is unavailable (network error/timeout — e.g. its first look at a
+    // freshly deployed contract runs slow) but the chain-level eth_call passed.
+    // Surface the "simulation unavailable" modal state instead of silently
+    // falling through to a real wallet signature with no preview at all.
+    // Mirrors the same fallback in useZapActions.
+    if (!simResult.ok && ethCallResult.ok) {
+      const rawMsg = simResult.errorMessage;
+      const unavailableReason = typeof rawMsg === "string"
+        ? rawMsg
+        : (rawMsg as { message?: string; slug?: string } | null)?.message
+          ?? (rawMsg as { message?: string; slug?: string } | null)?.slug
+          ?? "Simulation temporarily unavailable";
+      const unavailableResult: SimulationResult = simResult.result
+        ? {
+            ...simResult.result,
+            success: true,
+            simulationUnavailable: true,
+            simulationUnavailableReason: unavailableReason,
+            errorMessage: null,
+          }
+        : {
+            success: true,
+            gasUsed: null,
+            simulationId: null,
+            tenderlyUrl: null,
+            assetChanges: [],
+            errorMessage: null,
+            simulationUnavailable: true,
+            simulationUnavailableReason: unavailableReason,
+          };
+      setSimulationResult(unavailableResult);
+      setActionState("idle");
+      return unavailableResult;
+    }
+
     return simResult.result ?? null;
   }, [userAddress, vaultAddress, publicClient, testNetworkType, chainId]);
 

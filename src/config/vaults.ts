@@ -416,7 +416,7 @@ export const VAULTS: Record<string, VaultConfig> = {
     assetDecimals: 18,
     description: "Auto-compounding CVX staking rewards via Convex",
     longDescription:
-      "This strategy accepts CVX deposits and stakes them on Convex Finance's cvxRewardPool. Earned cvxCRV rewards are automatically auctioned for more CVX and re-deposited to compound your position. Lower 5% performance fee but cannot be used as collateral on LlamaLend.",
+      "This strategy accepts CVX deposits and stakes them on Convex Finance's cvxRewardPool. Earned cvxCRV rewards are automatically auctioned for more CVX and re-deposited to compound your position.",
     strategy: "Convex CVX Compounder",
     badges: ["Convex", "CVX", "Compounder"],
     logo: "/yscvx-128.png",
