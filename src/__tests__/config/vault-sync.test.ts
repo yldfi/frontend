@@ -40,6 +40,12 @@ describe("vault address sync", () => {
     expect(match).not.toBeNull();
     expect(match![1].toLowerCase()).toBe(TOKENS.CVXCRV.toLowerCase());
   });
+
+  it("worker has correct YSCVX_VAULT address", () => {
+    const match = workerContent.match(/const YSCVX_VAULT = "([^"]+)"/);
+    expect(match).not.toBeNull();
+    expect(match![1].toLowerCase()).toBe(VAULT_ADDRESSES.YSCVX.toLowerCase());
+  });
 });
 
 describe("vault lifecycle flags", () => {

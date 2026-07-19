@@ -75,6 +75,7 @@ const YSCVXCRV_VAULT = "0xCa960E6DF1150100586c51382f619efCCcF72706";
 const YCVGCVX_VAULT = "0x0849b046292293f78dF3002F8461f8A7e2eC2b82";
 const YSCVGCVX_VAULT = "0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359";
 const YSPXCVX_VAULT = "0xB246DB2A73EEE3ee026153660c74657C123f8E42";
+const YSCVX_VAULT = "0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e";
 
 // Function selectors
 const TOTAL_ASSETS = "0x01e1d114"; // totalAssets()
@@ -450,9 +451,10 @@ async function fetchVaultData(env: Env, logger: Logger) {
   logger.info("fetchVaultData", `Using ${rpcUrls.length} RPCs (${privateRpcs.length} private, ${publicRpcs.length} chainlist)`);
 
   // Use allSettled so one failure doesn't kill the entire update
-  const [kongResult, yspxcvxResult, cvxCrvPriceResult, cvgCvxPriceResult, pxCvxPriceResult, cvxPriceResult] = await Promise.allSettled([
+  const [kongResult, yspxcvxResult, yscvxResult, cvxCrvPriceResult, cvgCvxPriceResult, pxCvxPriceResult, cvxPriceResult] = await Promise.allSettled([
     fetchKongVaults(),
     getVaultData(YSPXCVX_VAULT, rpcUrls, logger),
+    getVaultData(YSCVX_VAULT, rpcUrls, logger),
     getTokenPrice(CVXCRV_TOKEN),
     getTokenPrice(CVGCVX_TOKEN),
     getTokenPrice(PXCVX_TOKEN),
@@ -467,9 +469,12 @@ async function fetchVaultData(env: Env, logger: Logger) {
   const kongData = kongResult.value;
   logger.info("fetchVaultData", "Kong data fetched");
 
-  // yspxcvx and prices are non-critical — use fallback values
+  // yspxcvx, yscvx and prices are non-critical — use fallback values
   const yspxcvxData = yspxcvxResult.status === "fulfilled"
     ? yspxcvxResult.value
+    : { totalAssets: "0", pricePerShare: "0", tvl: 0, pps: 0 };
+  const yscvxData = yscvxResult.status === "fulfilled"
+    ? yscvxResult.value
     : { totalAssets: "0", pricePerShare: "0", tvl: 0, pps: 0 };
   const cvxCrvPrice = cvxCrvPriceResult.status === "fulfilled"
     ? cvxCrvPriceResult.value
@@ -510,6 +515,11 @@ async function fetchVaultData(env: Env, logger: Logger) {
   } else {
     logger.info("fetchVaultData", "yspxcvx data fetched", { tvl: yspxcvxData.tvl });
   }
+  if (yscvxResult.status === "rejected") {
+    logger.error("fetchVaultData", "yscvx RPC failed (using zeros)", { error: String(yscvxResult.reason) });
+  } else {
+    logger.info("fetchVaultData", "yscvx data fetched", { tvl: yscvxData.tvl });
+  }
   if (cvxCrvPriceResult.status === "rejected") {
     logger.error("fetchVaultData", "cvxCRV price failed (using 0)", { error: String(cvxCrvPriceResult.reason) });
   }
@@ -531,11 +541,13 @@ async function fetchVaultData(env: Env, logger: Logger) {
       getVaultAPY(YCVXCRV_VAULT, currentBlock, rpcUrls, logger),
       getVaultAPY(YSCVXCRV_VAULT, currentBlock, rpcUrls, logger),
       getVaultAPY(YSCVGCVX_VAULT, currentBlock, rpcUrls, logger),
+      getVaultAPY(YSCVX_VAULT, currentBlock, rpcUrls, logger),
     ]);
     apys = {
       ycvxcrv: vaultAPYs[0].status === "fulfilled" ? vaultAPYs[0].value : null,
       yscvxcrv: vaultAPYs[1].status === "fulfilled" ? vaultAPYs[1].value : null,
       yscvgcvx: vaultAPYs[2].status === "fulfilled" ? vaultAPYs[2].value : null,
+      yscvx: vaultAPYs[3].status === "fulfilled" ? vaultAPYs[3].value : null,
     };
     logger.info("fetchVaultData", "On-chain APYs computed", apys as Record<string, unknown>);
   } catch (e) {
@@ -547,9 +559,20 @@ async function fetchVaultData(env: Env, logger: Logger) {
     yscvxcrv: { ...formatKongVault(YSCVXCRV_VAULT, kongData.data.yscvxcrv), apy: apys.yscvxcrv ?? null },
     ycvgcvx: { ...formatKongVault(YCVGCVX_VAULT, kongData.data.ycvgcvx), apy: null },
     yscvgcvx: { ...formatKongVault(YSCVGCVX_VAULT, kongData.data.yscvgcvx), apy: apys.yscvgcvx ?? null },
+    // yscvx not yet indexed by Kong (standalone strategy, no Yearn allocator vault) — direct RPC
+    yscvx: {
+      address: YSCVX_VAULT,
+      totalAssets: yscvxData.totalAssets,
+      pricePerShare: yscvxData.pricePerShare,
+      tvl: yscvxData.tvl,
+      pps: yscvxData.pps,
+      tvlUsd: yscvxData.tvl * cvxPrice,
+      apy: apys.yscvx ?? null,
+    },
     // yspxcvx excluded until vault is live
     cvxCrvPrice,
     cvgCvxPrice,
+    cvxPrice,
     lastUpdated: new Date().toISOString(),
   };
 }

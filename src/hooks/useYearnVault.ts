@@ -78,6 +78,7 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 // Strategies with no Yearn vault — not in Kong API, skip to avoid wasted requests
 const KONG_EXCLUDED_VAULTS = new Set([
   "0xB246DB2A73EEE3ee026153660c74657C123f8E42".toLowerCase(), // yspxcvx — standalone strategy, no Yearn vault
+  "0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e".toLowerCase(), // yscvx — standalone strategy, no Yearn vault
 ]);
 
 export function useYearnVault(address: string, chainId: number = 1) {
