@@ -62,7 +62,7 @@
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.1.4",
-    "@vitest/coverage-v8": "4.1.9",
+    "@vitest/coverage-v8": "4.1.10",
     "cross-fetch": "4.1.0",
     "dotenv": "17.4.2",
     "eslint": "9.39.2",
@@ -73,7 +73,7 @@
     "next": "16.2.6",
     "tailwindcss": "4.3.0",
     "typescript": "6.0.3",
-    "vitest": "4.1.9",
+    "vitest": "4.1.10",
     "wrangler": "4.90.0"
   },
   "packageManager": "pnpm@10.7.0"
