@@ -9,6 +9,7 @@ import {
   getSimulationPriceLookupAddresses,
   resolveSimulationDollarValue,
 } from "@/lib/simulation-pricing";
+import { getERC20AllowanceSlot } from "@/lib/token-storage-slots";
 
 export const dynamic = "force-dynamic";
 
@@ -615,6 +616,7 @@ export async function POST(request: NextRequest) {
     nonce?: string;
     expires?: number;
     sig?: string;
+    approvalOverride?: boolean;
   };
 
   try {
@@ -740,18 +742,32 @@ export async function POST(request: NextRequest) {
   };
 
   const inputToken = body.inputToken?.toLowerCase();
-  const shouldOverrideCvx = inputToken === TOKENS.CVX.toLowerCase();
   const normalizedGas = normalizeTenderlyGas(body.gas);
-  const overrides = shouldOverrideCvx
-    ? {
-        [TOKENS.CVX]: {
-          storage: {
-            [computeERC20BalanceSlot(body.from)]: toStorageValue(MAX_UINT256),
-            [computeERC20AllowanceSlot(body.from, ENSO_ROUTER_V2)]: toStorageValue(MAX_UINT256),
-          },
-        },
-      }
-    : undefined;
+  // Tenderly state overrides (field `state_objects`): set custom contract
+  // storage before the simulation runs. Keys are raw 32-byte storage slots.
+  const stateObjects: Record<string, { storage: Record<string, string> }> = {};
+  if (inputToken === TOKENS.CVX.toLowerCase()) {
+    // CVX reserves the full balance + allowance in the simulation because the
+    // yCVX strategy reads the raw CVX balance even though the actual funds are
+    // represented by vault shares.
+    stateObjects[TOKENS.CVX] = {
+      storage: {
+        [computeERC20BalanceSlot(body.from)]: toStorageValue(MAX_UINT256),
+        [computeERC20AllowanceSlot(body.from, ENSO_ROUTER_V2, BigInt(getERC20AllowanceSlot(inputToken)))]: toStorageValue(MAX_UINT256),
+      },
+    };
+  } else if (inputToken && body.approvalOverride === true) {
+    // The swap input token is granted to the Enso Router (an approval just
+    // confirmed on-chain, or an existing sufficient allowance). Force the
+    // simulated allowance so a lagging Tenderly indexer doesn't see a stale
+    // zero allowance and report a spurious "execution reverted". Uses the
+    // token's per-layout allowance slot; unknown tokens default to slot 1.
+    stateObjects[inputToken] = {
+      storage: {
+        [computeERC20AllowanceSlot(body.from, ENSO_ROUTER_V2, BigInt(getERC20AllowanceSlot(inputToken)))]: toStorageValue(MAX_UINT256),
+      },
+    };
+  }
 
   const tenderlyRequest = {
     network_id: body.networkId?.toString() ?? "1",
@@ -764,7 +780,7 @@ export async function POST(request: NextRequest) {
     save_if_fails: true,   // Always save failures for debugging
     // The UI only needs gas usage and asset/balance changes, not decoded traces.
     simulation_type: "quick",
-    overrides,
+    state_objects: Object.keys(stateObjects).length > 0 ? stateObjects : undefined,
   };
   logSimulate("start", {
     from: shortAddress(body.from),
@@ -773,7 +789,7 @@ export async function POST(request: NextRequest) {
     networkId: tenderlyRequest.network_id,
     simulationType: tenderlyRequest.simulation_type,
     gas: normalizedGas ?? null,
-    hasOverrides: Boolean(overrides),
+    hasOverrides: Object.keys(stateObjects).length > 0,
   });
 
   // Helper to try eth_call as fallback

@@ -329,7 +329,56 @@ describe("useZapActions preview fallback", () => {
     });
   });
 
-  it("signs a legacy MORPHO permit and simulates the prepared bundler transaction", async () => {
+  it("requests an approval storage override for standard ERC20 zaps", async () => {
+    const simulateBodyRef: { current?: Record<string, unknown> } = {};
+    // Grant a sufficient allowance so the zap reaches simulation (no approval
+    // card short-circuit) for the ERC20 USDC quote.
+    mockUseReadContract.mockReturnValue({
+      data: maxUint256,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useReadContract>);
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/api/simulate/nonce")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            nonce: "test-nonce",
+            expires: Date.now() + 60_000,
+            sig: "test-sig",
+          }),
+        });
+      }
+      if (url.includes("/api/simulate")) {
+        simulateBodyRef.current = JSON.parse(String(init?.body));
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            gasUsed: "12345",
+            simulationId: "sim-id",
+            tenderlyUrl: null,
+            assetChanges: [],
+            errorMessage: null,
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }));
+
+    const { result } = renderHook(() => useZapActions(mockUsdcQuote));
+
+    await act(async () => {
+      await result.current.executeZap({ previewOnly: true });
+    });
+
+    expect(simulateBodyRef.current?.inputToken).toBe(mockUsdcToken.address);
+    // Standard ERC20 zap → the server should force the Enso Router allowance
+    // so a lagging Tenderly indexer doesn't report a stale reverting pull.
+    expect(simulateBodyRef.current?.approvalOverride).toBe(true);
+  });
+
+  it("does not request an approval override for legacy MORPHO permit zaps", async () => {
     const readContract = vi.fn().mockResolvedValue(7n);
     const signTypedData = vi.fn().mockResolvedValue(
       `0x${"11".repeat(32)}${"22".repeat(32)}1b`
@@ -440,6 +489,8 @@ describe("useZapActions preview fallback", () => {
       inputToken: LEGACY_MORPHO_ADDRESS,
     });
     expect(simulateBodyRef.current?.data).not.toBe("0x");
+    // Permit flows set allowance inside the transaction, so no approval override.
+    expect(simulateBodyRef.current?.approvalOverride).toBe(false);
     expect(mockSendTx).not.toHaveBeenCalled();
   });
 });

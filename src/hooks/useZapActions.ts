@@ -495,6 +495,15 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
                 data: txParams.data,
                 value: txParams.value.toString(),
                 inputToken: quote.inputToken.address,
+                // The swap pulls the input token via the Enso Router, which
+                // requires an allowance. When the approval has just confirmed
+                // on-chain, Tenderly's indexer can lag and still see a stale
+                // (zero) allowance, causing a spurious "execution reverted".
+                // Signal the server to force that allowance via a storage
+                // override so the simulation reflects the real approval state.
+                // Only valid for standard ERC20 zaps (permit flows handle
+                // allowance inside the transaction itself).
+                approvalOverride: quote.legacyMorphoPermit ? false : true,
                 nonce: nonceResult.nonce,
                 expires: nonceResult.expires,
                 sig: nonceResult.sig,
