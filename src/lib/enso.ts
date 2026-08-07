@@ -1993,9 +1993,11 @@ export async function fetchWalletBalances(walletAddress: string): Promise<EnsoWa
       chainId: CHAIN_ID,
       decimals: b.decimals,
       price: Number(b.price),
-      name: override?.name ?? b.name,
-      symbol: override?.symbol ?? b.symbol,
-      logoUri: b.logoUri,
+      // viem returns nullable strings for these fields; normalize null → undefined
+      // to match the EnsoWalletBalance shape.
+      name: override?.name ?? b.name ?? undefined,
+      symbol: override?.symbol ?? b.symbol ?? undefined,
+      logoUri: b.logoUri ?? undefined,
     };
   });
 }
