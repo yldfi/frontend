@@ -253,6 +253,7 @@ const maintenancePageHtml = `<!DOCTYPE html>
 const GEO_EXEMPT_PATHS = [
   "/api/token-holders",
   "/api/simulate",
+  "/api/history", // Self-sampled vault history proxy
   "/api/vaults", // DefiLlama adapter
   "/social/weekly-apy", // X social card (rendered by Browser Rendering)
 ];
