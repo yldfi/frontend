@@ -238,7 +238,7 @@ export function HomePageContent() {
   // Use cached TVL (fast) or fall back to Yearn API TVL
   const ycvxcrvTvl = cacheData?.ycvxcrv?.tvlUsd ?? ycvxcrvVault?.tvl ?? 0;
   const yscvxcrvTvl = cacheData?.yscvxcrv?.tvlUsd ?? yscvxcrvVault?.tvl ?? 0;
-  const yscvgcvxTvl = cacheData?.yscvgcvx?.tvlUsd ?? 0;
+  const yscvgcvxTvl = cacheData?.yscvgcvx?.tvlUsd ?? yscvgcvxVault?.tvl ?? 0;
   const yspxcvxTvl = yspxcvxVault?.tvl ?? 0; // TODO: uncomment when yspxcvx is live — cacheData?.yspxcvx?.tvlUsd ?? ...
   const yscvxTvl = cacheData?.yscvx?.tvlUsd ?? 0;
 

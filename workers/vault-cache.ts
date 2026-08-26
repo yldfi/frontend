@@ -101,6 +101,7 @@ function bigIntToNumber18(value: bigint): number {
 interface Env {
   VAULT_CACHE: KVNamespace;
   LOGS: D1Database;
+  HISTORY: R2Bucket;
   REFRESH_SECRET?: string;
   RPC_URL?: string;
   ALCHEMY_RPC_URL?: string;
@@ -429,11 +430,18 @@ async function fetchKongVaults(): Promise<KongResponse> {
 }
 
 /**
- * Convert Kong vault data to our response format
+ * Convert Kong vault data to our response format.
+ * Kong's `tvl.close` can be null for new/small vaults whose TVL timeseries the
+ * indexer hasn't backfilled yet. In that case fall back to the on-chain
+ * `totalAssets * price` (we already fetch on-chain assets + token prices), so
+ * the card never renders $0.
  */
-function formatKongVault(address: string, data: KongVaultData | null) {
+function formatKongVault(address: string, data: KongVaultData | null, price: number) {
   const totalAssets = data?.totalAssets ? BigInt(data.totalAssets) : 0n;
   const pricePerShare = data?.pricePerShare ? BigInt(data.pricePerShare) : 0n;
+
+  const totalAssetsUsd = bigIntToNumber18(totalAssets) * price;
+  const tvlUsd = data?.tvl?.close ? Number(data.tvl.close) : totalAssetsUsd;
 
   return {
     address,
@@ -441,7 +449,7 @@ function formatKongVault(address: string, data: KongVaultData | null) {
     pricePerShare: pricePerShare.toString(),
     tvl: bigIntToNumber18(totalAssets),
     pps: bigIntToNumber18(pricePerShare),
-    tvlUsd: data?.tvl?.close ?? 0,
+    tvlUsd,
   };
 }
 
@@ -557,10 +565,10 @@ async function fetchVaultData(env: Env, logger: Logger) {
   }
 
   return {
-    ycvxcrv: { ...formatKongVault(YCVXCRV_VAULT, kongData.data.ycvxcrv), apy: apys.ycvxcrv ?? null },
-    yscvxcrv: { ...formatKongVault(YSCVXCRV_VAULT, kongData.data.yscvxcrv), apy: apys.yscvxcrv ?? null },
-    ycvgcvx: { ...formatKongVault(YCVGCVX_VAULT, kongData.data.ycvgcvx), apy: null },
-    yscvgcvx: { ...formatKongVault(YSCVGCVX_VAULT, kongData.data.yscvgcvx), apy: apys.yscvgcvx ?? null },
+    ycvxcrv: { ...formatKongVault(YCVXCRV_VAULT, kongData.data.ycvxcrv, cvxCrvPrice), apy: apys.ycvxcrv ?? null },
+    yscvxcrv: { ...formatKongVault(YSCVXCRV_VAULT, kongData.data.yscvxcrv, cvxCrvPrice), apy: apys.yscvxcrv ?? null },
+    ycvgcvx: { ...formatKongVault(YCVGCVX_VAULT, kongData.data.ycvgcvx, cvgCvxPrice), apy: null },
+    yscvgcvx: { ...formatKongVault(YSCVGCVX_VAULT, kongData.data.yscvgcvx, cvgCvxPrice), apy: apys.yscvgcvx ?? null },
     // yscvx not yet indexed by Kong (standalone strategy, no Yearn allocator vault) — direct RPC
     yscvx: {
       address: YSCVX_VAULT,
@@ -575,8 +583,85 @@ async function fetchVaultData(env: Env, logger: Logger) {
     cvxCrvPrice,
     cvgCvxPrice,
     cvxPrice,
+    pxCvxPrice,
     lastUpdated: new Date().toISOString(),
   };
+}
+
+/**
+ * Vaults with no Kong timeseries (standalone strategies not indexed by Kong).
+ * We sample totalAssets/pricePerShare ourselves on each cron and append to the
+ * R2 history so the frontend can render TVL/performance charts for them.
+ */
+const SELF_SAMPLED_VAULTS = [
+  { key: "yscvx", address: YSCVX_VAULT },
+  { key: "yspxcvx", address: YSPXCVX_VAULT },
+] as const;
+
+interface HistorySeries {
+  version: number;
+  generatedAt: string;
+  tvl: { t: number; v: number }[];
+  pps: { t: number; v: number }[];
+}
+
+// Round down to the start of the UTC day to dedupe to one sample/day.
+function toDayBucket(unixSec: number): number {
+  return Math.floor(unixSec / 86400) * 86400;
+}
+
+async function readHistorySeries(bucket: R2Bucket, key: string): Promise<HistorySeries> {
+  const obj = await bucket.get(key);
+  if (!obj) return { version: 1, generatedAt: "1970-01-01T00:00:00.000Z", tvl: [], pps: [] };
+  const raw = await obj.text();
+  // Best-effort parse — corrupt/old shapes are discarded.
+  try {
+    return JSON.parse(raw) as HistorySeries;
+  } catch {
+    return { version: 1, generatedAt: "1970-01-01T00:00:00.000Z", tvl: [], pps: [] };
+  }
+}
+
+// Append (or replace the current day's) point to a series, keeping the raw
+// list compact and strictly time-ascending.
+function appendSeriesPoint(series: { t: number; v: number }[], t: number, v: number): void {
+  if (series.length > 0 && series[series.length - 1].t === t) {
+    series[series.length - 1].v = v;
+    return;
+  }
+  if (series.length > 0 && series[series.length - 1].t > t) return; // out-of-order, ignore
+  series.push({ t, v });
+  // Keep history bounded to ~2 years to keep the JSON small.
+  const MAX_POINTS = 730;
+  if (series.length > MAX_POINTS) series.splice(0, series.length - MAX_POINTS);
+}
+
+/**
+ * Sample totalAssets/pps for self-hosted strategies into R2 history.
+ * Runs on every cron; dedupes to one point per day per metric.
+ */
+async function sampleHistory(env: Env, logger: Logger, rpcUrls: string[], cvxPrice: number, pxCvxPrice: number) {
+  for (const { key, address } of SELF_SAMPLED_VAULTS) {
+    try {
+      const data = await getVaultData(address, rpcUrls, logger);
+      const underlyingPrice = key === "yscvx" ? cvxPrice : pxCvxPrice;
+      if (underlyingPrice <= 0) {
+        logger.warn("sampleHistory", `Skipping ${key} — underlying price unavailable`, { cvxPrice, pxCvxPrice });
+        continue;
+      }
+      const t = toDayBucket(Math.floor(Date.now() / 1000));
+      const series = await readHistorySeries(env.HISTORY, `history/${key}.json`);
+      appendSeriesPoint(series.tvl, t, data.tvl * underlyingPrice);
+      appendSeriesPoint(series.pps, t, data.pps);
+      series.generatedAt = new Date().toISOString();
+      await env.HISTORY.put(`history/${key}.json`, JSON.stringify(series), {
+        httpMetadata: { contentType: "application/json" },
+      });
+      logger.info("sampleHistory", `Recorded ${key}`, { tvlUsd: data.tvl * underlyingPrice, pps: data.pps });
+    } catch (e) {
+      logger.warn("sampleHistory", `Failed for ${key}`, { error: String(e) });
+    }
+  }
 }
 
 export default {
@@ -593,6 +678,17 @@ export default {
         expirationTtl: 86400, // 24h TTL — stale data beats 503
       });
       logger.info("scheduled", "Vault data cached", { lastUpdated: data.lastUpdated });
+
+      // Sample on-chain history for strategies Kong doesn't index (yscvx, yspxcvx).
+      // Must not block/short-circuit the main cache write if it fails.
+      try {
+        const privateRpcs = [env.RPC_URL, env.ALCHEMY_RPC_URL, env.INFURA_RPC_URL].filter(Boolean) as string[];
+        const publicRpcs = await getPublicRpcUrls(env.VAULT_CACHE);
+        const rpcUrls = [...privateRpcs, ...publicRpcs];
+        await sampleHistory(env, logger, rpcUrls, (data as { cvxPrice?: number }).cvxPrice ?? 0, (data as { pxCvxPrice?: number }).pxCvxPrice ?? 0);
+      } catch (e) {
+        logger.error("scheduled", "History sampling failed (non-fatal)", { error: String(e) });
+      }
     } catch (error) {
       logger.error("scheduled", "Failed to cache vault data", { error: String(error) });
     }
@@ -678,6 +774,28 @@ export default {
       ctx.waitUntil(logger.flush(env.LOGS));
       return new Response(JSON.stringify(data), {
         headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // GET /api/history?vault=yscvx&metric=tvl|pps - Serve self-sampled R2 history
+    if (url.pathname === "/api/history") {
+      const key = url.searchParams.get("key");
+      const metric = url.searchParams.get("metric") === "pps" ? "pps" : "tvl";
+      const allowed = SELF_SAMPLED_VAULTS.some((v) => v.key === key);
+      if (!key || !allowed) {
+        return new Response(JSON.stringify({ error: "Invalid key" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      const series = await readHistorySeries(env.HISTORY, `history/${key}.json`);
+      const points = (series[metric] ?? []).map((p) => ({ time: p.t, value: p.v }));
+      return new Response(JSON.stringify({ data: { timeseries: points } }), {
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "public, max-age=3600",
+          "Access-Control-Allow-Origin": "*",
+        },
       });
     }
 

@@ -15,10 +15,19 @@ const HISTORY_CACHE = {
 // Route through Next.js GET proxy so Cloudflare can cache at the edge.
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
-// Strategies with no Yearn vault — not in Kong API
+// Strategies with no Yearn vault — not in Kong API. Their history is served
+// from our own on-chain sampler instead (see SELF_SAMPLED_KEYS below).
 const KONG_EXCLUDED_VAULTS = new Set([
   "0xB246DB2A73EEE3ee026153660c74657C123f8E42".toLowerCase(), // yspxcvx
+  "0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e".toLowerCase(), // yscvx
 ]);
+
+// Map excluded vault addresses → the key under which the cache worker samples
+// history into R2 (served via /api/history?key=<key>).
+const SELF_SAMPLED_KEYS: Record<string, string> = {
+  ["0xB246DB2A73EEE3ee026153660c74657C123f8E42".toLowerCase()]: "yspxcvx",
+  ["0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e".toLowerCase()]: "yscvx",
+};
 
 interface TimeseriesPoint {
   value: number;
@@ -34,6 +43,22 @@ async function fetchTimeseries(op: "tvl" | "pps", params: {
   address: string;
   limit: number;
 }): Promise<TimeseriesPoint[]> {
+  // Strategies without a Kong timeseries fetch from our own R2-backed history
+  // (sampled on-chain by the cache worker cron). Return empty on any failure so
+  // the chart renders "No history available" rather than crashing.
+  if (KONG_EXCLUDED_VAULTS.has(params.address.toLowerCase())) {
+    const vaultKey = SELF_SAMPLED_KEYS[params.address.toLowerCase()];
+    if (!vaultKey) return [];
+    try {
+      const response = await fetch(`/api/history?key=${vaultKey}&metric=${op}`);
+      if (!response.ok) return [];
+      const result: TimeseriesResponse = await response.json();
+      return result.data?.timeseries ?? [];
+    } catch {
+      return [];
+    }
+  }
+
   const qs = new URLSearchParams({
     chainId: String(params.chainId),
     address: params.address,
@@ -47,7 +72,11 @@ async function fetchTimeseries(op: "tvl" | "pps", params: {
 }
 
 function isQueryable(address: string) {
-  return !!address && address !== ZERO_ADDRESS && !KONG_EXCLUDED_VAULTS.has(address.toLowerCase());
+  if (!address || address === ZERO_ADDRESS) return false;
+  const lower = address.toLowerCase();
+  // Self-sampled strategies are queryable (they hit our R2-backed history).
+  if (SELF_SAMPLED_KEYS[lower]) return true;
+  return !KONG_EXCLUDED_VAULTS.has(lower);
 }
 
 export interface HistoryPoint {

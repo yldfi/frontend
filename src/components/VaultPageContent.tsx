@@ -694,6 +694,11 @@ export function VaultPageContent({ id }: { id: string }) {
   const cachedApy = vault ? (vaultCache as Record<string, { apy?: number | null }> | undefined)?.[vault.id]?.apy : null;
   const displayApy = cachedApy != null ? `${cachedApy.toFixed(2)}%` : displayApyFormatted;
 
+  // TVL from Kong, fallback to cached on-chain tvlUsd for vaults Kong doesn't
+  // index (yscvx) or whose Kong tvl.close is missing (would otherwise be $0/—)
+  const cachedTvlUsd = vault ? (vaultCache as Record<string, { tvlUsd?: number }> | undefined)?.[vault.id]?.tvlUsd : undefined;
+  const displayTvlFormatted = yearnVault?.tvlFormatted ?? (cachedTvlUsd ? formatUsd(cachedTvlUsd) : "—");
+
   // Get the correct underlying price based on vault's asset. No catch-all
   // default — an asset symbol with no case here should read as $0 (visibly
   // broken) rather than silently inherit an unrelated token's price.
@@ -1648,7 +1653,7 @@ export function VaultPageContent({ id }: { id: string }) {
                     <span className="text-xs font-medium uppercase tracking-wider">TVL</span>
                   </div>
                   <p className="mono xl:text-2xl text-xl font-medium">
-                    {yearnLoading ? "..." : yearnVault?.tvlFormatted ?? "—"}
+                    {yearnLoading ? "..." : displayTvlFormatted}
                   </p>
                 </div>
 

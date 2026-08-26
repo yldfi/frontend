@@ -13,3 +13,8 @@ id = "196d1aceae10469bb4bde0495b3e3ae0"
 binding = "LOGS"
 database_name = "yldfi-logs"
 database_id = "b2f2df39-1663-4507-8e58-5a21c4b14770"
+
+[[r2_buckets]]
+binding = "HISTORY"
+bucket_name = "yldfi-history"
+preview_bucket_name = "yldfi-history"
