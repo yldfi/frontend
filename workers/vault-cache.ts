@@ -303,6 +303,11 @@ const CVX_TOKEN = "0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B";
 const LPXCVX_CVX_POOL = "0x72725C0C879489986D213A9A6D2116dE45624c1c"; // CryptoSwap: coin0=CVX, coin1=lpxCVX
 const CVX1_CVGCVX_POOL = "0xc50E191F703FB3160fC15d8b168A8c740fec3666"; // StableSwap: coin0=CVX1, coin1=cvgCVX
 
+// Chainlink CVX/USD price feed — used to convert on-chain CVX balances to USD
+// when building historical (backfilled) TVL. latestRoundData() answer is 8dp.
+const CVX_USD_FEED = "0xc27e191714b429c51e18fafba6a4c31135b2e157";
+const LATEST_ROUND_DATA = "0xfeaf968c"; // latestRoundData()
+
 // get_dy selectors — encoded with abi.encodeWithSelector
 // CryptoSwap: get_dy(uint256 i, uint256 j, uint256 dx) → 0x556d6e9f
 // StableSwap: get_dy(int128 i, int128 j, uint256 dx)   → 0x5e0d443f
@@ -636,6 +641,24 @@ function appendSeriesPoint(series: { t: number; v: number }[], t: number, v: num
   if (series.length > MAX_POINTS) series.splice(0, series.length - MAX_POINTS);
 }
 
+// Insert/replace a point at its sorted position (used by backfill, which adds
+// past days before the existing "today" point, unlike the forward sampler).
+function upsertSeriesPoint(series: { t: number; v: number }[], t: number, v: number): void {
+  for (let i = 0; i < series.length; i++) {
+    if (series[i].t === t) {
+      series[i].v = v;
+      return;
+    }
+    if (series[i].t > t) {
+      series.splice(i, 0, { t, v });
+      return;
+    }
+  }
+  series.push({ t, v });
+  const MAX_POINTS = 730;
+  if (series.length > MAX_POINTS) series.splice(0, series.length - MAX_POINTS);
+}
+
 /**
  * Sample totalAssets/pps for self-hosted strategies into R2 history.
  * Runs on every cron; dedupes to one point per day per metric.
@@ -662,6 +685,158 @@ async function sampleHistory(env: Env, logger: Logger, rpcUrls: string[], cvxPri
       logger.warn("sampleHistory", `Failed for ${key}`, { error: String(e) });
     }
   }
+}
+
+// Inception (deploy) block for the self-sampled strategies. Used by the
+// archive backfill to scope the historical range. Verified on-chain:
+//   yscvx:    tx 0xc2e9... created block 25565641
+//   yspxcvx:  tx 0xe7b7... created block 23926415
+const BACKFILL_INCEPTION: Record<string, { block: number }> = {
+  yscvx: { block: 25565641 },
+  yspxcvx: { block: 23926415 },
+};
+
+// Historical underlying USD price for backfilled TVL, from the Chainlink
+// CVX/USD feed (8dp). pxCVX is a 1:1 wrapped CVX, so CVX/USD applies to both
+// vaults. Uses latestRoundData() at the given historical block.
+async function historicalUnderlyingPrice(key: string, blockHex: string, rpcUrls: string[], logger: Logger): Promise<number> {
+  try {
+    const answerHex = await ethCall(CVX_USD_FEED, LATEST_ROUND_DATA, rpcUrls, logger, blockHex);
+    if (!answerHex || answerHex === "0x") return 0;
+    // latestRoundData() → (roundId, answer, startedAt, updatedAt, answeredInRound);
+    // answer is word index 1 (8dp). Parse the 32-byte slot starting at byte 32.
+    const answer = BigInt("0x" + answerHex.slice(66, 130));
+    return Number(answer) / 1e8;
+  } catch (e) {
+    logger.warn("backfill", "Price read failed", { key, error: String(e) });
+    return 0;
+  }
+}
+
+/**
+ * Backfill daily tvl/pps history for self-sampled strategies back to inception
+ * (deployment). Reads on-chain state at historical blocks using an archive RPC.
+ * Samples one point per UTC day from the deploy block to today.
+ *
+ * Runs in bounded resumable batches: each invocation processes at most
+ * `maxDays` missing days (oldest-first) in parallel, then exits. Repeated calls
+ * continue. Idempotent — existing day buckets are preserved and skipped.
+ */
+async function backfillHistory(env: Env, logger: Logger, rpcUrls: string[], maxDays = 12) {
+  const currentBlock = await getBlockNumber(rpcUrls, logger);
+  const now = Math.floor(Date.now() / 1000);
+
+  for (const { key, address } of SELF_SAMPLED_VAULTS) {
+    const inceptionBlock = BACKFILL_INCEPTION[key];
+    if (!inceptionBlock) continue;
+
+    const series = await readHistorySeries(env.HISTORY, `history/${key}.json`);
+    // Track tvl and pps separately: a day must be (re)processed if either metric
+    // is missing for it. pps is cheap and often already complete, so this keeps
+    // TVL backfill from being skipped just because pps happened to be filled.
+    const tvlDays = new Set(series.tvl.map((p) => p.t));
+    const ppsDays = new Set(series.pps.map((p) => p.t));
+
+    const inceptionSec = await blockToSeconds(inceptionBlock.block, rpcUrls, logger);
+    if (inceptionSec === 0) {
+      logger.warn("backfill", `Cannot resolve inception timestamp for ${key}`, { block: inceptionBlock.block });
+      continue;
+    }
+
+    // Measure the actual mean block time between inception and now, so we don't
+    // assume 12s/block (avg is ~12.05s but drifts; this anchors the estimate).
+    const measuredSecondsPerBlock = (now - inceptionSec) / (Number(currentBlock) - inceptionBlock.block);
+    if (measuredSecondsPerBlock <= 0) continue;
+
+    // Start from the first full UTC day at/after deployment (the floored day 0
+    // would estimate a block before the vault existed, causing reverts).
+    const firstDay = toDayBucket(inceptionSec + 86400);
+    const totalDays = Math.floor((now - firstDay) / 86400);
+
+    // Collect missing day buckets (oldest-first), capped at maxDays.
+    // A day is a target if either metric is missing for it.
+    const targets: { dayStart: number; block: number }[] = [];
+    for (let d = 0; d <= totalDays && targets.length < maxDays; d++) {
+      const dayStart = firstDay + d * 86400;
+      if (dayStart >= now) continue;
+      if (tvlDays.has(dayStart) && ppsDays.has(dayStart)) continue;
+      const block = inceptionBlock.block + Math.round((dayStart - inceptionSec) / measuredSecondsPerBlock);
+      if (block > Number(currentBlock)) continue;
+      targets.push({ dayStart, block });
+    }
+
+    if (targets.length === 0) {
+      logger.info("backfill", `${key} already complete`, { totalDays });
+      continue;
+    }
+
+        // Fetch in parallel batches to stay within worker subrequest/time limits.
+    // Batch to ~12 days (~40 RPC calls) to stay under the 50-subrequest cap.
+    const CONCURRENCY = 6;
+    let added = 0;
+    for (let i = 0; i < targets.length; i += CONCURRENCY) {
+      const batch = targets.slice(i, i + CONCURRENCY);
+      const results = await Promise.all(batch.map(async ({ dayStart, block }) => {
+        const blockHex = "0x" + block.toString(16);
+        try {
+          const [totalAssetsHex, ppsHex, price] = await Promise.all([
+            ethCall(address, TOTAL_ASSETS, rpcUrls, logger, blockHex),
+            ethCall(address, PRICE_PER_SHARE, rpcUrls, logger, blockHex),
+            historicalUnderlyingPrice(key, blockHex, rpcUrls, logger),
+          ]);
+          return { dayStart, totalAssets: BigInt(totalAssetsHex), pps: BigInt(ppsHex), price };
+        } catch (e) {
+          logger.warn("backfill", `Day fetch failed for ${key}`, { dayStart, block, error: String(e) });
+          return null;
+        }
+      }));
+
+      let batchAdded = 0;
+      for (const r of results) {
+        if (!r) continue;
+        // Only write the metric(s) that were actually missing for this day.
+        if (!tvlDays.has(r.dayStart) && r.price > 0) {
+          upsertSeriesPoint(series.tvl, r.dayStart, bigIntToNumber18(r.totalAssets) * r.price);
+          tvlDays.add(r.dayStart);
+        }
+        if (!ppsDays.has(r.dayStart)) {
+          upsertSeriesPoint(series.pps, r.dayStart, bigIntToNumber18(r.pps));
+          ppsDays.add(r.dayStart);
+        }
+        batchAdded++;
+      }
+      added += batchAdded;
+
+      if (batchAdded > 0) {
+        series.generatedAt = new Date().toISOString();
+        await env.HISTORY.put(`history/${key}.json`, JSON.stringify(series), {
+          httpMetadata: { contentType: "application/json" },
+        });
+      }
+    }
+
+    logger.info("backfill", `Backfilled ${key}`, { totalDays, processed: added, measuredSecondsPerBlock });
+  }
+}
+
+// Estimate a block's unix timestamp (used to compute day buckets for backfill).
+async function blockToSeconds(block: number, rpcUrls: string[], logger: Logger): Promise<number> {
+  const blockHex = "0x" + block.toString(16);
+  for (const rpcUrl of rpcUrls) {
+    try {
+      const { url: cleanUrl, headers } = rpcHeaders(rpcUrl);
+      const response = await fetchWithRetry(cleanUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBlockByNumber", params: [blockHex, false] }),
+      }, 1);
+      if (response.ok) {
+      const json = (await response.json()) as { result?: { timestamp?: string } };
+      if (json.result?.timestamp) return parseInt(json.result.timestamp, 16);
+      }
+    } catch { /* try next */ }
+  }
+  return 0;
 }
 
 export default {
@@ -775,6 +950,40 @@ export default {
       return new Response(JSON.stringify(data), {
         headers: { "Content-Type": "application/json" },
       });
+    }
+
+    // POST /api/backfill - One-shot archive backfill of self-sampled history
+    // to inception (requires secret). Makes many RPC calls, so must be
+    // triggered explicitly rather than run on every cron.
+    if (url.pathname === "/api/backfill" && request.method === "POST") {
+      const authHeader = request.headers.get("x-refresh-secret");
+      if (!env.REFRESH_SECRET || authHeader !== env.REFRESH_SECRET) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      const logger = new Logger();
+      try {
+        // Backfill needs archive-capable RPCs (historical eth_call). Use muupé
+        // (RPC_URL) exclusively — it's the primary archive provider and the
+        // public/other nodes reject past-block reads and waste subrequests.
+        if (!env.RPC_URL) throw new Error("No archive RPC configured");
+        const rpcUrls = [env.RPC_URL];
+        await backfillHistory(env, logger, rpcUrls);
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      } catch (e) {
+        logger.error("backfill", "Backfill failed", { error: String(e) });
+        return new Response(JSON.stringify({ error: "Backfill failed" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
+      } finally {
+        ctx.waitUntil(logger.flush(env.LOGS));
+      }
     }
 
     // GET /api/history?vault=yscvx&metric=tvl|pps - Serve self-sampled R2 history
