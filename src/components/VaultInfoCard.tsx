@@ -334,10 +334,11 @@ export function VaultInfoCard({ address, chainId = 1, title, detailsContent }: V
 
   return (
     <div className="rounded-xl border border-[var(--border)] overflow-hidden">
-      <div className="flex items-stretch overflow-x-auto border-b border-[var(--border)] bg-[var(--muted)]/20">
+      <div className="grid grid-cols-4 sm:flex items-stretch border-b border-[var(--border)] bg-[var(--muted)]/20">
         <TabButton active={tab === "details"} onClick={() => changeTab("details")}>
           <Info size={13} />
-          <span>{title}</span>
+          <span className="sm:hidden">{title.replace(/ Details$/, "")}</span>
+          <span className="hidden sm:inline">{title}</span>
         </TabButton>
         <TabButton active={tab === "performance"} onClick={() => changeTab("performance")}>
           <TrendingUp size={13} />
@@ -420,7 +421,7 @@ function TabButton({
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-2 px-3 sm:px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors border-r border-[var(--border)] last:border-r-0 ${
+      className={`min-w-0 flex items-center justify-center gap-1 sm:gap-2 px-1 sm:px-4 py-3 text-xs sm:text-sm font-medium whitespace-nowrap transition-colors border-r border-[var(--border)] last:border-r-0 ${
         active
           ? "text-[var(--foreground)] bg-[var(--background)]"
           : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
