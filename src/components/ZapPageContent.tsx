@@ -148,18 +148,6 @@ export function ZapPageContent() {
     }
   }, []);
 
-  const swapTokens = useCallback(() => {
-    if (isEntryDisabledOutput(inputToken.address)) {
-      toast.error(`New ${inputToken.symbol} entry is hidden in the UI. Exchange to yscvxCRV instead.`);
-      return;
-    }
-    setInputTokenState(outputToken);
-    setOutputTokenState(inputToken);
-    saveToken("input", outputToken);
-    saveToken("output", inputToken);
-    setAmount("");
-  }, [inputToken, outputToken, setAmount]);
-
   useEffect(() => {
     if (!isEntryDisabledOutput(outputToken.address)) return;
     const timer = setTimeout(() => {
@@ -226,6 +214,18 @@ export function ZapPageContent() {
     slippage,
     paused: sameToken || showSimulationModal,
   });
+
+  const swapTokens = useCallback(() => {
+    if (isEntryDisabledOutput(inputToken.address)) {
+      toast.error(`New ${inputToken.symbol} entry is hidden in the UI. Exchange to yscvxCRV instead.`);
+      return;
+    }
+    setInputTokenState(outputToken);
+    setOutputTokenState(inputToken);
+    saveToken("input", outputToken);
+    saveToken("output", inputToken);
+    setAmount(quote?.outputAmountFormatted ?? amount);
+  }, [amount, inputToken, outputToken, quote?.outputAmountFormatted, setAmount]);
 
   // Insufficient balance check (bigint precision)
   const hasInsufficientBalance = (() => {
