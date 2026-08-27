@@ -143,16 +143,19 @@ export function VaultPageContent({ id }: { id: string }) {
   const [vaultSelectorOpen, setVaultSelectorOpen] = useState(false);
   const vaultSelectorRef = useRef<HTMLDivElement>(null);
 
-  // Get all visible vaults for the selector (always include current vault)
-  const normalizedId = id.toLowerCase();
-  const availableVaults = Object.values(VAULTS).filter(
-    (v) =>
-      v.id === normalizedId ||
-      (!v.hidden && v.address !== "0x0000000000000000000000000000000000000000")
+  // Deprecated/exit-only vaults remain directly accessible, but are not
+  // offered as navigation targets in the vault selector.
+  const selectableVaults = Object.values(VAULTS).filter(
+    (v) => !isVaultEntryDisabled(v) &&
+      !v.hidden &&
+      v.address !== "0x0000000000000000000000000000000000000000"
   );
 
   // Create explorer contracts list for the contract explorer dropdown
-  const explorerContracts: ExplorerContract[] = availableVaults.map((v) => ({
+  const explorerVaults = vault && !selectableVaults.some((v) => v.id === vault.id)
+    ? [vault, ...selectableVaults]
+    : selectableVaults;
+  const explorerContracts: ExplorerContract[] = explorerVaults.map((v) => ({
     address: v.address,
     title: v.name,
     icon: v.logo,
@@ -1435,8 +1438,8 @@ export function VaultPageContent({ id }: { id: string }) {
                     </button>
                     {vaultSelectorOpen && (
                       <div className="absolute top-full left-0 mt-2 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-lg z-50 min-w-[200px] py-1 max-h-[300px] overflow-y-auto">
-                        {availableVaults.map((v) => {
-                          const isSelected = v.id === normalizedId;
+                        {selectableVaults.map((v) => {
+                          const isSelected = v.id === vault.id;
                           return (
                             <button
                               key={v.id}
