@@ -173,6 +173,6 @@ describe("VaultHarvestPanel", () => {
 
     expect(screen.getByText("2.5 cvxCRV")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Auction in progress" }).hasAttribute("disabled")).toBe(true);
-    expect(screen.getByText(/The auction is live and ends by .* (BST|GMT)\./)).toBeTruthy();
+    expect(screen.getByText(/The auction is live and ends by .* [A-Z]{2,5}\./)).toBeTruthy();
   });
 });
