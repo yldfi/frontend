@@ -14,9 +14,10 @@ import {
   type AreaData,
   type HistogramData,
 } from "lightweight-charts";
-import { Info, TrendingUp, Wallet } from "lucide-react";
+import { Info, Sprout, TrendingUp, Wallet } from "lucide-react";
 import { useVaultTvlHistory, useVault30dApyHistory, type HistoryPoint, type ApyPoint } from "@/hooks/useYearnHistory";
 import { formatUsd } from "@/lib/utils";
+import { VaultHarvestPanel } from "@/components/VaultHarvestPanel";
 
 const TIME_RANGES = ["30d", "90d", "all"] as const;
 type TimeRange = (typeof TIME_RANGES)[number];
@@ -307,13 +308,13 @@ interface VaultInfoCardProps {
   detailsContent: ReactNode;
 }
 
-type TabKey = "details" | "performance" | "tvl";
+type TabKey = "details" | "performance" | "tvl" | "harvest";
 
 export function VaultInfoCard({ address, chainId = 1, title, detailsContent }: VaultInfoCardProps) {
   const [tab, setTab] = useState<TabKey>(() => {
     if (typeof window === "undefined") return "details";
     const stored = window.localStorage.getItem(TAB_KEY);
-    return stored === "performance" || stored === "tvl" ? stored : "details";
+    return stored === "performance" || stored === "tvl" || stored === "harvest" ? stored : "details";
   });
   const [range, setRange] = useState<TimeRange>("30d");
 
@@ -333,7 +334,7 @@ export function VaultInfoCard({ address, chainId = 1, title, detailsContent }: V
 
   return (
     <div className="rounded-xl border border-[var(--border)] overflow-hidden">
-      <div className="flex items-stretch border-b border-[var(--border)] bg-[var(--muted)]/20">
+      <div className="flex items-stretch overflow-x-auto border-b border-[var(--border)] bg-[var(--muted)]/20">
         <TabButton active={tab === "details"} onClick={() => changeTab("details")}>
           <Info size={13} />
           <span>{title}</span>
@@ -346,10 +347,16 @@ export function VaultInfoCard({ address, chainId = 1, title, detailsContent }: V
           <Wallet size={13} />
           <span>TVL</span>
         </TabButton>
+        <TabButton active={tab === "harvest"} onClick={() => changeTab("harvest")}>
+          <Sprout size={13} />
+          <span>Harvest</span>
+        </TabButton>
       </div>
 
       {tab === "details" ? (
         <div>{detailsContent}</div>
+      ) : tab === "harvest" ? (
+        <VaultHarvestPanel vaultAddress={address} />
       ) : (
         <div className="p-4 space-y-3">
           <div className="flex items-center justify-end gap-1 text-xs">
@@ -413,7 +420,7 @@ function TabButton({
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-r border-[var(--border)] last:border-r-0 ${
+      className={`flex items-center gap-2 px-3 sm:px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors border-r border-[var(--border)] last:border-r-0 ${
         active
           ? "text-[var(--foreground)] bg-[var(--background)]"
           : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
