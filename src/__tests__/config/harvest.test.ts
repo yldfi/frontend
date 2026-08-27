@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getHarvestConfig } from "@/config/harvest";
+import { CVGCVX_STRATEGY_TRIGGER, getHarvestConfig } from "@/config/harvest";
 import { VAULT_ADDRESSES } from "@/config/vaults";
 
 describe("getHarvestConfig", () => {
@@ -15,7 +15,10 @@ describe("getHarvestConfig", () => {
     expect(getHarvestConfig(VAULT_ADDRESSES.YSCVGCVX)).toEqual({
       kind: "yscvgcvx",
       strategy: VAULT_ADDRESSES.YSCVGCVX,
+      trigger: {
+        address: CVGCVX_STRATEGY_TRIGGER,
+        functionName: "reportTrigger",
+      },
     });
   });
 });
-
