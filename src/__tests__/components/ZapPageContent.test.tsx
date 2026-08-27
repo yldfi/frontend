@@ -302,6 +302,24 @@ describe("ZapPageContent", () => {
     });
   });
 
+  it("uses the quoted output amount as the input when reversing tokens", () => {
+    render(<ZapPageContent />);
+
+    const amountInput = screen.getByPlaceholderText("0.00");
+    fireEvent.change(amountInput, { target: { value: "0.1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Swap input and output" }));
+
+    expect((amountInput as HTMLInputElement).value).toBe("5.0554");
+    expect(sessionStorage.getItem("yldfi-universal-zap-amount")).toBe("5.0554");
+    expect(mockUseUniversalZap).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        inputToken: expect.objectContaining({ symbol: "yscvxCRV" }),
+        outputToken: expect.objectContaining({ symbol: "ETH" }),
+        inputAmount: "5.0554",
+      }),
+    );
+  });
+
   it("normalizes persisted known token metadata before quoting", () => {
     sessionStorage.setItem("yldfi-universal-zap-input", JSON.stringify({
       address: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E",
