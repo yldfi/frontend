@@ -355,29 +355,29 @@ const CURVE_USDC_CRVUSD_POOL = "0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E";
 const CURVE_TRICRV_POOL = "0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14";
 const CURVE_CRV_CVXCRV_POOL = "0x9D0464996170c6B9e75eED71c68B99dDEDf279e8";
 const CURVE_ROUTER = "0x99a58482BD75cbab83b27EC03CA68fF489b5788f";
-// Only aggregators verified to consume a dynamic useOutputOfCallAt amount
-// exactly belong here. 0x and KyberSwap currently embed a quoted amount in
-// their calldata and can overdraw after an ERC4626 redemption changes by a few
-// base units. Grapher was verified statefully to consume the full live output.
-const EXACT_AMOUNT_SAFE_ENSO_AGGREGATORS = new Set(["grapher"]);
+// Only aggregators verified inside Enso's native bundle `route` action with a
+// dynamic useOutputOfCallAt amount belong here. Standalone route calldata is
+// always quote-amount-specific and must never be replayed with routeMulti for a
+// runtime-produced balance, even when its provider is listed here.
+const DYNAMIC_INPUT_SAFE_ENSO_AGGREGATORS = new Set(["grapher", "openocean"]);
 
-interface ExactAmountAggregatorPolicy {
+interface DynamicInputAggregatorPolicy {
   availableSafeAggregators: string[];
   ignoreAggregators: string[];
 }
 
-async function getExactAmountAggregatorPolicy(): Promise<ExactAmountAggregatorPolicy> {
+async function getDynamicInputAggregatorPolicy(): Promise<DynamicInputAggregatorPolicy> {
   const aggregators = await enqueueEnsoCall(() => ensoClient.getAggregators(CHAIN_ID));
   if (aggregators.length === 0) {
-    throw new Error("Enso returned no aggregator policy for an exact-amount route");
+    throw new Error("Enso returned no aggregator policy for a dynamic-input route");
   }
 
   return {
     availableSafeAggregators: aggregators.filter((aggregator) =>
-      EXACT_AMOUNT_SAFE_ENSO_AGGREGATORS.has(aggregator.toLowerCase())
+      DYNAMIC_INPUT_SAFE_ENSO_AGGREGATORS.has(aggregator.toLowerCase())
     ),
     ignoreAggregators: aggregators.filter(
-      (aggregator) => !EXACT_AMOUNT_SAFE_ENSO_AGGREGATORS.has(aggregator.toLowerCase())
+      (aggregator) => !DYNAMIC_INPUT_SAFE_ENSO_AGGREGATORS.has(aggregator.toLowerCase())
     ),
   };
 }
@@ -1504,7 +1504,7 @@ async function appendBestExactUsdcToCvxConversion(
   const ensoQuotePromise = (async () => {
     try {
       const { availableSafeAggregators, ignoreAggregators } =
-        await getExactAmountAggregatorPolicy();
+        await getDynamicInputAggregatorPolicy();
       if (availableSafeAggregators.length === 0) return null;
       const route = await fetchRoute({
         fromAddress: ctx.fromAddress,
@@ -1515,7 +1515,7 @@ async function appendBestExactUsdcToCvxConversion(
         ignoreAggregators,
       });
       const usedSafeAggregator = route.route.find((hop) =>
-        EXACT_AMOUNT_SAFE_ENSO_AGGREGATORS.has(hop.protocol.toLowerCase())
+        DYNAMIC_INPUT_SAFE_ENSO_AGGREGATORS.has(hop.protocol.toLowerCase())
       );
       if (!usedSafeAggregator) return null;
 
@@ -2489,15 +2489,15 @@ export async function fetchRoute(params: EnsoRouteRequest): Promise<EnsoRouteRes
 }
 
 /**
- * Build standalone calldata that will consume an amount produced earlier in
- * the same transaction. Aggregators that embed the quote-time amount in their
- * calldata are excluded; fixed wallet-token swaps should call fetchRoute.
+ * Estimate the output of a runtime-produced balance. This standalone quote is
+ * deliberately unrestricted because its amount-specific calldata is never
+ * executed. The executable native bundle route receives the dynamic-safe
+ * aggregator policy in fetchBundle.
  */
-export async function fetchExactAmountSafeRoute(
+export async function fetchDynamicInputEstimate(
   params: Omit<EnsoRouteRequest, "ignoreAggregators">,
 ): Promise<EnsoRouteResponse> {
-  const { ignoreAggregators } = await getExactAmountAggregatorPolicy();
-  return fetchRoute({ ...params, ignoreAggregators });
+  return fetchRoute(params);
 }
 
 /**
@@ -2721,7 +2721,7 @@ export async function fetchBundle(params: {
   );
   let actions = params.actions;
   if (dynamicRouteActions.length > 0) {
-    const { ignoreAggregators } = await getExactAmountAggregatorPolicy();
+    const { ignoreAggregators } = await getDynamicInputAggregatorPolicy();
     actions = params.actions.map((action) => {
       const hasDynamicInput =
         action.protocol === "enso" &&
@@ -5974,23 +5974,26 @@ export async function fetchCvgCvxZapOutRoute(params: {
     },
   ];
 
-  // CVX1.withdraw() is void — can't chain output to route action.
-  // Use routeMulti([], innerSwapData) pattern: pre-fetch a standalone CVX→output route,
-  // extract its weiroll data, then execute it with CVX already in ENSO_SHORTCUTS.
-  // Security: CVX is TRANSFERRED to ENSO_SHORTCUTS (not approved), consumed atomically
-  // in the same tx via routeMulti. No persistent approvals for ENSO_SHORTCUTS.
-  // Pre-fetch standalone route for CVX → output token
-  // routeMulti sends output to fromAddress (user), so route directly to final token
-  // (no WETH unwrap needed — Enso handles ETH output natively in standalone routes)
-  const { extractInnerSwapData } = await import("@/lib/zapper");
-  const standaloneRoute = await fetchExactAmountSafeRoute({
-    fromAddress: params.fromAddress,
-    tokenIn: TOKENS.CVX,
-    tokenOut: params.outputToken,
-    amountIn: expectedCvx1Output.toString(),
-    slippage: params.slippage ?? "100",
-  });
-  const innerSwapData = extractInnerSwapData(standaloneRoute.tx.data);
+  // Native dynamic CVX→WETH routes are not consistently available from the
+  // verified providers, so ETH exits use the direct Curve CVX/WETH pool. Other
+  // outputs use an unrestricted standalone quote for display only.
+  const expectedOutput = outputIsEth
+    ? await estimateCryptoSwapOffchain(
+        CURVE_CVX_ETH_POOL,
+        1,
+        0,
+        expectedCvx1Output.toString(),
+      )
+    : BigInt((await fetchDynamicInputEstimate({
+        fromAddress: params.fromAddress,
+        tokenIn: TOKENS.CVX,
+        tokenOut: params.outputToken,
+        amountIn: expectedCvx1Output.toString(),
+        slippage: params.slippage ?? "100",
+      })).amountOut);
+  if (expectedOutput === 0n) {
+    throw new Error(`Cannot estimate CVX output route to ${params.outputToken}`);
+  }
 
   actions.push(
     // Action 3: Unwrap CVX1 → CVX via CVX1.withdraw (void, sends CVX to ENSO_SHORTCUTS)
@@ -6004,71 +6007,87 @@ export async function fetchCvgCvxZapOutRoute(params: {
         args: [{ useOutputOfCallAt: 2 }, ENSO_SHORTCUTS],
       },
     },
-    // Action 4: Execute pre-built swap via routeMulti (CVX already in ENSO_SHORTCUTS)
-    // Output goes to params.fromAddress (user) — verified by routeMulti output behavior
+    // Action 4: Read the CVX actually received from the void withdraw call.
     {
       protocol: "enso",
-      action: "call",
-      args: {
-        address: ENSO_ROUTER_V2.toLowerCase(),
-        method: "routeMulti",
-        abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)",
-        args: [[], innerSwapData],
-      },
+      action: "balance",
+      args: { token: TOKENS.CVX },
     },
   );
+  const cvxBalanceIdx = actions.length - 1;
+  if (outputIsEth) {
+    const zeroAddress = "0x0000000000000000000000000000000000000000";
+    actions.push(
+      {
+        protocol: "erc20",
+        action: "approve",
+        args: {
+          token: TOKENS.CVX,
+          spender: CURVE_ROUTER,
+          amount: { useOutputOfCallAt: cvxBalanceIdx },
+        },
+      },
+      {
+        protocol: "enso",
+        action: "call",
+        args: {
+          address: CURVE_ROUTER,
+          method: "exchange_multiple",
+          abi: "function exchange_multiple(address[9] _route, uint256[3][4] _swap_params, uint256 _amount, uint256 _expected, address[4] _pools, address _receiver) payable returns (uint256)",
+          args: [
+            [TOKENS.CVX, CURVE_CVX_ETH_POOL, WETH_ADDRESS, zeroAddress, zeroAddress, zeroAddress, zeroAddress, zeroAddress, zeroAddress],
+            [[1, 0, 3], [0, 0, 0], [0, 0, 0], [0, 0, 0]],
+            { useOutputOfCallAt: cvxBalanceIdx },
+            calculateMinDy(expectedOutput, slippageBps),
+            [zeroAddress, zeroAddress, zeroAddress, zeroAddress],
+            ENSO_SHORTCUTS,
+          ],
+        },
+      },
+    );
+    const wethOutputIdx = actions.length - 1;
+    actions.push({
+      protocol: "wrapped-native",
+      action: "redeem",
+      args: {
+        tokenIn: WETH_ADDRESS.toLowerCase(),
+        tokenOut: ETH_ADDRESS,
+        amountIn: { useOutputOfCallAt: wethOutputIdx },
+        primaryAddress: WETH_ADDRESS.toLowerCase(),
+      },
+    });
+  } else {
+    actions.push({
+      protocol: "enso",
+      action: "route",
+      args: {
+        tokenIn: TOKENS.CVX,
+        tokenOut: params.outputToken,
+        amountIn: { useOutputOfCallAt: cvxBalanceIdx },
+        slippage: params.slippage ?? "100",
+      },
+    });
+  }
 
   const bundleResult = await fetchBundle({
     fromAddress: params.fromAddress,
     actions,
     routingStrategy: "router",
-    // Skip quote to avoid simulation failure (intermediate tokens not in user wallet)
-    // Route planning still works because we provide a concrete amount
+    // The balance action supplies the runtime amount; skipQuote avoids requiring
+    // the custom void withdraw to be statically simulated during route planning.
     skipQuote: true,
   });
 
-  // Manually calculate expected output since skipQuote may not return the final output token
-  // Use expectedCvx1Output (CVX1 → CVX is 1:1) or fall back to expectedCvgCvxOutput
-  const estimatedCvxAmount = expectedCvx1Output?.toString() ?? expectedCvgCvxOutput;
+  // skipQuote does not return an output amount, so retain the independently
+  // calculated display estimate.
   const outputTokenKey = params.outputToken.toLowerCase();
   const hasOutputAmount = bundleResult.amountsOut[outputTokenKey] || bundleResult.amountsOut[ETH_ADDRESS.toLowerCase()];
 
-  if (estimatedCvxAmount && !hasOutputAmount) {
-    try {
-      // For ETH output: use Curve CVX/ETH pool estimate (fast, no API call)
-      if (outputTokenKey === ETH_ADDRESS.toLowerCase() || outputTokenKey === WETH_ADDRESS.toLowerCase()) {
-        const expectedEthOutput = await estimateCryptoSwapOffchain(
-          CURVE_CVX_ETH_POOL,
-          1, // CVX index
-          0, // WETH index (ETH)
-          estimatedCvxAmount
-        );
-        if (expectedEthOutput) {
-          bundleResult.amountsOut = {
-            [outputTokenKey]: expectedEthOutput.toString(),
-            [ETH_ADDRESS.toLowerCase()]: expectedEthOutput.toString(),
-          };
-        }
-      } else {
-        // For other tokens (USDC, etc.): query Enso route for CVX → output token
-        // This gives us proper output amount with correct decimals
-        const routeQuote = await fetchRoute({
-          fromAddress: params.fromAddress,
-          tokenIn: TOKENS.CVX,
-          tokenOut: params.outputToken,
-          amountIn: estimatedCvxAmount,
-          slippage: params.slippage ?? "100",
-        });
-        if (routeQuote.amountOut) {
-          bundleResult.amountsOut = {
-            [outputTokenKey]: routeQuote.amountOut,
-          };
-        }
-      }
-    } catch (err) {
-      console.error("[Enso cvgCVX ZapOut] estimate error:", err);
-      // Fallback: no estimate available
-    }
+  if (!hasOutputAmount) {
+    bundleResult.amountsOut = {
+      ...bundleResult.amountsOut,
+      [outputTokenKey]: expectedOutput.toString(),
+    };
   }
 
   return bundleResult;
@@ -10021,31 +10040,35 @@ export async function fetchAnyFromUCrvRoute(params: {
     },
   ];
 
-  // Estimate output in USD-of-output via a standalone route quote. We embed
-  // its inner weiroll bytes via routeMulti so Enso's shortcut builder doesn't
-  // need to validate a dynamic-amount route mid-bundle.
+  // Quote for display data, then route the actual cvxCRV balance produced by
+  // withdraw at runtime. The standalone quote calldata is never executed.
   let expectedOutput = "0";
   if (!sameAsOutput) {
-    const { extractInnerSwapData } = await import("@/lib/zapper");
-    const standaloneRoute = await fetchExactAmountSafeRoute({
+    const dynamicQuote = await fetchDynamicInputEstimate({
       fromAddress: params.fromAddress,
       tokenIn: LLAMA_AIRFORCE.UCRV_UNDERLYING,
       tokenOut: params.outputToken,
       amountIn: expectedCvxCrv,
       slippage: params.slippage ?? "100",
     });
-    expectedOutput = standaloneRoute.amountOut;
-    const innerSwapData = extractInnerSwapData(standaloneRoute.tx.data);
+    expectedOutput = dynamicQuote.amountOut;
     actions.push({
       protocol: "enso",
-      action: "call",
+      action: "balance",
+      args: { token: LLAMA_AIRFORCE.UCRV_UNDERLYING },
+    });
+    const underlyingBalanceIdx = actions.length - 1;
+    actions.push({
+      protocol: "enso",
+      action: "route",
       args: {
-        address: ENSO_ROUTER_V2.toLowerCase(),
-        method: "routeMulti",
-        abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)",
-        args: [[], innerSwapData],
+        tokenIn: LLAMA_AIRFORCE.UCRV_UNDERLYING,
+        tokenOut: params.outputToken,
+        amountIn: { useOutputOfCallAt: underlyingBalanceIdx },
+        slippage: params.slippage ?? "100",
       },
     });
+    appendETHUnwrapIfNeeded(actions, params.outputToken);
   }
 
   const bundleResult = await fetchBundle({
@@ -10118,9 +10141,9 @@ export async function fetchAnyFromBeefyRoute(params: {
     params.beefyVaultUnderlying.toLowerCase() === params.outputToken.toLowerCase();
 
   const actions: EnsoBundleAction[] = [
-    // Beefy withdraw(shares) — burns shares, sends underlying to msg.sender
-    // (ENSO_SHORTCUTS). The call is void, so Enso can't quote a route whose
-    // amountIn references its output — embed a pre-built inner swap instead.
+    // Beefy withdraw(shares) — burns shares and sends underlying to msg.sender
+    // (ENSO_SHORTCUTS). A following balance action captures the void call's
+    // runtime output.
     {
       protocol: "enso",
       action: "call",
@@ -10135,24 +10158,28 @@ export async function fetchAnyFromBeefyRoute(params: {
 
   let expectedOutput = "0";
   if (!sameAsOutput) {
-    const { extractInnerSwapData } = await import("@/lib/zapper");
-    const standaloneRoute = await fetchExactAmountSafeRoute({
+    const dynamicQuote = await fetchDynamicInputEstimate({
       fromAddress: params.fromAddress,
       tokenIn: params.beefyVaultUnderlying,
       tokenOut: params.outputToken,
       amountIn: expectedUnderlying,
       slippage: params.slippage ?? "100",
     });
-    expectedOutput = standaloneRoute.amountOut;
-    const innerSwapData = extractInnerSwapData(standaloneRoute.tx.data);
+    expectedOutput = dynamicQuote.amountOut;
     actions.push({
       protocol: "enso",
-      action: "call",
+      action: "balance",
+      args: { token: params.beefyVaultUnderlying },
+    });
+    const underlyingBalanceIdx = actions.length - 1;
+    actions.push({
+      protocol: "enso",
+      action: "route",
       args: {
-        address: ENSO_ROUTER_V2.toLowerCase(),
-        method: "routeMulti",
-        abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)",
-        args: [[], innerSwapData],
+        tokenIn: params.beefyVaultUnderlying,
+        tokenOut: params.outputToken,
+        amountIn: { useOutputOfCallAt: underlyingBalanceIdx },
+        slippage: params.slippage ?? "100",
       },
     });
   }
@@ -11215,7 +11242,7 @@ export async function fetchYldVaultToIlliquidRoute(params: {
  *   2. Convert cvgCVX → CVX (via CVX1 Curve pool) or pxCVX → CVX (via lpxCVX
  *      Curve pool). For cvxCRV sources this step is skipped.
  *   3. If the target external vault's underlying differs from the intermediate,
- *      route through Enso using the routeMulti([], innerSwapData) pattern.
+ *      read the runtime intermediate balance and route it through Enso.
  *      For pxCVX targets (uCVX) we use the Curve hybrid mint/swap instead.
  *   4. Deposit into the target via the vault's specific interface (erc4626,
  *      uCRV's non-standard deposit, or Beefy's deposit+transfer pattern).
@@ -11416,26 +11443,30 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
       );
     }
   } else if (!sameUnderlying) {
-    // Generic Enso routeMulti — intermediate is CVX or cvxCRV, target is some
-    // other token (crvUSD, cvxCRV, CVX, etc.).
-    const { extractInnerSwapData } = await import("@/lib/zapper");
-    const standaloneRoute = await fetchExactAmountSafeRoute({
+    // Quote for display/preview only. Execution uses the runtime intermediate
+    // balance through Enso's native dynamic route action.
+    const dynamicQuote = await fetchDynamicInputEstimate({
       fromAddress: params.fromAddress,
       tokenIn: intermediateToken,
       tokenOut: params.targetUnderlying,
       amountIn: intermediateForSplit.toString(),
       slippage: params.slippage ?? "100",
     });
-    totalExpectedTargetUnderlying = BigInt(standaloneRoute.amountOut);
-    const innerSwapData = extractInnerSwapData(standaloneRoute.tx.data);
+    totalExpectedTargetUnderlying = BigInt(dynamicQuote.amountOut);
     actions.push({
       protocol: "enso",
-      action: "call",
+      action: "balance",
+      args: { token: intermediateToken },
+    });
+    const intermediateBalanceIdx = actions.length - 1;
+    actions.push({
+      protocol: "enso",
+      action: "route",
       args: {
-        address: ENSO_ROUTER_V2.toLowerCase(),
-        method: "routeMulti",
-        abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)",
-        args: [[], innerSwapData],
+        tokenIn: intermediateToken,
+        tokenOut: params.targetUnderlying,
+        amountIn: { useOutputOfCallAt: intermediateBalanceIdx },
+        slippage: params.slippage ?? "100",
       },
     });
   }

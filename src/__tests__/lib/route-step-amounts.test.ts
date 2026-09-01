@@ -60,11 +60,14 @@ vi.mock("@/lib/curve", () => ({
 
 import {
   fetchAnyToCvgCvxRoute,
+  fetchAnyFromBeefyRoute,
+  fetchAnyFromUCrvRoute,
   fetchAnyFromErc4626ExternalVaultRoute,
   fetchAnyToPxCvxRoute,
   fetchAnyToLpxCvxRoute,
   fetchBundle,
-  fetchExactAmountSafeRoute,
+  fetchCvgCvxZapOutRoute,
+  fetchDynamicInputEstimate,
   fetchComposableZapInRoute,
   fetchLpxCvxZapInRoute,
   fetchLegacyMorphoWrapRoute,
@@ -73,6 +76,7 @@ import {
   fetchSpecialTokenToIlliquidRoute,
   fetchVaultToVaultRoute,
   fetchYldVaultToIlliquidRoute,
+  fetchYldVaultToExternalVaultRoute,
   ENSO_ROUTER_V2,
   ENSO_SHORTCUTS,
   ETH_ADDRESS,
@@ -81,7 +85,7 @@ import {
   MORPHO_GENERAL_ADAPTER1_ADDRESS,
   MORPHO_TOKEN_ADDRESS,
 } from "@/lib/enso";
-import { cryptoswap, findPegPoint, getCurveGetDy, getCurveGetDyFactory, getStableSwapParams } from "@/lib/curve";
+import { cryptoswap, estimateCryptoSwapOffchain, findPegPoint, getCurveGetDy, getCurveGetDyFactory, getStableSwapParams } from "@/lib/curve";
 import { LLAMA_AIRFORCE, PIREX, TANGENT, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 import { USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
 import type { EnsoBundleAction } from "@/types/enso";
@@ -166,6 +170,30 @@ function balanceIndex(actions: TestBundleAction[], token: string): number {
   );
 }
 
+function expectRuntimeBalanceRoute(
+  actions: TestBundleAction[],
+  tokenIn: string,
+  tokenOut: string,
+): void {
+  const runtimeBalanceIdx = balanceIndex(actions, tokenIn);
+  expect(runtimeBalanceIdx).toBeGreaterThanOrEqual(0);
+  expect(actions).not.toContainEqual(
+    expect.objectContaining({ args: expect.objectContaining({ method: "routeMulti" }) }),
+  );
+
+  expect(actions).toContainEqual({
+    protocol: "enso",
+    action: "route",
+    args: {
+      tokenIn,
+      tokenOut,
+      amountIn: { useOutputOfCallAt: runtimeBalanceIdx },
+      slippage: "100",
+      ignoreAggregators: ["0x", "kyberswap"],
+    },
+  });
+}
+
 function mockPxCvxHybridSplit(): void {
   vi.mocked(cryptoswap.getDy).mockImplementation((_params: unknown, i: number, j: number, dx: bigint) => {
     if (i === 0 && j === 1) return dx > ONE_ETHER ? (dx * 9n) / 10n : (dx * 11n) / 10n;
@@ -202,6 +230,7 @@ describe("route step amounts", () => {
     });
     vi.mocked(cryptoswap.findPegPoint).mockReturnValue(0n);
     vi.mocked(findPegPoint).mockReturnValue(0n);
+    vi.mocked(estimateCryptoSwapOffchain).mockResolvedValue(5_000_000_000_000_000n);
     vi.mocked(getStableSwapParams).mockResolvedValue({
       balances: [0n, 0n],
       A: 0n,
@@ -229,7 +258,7 @@ describe("route step amounts", () => {
     });
 
     mockGetBundleData.mockResolvedValue(BUNDLE_RESPONSE);
-    mockGetAggregators.mockResolvedValue(["0x", "kyberswap", "grapher"]);
+    mockGetAggregators.mockResolvedValue(["0x", "kyberswap", "grapher", "openocean"]);
     mockGetRouteData.mockImplementation(async ({ tokenIn, tokenOut }: { tokenIn: string[]; tokenOut: string[] }) => {
       const input = tokenIn[0]?.toLowerCase();
       const output = tokenOut[0]?.toLowerCase();
@@ -245,6 +274,13 @@ describe("route step amounts", () => {
 
     globalThis.fetch = vi.fn(async (_url, init) => {
       const body = JSON.parse(String(init?.body ?? "{}"));
+      if (Array.isArray(body)) {
+        const result = `0x${BigInt("5250000000000000000").toString(16)}`;
+        return {
+          ok: true,
+          json: async () => body.map((request) => ({ id: request.id, result })),
+        } as unknown as Response;
+      }
       if (!Array.isArray(body) && body.method === "eth_call") {
         return makeRpcResponse(`0x${BigInt("5250000000000000000").toString(16)}`);
       }
@@ -554,8 +590,8 @@ describe("route step amounts", () => {
     expect(mockGetAggregators).not.toHaveBeenCalled();
   });
 
-  it("builds precomputed routeMulti calldata with the exact-amount-safe policy", async () => {
-    await fetchExactAmountSafeRoute({
+  it("keeps non-executable dynamic-input estimates unrestricted", async () => {
+    await fetchDynamicInputEstimate({
       fromAddress: TEST_WALLET,
       tokenIn: TOKENS.CVX,
       tokenOut: USDC_ADDRESS,
@@ -566,11 +602,97 @@ describe("route step amounts", () => {
     expect(mockGetRouteData).toHaveBeenCalledWith(expect.objectContaining({
       tokenIn: [TOKENS.CVX],
       tokenOut: [USDC_ADDRESS],
-      ignoreAggregators: ["0x", "kyberswap"],
+      ignoreAggregators: undefined,
     }));
   });
 
-  it("selects a better exact-amount-safe Enso route and excludes unsafe aggregators", async () => {
+  it("uses runtime balances instead of amount-specific routeMulti calldata after void exits", async () => {
+    await fetchCvgCvxZapOutRoute({
+      fromAddress: TEST_WALLET,
+      vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+      outputToken: USDC_ADDRESS,
+      amountIn: ONE_ETHER.toString(),
+      slippage: "100",
+    });
+    expectRuntimeBalanceRoute(lastBundleActions(), TOKENS.CVX, USDC_ADDRESS);
+
+    await fetchAnyFromUCrvRoute({
+      fromAddress: TEST_WALLET,
+      outputToken: USDC_ADDRESS,
+      amountIn: ONE_ETHER.toString(),
+      slippage: "100",
+    });
+    expectRuntimeBalanceRoute(lastBundleActions(), LLAMA_AIRFORCE.UCRV_UNDERLYING, USDC_ADDRESS);
+
+    await fetchAnyFromBeefyRoute({
+      fromAddress: TEST_WALLET,
+      beefyVault: "0x1111111111111111111111111111111111111111",
+      beefyVaultUnderlying: TOKENS.CVXCRV,
+      beefyVaultSymbol: "mooCvxCrv",
+      outputToken: USDC_ADDRESS,
+      amountIn: ONE_ETHER.toString(),
+      slippage: "100",
+    });
+    expectRuntimeBalanceRoute(lastBundleActions(), TOKENS.CVXCRV, USDC_ADDRESS);
+  });
+
+  it("uses the full runtime CVX balance through Curve for native ETH exits", async () => {
+    await fetchCvgCvxZapOutRoute({
+      fromAddress: TEST_WALLET,
+      vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+      outputToken: ETH_ADDRESS,
+      amountIn: ONE_ETHER.toString(),
+      slippage: "100",
+    });
+
+    const actions = lastBundleActions();
+    const runtimeBalanceIdx = balanceIndex(actions, TOKENS.CVX);
+    expect(runtimeBalanceIdx).toBe(4);
+    expect(actions[runtimeBalanceIdx + 1]).toEqual({
+      protocol: "erc20",
+      action: "approve",
+      args: expect.objectContaining({
+        token: TOKENS.CVX,
+        amount: { useOutputOfCallAt: runtimeBalanceIdx },
+      }),
+    });
+    expect(actions[runtimeBalanceIdx + 2]).toEqual({
+      protocol: "enso",
+      action: "call",
+      args: expect.objectContaining({
+        method: "exchange_multiple",
+        args: expect.arrayContaining([{ useOutputOfCallAt: runtimeBalanceIdx }]),
+      }),
+    });
+    expect(actions.at(-1)).toEqual({
+      protocol: "wrapped-native",
+      action: "redeem",
+      args: expect.objectContaining({ amountIn: { useOutputOfCallAt: runtimeBalanceIdx + 2 } }),
+    });
+    expect(actions).not.toContainEqual(
+      expect.objectContaining({ args: expect.objectContaining({ method: "routeMulti" }) }),
+    );
+    expect(mockGetAggregators).not.toHaveBeenCalled();
+  });
+
+  it("uses a runtime balance route between yld-vault redemption and external-vault deposit", async () => {
+    await fetchYldVaultToExternalVaultRoute({
+      fromAddress: TEST_WALLET,
+      sourceVault: VAULT_ADDRESSES.YCVXCRV,
+      sourceUnderlying: TOKENS.CVXCRV,
+      targetVault: YVUSDC1_ADDRESS,
+      targetUnderlying: USDC_ADDRESS,
+      targetInterface: "erc4626",
+      targetSymbol: "yvUSDC-1",
+      targetProtocol: "Yearn",
+      amountIn: ONE_ETHER.toString(),
+      slippage: "100",
+    });
+
+    expectRuntimeBalanceRoute(lastBundleActions(), TOKENS.CVXCRV, USDC_ADDRESS);
+  });
+
+  it("selects a better dynamic-input-safe Enso route and excludes unsafe aggregators", async () => {
     mockGetRouteData.mockResolvedValueOnce({
       amountOut: "6000000000000000000",
       gas: "1200000",
