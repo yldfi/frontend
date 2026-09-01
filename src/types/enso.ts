@@ -40,6 +40,7 @@ export interface EnsoRouteResponse {
   };
   gas: string;
   amountOut: string;
+  minAmountOut?: string;
   // Enso SDK returns route price impact in basis points, or null/undefined
   // when it cannot price one side of the route.
   priceImpact?: number | null;
@@ -107,6 +108,7 @@ export interface EnsoBundleResponse {
   };
   gas: string;
   amountsOut: Record<string, string>;
+  minAmountsOut?: Record<string, string>;
   route?: Hop[];  // Route steps from SDK BundleData.route
   priceImpact?: number | null;
   routeInfo?: RouteInfo;

@@ -112,12 +112,12 @@ export function ApprovalCard({
                     "flex-[2] py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
                     isApproving
                       ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                      : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
+                      : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
                   )}
                 >
                   {isApproving && approvingType === "exact"
                     ? <>Approving<LoadingDots /></>
-                    : `${Number(formatUnits(pendingApproval.amount!, decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${pendingApproval.tokenSymbol}`}
+                    : `Exact · ${Number(formatUnits(pendingApproval.amount!, decimals)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${pendingApproval.tokenSymbol}`}
                 </button>
                 <button
                   onClick={() => { setApprovingType("unlimited"); onApprove(false); }}
@@ -126,10 +126,10 @@ export function ApprovalCard({
                     "flex-1 py-2.5 px-3 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm",
                     isApproving
                       ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                      : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
+                      : "border border-[var(--foreground)] text-[var(--foreground)] hover:bg-[var(--foreground)]/10"
                   )}
                 >
-                  {isApproving && approvingType === "unlimited" ? <>Approving<LoadingDots /></> : "Max"}
+                  {isApproving && approvingType === "unlimited" ? <>Approving<LoadingDots /></> : "Unlimited"}
                 </button>
               </div>
             ) : (

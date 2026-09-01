@@ -1,26 +1,49 @@
 import { describe, expect, it } from "vitest";
-import { encodeFunctionData, parseAbi } from "viem";
 import {
+  decodeAbiParameters,
+  decodeFunctionData,
+  encodeAbiParameters,
+  encodeFunctionData,
+  parseAbi,
+  parseAbiParameters,
+} from "viem";
+import {
+  assertProtectedEnsoIntentResponse,
   assertEnsoIntentTxTarget,
   assertValidEnsoIntentRequest,
   getIntentVault,
   getYldVaultToVaultIntentName,
   isStandardYldVaultIntentVault,
+  protectEnsoIntentResponse,
   shouldUsePlainTokenSwapIntent,
 } from "@/lib/enso-intents";
 import { CURVE_CONTROLLERS, LLAMA_AIRFORCE, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
+import { CRVUSD_ADDRESS } from "@/config/addresses";
+import type { EnsoRouteResponse } from "@/types/enso";
 
 const USER = "0x1000000000000000000000000000000000000001";
 const OTHER = "0x2000000000000000000000000000000000000002";
 const ONE_ETHER = "1000000000000000000";
 const ENSO_ROUTER_V2 = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf";
+const ENSO_ROUTER_V1 = "0x80EbA3855878739F4710233A8a19d89Bdd2ffB8E";
 const ENSO_SHORTCUTS = "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003";
 const MORPHO_BUNDLER3 = "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245";
 const LEGACY_MORPHO = "0x9994E35Db50125E0DF82e4c2dde62496CE330999";
+const MORPHO_GENERAL_ADAPTER1 = "0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0";
+const ZERO_CALLBACK_HASH = `0x${"00".repeat(32)}` as `0x${string}`;
 const ENSO_ROUTER_ENTRYPOINT_ABI = parseAbi([
   "function routeSingle((uint8 tokenType, bytes data) tokenIn, bytes data) payable returns (bytes)",
   "function routeMulti((uint8 tokenType, bytes data)[] tokensIn, bytes data) payable returns (bytes)",
+  "function safeRouteSingle((uint8 tokenType, bytes data) tokenIn, (uint8 tokenType, bytes data) tokenOut, address receiver, bytes data) payable returns (bytes)",
+  "function safeRouteMulti((uint8 tokenType, bytes data)[] tokensIn, (uint8 tokenType, bytes data)[] tokensOut, address receiver, bytes data) payable returns (bytes)",
 ]);
+const TOKEN_AMOUNT_PARAMETERS = parseAbiParameters("address token, uint256 amount");
+const MORPHO_ADAPTER_ABI = parseAbi([
+  "function erc20TransferFrom(address token, address receiver, uint256 amount)",
+  "function morphoWrapperDepositFor(address receiver, uint256 amount)",
+]);
+const encodeTokenAmount = (token: string, amount = ONE_ETHER) =>
+  encodeAbiParameters(TOKEN_AMOUNT_PARAMETERS, [token as `0x${string}`, BigInt(amount)]);
 const ROUTE_SINGLE_CALLDATA = encodeFunctionData({
   abi: ENSO_ROUTER_ENTRYPOINT_ABI,
   functionName: "routeSingle",
@@ -735,5 +758,272 @@ describe("Enso intent validation", () => {
       amountOut: "1",
       route: [],
     })).toThrow("undecodable router calldata");
+  });
+});
+
+describe("Enso intent response protection", () => {
+  const swapRequest = {
+    intent: "plainTokenSwap" as const,
+    fromAddress: USER,
+    receiver: USER,
+    tokenIn: TOKENS.CVX,
+    tokenOut: TOKENS.CVXCRV,
+    amountIn: ONE_ETHER,
+    slippage: "100",
+  };
+
+  const makeRouteResponse = (
+    data: string,
+    overrides?: { to?: string; value?: string }
+  ): EnsoRouteResponse => ({
+    tx: {
+      to: overrides?.to ?? ENSO_ROUTER_V2,
+      data,
+      value: overrides?.value ?? "0",
+    },
+    gas: "100000",
+    amountOut: "1000000",
+    minAmountOut: "990000",
+    route: [],
+  });
+
+  const makeRouteSingle = (token: string = TOKENS.CVX, amount = ONE_ETHER) => encodeFunctionData({
+    abi: ENSO_ROUTER_ENTRYPOINT_ABI,
+    functionName: "routeSingle",
+    args: [{ tokenType: 1, data: encodeTokenAmount(token, amount) }, "0x1234"],
+  });
+
+  it("binds the exact ERC20 input, final token, owner, and quoted minimum", () => {
+    const protectedResponse = protectEnsoIntentResponse(
+      swapRequest,
+      makeRouteResponse(makeRouteSingle())
+    );
+    const decoded = decodeFunctionData({
+      abi: ENSO_ROUTER_ENTRYPOINT_ABI,
+      data: protectedResponse.tx.data as `0x${string}`,
+    });
+
+    expect(decoded.functionName).toBe("safeRouteSingle");
+    if (decoded.functionName !== "safeRouteSingle") throw new Error("unexpected selector");
+    const [tokenIn, tokenOut, receiver, innerData] = decoded.args;
+    expect(receiver.toLowerCase()).toBe(USER.toLowerCase());
+    expect(innerData).toBe("0x1234");
+    expect(decodeAbiParameters(TOKEN_AMOUNT_PARAMETERS, tokenIn.data)).toEqual([
+      TOKENS.CVX,
+      BigInt(ONE_ETHER),
+    ]);
+    expect(decodeAbiParameters(TOKEN_AMOUNT_PARAMETERS, tokenOut.data)).toEqual([
+      TOKENS.CVXCRV,
+      990000n,
+    ]);
+    expect(() => assertProtectedEnsoIntentResponse(swapRequest, protectedResponse)).not.toThrow();
+  });
+
+  it("never accepts an upstream minimum below the requested slippage floor", () => {
+    const protectedResponse = protectEnsoIntentResponse(swapRequest, {
+      ...makeRouteResponse(makeRouteSingle()),
+      minAmountOut: "1",
+    });
+    expect(protectedResponse.minAmountOut).toBe("990000");
+    expect(() => assertProtectedEnsoIntentResponse(swapRequest, protectedResponse)).not.toThrow();
+  });
+
+  it("rejects an Enso response that pulls a different token or amount", () => {
+    expect(() => protectEnsoIntentResponse(
+      swapRequest,
+      makeRouteResponse(makeRouteSingle(TOKENS.CVGCVX))
+    )).toThrow("input token or amount does not match");
+
+    expect(() => protectEnsoIntentResponse(
+      swapRequest,
+      makeRouteResponse(makeRouteSingle(TOKENS.CVX, "2"))
+    )).toThrow("input token or amount does not match");
+  });
+
+  it("rejects extra routeMulti pulls from the wallet", () => {
+    const multiRequest = {
+      intent: "specialTokenToExternalVault" as const,
+      fromAddress: USER,
+      receiver: USER,
+      inputToken: TOKENS.PXCVX,
+      outputVault: LLAMA_AIRFORCE.UCVX,
+      amountIn: ONE_ETHER,
+      slippage: "100",
+    };
+    const data = encodeFunctionData({
+      abi: ENSO_ROUTER_ENTRYPOINT_ABI,
+      functionName: "routeMulti",
+      args: [[
+        { tokenType: 1, data: encodeTokenAmount(TOKENS.PXCVX) },
+        { tokenType: 1, data: encodeTokenAmount(TOKENS.CVXCRV, "1") },
+      ], "0x1234"],
+    });
+    expect(() => protectEnsoIntentResponse(multiRequest, {
+      tx: { to: ENSO_ROUTER_V2, data, value: "0", from: USER },
+      gas: "100000",
+      amountsOut: { [LLAMA_AIRFORCE.UCVX]: "1000000" },
+      minAmountsOut: { [LLAMA_AIRFORCE.UCVX]: "990000" },
+      route: [],
+    }))
+      .toThrow("exactly one bound input token");
+  });
+
+  it("rejects Router V1 even when its calldata is otherwise allowed", () => {
+    expect(() => protectEnsoIntentResponse(
+      swapRequest,
+      makeRouteResponse(makeRouteSingle(), { to: ENSO_ROUTER_V1 })
+    )).toThrow("unexpected transaction target");
+  });
+
+  it("rejects a protected response if its receiver or output binding is changed", () => {
+    const protectedResponse = protectEnsoIntentResponse(
+      swapRequest,
+      makeRouteResponse(makeRouteSingle())
+    );
+    const decoded = decodeFunctionData({
+      abi: ENSO_ROUTER_ENTRYPOINT_ABI,
+      data: protectedResponse.tx.data as `0x${string}`,
+    });
+    if (decoded.functionName !== "safeRouteSingle") throw new Error("unexpected selector");
+    const [tokenIn, tokenOut, , innerData] = decoded.args;
+    const wrongReceiverData = encodeFunctionData({
+      abi: ENSO_ROUTER_ENTRYPOINT_ABI,
+      functionName: "safeRouteSingle",
+      args: [tokenIn, tokenOut, OTHER, innerData],
+    });
+    expect(() => assertProtectedEnsoIntentResponse(swapRequest, {
+      ...protectedResponse,
+      tx: { ...protectedResponse.tx, data: wrongReceiverData },
+    })).toThrow("receiver does not match");
+
+    const wrongOutput = {
+      tokenType: 1,
+      data: encodeTokenAmount(TOKENS.CVGCVX, "990000"),
+    };
+    const wrongOutputData = encodeFunctionData({
+      abi: ENSO_ROUTER_ENTRYPOINT_ABI,
+      functionName: "safeRouteSingle",
+      args: [tokenIn, wrongOutput, USER, innerData],
+    });
+    expect(() => assertProtectedEnsoIntentResponse(swapRequest, {
+      ...protectedResponse,
+      tx: { ...protectedResponse.tx, data: wrongOutputData },
+    })).toThrow("output token or minimum does not match");
+  });
+
+  it("binds native input to the exact transaction value", () => {
+    const nativeRequest = {
+      ...swapRequest,
+      tokenIn: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    };
+    const rawData = encodeFunctionData({
+      abi: ENSO_ROUTER_ENTRYPOINT_ABI,
+      functionName: "routeSingle",
+      args: [{ tokenType: 0, data: "0x" }, "0x1234"],
+    });
+    const protectedResponse = protectEnsoIntentResponse(
+      nativeRequest,
+      makeRouteResponse(rawData, { value: ONE_ETHER })
+    );
+    expect(() => assertProtectedEnsoIntentResponse(nativeRequest, protectedResponse)).not.toThrow();
+    expect(() => protectEnsoIntentResponse(
+      nativeRequest,
+      makeRouteResponse(rawData, { value: "1" })
+    )).toThrow("native value does not match amountIn");
+  });
+
+  it("locks legacy MORPHO permits to fixed adapter calls and a protected nested route", () => {
+    const request = {
+      intent: "legacyMorphoWrap" as const,
+      fromAddress: USER,
+      outputToken: TOKENS.CVX,
+      amountIn: ONE_ETHER,
+      slippage: "100",
+    };
+    const call = (to: string, data: string) => ({
+      to,
+      data,
+      value: "0",
+      skipRevert: false,
+      callbackHash: ZERO_CALLBACK_HASH,
+    });
+    const nestedRawRoute = encodeFunctionData({
+      abi: ENSO_ROUTER_ENTRYPOINT_ABI,
+      functionName: "routeMulti",
+      args: [[], "0x1234"],
+    });
+    const response = {
+      tx: { to: MORPHO_BUNDLER3, data: "0x", value: "0", from: USER },
+      gas: "100000",
+      amountsOut: { [TOKENS.CVX]: "1000000" },
+      minAmountsOut: { [TOKENS.CVX]: "990000" },
+      route: [],
+      legacyMorphoPermit: {
+        token: LEGACY_MORPHO,
+        spender: MORPHO_GENERAL_ADAPTER1,
+        amount: ONE_ETHER,
+        postPermitCalls: [
+          call(MORPHO_GENERAL_ADAPTER1, encodeFunctionData({
+            abi: MORPHO_ADAPTER_ABI,
+            functionName: "erc20TransferFrom",
+            args: [LEGACY_MORPHO, MORPHO_GENERAL_ADAPTER1, BigInt(ONE_ETHER)],
+          })),
+          call(MORPHO_GENERAL_ADAPTER1, encodeFunctionData({
+            abi: MORPHO_ADAPTER_ABI,
+            functionName: "morphoWrapperDepositFor",
+            args: [ENSO_SHORTCUTS, BigInt(ONE_ETHER)],
+          })),
+          call(ENSO_ROUTER_V2, nestedRawRoute),
+        ],
+      },
+    };
+
+    const protectedResponse = protectEnsoIntentResponse(request, response);
+    const nestedData = protectedResponse.legacyMorphoPermit?.postPermitCalls[2]?.data;
+    if (!nestedData) throw new Error("missing nested route");
+    expect(decodeFunctionData({
+      abi: ENSO_ROUTER_ENTRYPOINT_ABI,
+      data: nestedData as `0x${string}`,
+    }).functionName).toBe("safeRouteMulti");
+    expect(() => assertProtectedEnsoIntentResponse(request, protectedResponse)).not.toThrow();
+
+    expect(() => protectEnsoIntentResponse(request, {
+      ...response,
+      legacyMorphoPermit: {
+        ...response.legacyMorphoPermit,
+        postPermitCalls: [
+          ...response.legacyMorphoPermit.postPermitCalls,
+          call(OTHER, "0x1234"),
+        ],
+      },
+    })).toThrow("unexpected post-permit calls");
+  });
+
+  it("uses a safe multi wrapper with no token-output claim for repayment state changes", () => {
+    const repayRequest = {
+      intent: "curveLendingRepay" as const,
+      fromAddress: USER,
+      vaultAddress: VAULT_ADDRESSES.YCVXCRV,
+      amountIn: ONE_ETHER,
+    };
+    const rawData = encodeFunctionData({
+      abi: ENSO_ROUTER_ENTRYPOINT_ABI,
+      functionName: "routeSingle",
+      args: [{ tokenType: 1, data: encodeTokenAmount(CRVUSD_ADDRESS) }, "0x1234"],
+    });
+    const protectedResponse = protectEnsoIntentResponse(repayRequest, {
+      tx: { to: ENSO_ROUTER_V2, data: rawData, value: "0", from: USER },
+      gas: "100000",
+      amountsOut: {},
+      route: [],
+    });
+    const decoded = decodeFunctionData({
+      abi: ENSO_ROUTER_ENTRYPOINT_ABI,
+      data: protectedResponse.tx.data as `0x${string}`,
+    });
+    expect(decoded.functionName).toBe("safeRouteMulti");
+    if (decoded.functionName !== "safeRouteMulti") throw new Error("unexpected selector");
+    expect(decoded.args[1]).toEqual([]);
+    expect(() => assertProtectedEnsoIntentResponse(repayRequest, protectedResponse)).not.toThrow();
   });
 });

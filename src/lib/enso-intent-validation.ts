@@ -224,6 +224,9 @@ export function assertEnsoIntentResponseShape(response: EnsoIntentResponse): voi
   if (!isHexAddress(response.tx.to)) {
     failResponse("Enso intent returned an invalid transaction target");
   }
+  if ("from" in response.tx && response.tx.from !== undefined && !isHexAddress(response.tx.from)) {
+    failResponse("Enso intent returned an invalid transaction sender");
+  }
   assertHexData(response.tx.data, "tx.data");
   assertIntegerString(response.tx.value, "tx.value");
 
@@ -233,8 +236,14 @@ export function assertEnsoIntentResponseShape(response: EnsoIntentResponse): voi
   if ("amountOut" in response && response.amountOut !== undefined) {
     assertIntegerString(response.amountOut, "amountOut");
   }
+  if ("minAmountOut" in response && response.minAmountOut !== undefined) {
+    assertIntegerString(response.minAmountOut, "minAmountOut", { positive: true });
+  }
   if ("amountsOut" in response) {
     assertResponseAmountMap(response.amountsOut, "amountsOut");
+  }
+  if ("minAmountsOut" in response) {
+    assertResponseAmountMap(response.minAmountsOut, "minAmountsOut");
   }
 }
 
