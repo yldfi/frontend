@@ -1,7 +1,7 @@
 // LlamaLendZapper contract integration
 // Enables leveraged Curve LlamaLend operations via Enso Router swaps
 
-import { fetchRoute, fetchBundle, ENSO_SHORTCUTS, ENSO_ROUTER_V2, getCvgCvxSwapRate, getLpxCvxToCvxSwapRate } from "@/lib/enso";
+import { fetchRoute, fetchExactAmountSafeRoute, fetchBundle, ENSO_SHORTCUTS, ENSO_ROUTER_V2, getCvgCvxSwapRate, getLpxCvxToCvxSwapRate } from "@/lib/enso";
 import { calculateMinDy, getCurveGetDyFactory } from "@/lib/curve";
 import { TOKENS, TANGENT, PIREX } from "@/config/vaults";
 import { CRVUSD_ADDRESS } from "@/config/addresses";
@@ -577,7 +577,7 @@ export async function buildVaultInputSwapBundle(params: {
 
     // Pre-fetch CVX -> targetToken route for inner swap data
     // fromAddress=ZAPPER_ADDRESS so Enso builds the route for the zapper context
-    const cvxRoute = await fetchRoute({
+    const cvxRoute = await fetchExactAmountSafeRoute({
       fromAddress: ZAPPER_ADDRESS,
       tokenIn: TOKENS.CVX,
       tokenOut: params.targetToken,
@@ -653,7 +653,7 @@ export async function buildVaultInputSwapBundle(params: {
     const minDyCvx = calculateMinDy(expectedCvx, slippageBps);
 
     // Pre-fetch CVX → target route for innerSwapData
-    const cvxRoute = await fetchRoute({
+    const cvxRoute = await fetchExactAmountSafeRoute({
       fromAddress: ZAPPER_ADDRESS,
       tokenIn: TOKENS.CVX,
       tokenOut: params.targetToken,

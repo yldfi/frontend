@@ -63,6 +63,8 @@ import {
   fetchAnyFromErc4626ExternalVaultRoute,
   fetchAnyToPxCvxRoute,
   fetchAnyToLpxCvxRoute,
+  fetchBundle,
+  fetchExactAmountSafeRoute,
   fetchComposableZapInRoute,
   fetchLpxCvxZapInRoute,
   fetchLegacyMorphoWrapRoute,
@@ -480,6 +482,92 @@ describe("route step amounts", () => {
         args: expect.objectContaining({ method: "exchange_multiple" }),
       }),
     ]);
+  });
+
+  it("excludes unsafe aggregators for every dynamic Enso route input", async () => {
+    await fetchBundle({
+      fromAddress: TEST_WALLET,
+      actions: [
+        {
+          protocol: "erc4626",
+          action: "redeem",
+          args: {
+            tokenIn: "0xvault",
+            tokenOut: "0xunderlying",
+            amountIn: "1000000000000000000",
+            primaryAddress: "0xvault",
+          },
+        },
+        {
+          protocol: "enso",
+          action: "route",
+          args: {
+            tokenIn: "0xunderlying",
+            tokenOut: "0xtarget",
+            amountIn: { useOutputOfCallAt: 0 },
+            slippage: "100",
+          },
+        },
+      ],
+    });
+
+    expect(lastBundleActions()[1]).toEqual({
+      protocol: "enso",
+      action: "route",
+      args: {
+        tokenIn: "0xunderlying",
+        tokenOut: "0xtarget",
+        amountIn: { useOutputOfCallAt: 0 },
+        slippage: "100",
+        ignoreAggregators: ["0x", "kyberswap"],
+      },
+    });
+  });
+
+  it("leaves fixed-input Enso routes unrestricted", async () => {
+    await fetchBundle({
+      fromAddress: TEST_WALLET,
+      actions: [
+        {
+          protocol: "enso",
+          action: "route",
+          args: {
+            tokenIn: "0xwalletToken",
+            tokenOut: "0xtarget",
+            amountIn: "1000000000000000000",
+            slippage: "100",
+          },
+        },
+      ],
+    });
+
+    expect(lastBundleActions()[0]).toEqual({
+      protocol: "enso",
+      action: "route",
+      args: {
+        tokenIn: "0xwalletToken",
+        tokenOut: "0xtarget",
+        amountIn: "1000000000000000000",
+        slippage: "100",
+      },
+    });
+    expect(mockGetAggregators).not.toHaveBeenCalled();
+  });
+
+  it("builds precomputed routeMulti calldata with the exact-amount-safe policy", async () => {
+    await fetchExactAmountSafeRoute({
+      fromAddress: TEST_WALLET,
+      tokenIn: TOKENS.CVX,
+      tokenOut: USDC_ADDRESS,
+      amountIn: "1000000000000000000",
+      slippage: "100",
+    });
+
+    expect(mockGetRouteData).toHaveBeenCalledWith(expect.objectContaining({
+      tokenIn: [TOKENS.CVX],
+      tokenOut: [USDC_ADDRESS],
+      ignoreAggregators: ["0x", "kyberswap"],
+    }));
   });
 
   it("selects a better exact-amount-safe Enso route and excludes unsafe aggregators", async () => {

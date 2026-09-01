@@ -4,8 +4,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mock setup (vi.hoisted pattern)
 // ============================================================================
 
-const { mockFetchRoute, mockFetchBundle, mockGetCvgCvxSwapRate, mockGetLpxCvxToCvxSwapRate, mockGetCurveGetDyFactory } = vi.hoisted(() => ({
+const { mockFetchRoute, mockFetchExactAmountSafeRoute, mockFetchBundle, mockGetCvgCvxSwapRate, mockGetLpxCvxToCvxSwapRate, mockGetCurveGetDyFactory } = vi.hoisted(() => ({
   mockFetchRoute: vi.fn(),
+  mockFetchExactAmountSafeRoute: vi.fn(),
   mockFetchBundle: vi.fn(),
   mockGetCvgCvxSwapRate: vi.fn(),
   mockGetLpxCvxToCvxSwapRate: vi.fn(),
@@ -15,6 +16,7 @@ const { mockFetchRoute, mockFetchBundle, mockGetCvgCvxSwapRate, mockGetLpxCvxToC
 // Mock @/lib/enso — the functions buildVaultInputSwapBundle/buildExoticOutputSwapData import
 vi.mock("@/lib/enso", () => ({
   fetchRoute: mockFetchRoute,
+  fetchExactAmountSafeRoute: mockFetchExactAmountSafeRoute,
   fetchBundle: mockFetchBundle,
   getCvgCvxSwapRate: mockGetCvgCvxSwapRate,
   getLpxCvxToCvxSwapRate: mockGetLpxCvxToCvxSwapRate,
@@ -69,6 +71,7 @@ describe("buildExoticOutputSwapData", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetchRoute.mockResolvedValue(MOCK_ROUTE_RESPONSE);
+    mockFetchExactAmountSafeRoute.mockResolvedValue(MOCK_ROUTE_RESPONSE);
     mockFetchBundle.mockResolvedValue(MOCK_BUNDLE_RESPONSE);
     mockGetCvgCvxSwapRate.mockResolvedValue(950000000000000000n);
     mockGetCurveGetDyFactory.mockResolvedValue(930000000000000000n);
@@ -195,6 +198,7 @@ describe("buildVaultInputSwapBundle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetchRoute.mockResolvedValue(MOCK_ROUTE_RESPONSE);
+    mockFetchExactAmountSafeRoute.mockResolvedValue(MOCK_ROUTE_RESPONSE);
     mockFetchBundle.mockResolvedValue(MOCK_BUNDLE_RESPONSE);
     mockGetLpxCvxToCvxSwapRate.mockResolvedValue(900000000000000000n);
   });
@@ -210,7 +214,7 @@ describe("buildVaultInputSwapBundle", () => {
     });
 
     expect(mockGetLpxCvxToCvxSwapRate).toHaveBeenCalledWith("950000000000000000");
-    expect(mockFetchRoute).toHaveBeenCalledWith(
+    expect(mockFetchExactAmountSafeRoute).toHaveBeenCalledWith(
       expect.objectContaining({
         fromAddress: ZAPPER_ADDRESS,
         tokenIn: TOKENS.CVX,
@@ -248,6 +252,14 @@ describe("buildVaultInputSwapBundle", () => {
       isCvgCvx: true,
       estimatedCvx1: "940000000000000000",
     });
+
+    expect(mockFetchExactAmountSafeRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fromAddress: ZAPPER_ADDRESS,
+        tokenIn: TOKENS.CVX,
+        tokenOut: TARGET_TOKEN,
+      }),
+    );
 
     const bundleCall = mockFetchBundle.mock.calls[0][0];
     // 1 redeem + 4 actions (approve cvgCVX, exchange, CVX1.withdraw, routeMulti)
@@ -307,6 +319,7 @@ describe("buildVaultInputSwapBundle", () => {
     for (const pathConfig of paths) {
       vi.clearAllMocks();
       mockFetchRoute.mockResolvedValue(MOCK_ROUTE_RESPONSE);
+      mockFetchExactAmountSafeRoute.mockResolvedValue(MOCK_ROUTE_RESPONSE);
       mockFetchBundle.mockResolvedValue(MOCK_BUNDLE_RESPONSE);
       mockGetLpxCvxToCvxSwapRate.mockResolvedValue(900000000000000000n);
 
