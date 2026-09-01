@@ -69,7 +69,6 @@ async function verifySignature(
 }
 
 const CVX_BALANCE_SLOT = 0n;
-const CVX_ALLOWANCE_SLOT = 1n;
 
 function computeERC20BalanceSlot(
   account: string,
@@ -79,25 +78,6 @@ function computeERC20BalanceSlot(
     encodeAbiParameters(parseAbiParameters("address, uint256"), [
       account as `0x${string}`,
       slot,
-    ])
-  );
-}
-
-function computeERC20AllowanceSlot(
-  owner: string,
-  spender: string,
-  slot: bigint = CVX_ALLOWANCE_SLOT
-): `0x${string}` {
-  const innerSlot = keccak256(
-    encodeAbiParameters(parseAbiParameters("address, uint256"), [
-      owner as `0x${string}`,
-      slot,
-    ])
-  );
-  return keccak256(
-    encodeAbiParameters(parseAbiParameters("address, bytes32"), [
-      spender as `0x${string}`,
-      innerSlot,
     ])
   );
 }
@@ -469,53 +449,6 @@ describe("Simulate API", () => {
         ])
       );
       expect(computeERC20BalanceSlot(addr, 0n)).toBe(expected);
-    });
-  });
-
-  describe("computeERC20AllowanceSlot", () => {
-    const owner = "0x1111111111111111111111111111111111111111";
-    const spender = "0x2222222222222222222222222222222222222222";
-
-    it("produces a 0x-prefixed hex string", () => {
-      const slot = computeERC20AllowanceSlot(owner, spender);
-      expect(slot).toMatch(/^0x[0-9a-f]{64}$/);
-    });
-
-    it("is deterministic", () => {
-      const a = computeERC20AllowanceSlot(owner, spender);
-      const b = computeERC20AllowanceSlot(owner, spender);
-      expect(a).toBe(b);
-    });
-
-    it("produces different slots for different owners", () => {
-      const a = computeERC20AllowanceSlot(owner, spender);
-      const b = computeERC20AllowanceSlot(spender, spender);
-      expect(a).not.toBe(b);
-    });
-
-    it("produces different slots for different spenders", () => {
-      const a = computeERC20AllowanceSlot(owner, spender);
-      const b = computeERC20AllowanceSlot(
-        owner,
-        "0x3333333333333333333333333333333333333333"
-      );
-      expect(a).not.toBe(b);
-    });
-
-    it("is a double-keccak (nested mapping)", () => {
-      const innerSlot = keccak256(
-        encodeAbiParameters(parseAbiParameters("address, uint256"), [
-          owner as `0x${string}`,
-          CVX_ALLOWANCE_SLOT,
-        ])
-      );
-      const expected = keccak256(
-        encodeAbiParameters(parseAbiParameters("address, bytes32"), [
-          spender as `0x${string}`,
-          innerSlot,
-        ])
-      );
-      expect(computeERC20AllowanceSlot(owner, spender)).toBe(expected);
     });
   });
 

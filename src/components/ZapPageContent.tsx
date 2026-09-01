@@ -140,13 +140,14 @@ export function ZapPageContent() {
   const setAmount = useCallback((v: string) => {
     const sanitized = sanitizeAmount(v);
     setAmountState(sanitized);
+    setShowSimulationModal(false);
     try {
       if (sanitized) sessionStorage.setItem(`${STORAGE_PREFIX}-amount`, sanitized);
       else sessionStorage.removeItem(`${STORAGE_PREFIX}-amount`);
     } catch {
       // ignore
     }
-  }, []);
+  }, [setShowSimulationModal]);
 
   useEffect(() => {
     if (!isEntryDisabledOutput(outputToken.address)) return;
@@ -207,13 +208,26 @@ export function ZapPageContent() {
   const debouncedAmount = useDebouncedValue(amount, 500);
   const sameToken =
     inputToken.address.toLowerCase() === outputToken.address.toLowerCase();
-  const { quote, isLoading: quoteLoading, error: quoteError } = useUniversalZap({
+  const { quote: rawQuote, isLoading: quoteLoading, error: quoteError } = useUniversalZap({
     inputToken,
     outputToken,
     inputAmount: debouncedAmount,
     slippage,
     paused: sameToken || showSimulationModal,
   });
+  const quoteIsCurrent = !!(
+    rawQuote &&
+    amount &&
+    amount === debouncedAmount &&
+    rawQuote.inputAmount === debouncedAmount &&
+    rawQuote.inputToken.address.toLowerCase() === inputToken.address.toLowerCase()
+  );
+  const quote = quoteIsCurrent ? rawQuote : null;
+  const quoteSettling = !!amount && (
+    amount !== debouncedAmount ||
+    quoteLoading ||
+    (!!rawQuote && !quoteIsCurrent)
+  );
 
   const swapTokens = useCallback(() => {
     if (isEntryDisabledOutput(inputToken.address)) {
@@ -415,7 +429,7 @@ export function ZapPageContent() {
   }, [clearCompletionResetTimer, isSuccess, isReverted, zapHash, refetchInputBalance, resetCompletionState, setAmount]);
 
   // Error display
-  const noRoute = !quoteLoading && !!quoteError && !!amount && Number(amount) > 0;
+  const noRoute = !quoteSettling && !!quoteError && !!amount && Number(amount) > 0;
   const isPendingTx = isZapTxPendingVisible(status) && !isSimulatingPreview && !showSimulationModal;
   const isZapSuccessVisible = !!showTxSuccess?.show;
   const isZapRevertedVisible = !!showTxReverted?.show;
@@ -504,7 +518,7 @@ export function ZapPageContent() {
                   </div>
                   <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2">
                     <span className="mono text-base text-[var(--foreground)] flex-1">
-                      {quoteLoading
+                      {quoteSettling
                         ? "—"
                         : quote
                         ? Number(quote.outputAmountFormatted).toFixed(4)
@@ -677,7 +691,7 @@ export function ZapPageContent() {
                       showApprovalCard ||
                       !quote ||
                       isLoading ||
-                      quoteLoading ||
+                      quoteSettling ||
                       isSimulatingPreview ||
                       showSimulationModal ||
                       hasInsufficientBalance ||
@@ -689,7 +703,7 @@ export function ZapPageContent() {
                       showApprovalCard ||
                         !quote ||
                         isLoading ||
-                        quoteLoading ||
+                        quoteSettling ||
                         isSimulatingPreview ||
                         showSimulationModal ||
                         (amount && hasInsufficientBalance) ||
@@ -705,7 +719,7 @@ export function ZapPageContent() {
                       <>Waiting for approval<LoadingDots /></>
                     ) : isLoading ? (
                       <>Confirm in wallet<LoadingDots /></>
-                    ) : quoteLoading ? (
+                    ) : quoteSettling ? (
                       <>Getting quote<LoadingDots /></>
                     ) : sameToken ? (
                       "Select different tokens"
@@ -778,7 +792,7 @@ export function ZapPageContent() {
                   className="lg:hidden grid transition-[grid-template-rows] duration-300 ease-in-out"
                   style={{
                     gridTemplateRows:
-                      showRoute && amount && Number(amount) > 0 && (quote || quoteLoading)
+                      showRoute && amount && Number(amount) > 0 && (quote || quoteSettling)
                         ? "1fr"
                         : "0fr",
                   }}
@@ -796,7 +810,7 @@ export function ZapPageContent() {
                             ? Number(quote.outputAmountFormatted).toFixed(4)
                             : undefined
                         }
-                        isLoading={quoteLoading}
+                        isLoading={quoteSettling}
                       />
                     </div>
                   </div>
@@ -810,11 +824,11 @@ export function ZapPageContent() {
             className={cn(
               "hidden lg:block absolute top-0 left-full ml-6 w-[360px]",
               "transition-[opacity,transform] duration-500 ease-out",
-              showRoute && !isTxStateVisible && amount && Number(amount) > 0 && (quote || quoteLoading)
+              showRoute && !isTxStateVisible && amount && Number(amount) > 0 && (quote || quoteSettling)
                 ? "opacity-100 translate-x-0"
                 : "opacity-0 -translate-x-4 pointer-events-none",
             )}
-            aria-hidden={!(showRoute && !isTxStateVisible && amount && Number(amount) > 0 && (quote || quoteLoading))}
+            aria-hidden={!(showRoute && !isTxStateVisible && amount && Number(amount) > 0 && (quote || quoteSettling))}
           >
             <div className="border border-[var(--border)] rounded-xl p-5">
               <div className="text-xs text-[var(--muted-foreground)] uppercase tracking-wider mb-3">
@@ -830,7 +844,7 @@ export function ZapPageContent() {
                     ? Number(quote.outputAmountFormatted).toFixed(4)
                     : undefined
                 }
-                isLoading={quoteLoading}
+                isLoading={quoteSettling}
               />
             </div>
           </aside>
@@ -851,7 +865,7 @@ export function ZapPageContent() {
         title="Zap Settings"
       />
 
-      {showSimulationModal && simulationResult && (
+      {showSimulationModal && quote && simulationResult && (
         <SimulationModal
           isOpen={showSimulationModal}
           onClose={() => setShowSimulationModal(false)}
