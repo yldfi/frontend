@@ -45,6 +45,18 @@ describe("Enso intent validation", () => {
     })).not.toThrow();
   });
 
+  it("rejects slippage above the protected UI ceiling", () => {
+    expect(() => assertValidEnsoIntentRequest({
+      intent: "plainTokenSwap",
+      fromAddress: USER,
+      receiver: USER,
+      tokenIn: TOKENS.CVX,
+      tokenOut: TOKENS.CVXCRV,
+      amountIn: ONE_ETHER,
+      slippage: "5001",
+    })).toThrow("slippage must be between 0 and 5000 basis points");
+  });
+
   it("rejects raw actions on the intent endpoint", () => {
     expect(() => assertValidEnsoIntentRequest({
       intent: "yldVaultZapIn",

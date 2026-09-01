@@ -1,4 +1,5 @@
 import type { EnsoBundleResponse, EnsoRouteResponse } from "@/types/enso";
+import { MAX_SAFE_SLIPPAGE_BPS } from "@/lib/enso-swap-protection";
 import { decodeFunctionData, parseAbi } from "viem";
 
 export type EnsoIntentResponse = EnsoRouteResponse | EnsoBundleResponse;
@@ -85,8 +86,8 @@ export function assertSlippage(value: unknown): asserts value is string | undefi
     failValidation("slippage must be a basis-points string");
   }
   const slippageBps = Number(value);
-  if (!Number.isSafeInteger(slippageBps) || slippageBps < 0 || slippageBps > 10_000) {
-    failValidation("slippage must be between 0 and 10000 basis points");
+  if (!Number.isSafeInteger(slippageBps) || slippageBps < 0 || slippageBps > MAX_SAFE_SLIPPAGE_BPS) {
+    failValidation(`slippage must be between 0 and ${MAX_SAFE_SLIPPAGE_BPS} basis points`);
   }
 }
 

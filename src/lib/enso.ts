@@ -20,6 +20,10 @@ import {
   shouldUsePlainTokenSwapIntent,
 } from "@/lib/enso-intents";
 import { formatTokenAmount } from "@/lib/utils";
+import {
+  assertProtectedEnsoBundleActions,
+  assertSafeSlippageBps,
+} from "@/lib/enso-swap-protection";
 
 // Import Curve helpers from dedicated module
 import {
@@ -2393,11 +2397,14 @@ export interface EnsoRouteRequest {
 }
 
 export async function fetchRoute(params: EnsoRouteRequest): Promise<EnsoRouteResponse> {
+  const slippage = params.slippage ?? "100";
+  assertSafeSlippageBps(slippage);
+
   console.log("[Enso Route] Request:", {
     tokenIn: params.tokenIn,
     tokenOut: params.tokenOut,
     amountIn: params.amountIn,
-    slippage: params.slippage ?? "100",
+    slippage,
   });
 
   // Client-side: proxy low-risk user-owned swaps through the named intent route.
@@ -2408,7 +2415,7 @@ export async function fetchRoute(params: EnsoRouteRequest): Promise<EnsoRouteRes
       tokenIn: params.tokenIn,
       tokenOut: params.tokenOut,
       amountIn: params.amountIn,
-      slippage: params.slippage ?? "100",
+      slippage,
       receiver: params.receiver ?? params.fromAddress,
     });
     console.log("[Enso Route] Response (via intent):", {
@@ -2430,7 +2437,7 @@ export async function fetchRoute(params: EnsoRouteRequest): Promise<EnsoRouteRes
         tokenIn: [params.tokenIn],
         tokenOut: [params.tokenOut],
         amountIn: [params.amountIn],
-        slippage: params.slippage ?? "100",
+        slippage,
         receiver: params.receiver,
       }),
     });
@@ -2454,7 +2461,7 @@ export async function fetchRoute(params: EnsoRouteRequest): Promise<EnsoRouteRes
     tokenIn: [params.tokenIn as `0x${string}`],
     tokenOut: [params.tokenOut as `0x${string}`],
     amountIn: [params.amountIn],
-    slippage: params.slippage ?? "100",
+    slippage,
     routingStrategy: "router",
     referralCode: ENSO_REFERRAL_CODE,
     receiver: params.receiver as `0x${string}` | undefined,
@@ -2710,6 +2717,8 @@ export async function fetchBundle(params: {
       "Raw Enso bundle actions cannot be submitted from the browser; use a server-owned Enso intent"
     );
   }
+
+  assertProtectedEnsoBundleActions(params.actions);
 
   const dynamicRouteActions = params.actions.filter((action) =>
     action.protocol === "enso" &&
