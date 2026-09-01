@@ -2483,6 +2483,9 @@ export async function fetchRoute(params: EnsoRouteRequest): Promise<EnsoRouteRes
     },
     gas: String(routeData.gas),
     amountOut: String(routeData.amountOut),
+    minAmountOut: routeData.minAmountOut == null
+      ? undefined
+      : String(Array.isArray(routeData.minAmountOut) ? routeData.minAmountOut[0] : routeData.minAmountOut),
     priceImpact: routeData.priceImpact != null ? Number(routeData.priceImpact) : null,
     route: routeData.route.map((hop) => ({
       action: hop.action,
@@ -2799,6 +2802,11 @@ export async function fetchBundle(params: {
           Object.entries(bundleData.amountsOut).map(([k, v]) => [k, String(v)])
         )
       : {},
+    minAmountsOut: bundleData.minAmountsOut
+      ? Object.fromEntries(
+          Object.entries(bundleData.minAmountsOut).map(([k, v]) => [k, String(v)])
+        )
+      : undefined,
     route: bundleData.route,
     priceImpact: bundleData.priceImpact,
   };

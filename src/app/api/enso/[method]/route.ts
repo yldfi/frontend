@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { EnsoClient } from "@ensofinance/sdk";
 import {
-  assertEnsoIntentTxTarget,
   assertValidEnsoIntentRequest,
   getIntentVault,
+  protectEnsoIntentResponse,
+  type EnsoIntentResponse,
 } from "@/lib/enso-intents";
 import { assertSlippage } from "@/lib/enso-intent-validation";
 import { getExternalVaultConfig, LLAMA_AIRFORCE, TOKENS } from "@/config/vaults";
@@ -91,6 +92,8 @@ export async function POST(
     switch (method) {
       case "intent": {
         assertValidEnsoIntentRequest(body);
+        const respond = (response: EnsoIntentResponse) =>
+          NextResponse.json(protectEnsoIntentResponse(body, response), { headers: cors });
 
         const {
           fetchCvgCvxZapInRoute,
@@ -135,8 +138,7 @@ export async function POST(
               slippage: body.slippage,
               receiver: body.receiver ?? body.fromAddress,
             });
-            assertEnsoIntentTxTarget(body.intent, route);
-            return NextResponse.json(route, { headers: cors });
+            return respond(route);
           }
 
           case "yldVaultZapIn": {
@@ -151,8 +153,7 @@ export async function POST(
               slippage: body.slippage,
               underlyingToken: vault.assetAddress,
             });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "yldVaultZapOut": {
@@ -167,8 +168,7 @@ export async function POST(
               slippage: body.slippage,
               underlyingToken: vault.assetAddress,
             });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "yldVaultToCvgCvxVault":
@@ -190,8 +190,7 @@ export async function POST(
               targetUnderlyingToken: targetVault.assetAddress,
               slippage: body.slippage,
             });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "cvgCvxZapIn": {
@@ -202,8 +201,7 @@ export async function POST(
               amountIn: body.amountIn,
               slippage: body.slippage,
             });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "cvgCvxZapOut": {
@@ -214,8 +212,7 @@ export async function POST(
               amountIn: body.amountIn,
               slippage: body.slippage,
             });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "pxCvxZapIn": {
@@ -226,8 +223,7 @@ export async function POST(
               amountIn: body.amountIn,
               slippage: body.slippage,
             });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "pxCvxZapOut": {
@@ -238,8 +234,7 @@ export async function POST(
               amountIn: body.amountIn,
               slippage: body.slippage,
             });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "externalVaultZapInToYld": {
@@ -250,8 +245,7 @@ export async function POST(
               amountIn: body.amountIn,
               slippage: body.slippage,
             });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "anyToExternalVault": {
@@ -262,8 +256,7 @@ export async function POST(
               amountIn: body.amountIn,
               slippage: body.slippage,
             });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "yldVaultToExternalVault": {
@@ -285,8 +278,7 @@ export async function POST(
               amountIn: body.amountIn,
               slippage: body.slippage,
             });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "yldVaultToIlliquid": {
@@ -301,8 +293,7 @@ export async function POST(
               amountIn: body.amountIn,
               slippage: body.slippage,
             });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "specialTokenToExternalVault": {
@@ -313,8 +304,7 @@ export async function POST(
               amountIn: body.amountIn,
               slippage: body.slippage,
             });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "specialTokenToIlliquid": {
@@ -325,8 +315,7 @@ export async function POST(
               amountIn: body.amountIn,
               slippage: body.slippage,
             });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "externalVaultToAny": {
@@ -367,8 +356,7 @@ export async function POST(
                         slippage: body.slippage,
                         protocolLabel: config.protocol,
                       });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "illiquidToAny": {
@@ -394,8 +382,7 @@ export async function POST(
                       amountIn: body.amountIn,
                       slippage: body.slippage,
                     });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "anyToIlliquid": {
@@ -421,8 +408,7 @@ export async function POST(
                       amountIn: body.amountIn,
                       slippage: body.slippage,
                     });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "legacyMorphoWrap": {
@@ -432,8 +418,7 @@ export async function POST(
               amountIn: body.amountIn,
               slippage: body.slippage,
             });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "legacyMorphoZapIn": {
@@ -447,8 +432,7 @@ export async function POST(
               slippage: body.slippage,
               underlyingToken: vault.assetAddress,
             });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "curveLendingRepay": {
@@ -457,8 +441,7 @@ export async function POST(
               vaultAddress: body.vaultAddress as `0x${string}`,
               repayAmount: body.amountIn,
             });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "curveLendingRepayWithSwap": {
@@ -472,8 +455,7 @@ export async function POST(
               closeLoan: body.closeLoan,
               maxRepayAmount: body.maxRepayAmount,
             });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           case "yldVaultToVault": {
@@ -492,8 +474,7 @@ export async function POST(
               targetUnderlyingToken: targetVault.assetAddress,
               slippage: body.slippage,
             });
-            assertEnsoIntentTxTarget(body.intent, bundle);
-            return NextResponse.json(bundle, { headers: cors });
+            return respond(bundle);
           }
 
           default:
@@ -524,6 +505,9 @@ export async function POST(
           },
           gas: String(routeData.gas),
           amountOut: String(routeData.amountOut),
+          minAmountOut: routeData.minAmountOut == null
+            ? undefined
+            : String(Array.isArray(routeData.minAmountOut) ? routeData.minAmountOut[0] : routeData.minAmountOut),
           priceImpact: routeData.priceImpact != null ? Number(routeData.priceImpact) : undefined,
           route: routeData.route.map((hop) => ({
             action: hop.action,
