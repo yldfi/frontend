@@ -57,6 +57,7 @@ vi.mock("@/lib/curve", () => ({
 
 import {
   fetchAnyToCvgCvxRoute,
+  fetchAnyFromErc4626ExternalVaultRoute,
   fetchAnyToPxCvxRoute,
   fetchAnyToLpxCvxRoute,
   fetchComposableZapInRoute,
@@ -75,7 +76,7 @@ import {
   MORPHO_GENERAL_ADAPTER1_ADDRESS,
   MORPHO_TOKEN_ADDRESS,
 } from "@/lib/enso";
-import { cryptoswap, findPegPoint, getCurveGetDy, getStableSwapParams } from "@/lib/curve";
+import { cryptoswap, findPegPoint, getCurveGetDy, getCurveGetDyFactory, getStableSwapParams } from "@/lib/curve";
 import { LLAMA_AIRFORCE, PIREX, TANGENT, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 import { USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
 import type { EnsoBundleAction } from "@/types/enso";
@@ -205,7 +206,20 @@ describe("route step amounts", () => {
     });
     vi.mocked(getCurveGetDy).mockImplementation(async (_pool: string, i: number, j: number, amount: string) => {
       const rawAmount = BigInt(amount);
+      if (_pool.toLowerCase() === "0x4dece678ceceb27446b35c672dc7d61f30bad69e") {
+        return rawAmount * (10n ** 12n);
+      }
       if (i === 0 && j === 1) return rawAmount + (rawAmount / 10n);
+      return rawAmount;
+    });
+    vi.mocked(getCurveGetDyFactory).mockImplementation(async (pool: string, i: number, j: number, amount: string) => {
+      const rawAmount = BigInt(amount);
+      if (pool.toLowerCase() === "0x4ebdf703948ddcea3b11f675b4d1fba9d2414a14" && i === 0 && j === 1) {
+        return rawAmount / 2000n;
+      }
+      if (pool.toLowerCase() === "0xb576491f1e6e5e62f1d8f26062ee822b40b0e0d4" && i === 0 && j === 1) {
+        return rawAmount * 1000n;
+      }
       return rawAmount;
     });
 
@@ -214,7 +228,7 @@ describe("route step amounts", () => {
       const input = tokenIn[0]?.toLowerCase();
       const output = tokenOut[0]?.toLowerCase();
 
-      if (input === "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" && output === TOKENS.CVX.toLowerCase()) {
+      if (input === USDC_ADDRESS.toLowerCase() && output === TOKENS.CVX.toLowerCase()) {
         return { amountOut: "5000000000000000000", tx: { to: "0xroute", data: "0x1", value: "0" }, route: [] };
       }
       if (input === TOKENS.CVXCRV.toLowerCase() && output === TOKENS.CVX.toLowerCase()) {
@@ -386,6 +400,81 @@ describe("route step amounts", () => {
       { token: "USDC", amount: "10.0000" },
       { token: "CVX", amount: "5.0000" },
       { token: "pxCVX", amount: "5.4450" },
+    ]);
+
+    const actions = lastBundleActions();
+    expect(actions[0]).toMatchObject({
+      protocol: "erc4626",
+      action: "redeem",
+      args: {
+        tokenIn: YVUSDC1_ADDRESS,
+        tokenOut: USDC_ADDRESS,
+        amountIn: "10000000",
+      },
+    });
+    expect(actions[1]).toMatchObject({
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: USDC_ADDRESS.toLowerCase(),
+        amount: { useOutputOfCallAt: 0 },
+      },
+    });
+    expect(actions[2]).toMatchObject({
+      protocol: "enso",
+      action: "call",
+      args: {
+        method: "exchange_multiple",
+        args: expect.arrayContaining([{ useOutputOfCallAt: 0 }]),
+      },
+    });
+    expect(actions).not.toContainEqual(expect.objectContaining({
+      protocol: "enso",
+      action: "route",
+      args: expect.objectContaining({ tokenIn: USDC_ADDRESS }),
+    }));
+    expect(actions).not.toContainEqual(expect.objectContaining({
+      protocol: "erc20",
+      action: "transfer",
+      args: expect.objectContaining({ token: USDC_ADDRESS }),
+    }));
+  });
+
+  it("routes all redeemed USDC through exact runtime amount references", async () => {
+    await fetchAnyFromErc4626ExternalVaultRoute({
+      fromAddress: TEST_WALLET,
+      externalVault: YVUSDC1_ADDRESS,
+      externalVaultUnderlying: USDC_ADDRESS,
+      outputToken: TOKENS.CVX,
+      amountIn: "297900852",
+      slippage: "100",
+      protocolLabel: "Yearn",
+    });
+
+    expect(lastBundleActions()).toEqual([
+      {
+        protocol: "erc4626",
+        action: "redeem",
+        args: {
+          tokenIn: YVUSDC1_ADDRESS,
+          tokenOut: USDC_ADDRESS,
+          amountIn: "297900852",
+          primaryAddress: YVUSDC1_ADDRESS,
+        },
+      },
+      expect.objectContaining({
+        protocol: "erc20",
+        action: "approve",
+        args: expect.objectContaining({
+          token: USDC_ADDRESS.toLowerCase(),
+          amount: { useOutputOfCallAt: 0 },
+        }),
+      }),
+      expect.objectContaining({
+        protocol: "enso",
+        action: "call",
+        args: expect.objectContaining({ method: "exchange_multiple" }),
+      }),
     ]);
   });
 

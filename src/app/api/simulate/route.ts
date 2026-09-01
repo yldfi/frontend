@@ -9,7 +9,12 @@ import {
   getSimulationPriceLookupAddresses,
   resolveSimulationDollarValue,
 } from "@/lib/simulation-pricing";
-import { getERC20AllowanceSlot } from "@/lib/token-storage-slots";
+import {
+  buildTenderlySimulationPayload,
+  parseApprovalSimulationTransactions,
+  selectFinalTenderlySimulation,
+  type TenderlySimulationRequest,
+} from "@/lib/tenderly-simulation-bundle";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +36,6 @@ function getCorsHeaders(request: NextRequest): Record<string, string> {
   };
 }
 const CVX_BALANCE_SLOT = 0n;
-const CVX_ALLOWANCE_SLOT = 1n;
 const MAX_UINT256 = (1n << 256n) - 1n;
 const MAX_REQUESTS_PER_MINUTE = 8;
 const SIMULATE_TOTAL_TIMEOUT_MS = 12_000;
@@ -135,19 +139,6 @@ async function verifySignature(
 function computeERC20BalanceSlot(account: string, slot: bigint = CVX_BALANCE_SLOT): `0x${string}` {
   return keccak256(
     encodeAbiParameters(parseAbiParameters("address, uint256"), [account as `0x${string}`, slot])
-  );
-}
-
-function computeERC20AllowanceSlot(
-  owner: string,
-  spender: string,
-  slot: bigint = CVX_ALLOWANCE_SLOT
-): `0x${string}` {
-  const innerSlot = keccak256(
-    encodeAbiParameters(parseAbiParameters("address, uint256"), [owner as `0x${string}`, slot])
-  );
-  return keccak256(
-    encodeAbiParameters(parseAbiParameters("address, bytes32"), [spender as `0x${string}`, innerSlot])
   );
 }
 
@@ -616,7 +607,7 @@ export async function POST(request: NextRequest) {
     nonce?: string;
     expires?: number;
     sig?: string;
-    approvalOverride?: boolean;
+    approvalTransactions?: unknown;
   };
 
   try {
@@ -697,6 +688,20 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  let approvalTransactions;
+  try {
+    approvalTransactions = parseApprovalSimulationTransactions(
+      body.approvalTransactions,
+      body.inputToken,
+      ENSO_ROUTER_V2,
+    );
+  } catch (error) {
+    return NextResponse.json(
+      { success: false, errorMessage: formatSimulateError(error), retryable: false },
+      { status: 400, headers: corsHeaders }
+    );
+  }
+
   const requestId = crypto.randomUUID().slice(0, 8);
   const requestStartedAt = Date.now();
   const totalDeadline = requestStartedAt + SIMULATE_TOTAL_TIMEOUT_MS;
@@ -743,28 +748,16 @@ export async function POST(request: NextRequest) {
 
   const inputToken = body.inputToken?.toLowerCase();
   const normalizedGas = normalizeTenderlyGas(body.gas);
-  // Tenderly state overrides (field `state_objects`): set custom contract
-  // storage before the simulation runs. Keys are raw 32-byte storage slots.
+  // CVX needs a synthetic balance for the yCVX strategy path. Allowances are
+  // deliberately not written as raw storage: a bundled approve call below
+  // lets the token implementation update its own storage dynamically.
   const stateObjects: Record<string, { storage: Record<string, string> }> = {};
   if (inputToken === TOKENS.CVX.toLowerCase()) {
-    // CVX reserves the full balance + allowance in the simulation because the
-    // yCVX strategy reads the raw CVX balance even though the actual funds are
-    // represented by vault shares.
+    // The yCVX strategy reads the raw CVX balance even though the actual funds
+    // are represented by vault shares.
     stateObjects[TOKENS.CVX] = {
       storage: {
         [computeERC20BalanceSlot(body.from)]: toStorageValue(MAX_UINT256),
-        [computeERC20AllowanceSlot(body.from, ENSO_ROUTER_V2, BigInt(getERC20AllowanceSlot(inputToken)))]: toStorageValue(MAX_UINT256),
-      },
-    };
-  } else if (inputToken && body.approvalOverride === true) {
-    // The swap input token is granted to the Enso Router (an approval just
-    // confirmed on-chain, or an existing sufficient allowance). Force the
-    // simulated allowance so a lagging Tenderly indexer doesn't see a stale
-    // zero allowance and report a spurious "execution reverted". Uses the
-    // token's per-layout allowance slot; unknown tokens default to slot 1.
-    stateObjects[inputToken] = {
-      storage: {
-        [computeERC20AllowanceSlot(body.from, ENSO_ROUTER_V2, BigInt(getERC20AllowanceSlot(inputToken)))]: toStorageValue(MAX_UINT256),
       },
     };
   }
@@ -781,7 +774,11 @@ export async function POST(request: NextRequest) {
     // The UI only needs gas usage and asset/balance changes, not decoded traces.
     simulation_type: "quick",
     state_objects: Object.keys(stateObjects).length > 0 ? stateObjects : undefined,
-  };
+  } satisfies TenderlySimulationRequest;
+  const tenderlySimulation = buildTenderlySimulationPayload(
+    tenderlyRequest,
+    approvalTransactions,
+  );
   logSimulate("start", {
     from: shortAddress(body.from),
     to: shortAddress(body.to),
@@ -790,6 +787,8 @@ export async function POST(request: NextRequest) {
     simulationType: tenderlyRequest.simulation_type,
     gas: normalizedGas ?? null,
     hasOverrides: Object.keys(stateObjects).length > 0,
+    endpoint: tenderlySimulation.endpoint,
+    approvalTransactions: approvalTransactions.length,
   });
 
   // Helper to try eth_call as fallback
@@ -816,7 +815,7 @@ export async function POST(request: NextRequest) {
   try {
     response = await runStage("tenderly_fetch", TENDERLY_FETCH_TIMEOUT_MS, (budgetMs) =>
       fetch(
-        `https://api.tenderly.co/api/v1/account/${accountSlug}/project/${projectSlug}/simulate`,
+        `https://api.tenderly.co/api/v1/account/${accountSlug}/project/${projectSlug}/${tenderlySimulation.endpoint}`,
         {
           method: "POST",
           headers: {
@@ -824,7 +823,7 @@ export async function POST(request: NextRequest) {
             "Content-Type": "application/json",
             "X-Access-Key": accessKey,
           },
-          body: JSON.stringify(tenderlyRequest),
+          body: JSON.stringify(tenderlySimulation.body),
           signal: AbortSignal.timeout(budgetMs),
         }
       )
@@ -955,11 +954,13 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const simulation = (payload?.simulation ?? payload?.transaction ?? payload ?? {}) as Record<string, unknown>;
-  const status = simulation?.status !== false;
-  const transaction = payload?.transaction as Record<string, unknown> | undefined;
+  const selected = selectFinalTenderlySimulation(payload, tenderlySimulation.expectedResults);
+  const selectedPayload = selected.result;
+  const simulation = (selectedPayload?.simulation ?? selectedPayload?.transaction ?? selectedPayload ?? {}) as Record<string, unknown>;
+  const status = selected.complete && simulation?.status !== false;
+  const transaction = selectedPayload?.transaction as Record<string, unknown> | undefined;
   const gasUsed = simulation?.gas_used ?? transaction?.gas_used ?? null;
-  const payloadSimulation = payload?.simulation as Record<string, unknown> | undefined;
+  const payloadSimulation = selectedPayload?.simulation as Record<string, unknown> | undefined;
   const simulationId = simulation?.id ?? payloadSimulation?.id ?? null;
 
   // Return a signed link to our share endpoint which will verify before sharing via Tenderly
@@ -970,7 +971,10 @@ export async function POST(request: NextRequest) {
   const errorMessage =
     simulation?.error_message ??
     simulation?.error ??
+    transaction?.error_message ??
+    transaction?.error ??
     payloadError?.message ??
+    (!selected.complete ? "Approval setup simulation failed before the zap" : null) ??
     (response.ok ? null : "Tenderly simulation failed");
   const retryable = !response.ok;
 
@@ -1000,6 +1004,8 @@ export async function POST(request: NextRequest) {
     gasUsed,
     assetChangesCount: assetChanges.length,
     rawAssetChangesCount: rawAssetChanges?.length ?? 0,
+    bundleResults: selected.receivedResults,
+    bundleComplete: selected.complete,
     tenderlyUrl: tenderlyUrl ?? null,
     errorMessage: errorMessage ?? null,
   });

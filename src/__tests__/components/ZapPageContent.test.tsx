@@ -302,6 +302,30 @@ describe("ZapPageContent", () => {
     });
   });
 
+  it("never simulates or sends a quote for the previous debounced amount", async () => {
+    const staleQuote = {
+      ...quote,
+      inputAmount: "297.900852",
+    } satisfies ZapQuote;
+    mockUseUniversalZap.mockReturnValue({
+      quote: staleQuote,
+      isLoading: false,
+      error: null,
+      refetch: refetchQuote,
+    } as unknown as ReturnType<typeof useUniversalZap>);
+    mockUseDebouncedValue.mockReturnValue("297.900852");
+
+    render(<ZapPageContent />);
+
+    fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "200" } });
+
+    expect(mockUseZapActions).toHaveBeenLastCalledWith(null);
+    const settlingButton = screen.getByRole("button", { name: /Getting quote/ });
+    expect((settlingButton as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(settlingButton);
+    expect(executeZap).not.toHaveBeenCalled();
+  });
+
   it("uses the quoted output amount as the input when reversing tokens", () => {
     render(<ZapPageContent />);
 
@@ -354,6 +378,7 @@ describe("ZapPageContent", () => {
   });
 
   it("confirms the preview modal by sending with skipSimulation", async () => {
+    sessionStorage.setItem("yldfi-universal-zap-amount", "0.1");
     mockUseSettings.mockReturnValue({
       slippage: "50",
       updateSlippage,

@@ -302,7 +302,7 @@ const HYBRID_EXTRA_BUFFER_BPS = Number(process.env.ENSO_HYBRID_EXTRA_BUFFER_BPS 
 // yld referral code for Enso attribution
 export const ENSO_REFERRAL_CODE = "yldfi";
 
-import { WETH_ADDRESS, CRVUSD_ADDRESS, CURVE_CVX_ETH_POOL, YVUSDC1_ADDRESS } from "@/config/addresses";
+import { WETH_ADDRESS, USDC_ADDRESS, CRVUSD_ADDRESS, CURVE_CVX_ETH_POOL, YVUSDC1_ADDRESS } from "@/config/addresses";
 
 /**
  * Check if a token address is native ETH (the 0xeee...eee sentinel).
@@ -351,6 +351,7 @@ function appendETHUnwrapIfNeeded(actions: EnsoBundleAction[], outputToken: strin
 }
 
 const CRV_ADDRESS = "0xD533a949740bb3306d119CC777fa900bA034cd52";
+const CURVE_USDC_CRVUSD_POOL = "0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E";
 const CURVE_TRICRV_POOL = "0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14";
 const CURVE_CRV_CVXCRV_POOL = "0x9D0464996170c6B9e75eED71c68B99dDEDf279e8";
 const CURVE_ROUTER = "0x99a58482BD75cbab83b27EC03CA68fF489b5788f";
@@ -1355,6 +1356,104 @@ async function appendRouteConversion(
   };
 }
 
+async function appendCurveUsdcToCvxConversion(
+  actions: EnsoBundleAction[],
+  amountRef: BundleAmountRef,
+  expectedUsdc: bigint,
+  ctx: ConversionContext,
+  routeSteps: RouteStep[],
+): Promise<ConversionState> {
+  const expectedCrvUsd = await getCurveGetDy(
+    CURVE_USDC_CRVUSD_POOL,
+    0,
+    1,
+    expectedUsdc.toString(),
+  );
+  if (!expectedCrvUsd || expectedCrvUsd === 0n) {
+    throw new Error("Failed to estimate Curve USDC→crvUSD output");
+  }
+
+  const expectedWeth = await getCurveGetDyFactory(
+    CURVE_TRICRV_POOL,
+    0,
+    1,
+    expectedCrvUsd.toString(),
+  );
+  if (!expectedWeth || expectedWeth === 0n) {
+    throw new Error("Failed to estimate Curve crvUSD→WETH output");
+  }
+
+  const expectedCvx = await getCurveGetDyFactory(
+    CURVE_CVX_ETH_POOL,
+    0,
+    1,
+    expectedWeth.toString(),
+  );
+  if (!expectedCvx || expectedCvx === 0n) {
+    throw new Error("Failed to estimate Curve WETH→CVX output");
+  }
+
+  const minCvx = calculateMinDy(expectedCvx, ctx.totalSlippageBps);
+  const zeroAddress = "0x0000000000000000000000000000000000000000";
+  actions.push(
+    {
+      protocol: "erc20",
+      action: "approve",
+      args: {
+        token: USDC_ADDRESS.toLowerCase(),
+        spender: CURVE_ROUTER,
+        amount: amountRef,
+      },
+    },
+    {
+      protocol: "enso",
+      action: "call",
+      args: {
+        address: CURVE_ROUTER,
+        method: "exchange_multiple",
+        abi: "function exchange_multiple(address[9] _route, uint256[3][4] _swap_params, uint256 _amount, uint256 _expected, address[4] _pools, address _receiver) payable returns (uint256)",
+        args: [
+          [
+            USDC_ADDRESS,
+            CURVE_USDC_CRVUSD_POOL,
+            CRVUSD_ADDRESS,
+            CURVE_TRICRV_POOL,
+            WETH_ADDRESS,
+            CURVE_CVX_ETH_POOL,
+            TOKENS.CVX,
+            zeroAddress,
+            zeroAddress,
+          ],
+          [
+            [0, 1, 1],
+            [0, 1, 3],
+            [0, 1, 3],
+            [0, 0, 0],
+          ],
+          amountRef,
+          minCvx,
+          [zeroAddress, zeroAddress, zeroAddress, zeroAddress],
+          ENSO_SHORTCUTS,
+        ],
+      },
+    },
+  );
+
+  routeSteps.push(createRouteStep({
+    tokenAddress: USDC_ADDRESS,
+    amount: expectedUsdc,
+    action: "Swap",
+    description: "USDC for CVX",
+    protocol: "Curve",
+  }));
+
+  return {
+    token: TOKENS.CVX,
+    amountRef: { useOutputOfCallAt: actions.length - 1 },
+    expectedAmount: expectedCvx,
+  };
+}
+
 async function appendConversionToCvx(
   actions: EnsoBundleAction[],
   state: ConversionState,
@@ -1652,6 +1751,8 @@ async function convertStateToToken(
 async function buildInitialConversionState(params: {
   inputToken: string;
   amountIn: string;
+  targetToken: string;
+  ctx: ConversionContext;
 }): Promise<{ actions: EnsoBundleAction[]; state: ConversionState; steps: RouteStep[] }> {
   const actions: EnsoBundleAction[] = [];
   const steps: RouteStep[] = [];
@@ -1756,6 +1857,13 @@ async function buildInitialConversionState(params: {
     description: `${config.symbol} for ${config.underlyingSymbol}`,
     protocol: config.protocol,
   }));
+  const routeTarget =
+    isPxCvxAddress(params.targetToken) ||
+    isLpxCvxAddress(params.targetToken) ||
+    isCvgCvxAddress(params.targetToken)
+      ? TOKENS.CVX
+      : params.targetToken;
+
   actions.push({
     protocol: "erc4626",
     action: "redeem",
@@ -1766,6 +1874,20 @@ async function buildInitialConversionState(params: {
       primaryAddress: config.address,
     },
   });
+
+  if (
+    config.address.toLowerCase() === YVUSDC1_ADDRESS.toLowerCase() &&
+    routeTarget.toLowerCase() === TOKENS.CVX.toLowerCase()
+  ) {
+    const state = await appendCurveUsdcToCvxConversion(
+      actions,
+      { useOutputOfCallAt: 0 },
+      BigInt(expectedUnderlying),
+      params.ctx,
+      steps,
+    );
+    return { actions, steps, state };
+  }
 
   return {
     actions,
@@ -9576,32 +9698,74 @@ export async function fetchAnyFromErc4626ExternalVaultRoute(params: {
     params.externalVaultUnderlying.toLowerCase() === params.outputToken.toLowerCase();
 
   const expectedUnderlying = await previewRedeem(params.externalVault, params.amountIn);
-
-  const actions: EnsoBundleAction[] = [
-    // Redeem external vault → underlying
-    {
-      protocol: "erc4626",
-      action: "redeem",
-      args: {
-        tokenIn: params.externalVault,
-        tokenOut: params.externalVaultUnderlying,
-        amountIn: params.amountIn,
-        primaryAddress: params.externalVault,
+  const useExactCurveRoute =
+    params.externalVault.toLowerCase() === YVUSDC1_ADDRESS.toLowerCase() &&
+    params.outputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
+  let expectedOutput: bigint | undefined;
+  let actions: EnsoBundleAction[];
+  if (sameAsOutput) {
+    actions = [
+      {
+        protocol: "erc4626",
+        action: "redeem",
+        args: {
+          tokenIn: params.externalVault,
+          tokenOut: params.externalVaultUnderlying,
+          amountIn: params.amountIn,
+          primaryAddress: params.externalVault,
+        },
       },
-    },
-  ];
-
-  if (!sameAsOutput) {
-    actions.push({
-      protocol: "enso",
-      action: "route",
-      args: {
-        tokenIn: params.externalVaultUnderlying,
-        tokenOut: params.outputToken,
-        amountIn: { useOutputOfCallAt: 0 },
-        slippage: params.slippage ?? "100",
+    ];
+  } else if (useExactCurveRoute) {
+    actions = [
+      {
+        protocol: "erc4626",
+        action: "redeem",
+        args: {
+          tokenIn: params.externalVault,
+          tokenOut: params.externalVaultUnderlying,
+          amountIn: params.amountIn,
+          primaryAddress: params.externalVault,
+        },
       },
-    });
+    ];
+    const slippageBps = validateSlippage(params.slippage);
+    const curveState = await appendCurveUsdcToCvxConversion(
+      actions,
+      { useOutputOfCallAt: 0 },
+      BigInt(expectedUnderlying),
+      {
+        fromAddress: params.fromAddress,
+        slippage: params.slippage,
+        slippageBps,
+        totalSlippageBps: getBufferedSlippageBps(slippageBps),
+      },
+      [],
+    );
+    expectedOutput = curveState.expectedAmount;
+  } else {
+    actions = [
+      {
+        protocol: "erc4626",
+        action: "redeem",
+        args: {
+          tokenIn: params.externalVault,
+          tokenOut: params.externalVaultUnderlying,
+          amountIn: params.amountIn,
+          primaryAddress: params.externalVault,
+        },
+      },
+      {
+        protocol: "enso",
+        action: "route",
+        args: {
+          tokenIn: params.externalVaultUnderlying,
+          tokenOut: params.outputToken,
+          amountIn: { useOutputOfCallAt: 0 },
+          slippage: params.slippage ?? "100",
+        },
+      },
+    ];
   }
 
   appendETHUnwrapIfNeeded(actions, params.outputToken);
@@ -9611,16 +9775,23 @@ export async function fetchAnyFromErc4626ExternalVaultRoute(params: {
     actions,
     receiver: params.fromAddress,
     routingStrategy: "router",
-    skipQuote: false,
+    skipQuote: useExactCurveRoute,
   });
+  if (sameAsOutput || expectedOutput !== undefined) {
+    bundleResult.amountsOut = {
+      ...bundleResult.amountsOut,
+      [params.outputToken.toLowerCase()]: expectedOutput?.toString() ?? expectedUnderlying,
+    };
+  }
 
   const underlyingFmt = formatRouteAmount(expectedUnderlying, params.externalVaultUnderlying);
   const steps: RouteStep[] = [
     { tokenSymbol: externalSymbol, action: "Exit", description: `${externalSymbol} for ${underlyingSymbol}`, protocol: protocolLabel },
   ];
   if (!sameAsOutput) {
-    steps.push({ tokenSymbol: underlyingSymbol, amount: underlyingFmt, action: "Swap", description: `${underlyingSymbol} for ${outputSymbol}`, protocol: "Enso" });
-    steps.push({ tokenSymbol: outputSymbol, action: "Receive", description: "tokens", protocol: "Enso" });
+    const swapProtocol = useExactCurveRoute ? "Curve" : "Enso";
+    steps.push({ tokenSymbol: underlyingSymbol, amount: underlyingFmt, action: "Swap", description: `${underlyingSymbol} for ${outputSymbol}`, protocol: swapProtocol });
+    steps.push({ tokenSymbol: outputSymbol, action: "Receive", description: "tokens", protocol: swapProtocol });
   } else {
     steps.push({ tokenSymbol: outputSymbol, amount: underlyingFmt, action: "Receive", description: "tokens", protocol: protocolLabel });
   }
@@ -9632,7 +9803,7 @@ export async function fetchAnyFromErc4626ExternalVaultRoute(params: {
       tokens: sameAsOutput
         ? [externalSymbol, outputSymbol]
         : [externalSymbol, underlyingSymbol, outputSymbol],
-      protocols: sameAsOutput ? [protocolLabel] : [protocolLabel, "Enso"],
+      protocols: sameAsOutput ? [protocolLabel] : [protocolLabel, useExactCurveRoute ? "Curve" : "Enso"],
     },
   };
 }
@@ -10376,6 +10547,8 @@ export async function fetchComposableZapInRoute(params: {
   const { actions, state: initialState, steps } = await buildInitialConversionState({
     inputToken: params.inputToken,
     amountIn: params.amountIn,
+    targetToken: targetVault.assetAddress,
+    ctx,
   });
   const routeSteps = [...steps];
   const finalState = await convertStateToToken(actions, initialState, targetVault.assetAddress, ctx, routeSteps);
@@ -10491,6 +10664,8 @@ export async function fetchSpecialTokenToIlliquidRoute(params: {
   const { actions, state: initialState, steps } = await buildInitialConversionState({
     inputToken: params.inputToken,
     amountIn: params.amountIn,
+    targetToken: params.outputToken,
+    ctx,
   });
   const routeSteps = [...steps];
   const finalState = await convertStateToToken(actions, initialState, params.outputToken, ctx, routeSteps);
@@ -10591,6 +10766,8 @@ export async function fetchSpecialTokenToExternalVaultRoute(params: {
   const { actions, state: initialState, steps } = await buildInitialConversionState({
     inputToken: params.inputToken,
     amountIn: params.amountIn,
+    targetToken: outputConfig.underlying,
+    ctx,
   });
   const routeSteps = [...steps];
   const finalState = await convertStateToToken(actions, initialState, outputConfig.underlying, ctx, routeSteps);

@@ -22,6 +22,7 @@ import { YVUSDC1_ADDRESS } from "@/config/addresses";
 const TEST_WALLET = "0xd8da6bf26964af9d7eed9e03e53415d37aa96045";
 const TEST_SLIPPAGE = "300";
 const TEN_SHARES = "10000000000000000000";
+const TEN_YVUSDC_SHARES = "10000000";
 
 function isExpectedError(e: unknown): boolean {
   const errorMsg = e instanceof Error ? e.message : String(e);
@@ -44,6 +45,37 @@ function isExpectedError(e: unknown): boolean {
 }
 
 describe("Special Route Composer Integration", () => {
+  it(
+    "yvUSDC-1 -> pxCVX builds the exact external-vault exit path",
+    async () => {
+      try {
+        const result = await fetchSpecialTokenToIlliquidRoute({
+          fromAddress: TEST_WALLET,
+          inputToken: YVUSDC1_ADDRESS,
+          outputToken: TOKENS.PXCVX,
+          amountIn: TEN_YVUSDC_SHARES,
+          slippage: TEST_SLIPPAGE,
+        });
+
+        const outputAmount =
+          result.amountsOut[TOKENS.PXCVX.toLowerCase()] ||
+          result.amountsOut[TOKENS.PXCVX];
+        expect(outputAmount).toBeDefined();
+        expect(BigInt(outputAmount)).toBeGreaterThan(0n);
+        expect(result.tx).toBeDefined();
+        expect(result.routeInfo?.tokens).toContain("yvUSDC-1");
+        expect(result.routeInfo?.tokens).toContain("pxCVX");
+      } catch (e) {
+        if (isExpectedError(e)) {
+          console.log("Note: Expected transient/preview error during yvUSDC-1 -> pxCVX verification");
+          return;
+        }
+        throw e;
+      }
+    },
+    45000,
+  );
+
   it(
     "uCRV -> pxCVX builds a composable illiquid-output route",
     async () => {
@@ -83,7 +115,7 @@ describe("Special Route Composer Integration", () => {
           fromAddress: TEST_WALLET,
           inputToken: YVUSDC1_ADDRESS,
           outputVault: LLAMA_AIRFORCE.UCVX,
-          amountIn: TEN_SHARES,
+          amountIn: TEN_YVUSDC_SHARES,
           slippage: TEST_SLIPPAGE,
         });
 

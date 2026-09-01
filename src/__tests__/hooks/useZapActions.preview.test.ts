@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { maxUint256 } from "viem";
+import type { ReplacementReturnType } from "viem";
 import {
   useAccount,
   usePublicClient,
@@ -16,6 +17,7 @@ import {
   MORPHO_BUNDLER3_ADDRESS,
   MORPHO_GENERAL_ADAPTER1_ADDRESS,
 } from "@/lib/enso";
+import { buildApprovalSimulationTransaction } from "@/lib/tenderly-simulation-bundle";
 import type { EnsoToken, ZapQuote } from "@/types/enso";
 
 const {
@@ -235,7 +237,7 @@ describe("useZapActions preview fallback", () => {
     );
   });
 
-  it("resets CRV approval to zero before increasing an existing allowance", async () => {
+  it("replays the CRV zero-reset sequence before the zap simulation", async () => {
     const mockCrvToken: EnsoToken = {
       address: "0xD533a949740bb3306d119CC777fa900bA034cd52",
       chainId: 1,
@@ -249,12 +251,39 @@ describe("useZapActions preview fallback", () => {
       inputToken: mockCrvToken,
       inputAmount: "140.266541374971961815",
     };
-    mockUseReadContract.mockReturnValue({
-      data: 92_838_401_930_596_493_924n,
+    let currentAllowance = 92_838_401_930_596_493_924n;
+    mockUseReadContract.mockImplementation(() => ({
+      data: currentAllowance,
       refetch: vi.fn(),
-    } as unknown as ReturnType<typeof useReadContract>);
+    }) as unknown as ReturnType<typeof useReadContract>);
+    const simulateBodyRef: { current?: Record<string, unknown> } = {};
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/api/simulate/nonce")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            nonce: "test-nonce",
+            expires: Date.now() + 60_000,
+            sig: "test-sig",
+          }),
+        });
+      }
+      simulateBodyRef.current = JSON.parse(String(init?.body));
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          success: true,
+          gasUsed: "12345",
+          simulationId: "sim-id",
+          tenderlyUrl: null,
+          assetChanges: [],
+          errorMessage: null,
+        }),
+      });
+    }));
 
-    const { result } = renderHook(() => useZapActions(mockCrvQuote));
+    const { result, rerender } = renderHook(() => useZapActions(mockCrvQuote));
 
     await act(async () => {
       await result.current.approve(true);
@@ -267,6 +296,18 @@ describe("useZapActions preview fallback", () => {
         args: [ENSO_ROUTER_V2, 0n],
       })
     );
+
+    currentAllowance = maxUint256;
+    rerender();
+    await act(async () => {
+      await result.current.executeZap({ previewOnly: true });
+    });
+
+    const approvalAmount = 140_266_541_374_971_961_815n;
+    expect(simulateBodyRef.current?.approvalTransactions).toEqual([
+      buildApprovalSimulationTransaction(mockCrvToken.address as `0x${string}`, ENSO_ROUTER_V2, 0n),
+      buildApprovalSimulationTransaction(mockCrvToken.address as `0x${string}`, ENSO_ROUTER_V2, approvalAmount),
+    ]);
   });
 
   it("shows pending approval for the Enso Router V2 spender", async () => {
@@ -329,7 +370,152 @@ describe("useZapActions preview fallback", () => {
     });
   });
 
-  it("requests an approval storage override for standard ERC20 zaps", async () => {
+  it("follows a sped-up zap to its replacement hash and success receipt", async () => {
+    const originalHash = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const replacementHash = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let onReplaced: ((replacement: ReplacementReturnType) => void) | undefined;
+
+    mockSendTx.mockResolvedValue(originalHash);
+    mockUseWaitForTransactionReceipt.mockImplementation((parameters) => {
+      if (parameters?.hash === originalHash) {
+        onReplaced = parameters.onReplaced;
+        return {
+          isLoading: true,
+          isSuccess: false,
+          data: undefined,
+        } as unknown as ReturnType<typeof useWaitForTransactionReceipt>;
+      }
+      if (parameters?.hash === replacementHash) {
+        return {
+          isLoading: false,
+          isSuccess: true,
+          data: {
+            status: "success",
+            transactionHash: replacementHash,
+          },
+        } as unknown as ReturnType<typeof useWaitForTransactionReceipt>;
+      }
+      return {
+        isLoading: false,
+        isSuccess: false,
+        data: undefined,
+      } as unknown as ReturnType<typeof useWaitForTransactionReceipt>;
+    });
+
+    const { result } = renderHook(() => useZapActions(mockEthQuote));
+    await act(async () => {
+      await result.current.executeZap();
+    });
+
+    expect(result.current.zapHash).toBe(originalHash);
+    expect(onReplaced).toBeTypeOf("function");
+    expect(mockUseWaitForTransactionReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hash: originalHash,
+        checkReplacement: true,
+        onReplaced: expect.any(Function),
+      })
+    );
+
+    act(() => {
+      onReplaced?.({
+        reason: "repriced",
+        replacedTransaction: { hash: originalHash },
+        transaction: { hash: replacementHash },
+        transactionReceipt: { status: "success", transactionHash: replacementHash },
+      } as unknown as ReplacementReturnType);
+    });
+
+    expect(result.current.zapHash).toBe(replacementHash);
+    expect(result.current.status).toBe("success");
+    expect(result.current.isSuccess).toBe(true);
+  });
+
+  it("uses the mined receipt hash when it differs from the submitted hash", async () => {
+    const originalHash = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    const minedHash = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+
+    mockSendTx.mockResolvedValue(originalHash);
+    mockUseWaitForTransactionReceipt.mockImplementation((parameters) => {
+      if (parameters?.hash === originalHash) {
+        return {
+          isLoading: false,
+          isSuccess: true,
+          data: {
+            status: "success",
+            transactionHash: minedHash,
+          },
+        } as unknown as ReturnType<typeof useWaitForTransactionReceipt>;
+      }
+      return {
+        isLoading: false,
+        isSuccess: false,
+        data: undefined,
+      } as unknown as ReturnType<typeof useWaitForTransactionReceipt>;
+    });
+
+    const { result } = renderHook(() => useZapActions(mockEthQuote));
+    await act(async () => {
+      await result.current.executeZap();
+    });
+
+    expect(result.current.zapHash).toBe(minedHash);
+    expect(result.current.status).toBe("success");
+  });
+
+  it("does not report a cancelled replacement as a successful zap", async () => {
+    const originalHash = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    const cancellationHash = "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    let onReplaced: ((replacement: ReplacementReturnType) => void) | undefined;
+
+    mockSendTx.mockResolvedValue(originalHash);
+    mockUseWaitForTransactionReceipt.mockImplementation((parameters) => {
+      if (parameters?.hash === originalHash) {
+        onReplaced = parameters.onReplaced;
+        return {
+          isLoading: true,
+          isSuccess: false,
+          data: undefined,
+        } as unknown as ReturnType<typeof useWaitForTransactionReceipt>;
+      }
+      if (parameters?.hash === cancellationHash) {
+        return {
+          isLoading: false,
+          isSuccess: true,
+          data: {
+            status: "success",
+            transactionHash: cancellationHash,
+          },
+        } as unknown as ReturnType<typeof useWaitForTransactionReceipt>;
+      }
+      return {
+        isLoading: false,
+        isSuccess: false,
+        data: undefined,
+      } as unknown as ReturnType<typeof useWaitForTransactionReceipt>;
+    });
+
+    const { result } = renderHook(() => useZapActions(mockEthQuote));
+    await act(async () => {
+      await result.current.executeZap();
+    });
+
+    act(() => {
+      onReplaced?.({
+        reason: "cancelled",
+        replacedTransaction: { hash: originalHash },
+        transaction: { hash: cancellationHash },
+        transactionReceipt: { status: "success", transactionHash: cancellationHash },
+      } as unknown as ReplacementReturnType);
+    });
+
+    expect(result.current.zapHash).toBe(cancellationHash);
+    expect(result.current.status).toBe("error");
+    expect(result.current.isSuccess).toBe(false);
+    expect(result.current.error).toBe("Zap transaction was cancelled");
+  });
+
+  it("does not add setup calls when the allowance already existed", async () => {
     const simulateBodyRef: { current?: Record<string, unknown> } = {};
     // Grant a sufficient allowance so the zap reaches simulation (no approval
     // card short-circuit) for the ERC20 USDC quote.
@@ -373,9 +559,60 @@ describe("useZapActions preview fallback", () => {
     });
 
     expect(simulateBodyRef.current?.inputToken).toBe(mockUsdcToken.address);
-    // Standard ERC20 zap → the server should force the Enso Router allowance
-    // so a lagging Tenderly indexer doesn't report a stale reverting pull.
-    expect(simulateBodyRef.current?.approvalOverride).toBe(true);
+    expect(simulateBodyRef.current).not.toHaveProperty("approvalTransactions");
+  });
+
+  it("replays a just-confirmed approval before the zap simulation", async () => {
+    let currentAllowance = 0n;
+    const simulateBodyRef: { current?: Record<string, unknown> } = {};
+    mockUseReadContract.mockImplementation(() => ({
+      data: currentAllowance,
+      refetch: vi.fn(),
+    }) as unknown as ReturnType<typeof useReadContract>);
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/api/simulate/nonce")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            nonce: "test-nonce",
+            expires: Date.now() + 60_000,
+            sig: "test-sig",
+          }),
+        });
+      }
+      simulateBodyRef.current = JSON.parse(String(init?.body));
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          success: true,
+          gasUsed: "12345",
+          simulationId: "sim-id",
+          tenderlyUrl: null,
+          assetChanges: [],
+          errorMessage: null,
+        }),
+      });
+    }));
+
+    let activeQuote = mockUsdcQuote;
+    const { result, rerender } = renderHook(() => useZapActions(activeQuote));
+    await act(async () => {
+      await result.current.approve(false);
+    });
+
+    currentAllowance = maxUint256;
+    // Query libraries may replace the quote object while preserving the same
+    // executable token/amount. The prepared approval bundle must survive that.
+    activeQuote = { ...mockUsdcQuote };
+    rerender();
+    await act(async () => {
+      await result.current.executeZap({ previewOnly: true });
+    });
+
+    expect(simulateBodyRef.current?.approvalTransactions).toEqual([
+      buildApprovalSimulationTransaction(mockUsdcToken.address as `0x${string}`, ENSO_ROUTER_V2, maxUint256),
+    ]);
   });
 
   it("does not request an approval override for legacy MORPHO permit zaps", async () => {
@@ -489,8 +726,8 @@ describe("useZapActions preview fallback", () => {
       inputToken: LEGACY_MORPHO_ADDRESS,
     });
     expect(simulateBodyRef.current?.data).not.toBe("0x");
-    // Permit flows set allowance inside the transaction, so no approval override.
-    expect(simulateBodyRef.current?.approvalOverride).toBe(false);
+    // Permit flows set allowance inside the transaction, so no setup approval.
+    expect(simulateBodyRef.current).not.toHaveProperty("approvalTransactions");
     expect(mockSendTx).not.toHaveBeenCalled();
   });
 });
