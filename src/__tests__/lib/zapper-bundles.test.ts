@@ -4,9 +4,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mock setup (vi.hoisted pattern)
 // ============================================================================
 
-const { mockFetchRoute, mockFetchExactAmountSafeRoute, mockFetchBundle, mockGetCvgCvxSwapRate, mockGetLpxCvxToCvxSwapRate, mockGetCurveGetDyFactory } = vi.hoisted(() => ({
+const { mockFetchRoute, mockFetchDynamicInputEstimate, mockFetchBundle, mockGetCvgCvxSwapRate, mockGetLpxCvxToCvxSwapRate, mockGetCurveGetDyFactory } = vi.hoisted(() => ({
   mockFetchRoute: vi.fn(),
-  mockFetchExactAmountSafeRoute: vi.fn(),
+  mockFetchDynamicInputEstimate: vi.fn(),
   mockFetchBundle: vi.fn(),
   mockGetCvgCvxSwapRate: vi.fn(),
   mockGetLpxCvxToCvxSwapRate: vi.fn(),
@@ -16,7 +16,7 @@ const { mockFetchRoute, mockFetchExactAmountSafeRoute, mockFetchBundle, mockGetC
 // Mock @/lib/enso — the functions buildVaultInputSwapBundle/buildExoticOutputSwapData import
 vi.mock("@/lib/enso", () => ({
   fetchRoute: mockFetchRoute,
-  fetchExactAmountSafeRoute: mockFetchExactAmountSafeRoute,
+  fetchDynamicInputEstimate: mockFetchDynamicInputEstimate,
   fetchBundle: mockFetchBundle,
   getCvgCvxSwapRate: mockGetCvgCvxSwapRate,
   getLpxCvxToCvxSwapRate: mockGetLpxCvxToCvxSwapRate,
@@ -71,7 +71,7 @@ describe("buildExoticOutputSwapData", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetchRoute.mockResolvedValue(MOCK_ROUTE_RESPONSE);
-    mockFetchExactAmountSafeRoute.mockResolvedValue(MOCK_ROUTE_RESPONSE);
+    mockFetchDynamicInputEstimate.mockResolvedValue(MOCK_ROUTE_RESPONSE);
     mockFetchBundle.mockResolvedValue(MOCK_BUNDLE_RESPONSE);
     mockGetCvgCvxSwapRate.mockResolvedValue(950000000000000000n);
     mockGetCurveGetDyFactory.mockResolvedValue(930000000000000000n);
@@ -198,12 +198,12 @@ describe("buildVaultInputSwapBundle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetchRoute.mockResolvedValue(MOCK_ROUTE_RESPONSE);
-    mockFetchExactAmountSafeRoute.mockResolvedValue(MOCK_ROUTE_RESPONSE);
+    mockFetchDynamicInputEstimate.mockResolvedValue(MOCK_ROUTE_RESPONSE);
     mockFetchBundle.mockResolvedValue(MOCK_BUNDLE_RESPONSE);
     mockGetLpxCvxToCvxSwapRate.mockResolvedValue(900000000000000000n);
   });
 
-  it("pxCVX underlying: builds 6 actions (redeem + 5 swap steps), skipQuote=true", async () => {
+  it("pxCVX underlying: routes the full runtime CVX balance, skipQuote=true", async () => {
     const result = await buildVaultInputSwapBundle({
       vaultAddress: "0xVault",
       underlying: TOKENS.PXCVX,
@@ -214,7 +214,7 @@ describe("buildVaultInputSwapBundle", () => {
     });
 
     expect(mockGetLpxCvxToCvxSwapRate).toHaveBeenCalledWith("950000000000000000");
-    expect(mockFetchExactAmountSafeRoute).toHaveBeenCalledWith(
+    expect(mockFetchDynamicInputEstimate).toHaveBeenCalledWith(
       expect.objectContaining({
         fromAddress: ZAPPER_ADDRESS,
         tokenIn: TOKENS.CVX,
@@ -223,8 +223,8 @@ describe("buildVaultInputSwapBundle", () => {
     );
 
     const bundleCall = mockFetchBundle.mock.calls[0][0];
-    // 1 redeem + 5 actions (approve pxCVX, wrap, approve lpxCVX, exchange, routeMulti)
-    expect(bundleCall.actions).toHaveLength(6);
+    // redeem + approve + wrap + approve + exchange + balance + dynamic route
+    expect(bundleCall.actions).toHaveLength(7);
     expect(bundleCall.skipQuote).toBe(true);
 
     // Action 1: approve pxCVX → LPXCVX
@@ -233,8 +233,26 @@ describe("buildVaultInputSwapBundle", () => {
     expect(bundleCall.actions[2].args.method).toBe("wrap");
     // Action 4: exchange lpxCVX→CVX
     expect(bundleCall.actions[4].args.method).toBe("exchange");
-    // Action 5: routeMulti
-    expect(bundleCall.actions[5].args.method).toBe("routeMulti");
+    // Action 5: runtime CVX balance
+    expect(bundleCall.actions[5]).toEqual({
+      protocol: "enso",
+      action: "balance",
+      args: { token: TOKENS.CVX },
+    });
+    // Action 6: native route consumes that exact balance
+    expect(bundleCall.actions[6]).toEqual({
+      protocol: "enso",
+      action: "route",
+      args: {
+        tokenIn: TOKENS.CVX,
+        tokenOut: TARGET_TOKEN,
+        amountIn: { useOutputOfCallAt: 5 },
+        slippage: "100",
+      },
+    });
+    expect(bundleCall.actions).not.toContainEqual(
+      expect.objectContaining({ args: expect.objectContaining({ method: "routeMulti" }) }),
+    );
 
     expect(result).toEqual({
       swapData: "0xmockbundledata",
@@ -242,7 +260,7 @@ describe("buildVaultInputSwapBundle", () => {
     });
   });
 
-  it("cvgCVX underlying: builds 6 actions (redeem + 5 swap steps), skipQuote=true", async () => {
+  it("cvgCVX underlying: routes the full runtime CVX balance, skipQuote=true", async () => {
     await buildVaultInputSwapBundle({
       vaultAddress: "0xVault",
       underlying: TOKENS.CVGCVX,
@@ -253,7 +271,7 @@ describe("buildVaultInputSwapBundle", () => {
       estimatedCvx1: "940000000000000000",
     });
 
-    expect(mockFetchExactAmountSafeRoute).toHaveBeenCalledWith(
+    expect(mockFetchDynamicInputEstimate).toHaveBeenCalledWith(
       expect.objectContaining({
         fromAddress: ZAPPER_ADDRESS,
         tokenIn: TOKENS.CVX,
@@ -262,8 +280,8 @@ describe("buildVaultInputSwapBundle", () => {
     );
 
     const bundleCall = mockFetchBundle.mock.calls[0][0];
-    // 1 redeem + 4 actions (approve cvgCVX, exchange, CVX1.withdraw, routeMulti)
-    expect(bundleCall.actions).toHaveLength(5);
+    // redeem + approve + exchange + withdraw + balance + dynamic route
+    expect(bundleCall.actions).toHaveLength(6);
     expect(bundleCall.skipQuote).toBe(true);
 
     // Action 2: exchange cvgCVX→CVX1
@@ -274,8 +292,26 @@ describe("buildVaultInputSwapBundle", () => {
     expect(bundleCall.actions[3].args.method).toBe("withdraw");
     expect(bundleCall.actions[3].args.address).toBe(TOKENS.CVX1.toLowerCase());
 
-    // Action 4: routeMulti
-    expect(bundleCall.actions[4].args.method).toBe("routeMulti");
+    // Action 4: runtime CVX balance
+    expect(bundleCall.actions[4]).toEqual({
+      protocol: "enso",
+      action: "balance",
+      args: { token: TOKENS.CVX },
+    });
+    // Action 5: native route consumes that exact balance
+    expect(bundleCall.actions[5]).toEqual({
+      protocol: "enso",
+      action: "route",
+      args: {
+        tokenIn: TOKENS.CVX,
+        tokenOut: TARGET_TOKEN,
+        amountIn: { useOutputOfCallAt: 4 },
+        slippage: "100",
+      },
+    });
+    expect(bundleCall.actions).not.toContainEqual(
+      expect.objectContaining({ args: expect.objectContaining({ method: "routeMulti" }) }),
+    );
   });
 
   it("standard underlying: 2 actions (redeem + route), no skipQuote", async () => {
@@ -319,7 +355,7 @@ describe("buildVaultInputSwapBundle", () => {
     for (const pathConfig of paths) {
       vi.clearAllMocks();
       mockFetchRoute.mockResolvedValue(MOCK_ROUTE_RESPONSE);
-      mockFetchExactAmountSafeRoute.mockResolvedValue(MOCK_ROUTE_RESPONSE);
+      mockFetchDynamicInputEstimate.mockResolvedValue(MOCK_ROUTE_RESPONSE);
       mockFetchBundle.mockResolvedValue(MOCK_BUNDLE_RESPONSE);
       mockGetLpxCvxToCvxSwapRate.mockResolvedValue(900000000000000000n);
 

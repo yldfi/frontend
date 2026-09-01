@@ -1,7 +1,7 @@
 // LlamaLendZapper contract integration
 // Enables leveraged Curve LlamaLend operations via Enso Router swaps
 
-import { fetchRoute, fetchExactAmountSafeRoute, fetchBundle, ENSO_SHORTCUTS, ENSO_ROUTER_V2, getCvgCvxSwapRate, getLpxCvxToCvxSwapRate } from "@/lib/enso";
+import { fetchRoute, fetchDynamicInputEstimate, fetchBundle, ENSO_SHORTCUTS, ENSO_ROUTER_V2, getCvgCvxSwapRate, getLpxCvxToCvxSwapRate } from "@/lib/enso";
 import { calculateMinDy, getCurveGetDyFactory } from "@/lib/curve";
 import { TOKENS, TANGENT, PIREX } from "@/config/vaults";
 import { CRVUSD_ADDRESS } from "@/config/addresses";
@@ -524,7 +524,8 @@ export function getDeadline(minutes: number = 20): bigint {
  *   2. erc20/approve(cvgCVX -> CVX1_CVGCVX_POOL)
  *   3. call(exchange cvgCVX -> CVX1) with min_dy slippage
  *   4. call(CVX1.withdraw -> CVX to ENSO_SHORTCUTS)
- *   5. call(routeMulti([], innerSwapData)) using pre-fetched route
+ *   5. balance(CVX in ENSO_SHORTCUTS)
+ *   6. route(the runtime CVX balance -> targetToken)
  *
  * For standard vault tokens:
  *   1. erc4626/redeem(vaultToken -> underlying)
@@ -575,16 +576,15 @@ export async function buildVaultInputSwapBundle(params: {
     }
     const minDy = calculateMinDy(BigInt(params.estimatedCvx1), slippageBps);
 
-    // Pre-fetch CVX -> targetToken route for inner swap data
-    // fromAddress=ZAPPER_ADDRESS so Enso builds the route for the zapper context
-    const cvxRoute = await fetchExactAmountSafeRoute({
+    // Quote for display only. The executable dynamic route receives its own
+    // provider policy when fetchBundle builds the transaction.
+    const cvxQuote = await fetchDynamicInputEstimate({
       fromAddress: ZAPPER_ADDRESS,
       tokenIn: TOKENS.CVX,
       tokenOut: params.targetToken,
       amountIn: params.estimatedCvx1, // CVX1->CVX is 1:1
       slippage: params.slippage ?? "100",
     });
-    const innerSwapData = extractInnerSwapData(cvxRoute.tx.data);
 
     // Action 1: approve cvgCVX -> Curve pool
     actions.push({
@@ -622,15 +622,23 @@ export async function buildVaultInputSwapBundle(params: {
       },
     });
 
-    // Action 4: Recursive routeMulti — swap CVX (already in ENSO_SHORTCUTS) -> target token
+    // Action 4: Read the CVX actually received by ENSO_SHORTCUTS.
     actions.push({
       protocol: "enso",
-      action: "call",
+      action: "balance",
+      args: { token: TOKENS.CVX },
+    });
+    const cvxBalanceIdx = actions.length - 1;
+
+    // Action 5: Route the full runtime CVX balance to the target token.
+    actions.push({
+      protocol: "enso",
+      action: "route",
       args: {
-        address: ENSO_ROUTER_V2.toLowerCase(),
-        method: "routeMulti",
-        abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)",
-        args: [[], innerSwapData],
+        tokenIn: TOKENS.CVX,
+        tokenOut: params.targetToken,
+        amountIn: { useOutputOfCallAt: cvxBalanceIdx },
+        slippage: params.slippage ?? "100",
       },
     });
 
@@ -643,24 +651,23 @@ export async function buildVaultInputSwapBundle(params: {
 
     return {
       swapData: bundle.tx.data,
-      expectedOut: cvxRoute.amountOut,
+      expectedOut: bundle.amountsOut?.[params.targetToken.toLowerCase()] ?? cvxQuote.amountOut,
     };
   } else if (params.underlying.toLowerCase() === TOKENS.PXCVX.toLowerCase()) {
-    // pxCVX path: pxCVX → lpxCVX (wrap 1:1) → CVX (Curve CryptoSwap) → routeMulti to target
+    // pxCVX path: pxCVX → lpxCVX (wrap 1:1) → CVX (Curve CryptoSwap) → runtime route to target
     const estimatedLpxCvx = BigInt(params.estimatedUnderlying);
     const expectedCvx = await getLpxCvxToCvxSwapRate(estimatedLpxCvx.toString());
     if (expectedCvx === 0n) throw new Error("Failed to estimate lpxCVX→CVX swap output");
     const minDyCvx = calculateMinDy(expectedCvx, slippageBps);
 
-    // Pre-fetch CVX → target route for innerSwapData
-    const cvxRoute = await fetchExactAmountSafeRoute({
+    // Quote for display data only; execution routes the runtime CVX balance.
+    const cvxQuote = await fetchDynamicInputEstimate({
       fromAddress: ZAPPER_ADDRESS,
       tokenIn: TOKENS.CVX,
       tokenOut: params.targetToken,
       amountIn: expectedCvx.toString(),
       slippage: params.slippage ?? "100",
     });
-    const innerSwapData = extractInnerSwapData(cvxRoute.tx.data);
 
     // Action 1: approve pxCVX → LPXCVX
     actions.push({ protocol: "erc20", action: "approve", args: { token: TOKENS.PXCVX, spender: PIREX.LPXCVX, amount: { useOutputOfCallAt: 0 } } });
@@ -670,8 +677,20 @@ export async function buildVaultInputSwapBundle(params: {
     actions.push({ protocol: "erc20", action: "approve", args: { token: PIREX.LPXCVX, spender: PIREX.LPXCVX_CVX_POOL, amount: { useOutputOfCallAt: 0 } } });
     // Action 4: exchange lpxCVX → CVX (CryptoSwap uses uint256 indices)
     actions.push({ protocol: "enso", action: "call", args: { address: PIREX.LPXCVX_CVX_POOL.toLowerCase(), method: "exchange", abi: "function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) returns (uint256)", args: [String(PIREX.POOL_INDEX.LPXCVX), String(PIREX.POOL_INDEX.CVX), { useOutputOfCallAt: 0 }, minDyCvx.toString()] } });
-    // Action 5: routeMulti — CVX already in ENSO_SHORTCUTS → target token
-    actions.push({ protocol: "enso", action: "call", args: { address: ENSO_ROUTER_V2.toLowerCase(), method: "routeMulti", abi: "function routeMulti((uint8,bytes)[] tokensIn, bytes data) payable returns (bytes)", args: [[], innerSwapData] } });
+    // Action 5: read the actual CVX received from the Curve exchange.
+    actions.push({ protocol: "enso", action: "balance", args: { token: TOKENS.CVX } });
+    const cvxBalanceIdx = actions.length - 1;
+    // Action 6: route the full runtime CVX balance to the target token.
+    actions.push({
+      protocol: "enso",
+      action: "route",
+      args: {
+        tokenIn: TOKENS.CVX,
+        tokenOut: params.targetToken,
+        amountIn: { useOutputOfCallAt: cvxBalanceIdx },
+        slippage: params.slippage ?? "100",
+      },
+    });
 
     const bundle = await fetchBundle({
       fromAddress: ZAPPER_ADDRESS,
@@ -682,7 +701,7 @@ export async function buildVaultInputSwapBundle(params: {
 
     return {
       swapData: bundle.tx.data,
-      expectedOut: cvxRoute.amountOut,
+      expectedOut: bundle.amountsOut?.[params.targetToken.toLowerCase()] ?? cvxQuote.amountOut,
     };
   } else {
     // Standard vault path: redeem underlying -> route to target
