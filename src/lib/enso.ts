@@ -355,6 +355,11 @@ const CURVE_USDC_CRVUSD_POOL = "0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E";
 const CURVE_TRICRV_POOL = "0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14";
 const CURVE_CRV_CVXCRV_POOL = "0x9D0464996170c6B9e75eED71c68B99dDEDf279e8";
 const CURVE_ROUTER = "0x99a58482BD75cbab83b27EC03CA68fF489b5788f";
+// Only aggregators verified to consume a dynamic useOutputOfCallAt amount
+// exactly belong here. 0x and KyberSwap currently embed a quoted amount in
+// their calldata and can overdraw after an ERC4626 redemption changes by a few
+// base units. Grapher was verified statefully to consume the full live output.
+const EXACT_AMOUNT_SAFE_ENSO_AGGREGATORS = new Set(["grapher"]);
 
 // Custom tokens not in Uniswap list (Convex ecosystem + yld vaults)
 export const CUSTOM_TOKENS: EnsoToken[] = [
@@ -1356,13 +1361,13 @@ async function appendRouteConversion(
   };
 }
 
-async function appendCurveUsdcToCvxConversion(
-  actions: EnsoBundleAction[],
-  amountRef: BundleAmountRef,
-  expectedUsdc: bigint,
-  ctx: ConversionContext,
-  routeSteps: RouteStep[],
-): Promise<ConversionState> {
+interface CurveUsdcToCvxQuote {
+  expectedCrvUsd: bigint;
+  expectedWeth: bigint;
+  expectedCvx: bigint;
+}
+
+async function quoteCurveUsdcToCvx(expectedUsdc: bigint): Promise<CurveUsdcToCvxQuote> {
   const expectedCrvUsd = await getCurveGetDy(
     CURVE_USDC_CRVUSD_POOL,
     0,
@@ -1392,6 +1397,19 @@ async function appendCurveUsdcToCvxConversion(
   if (!expectedCvx || expectedCvx === 0n) {
     throw new Error("Failed to estimate Curve WETH→CVX output");
   }
+
+  return { expectedCrvUsd, expectedWeth, expectedCvx };
+}
+
+async function appendCurveUsdcToCvxConversion(
+  actions: EnsoBundleAction[],
+  amountRef: BundleAmountRef,
+  expectedUsdc: bigint,
+  ctx: ConversionContext,
+  routeSteps: RouteStep[],
+  quote?: CurveUsdcToCvxQuote,
+): Promise<ConversionState> {
+  const { expectedCvx } = quote ?? await quoteCurveUsdcToCvx(expectedUsdc);
 
   const minCvx = calculateMinDy(expectedCvx, ctx.totalSlippageBps);
   const zeroAddress = "0x0000000000000000000000000000000000000000";
@@ -1452,6 +1470,90 @@ async function appendCurveUsdcToCvxConversion(
     amountRef: { useOutputOfCallAt: actions.length - 1 },
     expectedAmount: expectedCvx,
   };
+}
+
+async function appendBestExactUsdcToCvxConversion(
+  actions: EnsoBundleAction[],
+  amountRef: BundleAmountRef,
+  expectedUsdc: bigint,
+  ctx: ConversionContext,
+  routeSteps: RouteStep[],
+): Promise<ConversionState> {
+  const curveQuotePromise = quoteCurveUsdcToCvx(expectedUsdc).catch(() => null);
+  const ensoQuotePromise = (async () => {
+    try {
+      const aggregators = await enqueueEnsoCall(() => ensoClient.getAggregators(CHAIN_ID));
+      const availableSafeAggregators = aggregators.filter((aggregator) =>
+        EXACT_AMOUNT_SAFE_ENSO_AGGREGATORS.has(aggregator.toLowerCase())
+      );
+      if (availableSafeAggregators.length === 0) return null;
+
+      const ignoreAggregators = aggregators.filter(
+        (aggregator) => !EXACT_AMOUNT_SAFE_ENSO_AGGREGATORS.has(aggregator.toLowerCase())
+      );
+      const route = await fetchRoute({
+        fromAddress: ctx.fromAddress,
+        tokenIn: USDC_ADDRESS,
+        tokenOut: TOKENS.CVX,
+        amountIn: expectedUsdc.toString(),
+        slippage: ctx.slippage,
+        ignoreAggregators,
+      });
+      const usedSafeAggregator = route.route.find((hop) =>
+        EXACT_AMOUNT_SAFE_ENSO_AGGREGATORS.has(hop.protocol.toLowerCase())
+      );
+      if (!usedSafeAggregator) return null;
+
+      return {
+        expectedCvx: BigInt(route.amountOut),
+        ignoreAggregators,
+        protocol: usedSafeAggregator.protocol,
+      };
+    } catch {
+      return null;
+    }
+  })();
+
+  const [curveQuote, ensoQuote] = await Promise.all([curveQuotePromise, ensoQuotePromise]);
+  if (ensoQuote && (!curveQuote || ensoQuote.expectedCvx > curveQuote.expectedCvx)) {
+    actions.push({
+      protocol: "enso",
+      action: "route",
+      args: {
+        tokenIn: USDC_ADDRESS,
+        tokenOut: TOKENS.CVX,
+        amountIn: amountRef,
+        slippage: ctx.slippage ?? "100",
+        ignoreAggregators: ensoQuote.ignoreAggregators,
+      },
+    });
+    const protocol = ensoQuote.protocol === "grapher" ? "Grapher" : ensoQuote.protocol;
+    routeSteps.push(createRouteStep({
+      tokenAddress: USDC_ADDRESS,
+      amount: expectedUsdc,
+      action: "Swap",
+      description: "USDC for CVX",
+      protocol,
+    }));
+    return {
+      token: TOKENS.CVX,
+      amountRef: { useOutputOfCallAt: actions.length - 1 },
+      expectedAmount: ensoQuote.expectedCvx,
+    };
+  }
+
+  if (!curveQuote) {
+    throw new Error("No exact-amount-safe USDC→CVX route is currently available");
+  }
+
+  return appendCurveUsdcToCvxConversion(
+    actions,
+    amountRef,
+    expectedUsdc,
+    ctx,
+    routeSteps,
+    curveQuote,
+  );
 }
 
 async function appendConversionToCvx(
@@ -1879,7 +1981,7 @@ async function buildInitialConversionState(params: {
     config.address.toLowerCase() === YVUSDC1_ADDRESS.toLowerCase() &&
     routeTarget.toLowerCase() === TOKENS.CVX.toLowerCase()
   ) {
-    const state = await appendCurveUsdcToCvxConversion(
+    const state = await appendBestExactUsdcToCvxConversion(
       actions,
       { useOutputOfCallAt: 0 },
       BigInt(expectedUnderlying),
@@ -2272,6 +2374,7 @@ export async function fetchRoute(params: {
   amountIn: string;
   slippage?: string; // basis points, e.g., "100" = 1%
   receiver?: string;
+  ignoreAggregators?: string[];
 }): Promise<EnsoRouteResponse> {
   console.log("[Enso Route] Request:", {
     tokenIn: params.tokenIn,
@@ -2338,6 +2441,7 @@ export async function fetchRoute(params: {
     routingStrategy: "router",
     referralCode: ENSO_REFERRAL_CODE,
     receiver: params.receiver as `0x${string}` | undefined,
+    ignoreAggregators: params.ignoreAggregators,
   }));
 
   console.log("[Enso Route] Response:", {
@@ -9698,10 +9802,11 @@ export async function fetchAnyFromErc4626ExternalVaultRoute(params: {
     params.externalVaultUnderlying.toLowerCase() === params.outputToken.toLowerCase();
 
   const expectedUnderlying = await previewRedeem(params.externalVault, params.amountIn);
-  const useExactCurveRoute =
+  const useExactUsdcRoute =
     params.externalVault.toLowerCase() === YVUSDC1_ADDRESS.toLowerCase() &&
     params.outputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
   let expectedOutput: bigint | undefined;
+  let exactSwapProtocol: string | undefined;
   let actions: EnsoBundleAction[];
   if (sameAsOutput) {
     actions = [
@@ -9716,7 +9821,7 @@ export async function fetchAnyFromErc4626ExternalVaultRoute(params: {
         },
       },
     ];
-  } else if (useExactCurveRoute) {
+  } else if (useExactUsdcRoute) {
     actions = [
       {
         protocol: "erc4626",
@@ -9730,7 +9835,8 @@ export async function fetchAnyFromErc4626ExternalVaultRoute(params: {
       },
     ];
     const slippageBps = validateSlippage(params.slippage);
-    const curveState = await appendCurveUsdcToCvxConversion(
+    const exactRouteSteps: RouteStep[] = [];
+    const exactState = await appendBestExactUsdcToCvxConversion(
       actions,
       { useOutputOfCallAt: 0 },
       BigInt(expectedUnderlying),
@@ -9740,9 +9846,10 @@ export async function fetchAnyFromErc4626ExternalVaultRoute(params: {
         slippageBps,
         totalSlippageBps: getBufferedSlippageBps(slippageBps),
       },
-      [],
+      exactRouteSteps,
     );
-    expectedOutput = curveState.expectedAmount;
+    expectedOutput = exactState.expectedAmount;
+    exactSwapProtocol = exactRouteSteps.at(-1)?.protocol;
   } else {
     actions = [
       {
@@ -9775,7 +9882,7 @@ export async function fetchAnyFromErc4626ExternalVaultRoute(params: {
     actions,
     receiver: params.fromAddress,
     routingStrategy: "router",
-    skipQuote: useExactCurveRoute,
+    skipQuote: useExactUsdcRoute,
   });
   if (sameAsOutput || expectedOutput !== undefined) {
     bundleResult.amountsOut = {
@@ -9789,7 +9896,7 @@ export async function fetchAnyFromErc4626ExternalVaultRoute(params: {
     { tokenSymbol: externalSymbol, action: "Exit", description: `${externalSymbol} for ${underlyingSymbol}`, protocol: protocolLabel },
   ];
   if (!sameAsOutput) {
-    const swapProtocol = useExactCurveRoute ? "Curve" : "Enso";
+    const swapProtocol = useExactUsdcRoute ? (exactSwapProtocol ?? "Curve") : "Enso";
     steps.push({ tokenSymbol: underlyingSymbol, amount: underlyingFmt, action: "Swap", description: `${underlyingSymbol} for ${outputSymbol}`, protocol: swapProtocol });
     steps.push({ tokenSymbol: outputSymbol, action: "Receive", description: "tokens", protocol: swapProtocol });
   } else {
@@ -9803,7 +9910,9 @@ export async function fetchAnyFromErc4626ExternalVaultRoute(params: {
       tokens: sameAsOutput
         ? [externalSymbol, outputSymbol]
         : [externalSymbol, underlyingSymbol, outputSymbol],
-      protocols: sameAsOutput ? [protocolLabel] : [protocolLabel, useExactCurveRoute ? "Curve" : "Enso"],
+      protocols: sameAsOutput
+        ? [protocolLabel]
+        : [protocolLabel, useExactUsdcRoute ? (exactSwapProtocol ?? "Curve") : "Enso"],
     },
   };
 }
