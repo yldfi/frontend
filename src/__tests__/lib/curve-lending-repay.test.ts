@@ -178,6 +178,8 @@ describe("fetchRepayWithSwapBundle", () => {
       expect(actions[5].action).toBe("route");
       expect(actions[5].args.tokenIn).toBe(TOKENS.CVX);
       expect(actions[5].args.tokenOut).toBe(CRVUSD);
+      expect(actions[5].args.slippage).toBe("100");
+      expect(actions[5].args.minAmountOut).toBeUndefined();
 
       // Action 6: curve-lending/repay
       expect(actions[6].protocol).toBe("curve-lending");
@@ -345,6 +347,7 @@ describe("fetchRepayWithSwapBundle", () => {
       expect(actions[0].action).toBe("redeem");
       expect(actions[1].action).toBe("route");
       expect(actions[1].args.minAmountOut).toBe("1200000000000000000");
+      expect(actions[1].args.slippage).toBeUndefined();
       expect(actions[2].action).toBe("minamountout");
       expect(actions[2].args.amountOut).toEqual({ useOutputOfCallAt: 1 });
       expect(actions[2].args.minAmountOut).toBe("1200000000000000000");
@@ -548,7 +551,7 @@ describe("fetchRepayWithSwapBundle", () => {
       expect(removeAction.args.args).toEqual(["500000000000000000", USER]);
     });
 
-    it("with withdrawAmount + withdrawTokenOut (different from vault): appends remove_collateral + route", async () => {
+    it("with withdrawAmount + withdrawTokenOut (different from vault): appends a protected collateral route", async () => {
       const SOME_TOKEN = "0xDifferentTokenAddress";
 
       await fetchRepayWithSwapBundle({
@@ -556,6 +559,7 @@ describe("fetchRepayWithSwapBundle", () => {
         vaultAddress: VAULT_ADDRESSES.YCVXCRV as `0x${string}`,
         tokenIn: "0xSomeToken",
         amountIn: "1000000000000000000",
+        slippage: 175,
         withdrawAmount: "500000000000000000",
         withdrawTokenOut: SOME_TOKEN,
       });
@@ -573,6 +577,39 @@ describe("fetchRepayWithSwapBundle", () => {
       expect(actions[4].args.tokenIn).toBe(VAULT_ADDRESSES.YCVXCRV);
       expect(actions[4].args.tokenOut).toBe(SOME_TOKEN);
       expect(actions[4].args.amountIn).toBe("500000000000000000");
+      expect(actions[4].args.slippage).toBe("175");
+      expect(actions[4].args.minAmountOut).toBeUndefined();
+    });
+
+    it("protects collateral conversion for every repay input path", async () => {
+      const inputTokens = [
+        VAULT_ADDRESSES.YSPXCVX,
+        CURVE_SAVINGS.SCRVUSD,
+        VAULT_ADDRESSES.YCVXCRV,
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      ];
+
+      for (const tokenIn of inputTokens) {
+        vi.clearAllMocks();
+        mockFetchRoute.mockResolvedValue(MOCK_ROUTE_RESPONSE);
+        mockEnsoFetchBundle.mockResolvedValue(MOCK_BUNDLE_RESPONSE);
+        mockGetLpxCvxToCvxSwapRate.mockResolvedValue(940000000000000000n);
+
+        await fetchRepayWithSwapBundle({
+          fromAddress: USER,
+          vaultAddress: VAULT_ADDRESSES.YCVXCRV as `0x${string}`,
+          tokenIn,
+          amountIn: "1000000000000000000",
+          slippage: 225,
+          withdrawAmount: "500000000000000000",
+          withdrawTokenOut: "0xDifferentTokenAddress",
+        });
+
+        const collateralRoute = capturedActions().at(-1);
+        expect(collateralRoute.action).toBe("route");
+        expect(collateralRoute.args.slippage).toBe("225");
+        expect(collateralRoute.args.minAmountOut).toBeUndefined();
+      }
     });
 
     it("with withdrawAmount + withdrawTokenOut same as vault: only remove_collateral (no route)", async () => {

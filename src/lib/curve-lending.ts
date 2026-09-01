@@ -353,8 +353,9 @@ export async function fetchRepayWithSwapBundle(params: {
             tokenIn: TOKENS.CVX,
             tokenOut: CRVUSD,
             amountIn: { useOutputOfCallAt: 4 }, // Use output from Curve exchange
-            slippage,
-            ...(closeMinCrvUsdOut ? { minAmountOut: closeMinCrvUsdOut } : {}),
+            ...(closeMinCrvUsdOut
+              ? { minAmountOut: closeMinCrvUsdOut }
+              : { slippage }),
           },
         },
         ...(closeMinCrvUsdOut ? [{
@@ -404,6 +405,7 @@ export async function fetchRepayWithSwapBundle(params: {
               tokenIn: params.vaultAddress,
               tokenOut: params.withdrawTokenOut,
               amountIn: params.withdrawAmount,
+              slippage,
             },
           });
         }
@@ -511,6 +513,7 @@ export async function fetchRepayWithSwapBundle(params: {
               tokenIn: params.vaultAddress,
               tokenOut: params.withdrawTokenOut,
               amountIn: params.withdrawAmount,
+              slippage,
             },
           });
         }
@@ -530,8 +533,9 @@ export async function fetchRepayWithSwapBundle(params: {
         tokenIn: vaultInfo.underlying,
         tokenOut: CRVUSD,
         amountIn: { useOutputOfCallAt: 0 }, // Use output from redeem
-        slippage,
-        ...(closeMinCrvUsdOut ? { minAmountOut: closeMinCrvUsdOut } : {}),
+        ...(closeMinCrvUsdOut
+          ? { minAmountOut: closeMinCrvUsdOut }
+          : { slippage }),
       },
     });
     const crvUsdRouteActionIndex = actions.length - 1;
@@ -586,6 +590,7 @@ export async function fetchRepayWithSwapBundle(params: {
             tokenIn: params.vaultAddress,
             tokenOut: params.withdrawTokenOut,
             amountIn: params.withdrawAmount,
+            slippage,
           },
         });
       }
@@ -669,6 +674,7 @@ export async function fetchRepayWithSwapBundle(params: {
           tokenIn: params.vaultAddress,
           tokenOut: params.withdrawTokenOut,
           amountIn: params.withdrawAmount,
+          slippage,
         },
       });
     }

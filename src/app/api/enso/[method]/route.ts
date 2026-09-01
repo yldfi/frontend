@@ -5,6 +5,7 @@ import {
   assertValidEnsoIntentRequest,
   getIntentVault,
 } from "@/lib/enso-intents";
+import { assertSlippage } from "@/lib/enso-intent-validation";
 import { getExternalVaultConfig, LLAMA_AIRFORCE, TOKENS } from "@/config/vaults";
 
 export const dynamic = "force-dynamic";
@@ -501,13 +502,15 @@ export async function POST(
       }
 
       case "route": {
+        const slippage = (body.slippage as string | undefined) ?? "100";
+        assertSlippage(slippage);
         const routeData = await ensoClient.getRouteData({
           chainId: CHAIN_ID,
           fromAddress: body.fromAddress as `0x${string}`,
           tokenIn: body.tokenIn as [`0x${string}`],
           tokenOut: body.tokenOut as [`0x${string}`],
           amountIn: body.amountIn as [string],
-          slippage: (body.slippage as string) ?? "100",
+          slippage,
           routingStrategy: "router",
           referralCode: REFERRAL_CODE,
           receiver: body.receiver as `0x${string}` | undefined,
