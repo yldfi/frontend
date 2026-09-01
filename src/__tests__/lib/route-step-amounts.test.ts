@@ -3,15 +3,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
+  mockGetAggregators,
   mockGetRouteData,
   mockGetBundleData,
 } = vi.hoisted(() => ({
+  mockGetAggregators: vi.fn(),
   mockGetRouteData: vi.fn(),
   mockGetBundleData: vi.fn(),
 }));
 
 vi.mock("@ensofinance/sdk", () => ({
   EnsoClient: class MockEnsoClient {
+    getAggregators = mockGetAggregators;
     getRouteData = mockGetRouteData;
     getBundleData = mockGetBundleData;
   },
@@ -224,6 +227,7 @@ describe("route step amounts", () => {
     });
 
     mockGetBundleData.mockResolvedValue(BUNDLE_RESPONSE);
+    mockGetAggregators.mockResolvedValue(["0x", "kyberswap", "grapher"]);
     mockGetRouteData.mockImplementation(async ({ tokenIn, tokenOut }: { tokenIn: string[]; tokenOut: string[] }) => {
       const input = tokenIn[0]?.toLowerCase();
       const output = tokenOut[0]?.toLowerCase();
@@ -476,6 +480,57 @@ describe("route step amounts", () => {
         args: expect.objectContaining({ method: "exchange_multiple" }),
       }),
     ]);
+  });
+
+  it("selects a better exact-amount-safe Enso route and excludes unsafe aggregators", async () => {
+    mockGetRouteData.mockResolvedValueOnce({
+      amountOut: "6000000000000000000",
+      gas: "1200000",
+      priceImpact: 20,
+      tx: { to: "0xroute", data: "0xrouteData", value: "0" },
+      route: [{ protocol: "grapher", action: "swap" }],
+    });
+
+    const result = await fetchAnyFromErc4626ExternalVaultRoute({
+      fromAddress: TEST_WALLET,
+      externalVault: YVUSDC1_ADDRESS,
+      externalVaultUnderlying: USDC_ADDRESS,
+      outputToken: TOKENS.CVX,
+      amountIn: "297900852",
+      slippage: "100",
+      protocolLabel: "Yearn",
+    });
+
+    expect(mockGetRouteData).toHaveBeenCalledWith(expect.objectContaining({
+      tokenIn: [USDC_ADDRESS],
+      tokenOut: [TOKENS.CVX],
+      ignoreAggregators: ["0x", "kyberswap"],
+    }));
+    expect(lastBundleActions()).toEqual([
+      {
+        protocol: "erc4626",
+        action: "redeem",
+        args: {
+          tokenIn: YVUSDC1_ADDRESS,
+          tokenOut: USDC_ADDRESS,
+          amountIn: "297900852",
+          primaryAddress: YVUSDC1_ADDRESS,
+        },
+      },
+      {
+        protocol: "enso",
+        action: "route",
+        args: {
+          tokenIn: USDC_ADDRESS,
+          tokenOut: TOKENS.CVX,
+          amountIn: { useOutputOfCallAt: 0 },
+          slippage: "100",
+          ignoreAggregators: ["0x", "kyberswap"],
+        },
+      },
+    ]);
+    expect(result.amountsOut[TOKENS.CVX.toLowerCase()]).toBe("6000000000000000000");
+    expect(result.routeInfo?.protocols).toEqual(["Yearn", "Grapher"]);
   });
 
   it("shows external -> yld vault intermediate amounts", async () => {
