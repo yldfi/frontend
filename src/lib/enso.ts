@@ -361,6 +361,27 @@ const CURVE_ROUTER = "0x99a58482BD75cbab83b27EC03CA68fF489b5788f";
 // base units. Grapher was verified statefully to consume the full live output.
 const EXACT_AMOUNT_SAFE_ENSO_AGGREGATORS = new Set(["grapher"]);
 
+interface ExactAmountAggregatorPolicy {
+  availableSafeAggregators: string[];
+  ignoreAggregators: string[];
+}
+
+async function getExactAmountAggregatorPolicy(): Promise<ExactAmountAggregatorPolicy> {
+  const aggregators = await enqueueEnsoCall(() => ensoClient.getAggregators(CHAIN_ID));
+  if (aggregators.length === 0) {
+    throw new Error("Enso returned no aggregator policy for an exact-amount route");
+  }
+
+  return {
+    availableSafeAggregators: aggregators.filter((aggregator) =>
+      EXACT_AMOUNT_SAFE_ENSO_AGGREGATORS.has(aggregator.toLowerCase())
+    ),
+    ignoreAggregators: aggregators.filter(
+      (aggregator) => !EXACT_AMOUNT_SAFE_ENSO_AGGREGATORS.has(aggregator.toLowerCase())
+    ),
+  };
+}
+
 // Custom tokens not in Uniswap list (Convex ecosystem + yld vaults)
 export const CUSTOM_TOKENS: EnsoToken[] = [
   {
@@ -1482,15 +1503,9 @@ async function appendBestExactUsdcToCvxConversion(
   const curveQuotePromise = quoteCurveUsdcToCvx(expectedUsdc).catch(() => null);
   const ensoQuotePromise = (async () => {
     try {
-      const aggregators = await enqueueEnsoCall(() => ensoClient.getAggregators(CHAIN_ID));
-      const availableSafeAggregators = aggregators.filter((aggregator) =>
-        EXACT_AMOUNT_SAFE_ENSO_AGGREGATORS.has(aggregator.toLowerCase())
-      );
+      const { availableSafeAggregators, ignoreAggregators } =
+        await getExactAmountAggregatorPolicy();
       if (availableSafeAggregators.length === 0) return null;
-
-      const ignoreAggregators = aggregators.filter(
-        (aggregator) => !EXACT_AMOUNT_SAFE_ENSO_AGGREGATORS.has(aggregator.toLowerCase())
-      );
       const route = await fetchRoute({
         fromAddress: ctx.fromAddress,
         tokenIn: USDC_ADDRESS,
@@ -2367,7 +2382,7 @@ export async function fetchTokens(params?: {
  * Client-side: proxied through /api/enso/route (API key stays server-side).
  * Server-side: calls SDK directly.
  */
-export async function fetchRoute(params: {
+export interface EnsoRouteRequest {
   fromAddress: string;
   tokenIn: string;
   tokenOut: string;
@@ -2375,7 +2390,9 @@ export async function fetchRoute(params: {
   slippage?: string; // basis points, e.g., "100" = 1%
   receiver?: string;
   ignoreAggregators?: string[];
-}): Promise<EnsoRouteResponse> {
+}
+
+export async function fetchRoute(params: EnsoRouteRequest): Promise<EnsoRouteResponse> {
   console.log("[Enso Route] Request:", {
     tokenIn: params.tokenIn,
     tokenOut: params.tokenOut,
@@ -2469,6 +2486,18 @@ export async function fetchRoute(params: {
       amountOut: [],
     })),
   };
+}
+
+/**
+ * Build standalone calldata that will consume an amount produced earlier in
+ * the same transaction. Aggregators that embed the quote-time amount in their
+ * calldata are excluded; fixed wallet-token swaps should call fetchRoute.
+ */
+export async function fetchExactAmountSafeRoute(
+  params: Omit<EnsoRouteRequest, "ignoreAggregators">,
+): Promise<EnsoRouteResponse> {
+  const { ignoreAggregators } = await getExactAmountAggregatorPolicy();
+  return fetchRoute({ ...params, ignoreAggregators });
 }
 
 /**
@@ -2682,6 +2711,37 @@ export async function fetchBundle(params: {
     );
   }
 
+  const dynamicRouteActions = params.actions.filter((action) =>
+    action.protocol === "enso" &&
+    action.action === "route" &&
+    typeof action.args.amountIn === "object" &&
+    action.args.amountIn !== null &&
+    "useOutputOfCallAt" in action.args.amountIn &&
+    !Array.isArray(action.args.ignoreAggregators)
+  );
+  let actions = params.actions;
+  if (dynamicRouteActions.length > 0) {
+    const { ignoreAggregators } = await getExactAmountAggregatorPolicy();
+    actions = params.actions.map((action) => {
+      const hasDynamicInput =
+        action.protocol === "enso" &&
+        action.action === "route" &&
+        typeof action.args.amountIn === "object" &&
+        action.args.amountIn !== null &&
+        "useOutputOfCallAt" in action.args.amountIn;
+      if (!hasDynamicInput || Array.isArray(action.args.ignoreAggregators)) {
+        return action;
+      }
+      return {
+        ...action,
+        args: {
+          ...action.args,
+          ignoreAggregators,
+        },
+      };
+    });
+  }
+
   // Server-side: use SDK directly
   let bundleData: Awaited<ReturnType<typeof ensoClient.getBundleData>>;
   try {
@@ -2694,7 +2754,7 @@ export async function fetchBundle(params: {
         receiver: params.receiver as `0x${string}` | undefined,
         skipQuote: params.skipQuote ?? isDev,
       },
-      params.actions as unknown as Parameters<typeof ensoClient.getBundleData>[1]
+      actions as unknown as Parameters<typeof ensoClient.getBundleData>[1]
     ));
   } catch (error: unknown) {
     if (isDev) {
@@ -5923,7 +5983,7 @@ export async function fetchCvgCvxZapOutRoute(params: {
   // routeMulti sends output to fromAddress (user), so route directly to final token
   // (no WETH unwrap needed — Enso handles ETH output natively in standalone routes)
   const { extractInnerSwapData } = await import("@/lib/zapper");
-  const standaloneRoute = await fetchRoute({
+  const standaloneRoute = await fetchExactAmountSafeRoute({
     fromAddress: params.fromAddress,
     tokenIn: TOKENS.CVX,
     tokenOut: params.outputToken,
@@ -9967,7 +10027,7 @@ export async function fetchAnyFromUCrvRoute(params: {
   let expectedOutput = "0";
   if (!sameAsOutput) {
     const { extractInnerSwapData } = await import("@/lib/zapper");
-    const standaloneRoute = await fetchRoute({
+    const standaloneRoute = await fetchExactAmountSafeRoute({
       fromAddress: params.fromAddress,
       tokenIn: LLAMA_AIRFORCE.UCRV_UNDERLYING,
       tokenOut: params.outputToken,
@@ -10076,7 +10136,7 @@ export async function fetchAnyFromBeefyRoute(params: {
   let expectedOutput = "0";
   if (!sameAsOutput) {
     const { extractInnerSwapData } = await import("@/lib/zapper");
-    const standaloneRoute = await fetchRoute({
+    const standaloneRoute = await fetchExactAmountSafeRoute({
       fromAddress: params.fromAddress,
       tokenIn: params.beefyVaultUnderlying,
       tokenOut: params.outputToken,
@@ -11359,7 +11419,7 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
     // Generic Enso routeMulti — intermediate is CVX or cvxCRV, target is some
     // other token (crvUSD, cvxCRV, CVX, etc.).
     const { extractInnerSwapData } = await import("@/lib/zapper");
-    const standaloneRoute = await fetchRoute({
+    const standaloneRoute = await fetchExactAmountSafeRoute({
       fromAddress: params.fromAddress,
       tokenIn: intermediateToken,
       tokenOut: params.targetUnderlying,
