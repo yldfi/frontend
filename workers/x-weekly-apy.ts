@@ -16,19 +16,13 @@ const OAUTH_STATE_PREFIX = "x:oauth:state:";
 const POSTED_KEY_PREFIX = "x:weekly-apy:posted:";
 const LAST_RUN_KEY = "x:weekly-apy:last-run";
 
-interface Env {
-  CLOUDFLARE_ACCOUNT_ID: string;
+interface Env extends XWeeklyApyEnv {
   CLOUDFLARE_API_TOKEN: string;
-  SITE_URL?: string;
-  SOCIAL_RENDER_PATH?: string;
   SOCIAL_RUN_SECRET?: string;
-  SOCIAL_CACHE?: KVNamespace;
   X_CLIENT_ID: string;
   X_CLIENT_SECRET?: string;
-  X_DRY_RUN?: string;
   X_REDIRECT_URI?: string;
   X_REFRESH_TOKEN?: string;
-  X_WEEKLY_COPY?: string;
 }
 
 interface BrowserImage {
@@ -53,7 +47,9 @@ interface XMediaUploadResponse {
     media_key?: string;
     size?: number;
   };
+  detail?: string;
   errors?: XApiError[];
+  title?: string;
 }
 
 interface XCreatePostResponse {
