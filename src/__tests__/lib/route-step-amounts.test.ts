@@ -387,7 +387,7 @@ describe("route step amounts", () => {
     }));
 
     const actions = lastBundleActions();
-    expect(actions).toHaveLength(2);
+    expect(actions).toHaveLength(3);
     expect(actions[0]).toMatchObject({
       protocol: "enso",
       action: "route",
@@ -406,6 +406,14 @@ describe("route step amounts", () => {
         tokenOut: VAULT_ADDRESSES.YCVXCRV,
         amountIn: { useOutputOfCallAt: 0 },
         primaryAddress: VAULT_ADDRESSES.YCVXCRV,
+      },
+    });
+    expect(actions[2]).toMatchObject({
+      protocol: "enso",
+      action: "slippage",
+      args: {
+        amountOut: { useOutputOfCallAt: 1 },
+        bps: "100",
       },
     });
     expect(result.tx.to).toBe(MORPHO_BUNDLER3_ADDRESS);

@@ -121,6 +121,25 @@ export function assertProtectedEnsoBundleActions(actions: EnsoBundleAction[]): v
         action.args.minAmountOut,
         `actions[${index}].args.minAmountOut`,
       );
+      if (
+        typeof action.args.amountOut !== "object" ||
+        action.args.amountOut === null ||
+        !("useOutputOfCallAt" in action.args.amountOut)
+      ) {
+        fail(`actions[${index}].args.amountOut must reference a previous action output`);
+      }
+      return;
+    }
+
+    if (action.action === "slippage") {
+      assertSafeSlippageBps(action.args.bps, `actions[${index}].args.bps`);
+      if (
+        typeof action.args.amountOut !== "object" ||
+        action.args.amountOut === null ||
+        !("useOutputOfCallAt" in action.args.amountOut)
+      ) {
+        fail(`actions[${index}].args.amountOut must reference a previous action output`);
+      }
       return;
     }
 

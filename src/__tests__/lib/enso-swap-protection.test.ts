@@ -67,8 +67,40 @@ describe("Enso swap protection", () => {
     expect(() => assertProtectedEnsoBundleActions([{
       protocol: "enso",
       action: "minamountout",
+      args: { amountOut: { useOutputOfCallAt: 0 }, minAmountOut: "1" },
+    }])).not.toThrow();
+
+    expect(() => assertProtectedEnsoBundleActions([{
+      protocol: "enso",
+      action: "minamountout",
       args: { minAmountOut: "0" },
     }])).toThrow("must be greater than zero");
+
+    expect(() => assertProtectedEnsoBundleActions([{
+      protocol: "enso",
+      action: "minamountout",
+      args: { amountOut: "1", minAmountOut: "1" },
+    }])).toThrow("must reference a previous action output");
+  });
+
+  it("validates terminal slippage guards", () => {
+    expect(() => assertProtectedEnsoBundleActions([{
+      protocol: "enso",
+      action: "slippage",
+      args: { amountOut: { useOutputOfCallAt: 0 }, bps: "100" },
+    }])).not.toThrow();
+
+    expect(() => assertProtectedEnsoBundleActions([{
+      protocol: "enso",
+      action: "slippage",
+      args: { amountOut: "100", bps: "100" },
+    }])).toThrow("must reference a previous action output");
+
+    expect(() => assertProtectedEnsoBundleActions([{
+      protocol: "enso",
+      action: "slippage",
+      args: { amountOut: { useOutputOfCallAt: 0 }, bps: "5001" },
+    }])).toThrow("must be between 0 and 5000 basis points");
   });
 
   it("does not classify fixed-ratio calls as market swaps", () => {
