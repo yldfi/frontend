@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "types": [
+      "./worker-runtime.d.ts",
+      "./cache-worker-env.d.ts",
+      "./x-weekly-apy-env.d.ts"
+    ],
+    "strict": true,
+    "noEmit": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "skipLibCheck": true
+  },
+  "include": ["vault-cache.ts", "x-weekly-apy.ts"]
+}
