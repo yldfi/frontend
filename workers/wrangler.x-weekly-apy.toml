@@ -1,6 +1,7 @@
 name = "yldfi-x-weekly-apy"
 main = "x-weekly-apy.ts"
-compatibility_date = "2024-09-23"
+compatibility_date = "2026-09-02"
+compatibility_flags = ["no_nodejs_compat", "no_nodejs_compat_v2"]
 
 [vars]
 CLOUDFLARE_ACCOUNT_ID = "7f4f33bd3b9086164518eee1e9b8590a"

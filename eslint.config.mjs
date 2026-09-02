@@ -13,6 +13,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    "cloudflare-runtime.d.ts",
+    "cloudflare-env.d.ts",
     // Build output directories:
     ".open-next/**",
     ".wrangler/**",

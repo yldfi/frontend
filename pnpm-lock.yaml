@@ -51,9 +51,6 @@ importers:
         specifier: 2.19.5
         version: 2.19.5(@tanstack/query-core@5.102.8)(@tanstack/react-query@5.102.8(react@19.2.8))(@types/react@19.2.18)(aws4fetch@1.0.20)(bufferutil@4.0.9)(fastestsmallesttextencoderdecoder@1.0.22)(react@19.2.8)(typescript@6.0.3)(utf-8-validate@5.0.10)(viem@2.56.3(bufferutil@4.0.9)(typescript@6.0.3)(utf-8-validate@5.0.10)(zod@4.4.3))(ws@7.5.13(bufferutil@4.0.9)(utf-8-validate@5.0.10))(zod@4.4.3)
     devDependencies:
-      '@cloudflare/workers-types':
-        specifier: 5.20260902.1
-        version: 5.20260902.1
       '@opennextjs/cloudflare':
         specifier: 1.20.5
         version: 1.20.5(next@16.3.4(@babel/core@7.29.7)(@playwright/test@1.62.1)(@types/node@26.4.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(wrangler@4.128.0(@cloudflare/workers-types@5.20260902.1)(bufferutil@4.0.9)(utf-8-validate@5.0.10))
