@@ -920,18 +920,14 @@ function buildRouteMetadataFromSteps(steps: RouteStep[]): Pick<RouteInfo, "token
   return { tokens, protocols };
 }
 
-async function estimateRouteOutputOrFallback(
+async function estimateRequiredRouteOutput(
   fromAddress: string,
   tokenIn: string,
   tokenOut: string,
   amountIn: string,
   slippage?: string,
 ): Promise<bigint> {
-  try {
-    return BigInt(await estimateRouteOutput(fromAddress, tokenIn, tokenOut, amountIn, slippage));
-  } catch {
-    return BigInt(amountIn);
-  }
+  return BigInt(await estimateRouteOutput(fromAddress, tokenIn, tokenOut, amountIn, slippage));
 }
 
 function toBalanceState(
@@ -2562,40 +2558,6 @@ const getRpcAuth = (): string | undefined => {
   return undefined;
 };
 
-const isDevEnv = (): boolean => process.env.NODE_ENV !== "production";
-
-const getErc20TotalSupply = async (token: string): Promise<bigint> => {
-  const selector = "0x18160ddd"; // totalSupply()
-  const rpcAuth = getRpcAuth();
-  const rpcUrls = getRpcUrls();
-
-  for (const rpcUrl of rpcUrls) {
-    try {
-      const result = await fetch(rpcUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(rpcAuth ? { Authorization: rpcAuth.startsWith("Basic ") ? rpcAuth : `Basic ${rpcAuth}` } : {}),
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "eth_call",
-          params: [{ to: token, data: selector }, "latest"],
-        }),
-      });
-      if (!result || !result.ok) continue;
-      const response = await result.json() as { result?: string };
-      if (!response.result || response.result === "0x") continue;
-      return BigInt(response.result);
-    } catch {
-      continue;
-    }
-  }
-  // All RPCs failed - return 0n to skip clamping
-  return 0n;
-};
-
 /**
  * Make a JSON-RPC request with RPC URL fallback. Tries each available
  * RPC URL until one returns a successful response.
@@ -2628,23 +2590,6 @@ async function rpcWithFallback<T = unknown>(body: unknown): Promise<T> {
   }
   throw lastError ?? new Error("All RPC URLs failed");
 }
-
-/** Dev-only: clamp amountIn to token/vault totalSupply to prevent simulation errors */
-const clampAmountIn = async (token: string, amountIn: string): Promise<string> => {
-  if (!isDevEnv()) {
-    return amountIn;
-  }
-  if (token.toLowerCase() === ETH_ADDRESS.toLowerCase()) {
-    return amountIn;
-  }
-  const totalSupply = await getErc20TotalSupply(token);
-  const requested = BigInt(amountIn);
-  if (totalSupply === 0n) {
-    return amountIn;
-  }
-  return requested > totalSupply ? totalSupply.toString() : amountIn;
-};
-
 
 /**
  * Sort tokens with popular tokens first
@@ -3061,8 +3006,8 @@ export async function fetchZapOutRoute(params: {
   }
 
   const underlying = params.underlyingToken || CVXCRV_ADDRESS;
-  const amountIn = await clampAmountIn(params.vaultAddress, params.amountIn);
-
+  const amountIn = params.amountIn;
+  const outputIsUnderlying = underlying.toLowerCase() === params.outputToken.toLowerCase();
   const actions: EnsoBundleAction[] = [
     // Step 1: Redeem from vault to get underlying token (cvxCRV)
     {
@@ -3075,8 +3020,10 @@ export async function fetchZapOutRoute(params: {
         primaryAddress: params.vaultAddress,
       },
     },
-    // Step 2: Swap underlying (cvxCRV) to output token
-    {
+  ];
+
+  if (!outputIsUnderlying) {
+    actions.push({
       protocol: "enso",
       action: "route",
       args: {
@@ -3085,10 +3032,9 @@ export async function fetchZapOutRoute(params: {
         amountIn: { useOutputOfCallAt: 0 }, // Use output from redeem
         slippage: params.slippage ?? "100",
       },
-    },
-  ];
+    });
+  }
 
-  // For ETH output: route to WETH + unwrap (avoids weiroll slippage check failure)
   appendETHUnwrapIfNeeded(actions, params.outputToken);
 
   return fetchBundle({
@@ -3124,11 +3070,13 @@ export async function fetchZapInRoute(params: {
   }
 
   const underlying = params.underlyingToken || CVXCRV_ADDRESS;
-  const amountIn = await clampAmountIn(params.inputToken, params.amountIn);
+  const amountIn = params.amountIn;
 
-  const actions: EnsoBundleAction[] = [
-    // Step 1: Swap input token to underlying (cvxCRV)
-    {
+  const inputIsUnderlying = params.inputToken.toLowerCase() === underlying.toLowerCase();
+  const actions: EnsoBundleAction[] = [];
+
+  if (!inputIsUnderlying) {
+    actions.push({
       protocol: "enso",
       action: "route",
       args: {
@@ -3137,19 +3085,19 @@ export async function fetchZapInRoute(params: {
         amountIn,
         slippage: params.slippage ?? "100",
       },
-    },
-    // Step 2: Deposit underlying (cvxCRV) into vault
-    {
+    });
+  }
+
+  actions.push({
       protocol: "erc4626",
       action: "deposit",
       args: {
         tokenIn: underlying,
         tokenOut: params.vaultAddress,
-        amountIn: { useOutputOfCallAt: 0 }, // Use output from swap
+        amountIn: inputIsUnderlying ? amountIn : { useOutputOfCallAt: 0 },
         primaryAddress: params.vaultAddress,
       },
-    },
-  ];
+    });
 
   return fetchBundle({
     fromAddress: params.fromAddress,
@@ -3207,7 +3155,7 @@ export async function fetchVaultToVaultRoute(params: {
   const targetVaultSymbol = targetVaultConfig?.symbol ?? getTokenSymbol(params.targetVault);
   const sourceUnderlyingSymbol = getTokenSymbol(sourceUnderlying);
   const slippage = params.slippage ?? "100";
-  const amountIn = await clampAmountIn(params.sourceVault, params.amountIn);
+  const amountIn = params.amountIn;
 
   // Same-underlying vault-to-vault: simple redeem → deposit (no swap needed)
   const sameUnderlying = sourceUnderlying.toLowerCase() === targetUnderlying.toLowerCase();
@@ -3412,18 +3360,21 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
   const sourceVaultSymbol = getTokenSymbol(params.sourceVault);
   const targetVaultSymbol = getTokenSymbol(params.targetVault);
   const sourceUnderlyingSymbol = getTokenSymbol(params.sourceUnderlyingToken);
+  const sourceIsCvx = params.sourceUnderlyingToken.toLowerCase() === TOKENS.CVX.toLowerCase();
 
   // Estimate underlying amount from vault redeem
   const estimatedUnderlying = await previewRedeem(params.sourceVault, params.amountIn);
 
-  // Estimate CVX amount from route (throws on failure)
-  const estimatedCvx = await estimateRouteOutput(
-    params.fromAddress,
-    params.sourceUnderlyingToken,
-    TOKENS.CVX,
-    estimatedUnderlying,
-    params.slippage
-  );
+  // A CVX vault already redeems to CVX; only estimate a swap for other assets.
+  const estimatedCvx = sourceIsCvx
+    ? estimatedUnderlying
+    : await estimateRouteOutput(
+        params.fromAddress,
+        params.sourceUnderlyingToken,
+        TOKENS.CVX,
+        estimatedUnderlying,
+        params.slippage
+      );
 
   // Apply slippage buffer to CVX estimate for fixed-amount actions
   // This ensures we don't try to spend more CVX than we received after slippage
@@ -3474,9 +3425,12 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
         primaryAddress: params.sourceVault,
       },
     },
-    // Action 1: Route source underlying → CVX via Enso
-    // Use dynamic output chaining so Enso doesn't expect user to pre-fund intermediate tokens
-    {
+  ];
+
+  if (!sourceIsCvx) {
+    // Route source underlying → CVX via Enso. A CVX source can use the redeem
+    // output directly and must not ask Enso to construct a CVX → CVX route.
+    actions.push({
       protocol: "enso",
       action: "route",
       args: {
@@ -3485,15 +3439,20 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
         amountIn: { useOutputOfCallAt: 0 },
         slippage: params.slippage,
       },
-    },
-    // Action 2: Approve CVX → CVX1 wrapper
-    // Use dynamic output from route action to approve exact amount received
+    });
+  }
+
+  const cvxOutputIndex = sourceIsCvx ? 0 : 1;
+  const curveSwapOutputIndex = actions.length + 3;
+
+  actions.push(
+    // Approve CVX → CVX1 wrapper
     {
       protocol: "erc20",
       action: "approve",
-      args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: { useOutputOfCallAt: 1 } },
+      args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: { useOutputOfCallAt: cvxOutputIndex } },
     },
-    // Action 3: Wrap CVX → CVX1 (mint to ENSO_SHORTCUTS, not ENSO_ROUTER_V2)
+    // Wrap CVX → CVX1 (mint to ENSO_SHORTCUTS, not ENSO_ROUTER_V2)
     // CVX1 must go to ENSO_SHORTCUTS because Curve.exchange does transferFrom(msg.sender, ...)
     // and the Shortcuts contract is the one executing the Curve call
     {
@@ -3503,17 +3462,17 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
         address: TOKENS.CVX1,
         method: "mint",
         abi: "function mint(address to, uint256 amount)",
-        args: [ENSO_SHORTCUTS, { useOutputOfCallAt: 1 }],
+        args: [ENSO_SHORTCUTS, { useOutputOfCallAt: cvxOutputIndex }],
       },
     },
-    // Action 4: Approve CVX1 → Curve pool
+    // Approve CVX1 → Curve pool
     // CVX1 mint is 1:1, so amount equals route output
     {
       protocol: "erc20",
       action: "approve",
-      args: { token: TOKENS.CVX1, spender: TANGENT.CVX1_CVGCVX_POOL, amount: { useOutputOfCallAt: 1 } },
+      args: { token: TOKENS.CVX1, spender: TANGENT.CVX1_CVGCVX_POOL, amount: { useOutputOfCallAt: cvxOutputIndex } },
     },
-    // Action 5: Swap CVX1 → cvgCVX via Curve pool
+    // Swap CVX1 → cvgCVX via Curve pool
     // Use dynamic CVX1 amount (same as CVX from route, since mint is 1:1)
     {
       protocol: "enso",
@@ -3522,30 +3481,29 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
         address: TANGENT.CVX1_CVGCVX_POOL,
         method: "exchange",
         abi: "function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) returns (uint256)",
-        args: [0, 1, { useOutputOfCallAt: 1 }, minDyCvgCvx], // dx from route, min_dy with slippage
+        args: [0, 1, { useOutputOfCallAt: cvxOutputIndex }, minDyCvgCvx],
       },
     },
-    // Action 6: Approve cvgCVX → vault
+    // Approve cvgCVX → vault
     {
       protocol: "erc20",
       action: "approve",
-      args: { token: TOKENS.CVGCVX, spender: params.targetVault, amount: { useOutputOfCallAt: 5 } },
+      args: { token: TOKENS.CVGCVX, spender: params.targetVault, amount: { useOutputOfCallAt: curveSwapOutputIndex } },
     },
-    // Action 7: Deposit cvgCVX → target vault
+    // Deposit cvgCVX → target vault
     {
       protocol: "erc4626",
       action: "deposit",
       args: {
         tokenIn: TOKENS.CVGCVX,
         tokenOut: params.targetVault,
-        amountIn: { useOutputOfCallAt: 5 },
+        amountIn: { useOutputOfCallAt: curveSwapOutputIndex },
         primaryAddress: params.targetVault,
       },
     },
-  ];
+  );
 
   // Use skipQuote to bypass Enso's simulation which fails with complex output chaining.
-  // The bundle uses useOutputOfCallAt across 8 actions, which Enso's simulator can't handle.
   const bundle = await fetchBundle({
     fromAddress: params.fromAddress,
     actions,
@@ -3625,6 +3583,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
 
   // Check if target is pxCVX - needs special routing through lpxCVX.swap()
   const targetIsPxCvx = params.targetUnderlyingToken.toLowerCase() === TOKENS.PXCVX.toLowerCase();
+  const targetIsCvxCrv = params.targetUnderlyingToken.toLowerCase() === TOKENS.CVXCRV.toLowerCase();
 
   // OPTIMIZED: Batch previewRedeem + pool params in single RPC call
   // Uses off-chain StableSwap math for getDy calculation
@@ -3770,12 +3729,25 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
     }
   );
 
-  const targetIsCvxCrv = params.targetUnderlyingToken.toLowerCase() === TOKENS.CVXCRV.toLowerCase();
+  const targetIsCvx = params.targetUnderlyingToken.toLowerCase() === TOKENS.CVX.toLowerCase();
 
   // Track expected cvxCRV output for amountsOut (set inside targetIsCvxCrv block)
   let expectedCvxCrvOutput: bigint | null = null;
 
-  if (targetIsCvxCrv) {
+  if (targetIsCvx) {
+    // CVX1 unwraps 1:1 to CVX, so the Curve exchange output is also the exact
+    // amount of CVX available after the void-returning withdraw call.
+    actions.push({
+      protocol: "erc4626",
+      action: "deposit",
+      args: {
+        tokenIn: TOKENS.CVX,
+        tokenOut: params.targetVault,
+        amountIn: { useOutputOfCallAt: 2 },
+        primaryAddress: params.targetVault,
+      },
+    });
+  } else if (targetIsCvxCrv) {
     // Estimate chain for min_dy safety values (conservative, with slippage buffers)
     const expectedWeth = await estimateCryptoSwapOffchain(
       CURVE_CVX_ETH_POOL,
@@ -5837,7 +5809,7 @@ export async function fetchCvgCvxZapOutRoute(params: {
 
   const { TANGENT } = await import("@/config/vaults");
   const slippageBps = parseInt(params.slippage ?? "100", 10);
-  const amountIn = await clampAmountIn(params.vaultAddress, params.amountIn);
+  const amountIn = params.amountIn;
 
   // Check if output is already CVX - skip final route step
   const outputIsCvx = params.outputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
@@ -6144,7 +6116,7 @@ export async function fetchPxCvxZapOutRoute(params: {
   // Validate slippage parameter
   const slippageBps = validateSlippage(params.slippage);
 
-  const amountIn = await clampAmountIn(params.vaultAddress, params.amountIn);
+  const amountIn = params.amountIn;
 
   // Check if output is already CVX - skip final route step
   const outputIsCvx = params.outputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
@@ -6928,19 +6900,14 @@ export async function fetchUCrvZapInRoute(params: {
       },
     });
     const cvxRouteIdx = actions.length - 1;
-    let cvxEstimate: bigint;
-    try {
-      const rq = await fetchRoute({
-        fromAddress: params.fromAddress,
-        tokenIn: LLAMA_AIRFORCE.UCRV_UNDERLYING,
-        tokenOut: TOKENS.CVX,
-        amountIn: expectedCvxCrvOutput,
-        slippage: params.slippage ?? "100",
-      });
-      cvxEstimate = BigInt(rq.amountOut);
-    } catch {
-      cvxEstimate = BigInt(expectedCvxCrvOutput);
-    }
+    const rq = await fetchRoute({
+      fromAddress: params.fromAddress,
+      tokenIn: LLAMA_AIRFORCE.UCRV_UNDERLYING,
+      tokenOut: TOKENS.CVX,
+      amountIn: expectedCvxCrvOutput,
+      slippage: params.slippage ?? "100",
+    });
+    const cvxEstimate = BigInt(rq.amountOut);
     expectedIntermediateCvx = cvxEstimate;
     const { actions: cvgCvxActions, expectedCvgCvx } = await buildCvxToCvgCvxDepositActions({
       expectedCvxAmount: cvxEstimate,
@@ -6953,7 +6920,7 @@ export async function fetchUCrvZapInRoute(params: {
     rebaseCvgCvxHybridRef(actions, baseIdx);
     expectedCvgCvxTotal = expectedCvgCvx;
   } else {
-    expectedTargetUnderlyingOutput = await estimateRouteOutputOrFallback(
+    expectedTargetUnderlyingOutput = await estimateRequiredRouteOutput(
       params.fromAddress,
       LLAMA_AIRFORCE.UCRV_UNDERLYING,
       targetUnderlying,
@@ -7217,7 +7184,7 @@ export async function fetchUCvxZapInRoute(params: {
       // Stash expected output for amountsOut population below
       expectedCvgCvxTotal = cvgCvxTotal;
     } else {
-      expectedTargetUnderlyingOutput = await estimateRouteOutputOrFallback(
+      expectedTargetUnderlyingOutput = await estimateRequiredRouteOutput(
         params.fromAddress,
         TOKENS.CVX,
         targetUnderlying,
@@ -7465,19 +7432,14 @@ export async function fetchErc4626ExternalVaultZapInRoute(params: {
         },
       });
       cvxInputAmountRef = { useOutputOfCallAt: 1 };
-      // Rough estimate: assume Enso gives market price — use previewed underlying
-      try {
-        const routeQuote = await fetchRoute({
-          fromAddress: params.fromAddress,
-          tokenIn: params.externalVaultUnderlying,
-          tokenOut: TOKENS.CVX,
-          amountIn: expectedUnderlyingOutput,
-          slippage: params.slippage ?? "100",
-        });
-        cvxEstimate = BigInt(routeQuote.amountOut);
-      } catch {
-        cvxEstimate = BigInt(expectedUnderlyingOutput);
-      }
+      const routeQuote = await fetchRoute({
+        fromAddress: params.fromAddress,
+        tokenIn: params.externalVaultUnderlying,
+        tokenOut: TOKENS.CVX,
+        amountIn: expectedUnderlyingOutput,
+        slippage: params.slippage ?? "100",
+      });
+      cvxEstimate = BigInt(routeQuote.amountOut);
     }
     expectedIntermediateCvx = cvxEstimate;
     const { actions: cvgCvxActions, expectedCvgCvx } = await buildCvxToCvgCvxDepositActions({
@@ -7491,7 +7453,7 @@ export async function fetchErc4626ExternalVaultZapInRoute(params: {
     rebaseCvgCvxHybridRef(actions, baseIdx);
     expectedCvgCvxTotal = expectedCvgCvx;
   } else {
-    expectedTargetUnderlyingOutput = await estimateRouteOutputOrFallback(
+    expectedTargetUnderlyingOutput = await estimateRequiredRouteOutput(
       params.fromAddress,
       params.externalVaultUnderlying,
       targetUnderlying,
@@ -7699,18 +7661,14 @@ export async function fetchBeefyZapInRoute(params: {
         },
       });
       cvxAmountRef = { useOutputOfCallAt: actions.length - 1 };
-      try {
-        const rq = await fetchRoute({
-          fromAddress: params.fromAddress,
-          tokenIn: params.beefyVaultUnderlying,
-          tokenOut: TOKENS.CVX,
-          amountIn: expectedUnderlyingOutput,
-          slippage: params.slippage ?? "100",
-        });
-        cvxEstimate = BigInt(rq.amountOut);
-      } catch {
-        cvxEstimate = BigInt(expectedUnderlyingOutput);
-      }
+      const rq = await fetchRoute({
+        fromAddress: params.fromAddress,
+        tokenIn: params.beefyVaultUnderlying,
+        tokenOut: TOKENS.CVX,
+        amountIn: expectedUnderlyingOutput,
+        slippage: params.slippage ?? "100",
+      });
+      cvxEstimate = BigInt(rq.amountOut);
     } else {
       cvxEstimate = BigInt(expectedUnderlyingOutput);
       cvxAmountRef = { useOutputOfCallAt: 1 };
@@ -7727,7 +7685,7 @@ export async function fetchBeefyZapInRoute(params: {
     rebaseCvgCvxHybridRef(actions, baseIdx);
     expectedCvgCvxTotal = expectedCvgCvx;
   } else {
-    expectedTargetUnderlyingOutput = await estimateRouteOutputOrFallback(
+    expectedTargetUnderlyingOutput = await estimateRequiredRouteOutput(
       params.fromAddress,
       params.beefyVaultUnderlying,
       targetUnderlying,
@@ -8075,7 +8033,7 @@ export async function fetchLpxCvxZapInRoute(params: {
     actions.push(...cvgCvxDepositActions);
     rebaseCvgCvxHybridRef(actions, baseIdx);
   } else {
-    expectedTargetUnderlyingOutput = await estimateRouteOutputOrFallback(
+    expectedTargetUnderlyingOutput = await estimateRequiredRouteOutput(
       params.fromAddress,
       TOKENS.CVX,
       targetUnderlying,
@@ -11147,7 +11105,7 @@ export async function fetchYldVaultToIlliquidRoute(params: {
     });
   }
 
-  const amountIn = await clampAmountIn(params.sourceVault, params.amountIn);
+  const amountIn = params.amountIn;
   const expectedUnderlying = BigInt(await previewRedeem(params.sourceVault, amountIn));
   const slippageBps = validateSlippage(params.slippage);
   const ctx: ConversionContext = {
@@ -11295,7 +11253,7 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
   const totalSlippageBps = getBufferedSlippageBps(slippageBps);
   const sourceUnderlyingLower = params.sourceUnderlying.toLowerCase();
   const targetUnderlyingLower = params.targetUnderlying.toLowerCase();
-  const amountIn = await clampAmountIn(params.sourceVault, params.amountIn);
+  const amountIn = params.amountIn;
 
   const sourceIsCvxCrv = sourceUnderlyingLower === TOKENS.CVXCRV.toLowerCase();
   const sourceIsCvgCvx = sourceUnderlyingLower === TOKENS.CVGCVX.toLowerCase();
