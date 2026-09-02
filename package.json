@@ -81,5 +81,10 @@
     "vitest": "4.1.11",
     "wrangler": "4.128.0"
   },
+  "pnpm": {
+    "overrides": {
+      "cuer>qr": "0.5.5"
+    }
+  },
   "packageManager": "pnpm@10.7.0"
 }
