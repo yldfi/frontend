@@ -19,21 +19,22 @@ import { TxAssetDetailsPill } from "@/components/TxAssetDetailsPill";
 function parseQuoteError(error: Error | null): string {
   if (!error) return "Failed to get quote";
   const msg = error.message || "";
+  const normalizedMsg = msg.toLowerCase();
 
   // Amount too large/out of range
-  if (msg.includes("amountIn") && msg.includes("acceptable range")) {
+  if (normalizedMsg.includes("amountin") && normalizedMsg.includes("acceptable range")) {
     return "Amount too large to quote - try a smaller amount";
   }
   // Insufficient liquidity
-  if (msg.includes("insufficient liquidity") || msg.includes("no route found")) {
+  if (normalizedMsg.includes("insufficient liquidity") || normalizedMsg.includes("no route found") || normalizedMsg.includes("swap not found")) {
     return "No route available - insufficient liquidity";
   }
   // Rate limit
-  if (msg.includes("rate limit") || msg.includes("429")) {
+  if (normalizedMsg.includes("rate limit") || normalizedMsg.includes("429")) {
     return "Too many requests - please wait a moment";
   }
   // Network/timeout errors
-  if (msg.includes("timeout") || msg.includes("network") || msg.includes("fetch")) {
+  if (normalizedMsg.includes("timeout") || normalizedMsg.includes("network") || normalizedMsg.includes("fetch")) {
     return "Network error - please try again";
   }
   // Generic API error - show shortened version
