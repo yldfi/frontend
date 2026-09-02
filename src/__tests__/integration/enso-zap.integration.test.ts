@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 /**
  * Comprehensive Enso Zap Integration Tests
  *
@@ -71,13 +73,17 @@ function hasValidOutput(amountsOut: Record<string, string>, tokenAddress: string
 function isTransientRpcError(e: unknown): boolean {
   const errorMsg = e instanceof Error ? e.message : String(e);
   const errorStr = JSON.stringify(e);
-  return (
+  const transient = (
     errorMsg.includes("Failed to preview redeem") ||
     errorMsg.includes("429") ||
     errorStr.includes("429") ||
     errorMsg.includes("RPC request failed") ||
     errorMsg.includes("get_dy after retries")
   );
+  if (transient) {
+    throw e;
+  }
+  return false;
 }
 
 /**

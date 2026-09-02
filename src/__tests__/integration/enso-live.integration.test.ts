@@ -46,7 +46,7 @@ const TEST_WALLET = "0xd8da6bf26964af9d7eed9e03e53415d37aa96045";
 function isTransientRpcError(e: unknown): boolean {
   const errorMsg = e instanceof Error ? e.message : String(e);
   const errorStr = JSON.stringify(e);
-  return (
+  const transient = (
     errorMsg.includes("Failed to preview redeem") ||
     errorMsg.includes("429") ||
     errorStr.includes("429") ||
@@ -57,6 +57,10 @@ function isTransientRpcError(e: unknown): boolean {
     errorMsg.includes("Minimum amount") ||
     errorStr.includes("minimum-amount-out")
   );
+  if (transient) {
+    throw e;
+  }
+  return false;
 }
 
 // Default slippage for integration tests (3% = 300 bps) - higher than UI default (1%)
@@ -196,7 +200,7 @@ describe("Enso Live API Integration", () => {
           const errorStr = JSON.stringify(e);
           if (errorStr.includes("transfer amount exceeds balance") || errorStr.includes("Could not simulate tx")) {
             console.log("Note: Enso API simulation failed (test wallet has no CVX - expected)");
-            return; // Skip gracefully
+            throw e;
           }
           throw e;
         }
@@ -300,7 +304,7 @@ describe("Enso Live API Integration", () => {
           const errorMsg = e instanceof Error ? e.message : String(e);
           if (errorMsg.includes("Failed to preview redeem")) {
             console.log("Note: RPC previewRedeem failed (transient network issue in CI)");
-            return; // Skip gracefully
+            throw e;
           }
           throw e;
         }
@@ -317,6 +321,61 @@ describe("Enso Live API Integration", () => {
   });
 
   describe("fetchVaultToVaultRoute - Vault → Vault zaps", () => {
+    const additionalRouteCases = [
+      {
+        name: "yscvgCVX → ysCVX (cvgCVX → CVX)",
+        sourceVault: VAULT_ADDRESSES.YSCVGCVX,
+        targetVault: VAULT_ADDRESSES.YSCVX,
+      },
+      {
+        name: "ysCVX → yscvgCVX (CVX → cvgCVX)",
+        sourceVault: VAULT_ADDRESSES.YSCVX,
+        targetVault: VAULT_ADDRESSES.YSCVGCVX,
+      },
+      {
+        name: "yspxCVX → ysCVX (pxCVX → CVX)",
+        sourceVault: VAULT_ADDRESSES.YSPXCVX,
+        targetVault: VAULT_ADDRESSES.YSCVX,
+      },
+      {
+        name: "yscvxCRV → ysCVX (cvxCRV → CVX)",
+        sourceVault: VAULT_ADDRESSES.YSCVXCRV,
+        targetVault: VAULT_ADDRESSES.YSCVX,
+      },
+      {
+        name: "ycvgCVX → yscvgCVX (same underlying: cvgCVX)",
+        sourceVault: VAULT_ADDRESSES.YCVGCVX,
+        targetVault: VAULT_ADDRESSES.YSCVGCVX,
+      },
+      {
+        name: "yscvgCVX → ycvgCVX (same underlying: cvgCVX, reverse)",
+        sourceVault: VAULT_ADDRESSES.YSCVGCVX,
+        targetVault: VAULT_ADDRESSES.YCVGCVX,
+      },
+    ] as const;
+
+    it.each(additionalRouteCases)(
+      "$name",
+      async ({ sourceVault, targetVault }) => {
+        const result = await fetchVaultToVaultRoute({
+          fromAddress: TEST_WALLET,
+          sourceVault,
+          targetVault,
+          amountIn: TEN_VAULT_SHARES,
+          slippage: TEST_SLIPPAGE,
+        });
+
+        const targetOutput =
+          result.amountsOut[targetVault.toLowerCase()] || result.amountsOut[targetVault];
+        expect(targetOutput).toBeDefined();
+        expect(BigInt(targetOutput)).toBeGreaterThan(0n);
+        expect(result.tx).toBeDefined();
+        expect(result.tx.to).toBeDefined();
+        expect(result.tx.data).toBeDefined();
+      },
+      API_TIMEOUT * 2
+    );
+
     it(
       "ycvxCRV → yscvxCRV (same underlying: cvxCRV)",
       async () => {
@@ -399,7 +458,7 @@ describe("Enso Live API Integration", () => {
           const errorMsg = e instanceof Error ? e.message : String(e);
           if (errorMsg.includes("Failed to preview redeem")) {
             console.log("Note: RPC previewRedeem failed (transient network issue in CI)");
-            return; // Skip gracefully
+            throw e;
           }
           throw e;
         }
@@ -432,7 +491,7 @@ describe("Enso Live API Integration", () => {
           const errorMsg = e instanceof Error ? e.message : String(e);
           if (errorMsg.includes("Failed to preview redeem")) {
             console.log("Note: RPC previewRedeem failed (transient network issue in CI)");
-            return; // Skip gracefully
+            throw e;
           }
           throw e;
         }
