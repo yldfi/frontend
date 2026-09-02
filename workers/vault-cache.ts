@@ -98,10 +98,7 @@ function bigIntToNumber18(value: bigint): number {
   return Number(intPart) + Number(fracPart) / 1e18;
 }
 
-interface Env {
-  VAULT_CACHE: KVNamespace;
-  LOGS: D1Database;
-  HISTORY: R2Bucket;
+interface Env extends CacheWorkerEnv {
   REFRESH_SECRET?: string;
   RPC_URL?: string;
   ALCHEMY_RPC_URL?: string;

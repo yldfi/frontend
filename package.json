@@ -11,7 +11,13 @@
     "start": "next start",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
-    "type-check": "tsc --noEmit",
+    "typegen:app": "wrangler types --env-file /dev/null --include-env=false cloudflare-runtime.d.ts",
+    "typegen:workers": "wrangler types --config workers/wrangler.toml --env-file /dev/null --include-env=false workers/worker-runtime.d.ts && wrangler types --config workers/wrangler.toml --env-file /dev/null --include-runtime=false --env-interface CacheWorkerEnv workers/cache-worker-env.d.ts && wrangler types --config workers/wrangler.x-weekly-apy.toml --env-file /dev/null --include-runtime=false --env-interface XWeeklyApyEnv workers/x-weekly-apy-env.d.ts",
+    "typegen": "pnpm typegen:app && pnpm typegen:workers",
+    "typegen:check:app": "wrangler types --env-file /dev/null --include-env=false --check cloudflare-runtime.d.ts",
+    "typegen:check:workers": "wrangler types --config workers/wrangler.toml --env-file /dev/null --include-env=false --check workers/worker-runtime.d.ts && wrangler types --config workers/wrangler.toml --env-file /dev/null --include-runtime=false --env-interface CacheWorkerEnv --check workers/cache-worker-env.d.ts && wrangler types --config workers/wrangler.x-weekly-apy.toml --env-file /dev/null --include-runtime=false --env-interface XWeeklyApyEnv --check workers/x-weekly-apy-env.d.ts",
+    "typegen:check": "pnpm typegen:check:app && pnpm typegen:check:workers",
+    "type-check": "pnpm typegen:check && tsc --noEmit && tsc --noEmit -p workers/tsconfig.json",
     "test": "vitest run",
     "test:unit": "vitest run --exclude='**/integration/**'",
     "test:integration": "vitest run src/__tests__/integration/",
@@ -50,7 +56,6 @@
     "wagmi": "2.19.5"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20260902.1",
     "@opennextjs/cloudflare": "1.20.5",
     "@openzeppelin/contracts": "5.6.1",
     "@playwright/test": "1.62.1",
