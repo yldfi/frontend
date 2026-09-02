@@ -354,6 +354,59 @@ function appendETHUnwrapIfNeeded(actions: EnsoBundleAction[], outputToken: strin
   return actions;
 }
 
+/** Protect the complete zap output, not only an intermediate market swap. */
+function appendTerminalSlippageGuard(
+  actions: EnsoBundleAction[],
+  slippageBps: string,
+  outputIndex = actions.length - 1,
+): void {
+  assertSafeSlippageBps(slippageBps, "terminal slippage");
+  if (outputIndex < 0 || outputIndex >= actions.length) {
+    throw new Error("Cannot protect an invalid terminal action output");
+  }
+  actions.push({
+    protocol: "enso",
+    action: "slippage",
+    args: {
+      amountOut: { useOutputOfCallAt: outputIndex },
+      bps: slippageBps,
+    },
+  });
+}
+
+function appendTerminalMinAmountOutGuard(
+  actions: EnsoBundleAction[],
+  minAmountOut: bigint,
+  outputIndex = actions.length - 1,
+): void {
+  if (minAmountOut <= 0n) {
+    throw new Error("Terminal minimum output must be greater than zero");
+  }
+  actions.push({
+    protocol: "enso",
+    action: "minamountout",
+    args: {
+      amountOut: { useOutputOfCallAt: outputIndex },
+      minAmountOut: minAmountOut.toString(),
+    },
+  });
+}
+
+async function previewDepositStrict(vaultAddress: string, assets: bigint): Promise<bigint> {
+  if (assets <= 0n) throw new Error("Cannot preview a zero-asset vault deposit");
+  const data = `0xef8b30f7${assets.toString(16).padStart(64, "0")}`;
+  const result = await rpcWithFallback<{ result?: string }>({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "eth_call",
+    params: [{ to: vaultAddress, data }, "latest"],
+  });
+  if (!result.result || result.result === "0x" || BigInt(result.result) <= 0n) {
+    throw new Error("Failed to preview target vault shares for minimum-output protection");
+  }
+  return BigInt(result.result);
+}
+
 const CRV_ADDRESS = "0xD533a949740bb3306d119CC777fa900bA034cd52";
 const CURVE_USDC_CRVUSD_POOL = "0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E";
 const CURVE_TRICRV_POOL = "0x4eBdF703948ddCEA3B11f675B4D1Fba9d2414A14";
@@ -3036,6 +3089,7 @@ export async function fetchZapOutRoute(params: {
   }
 
   appendETHUnwrapIfNeeded(actions, params.outputToken);
+  appendTerminalSlippageGuard(actions, params.slippage ?? "100");
 
   return fetchBundle({
     fromAddress: params.fromAddress,
@@ -3098,6 +3152,8 @@ export async function fetchZapInRoute(params: {
         primaryAddress: params.vaultAddress,
       },
     });
+
+  appendTerminalSlippageGuard(actions, params.slippage ?? "100");
 
   return fetchBundle({
     fromAddress: params.fromAddress,
@@ -3182,6 +3238,7 @@ export async function fetchVaultToVaultRoute(params: {
         },
       },
     ];
+    appendTerminalSlippageGuard(actions, slippage);
 
     const bundleResult = await fetchBundle({
       fromAddress: params.fromAddress,
@@ -3280,15 +3337,22 @@ export async function fetchVaultToVaultRoute(params: {
   }
 
   if (targetIsPxCvx) {
-    // Zapping TO pxCVX vault: redeem source → route to CVX → hybrid swap/mint → deposit
-    // Note: We use the SOURCE UNDERLYING token, not the vault token
-    return fetchVaultToPxCvxVaultRoute({
+    // Let Enso protect the complete source-share → target-share position route.
+    // This avoids relying on an ERC-4626 deposit return that yspxCVX does not
+    // expose to a separate bundle-level minimum-output action.
+    return fetchBundle({
       fromAddress: params.fromAddress,
-      sourceVault: params.sourceVault,
-      targetVault: params.targetVault,
-      amountIn,
-      sourceUnderlyingToken: sourceUnderlying,
-      slippage,
+      receiver: params.fromAddress,
+      actions: [{
+        protocol: "enso",
+        action: "route",
+        args: {
+          tokenIn: params.sourceVault,
+          tokenOut: params.targetVault,
+          amountIn,
+          slippage,
+        },
+      }],
     });
   }
 
@@ -3329,6 +3393,7 @@ export async function fetchVaultToVaultRoute(params: {
       },
     },
   ];
+  appendTerminalSlippageGuard(actions, slippage);
 
   return fetchBundle({
     fromAddress: params.fromAddress,
@@ -3502,6 +3567,8 @@ async function fetchVaultToCvgCvxVaultRoute(params: {
       },
     },
   );
+  const previewedTargetShares = await previewDepositStrict(params.targetVault, conservativeCvgCvx);
+  appendTerminalMinAmountOutGuard(actions, BigInt(calculateMinDy(previewedTargetShares, slippageBps)));
 
   // Use skipQuote to bypass Enso's simulation which fails with complex output chaining.
   const bundle = await fetchBundle({
@@ -3705,6 +3772,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
         },
       },
     );
+    appendTerminalSlippageGuard(actions, params.slippage);
 
     return fetchBundle({
       fromAddress: params.fromAddress,
@@ -3894,6 +3962,8 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
     );
   }
 
+  appendTerminalSlippageGuard(actions, params.slippage);
+
   const bundleResult = await fetchBundle({
     fromAddress: params.fromAddress,
     actions,
@@ -3940,7 +4010,7 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
  * - If rate < 1:1: deposit CVX to Pirex for 1:1 pxCVX
  * - Optimal: split between swap and mint at peg point
  */
-async function fetchVaultToPxCvxVaultRoute(params: {
+async function _fetchVaultToPxCvxVaultRoute(params: {
   fromAddress: string;
   sourceVault: string;
   targetVault: string;
@@ -4367,6 +4437,8 @@ async function fetchPxCvxVaultToVaultRoute(params: {
     );
   }
 
+  appendTerminalSlippageGuard(actions, params.slippage);
+
   return fetchBundle({
     fromAddress: params.fromAddress,
     actions,
@@ -4785,6 +4857,7 @@ export async function fetchCvgCvxZapInRoute(params: {
         },
       },
     ];
+    appendTerminalSlippageGuard(actions, params.slippage ?? "100");
 
     const bundle = await fetchBundle({
       fromAddress: params.fromAddress,
@@ -5192,6 +5265,7 @@ async function buildSwapOnlyBundle(
         },
       },
     ];
+    appendTerminalSlippageGuard(actions, params.slippage ?? "100");
 
     return fetchBundle({
       fromAddress: params.fromAddress,
@@ -5280,6 +5354,7 @@ async function buildSwapOnlyBundle(
       },
     },
   ];
+  appendTerminalSlippageGuard(actions, params.slippage ?? "100");
 
   // Use skipQuote to bypass Enso's simulation which fails with complex output chaining.
   // The bundle uses useOutputOfCallAt to chain outputs, which Enso's simulator can't handle.
@@ -5354,6 +5429,7 @@ async function buildMintOnlyBundle(
         },
       },
     ];
+    appendTerminalSlippageGuard(actions, params.slippage ?? "100");
 
     return fetchBundle({
       fromAddress: params.fromAddress,
@@ -5417,6 +5493,7 @@ async function buildMintOnlyBundle(
       },
     },
   ];
+  appendTerminalSlippageGuard(actions, params.slippage ?? "100");
 
   // Use skipQuote to bypass Enso's simulation which fails with output chaining
   const bundleResult = await fetchBundle({
@@ -5560,6 +5637,7 @@ async function buildHybridBundle(
         },
       },
     ];
+    appendTerminalSlippageGuard(actions, params.slippage ?? "100");
 
     // Use skipQuote to bypass Enso simulation (which fails for multi-consumption CVX bundles)
     //
@@ -5753,6 +5831,7 @@ async function buildEthHybridBundle(
       },
     },
   ];
+  appendTerminalSlippageGuard(actions, params.slippage ?? "100");
 
   // Use router strategy with skipQuote to bypass simulation
   // (skipQuote is required for fee action and complex output chaining)
@@ -6456,6 +6535,7 @@ export async function fetchPxCvxZapInRoute(params: {
         },
       },
     ];
+    appendTerminalSlippageGuard(actions, params.slippage ?? "100");
 
     const bundleResult = await fetchBundle({
       fromAddress: params.fromAddress,
@@ -6518,23 +6598,14 @@ export async function fetchPxCvxZapInRoute(params: {
       estimatedCvxAmount = await getEthToCvxEstimate(params.amountIn);
     } else {
       // For other tokens, we need a route call
-      try {
-        const routeEstimate = await fetchRoute({
-          fromAddress: params.fromAddress,
-          tokenIn: params.inputToken,
-          tokenOut: TOKENS.CVX,
-          amountIn: params.amountIn,
-          slippage: params.slippage ?? "100",
-        });
-        estimatedCvxAmount = routeEstimate.amountOut || params.amountIn;
-
-        // Rate limit: Enso API allows 1 request/second
-        // Wait before the next API call (fetchBundle)
-        await new Promise(resolve => setTimeout(resolve, 1100));
-      } catch {
-        // Fallback: assume 1:1 for estimation
-        estimatedCvxAmount = params.amountIn;
-      }
+      estimatedCvxAmount = await estimateRouteOutput(
+        params.fromAddress,
+        params.inputToken,
+        TOKENS.CVX,
+        params.amountIn,
+        params.slippage,
+      );
+      await new Promise(resolve => setTimeout(resolve, 1100));
     }
   }
 
@@ -6692,6 +6763,7 @@ export async function fetchPxCvxZapInRoute(params: {
       primaryAddress: params.vaultAddress,
     },
   });
+  appendTerminalSlippageGuard(actions, params.slippage ?? "100");
 
   // Fetch bundle result
   const bundleResult = await fetchBundle({
@@ -8383,19 +8455,14 @@ export async function fetchAnyToPxCvxRoute(params: {
     if (inputIsEth) {
       estimatedCvxAmount = await getEthToCvxEstimate(params.amountIn);
     } else {
-      try {
-        const routeEstimate = await fetchRoute({
-          fromAddress: params.fromAddress,
-          tokenIn: params.inputToken,
-          tokenOut: TOKENS.CVX,
-          amountIn: params.amountIn,
-          slippage: params.slippage ?? "100",
-        });
-        estimatedCvxAmount = routeEstimate.amountOut || params.amountIn;
-        await new Promise((resolve) => setTimeout(resolve, 1100)); // Enso rate limit
-      } catch {
-        estimatedCvxAmount = params.amountIn;
-      }
+      estimatedCvxAmount = await estimateRouteOutput(
+        params.fromAddress,
+        params.inputToken,
+        TOKENS.CVX,
+        params.amountIn,
+        params.slippage,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1100));
     }
   }
 
@@ -8720,19 +8787,14 @@ export async function fetchAnyToCvgCvxRoute(params: {
   } else if (inputIsEth) {
     expectedCvxOutput = await getEthToCvxEstimate(params.amountIn);
   } else {
-    try {
-      const routeEstimate = await fetchRoute({
-        fromAddress: params.fromAddress,
-        tokenIn: params.inputToken,
-        tokenOut: TOKENS.CVX,
-        amountIn: params.amountIn,
-        slippage: params.slippage ?? "100",
-      });
-      expectedCvxOutput = routeEstimate.amountOut || params.amountIn;
-      await new Promise((resolve) => setTimeout(resolve, 1100));
-    } catch {
-      expectedCvxOutput = params.amountIn;
-    }
+    expectedCvxOutput = await estimateRouteOutput(
+      params.fromAddress,
+      params.inputToken,
+      TOKENS.CVX,
+      params.amountIn,
+      params.slippage,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 1100));
   }
 
   // Buffered CVX amount for split (account for route slippage)
@@ -8969,19 +9031,14 @@ export async function fetchAnyToLpxCvxRoute(params: {
     if (inputIsEth) {
       estimatedCvxAmount = await getEthToCvxEstimate(params.amountIn);
     } else {
-      try {
-        const routeEstimate = await fetchRoute({
-          fromAddress: params.fromAddress,
-          tokenIn: params.inputToken,
-          tokenOut: TOKENS.CVX,
-          amountIn: params.amountIn,
-          slippage: params.slippage ?? "100",
-        });
-        estimatedCvxAmount = routeEstimate.amountOut || params.amountIn;
-        await new Promise((resolve) => setTimeout(resolve, 1100));
-      } catch {
-        estimatedCvxAmount = params.amountIn;
-      }
+      estimatedCvxAmount = await estimateRouteOutput(
+        params.fromAddress,
+        params.inputToken,
+        TOKENS.CVX,
+        params.amountIn,
+        params.slippage,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1100));
     }
   }
 
