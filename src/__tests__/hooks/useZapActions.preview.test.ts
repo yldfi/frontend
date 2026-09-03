@@ -17,6 +17,7 @@ import {
   MORPHO_BUNDLER3_ADDRESS,
   MORPHO_GENERAL_ADAPTER1_ADDRESS,
 } from "@/lib/enso";
+import { TOKENS, VAULTS } from "@/config/vaults";
 import { buildApprovalSimulationTransaction } from "@/lib/tenderly-simulation-bundle";
 import type { EnsoToken, ZapQuote } from "@/types/enso";
 
@@ -729,5 +730,154 @@ describe("useZapActions preview fallback", () => {
     // Permit flows set allowance inside the transaction, so no setup approval.
     expect(simulateBodyRef.current).not.toHaveProperty("approvalTransactions");
     expect(mockSendTx).not.toHaveBeenCalled();
+  });
+
+  const directVaultAddress = VAULTS.yscvx.address as `0x${string}`;
+  const mockCvxToken: EnsoToken = {
+    address: TOKENS.CVX,
+    chainId: 1,
+    name: "Convex Token",
+    symbol: "CVX",
+    decimals: 18,
+    type: "base",
+  };
+  const mockDirectDepositQuote: ZapQuote = {
+    inputToken: mockCvxToken,
+    inputAmount: "1000",
+    outputAmount: "1000000000000000000000",
+    outputAmountFormatted: "1000",
+    exchangeRate: 1,
+    inputUsdValue: 2300,
+    outputUsdValue: 2300,
+    priceImpact: null,
+    gasEstimate: "",
+    tx: {
+      to: directVaultAddress,
+      data: "0xdeposit",
+      value: "0",
+    },
+    route: [],
+    routeInfo: {
+      steps: [
+        { tokenSymbol: "CVX", action: "Deposit", description: "into ysCVX", protocol: "yld" },
+        { tokenSymbol: "ysCVX", action: "Receive", description: "ysCVX shares", protocol: "yld" },
+      ],
+    },
+    directVault: {
+      vaultAddress: directVaultAddress,
+      action: "deposit",
+      symbol: "ysCVX",
+    },
+  };
+
+  it("checks allowance against the vault for a direct vault deposit", () => {
+    renderHook(() => useZapActions(mockDirectDepositQuote));
+
+    expect(mockUseReadContract).toHaveBeenCalledWith(
+      expect.objectContaining({
+        functionName: "allowance",
+        args: [userAddress, directVaultAddress],
+      })
+    );
+    expect(mockDirectDepositQuote.tx.to).toBe(directVaultAddress);
+  });
+
+  it("approves the vault spender for a direct vault deposit", async () => {
+    mockUseReadContract.mockReturnValue({
+      data: BigInt(0),
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useReadContract>);
+
+    const { result } = renderHook(() => useZapActions(mockDirectDepositQuote));
+
+    await act(async () => {
+      await result.current.approve(false);
+    });
+
+    expect(mockWriteApprove).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: mockCvxToken.address,
+        functionName: "approve",
+        args: [directVaultAddress, maxUint256],
+      })
+    );
+  });
+
+  it("requires no approval for a direct vault withdrawal", async () => {
+    const directWithdrawQuote: ZapQuote = {
+      ...mockDirectDepositQuote,
+      inputToken: {
+        address: directVaultAddress,
+        chainId: 1,
+        name: "ysCVX",
+        symbol: "ysCVX",
+        decimals: 18,
+        type: "defi",
+      },
+      tx: { to: directVaultAddress, data: "0xredeem", value: "0" },
+      directVault: {
+        vaultAddress: directVaultAddress,
+        action: "withdraw",
+        symbol: "ysCVX",
+      },
+    };
+
+    const { result } = renderHook(() => useZapActions(directWithdrawQuote));
+
+    expect(result.current.needsApproval()).toBe(false);
+  });
+
+  it("passes the direct vault spender in the simulation bundle", async () => {
+    let currentAllowance = 0n;
+    mockUseReadContract.mockImplementation(() => ({
+      data: currentAllowance,
+      refetch: vi.fn(),
+    }) as unknown as ReturnType<typeof useReadContract>);
+    const simulateBodyRef: { current?: Record<string, unknown> } = {};
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/api/simulate/nonce")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            nonce: "test-nonce",
+            expires: Date.now() + 60_000,
+            sig: "test-sig",
+          }),
+        });
+      }
+      simulateBodyRef.current = JSON.parse(String(init?.body));
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          success: true,
+          gasUsed: "12345",
+          simulationId: "sim-id",
+          tenderlyUrl: null,
+          assetChanges: [],
+          errorMessage: null,
+        }),
+      });
+    }));
+
+    const { result, rerender } = renderHook(() => useZapActions(mockDirectDepositQuote));
+
+    await act(async () => {
+      await result.current.approve(true);
+    });
+
+    currentAllowance = maxUint256;
+    rerender();
+    await act(async () => {
+      await result.current.executeZap({ previewOnly: true });
+    });
+
+    expect(simulateBodyRef.current).toMatchObject({
+      inputToken: TOKENS.CVX,
+      spender: directVaultAddress,
+    });
+    expect(simulateBodyRef.current?.approvalTransactions).toEqual([
+      buildApprovalSimulationTransaction(mockCvxToken.address as `0x${string}`, directVaultAddress, 1000n * 10n ** 18n),
+    ]);
   });
 });

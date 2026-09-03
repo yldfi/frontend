@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useAccount, usePublicClient } from "wagmi";
-import { parseUnits, formatUnits } from "viem";
+import { encodeFunctionData, parseUnits, formatUnits } from "viem";
 import {
   fetchRoute,
   fetchZapInRoute,
@@ -56,7 +56,7 @@ import {
 } from "@/config/vaults";
 import { useVaultCache } from "@/hooks/useVaultCache";
 import { PUBLIC_RPC_URLS } from "@/config/rpc";
-import { ERC4626_ABI } from "@/lib/abis";
+import { ERC4626_ABI, VAULT_ABI } from "@/lib/abis";
 import {
   annotateEnsoStepSlippage,
   calculateCvxLegPriceImpact,
@@ -277,6 +277,125 @@ export function useUniversalZap({
       }
 
       const outputDecimals = outputToken.decimals ?? 18;
+
+      // ──────────────────────────────────────────────────────────
+      // Case 0: direct vault deposit / withdraw — underlying ⇄ shares at NAV.
+      // A deposit mints shares from the underlying (pps), a withdraw redeems
+      // shares into the underlying — neither is a market swap, so Enso is not
+      // needed (and would only inflate gas + surface phantom price impact).
+      // Detected purely by address: input token IS the vault's underlying
+      // (deposit) or output token IS the vault's underlying (withdraw).
+      // ──────────────────────────────────────────────────────────
+      const isDirectDeposit =
+        !inputIsYld &&
+        !!outputVault &&
+        outputVault.assetAddress.toLowerCase() === inputToken.address.toLowerCase();
+      const isDirectWithdraw =
+        !outputIsYld &&
+        !!inputVault &&
+        inputVault.assetAddress.toLowerCase() === outputToken.address.toLowerCase();
+
+      if (isDirectDeposit || isDirectWithdraw) {
+        const vault = (isDirectDeposit ? outputVault : inputVault)!;
+        const vaultAddress = vault.address as `0x${string}`;
+        const underlying = vault.assetAddress as `0x${string}`;
+        const inAmountWei = BigInt(amountInWei);
+        const inNum = Number(inputAmount);
+
+        // Preview the exact output the tx will produce (pps-aware).
+        let outputRaw: bigint;
+        try {
+          if (!publicClient) throw new Error("No mainnet client");
+          outputRaw = (await publicClient.readContract({
+            address: vaultAddress,
+            abi: ERC4626_ABI,
+            functionName: isDirectDeposit ? "previewDeposit" : "previewRedeem",
+            args: [inAmountWei],
+          })) as bigint;
+        } catch {
+          // previewDeposit/previewRedeem missing on an old vault (or no client) —
+          // estimate from assets-per-share; the real number is still verified by
+          // the on-chain simulation.
+          const aps = await getAssetsPerShare(publicClient, vaultAddress);
+          if (aps !== null && aps > 0) {
+            outputRaw = isDirectDeposit
+              ? BigInt(Math.round((inNum / aps) * 1e18))
+              : BigInt(Math.round(inNum * aps * 1e18));
+          } else {
+            outputRaw = inAmountWei;
+          }
+        }
+
+        const calldata = encodeFunctionData({
+          abi: VAULT_ABI,
+          functionName: isDirectDeposit ? "deposit" : "redeem",
+          args: isDirectDeposit
+            ? [inAmountWei, userAddress]
+            : [inAmountWei, userAddress, userAddress],
+        });
+
+        const outFmt = formatUnits(outputRaw, outputDecimals);
+        const outNum = Number(outFmt);
+        const priceMap = await getPrices([underlying]);
+        const underPx = priceMap.get(underlying.toLowerCase()) ?? null;
+        const inUsd = underPx !== null ? inNum * underPx : null;
+        const outUsd = underPx !== null ? outNum * underPx : null;
+
+        const routeInfo: RouteInfo = isDirectDeposit
+          ? {
+              steps: [
+                {
+                  tokenSymbol: inputToken.symbol,
+                  action: "Deposit",
+                  description: `into ${vault.symbol}`,
+                  protocol: "yld",
+                },
+                {
+                  tokenSymbol: vault.symbol,
+                  action: "Receive",
+                  description: `${vault.symbol} shares`,
+                  protocol: "yld",
+                },
+              ],
+            }
+          : {
+              steps: [
+                {
+                  tokenSymbol: inputToken.symbol,
+                  action: "Redeem",
+                  description: `${inputToken.symbol} for ${getTokenSymbol(vault.assetAddress)}`,
+                  protocol: "yld",
+                },
+                {
+                  tokenSymbol: getTokenSymbol(vault.assetAddress),
+                  action: "Receive",
+                  description: "tokens",
+                  protocol: "yld",
+                },
+              ],
+            };
+
+        return {
+          inputToken,
+          inputAmount,
+          outputAmount: outputRaw.toString(),
+          outputAmountFormatted: outFmt,
+          exchangeRate: inNum > 0 ? outNum / inNum : 0,
+          inputUsdValue: inUsd,
+          outputUsdValue: outUsd,
+          // No swap step → null (same as direct deposits elsewhere in the UI).
+          priceImpact: calculateRoutePriceImpact(inUsd, outUsd, routeInfo, null),
+          gasEstimate: "",
+          tx: { to: vaultAddress, data: calldata, value: "0" },
+          route: [],
+          routeInfo,
+          directVault: {
+            vaultAddress,
+            action: isDirectDeposit ? "deposit" : "withdraw",
+            symbol: vault.symbol,
+          },
+        };
+      }
 
       // ──────────────────────────────────────────────────────────
       // Case 1: yld vault → yld vault

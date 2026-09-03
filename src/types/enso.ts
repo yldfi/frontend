@@ -75,6 +75,18 @@ export interface ZapQuote {
   // Route info for display (custom routes)
   routeInfo?: RouteInfo;
   legacyMorphoPermit?: LegacyMorphoPermitRequest;
+  /**
+   * Set when the swap is actually a direct ERC4626 vault deposit/withdraw at NAV
+   * (input is the vault's underlying → deposit, or input is the vault share →
+   * redeem). Bypasses Enso entirely; `tx` targets the vault directly and the
+   * approval spender is the vault itself, not the Enso router.
+   */
+  directVault?: {
+    vaultAddress: string;
+    action: "deposit" | "withdraw";
+    /** Vault share token symbol — used as the approval spender display name */
+    symbol: string;
+  };
 }
 
 // Zap direction

@@ -123,6 +123,22 @@ function computeAmountImpact(inChanges: SimulationAssetChange[], outChanges: Sim
   return null;
 }
 
+// A "send" that mints vault shares (underlying → vault token) is a direct deposit, not a
+// swap: the exchange rate is pricePerShare, not a market rate. Any USD delta between the
+// two is a pricing artifact (e.g. pps == 1 gives a 1:1 exchange, so it must not surface
+// as price impact).
+function isVaultMintPair(send: SimulationAssetChange, received: SimulationAssetChange[]): boolean {
+  const sendSymbolLower = send.symbol.toLowerCase();
+  const sendAddressLower = send.address?.toLowerCase();
+  return received.some((token) => {
+    const vault = VAULTS[token.symbol.toLowerCase() as keyof typeof VAULTS];
+    if (!vault?.assetSymbol && !vault?.assetAddress) return false;
+    if (vault.assetSymbol?.toLowerCase() === sendSymbolLower) return true;
+    if (vault.assetAddress?.toLowerCase() === sendAddressLower) return true;
+    return false;
+  });
+}
+
 // Extract error message from string or object
 function getErrorMessage(error: string | { id?: string; slug?: string; message?: string } | null): string | null {
   if (!error) return null;
@@ -520,12 +536,14 @@ export function SimulationModal({
 
               // Skip price impact if all sent tokens also appear as deposits (direct deposit, no swap)
               const sends = simulationResult.assetChanges.filter(c => c.type === "send");
-              const depositSymbols = new Set(
-                simulationResult.assetChanges
-                  .filter(c => c.type === "deposit")
-                  .map(c => c.symbol.toLowerCase())
+              const receives = simulationResult.assetChanges.filter(c => c.type === "receive");
+              const deposits = simulationResult.assetChanges.filter(c => c.type === "deposit");
+              const depositSymbols = new Set(deposits.map(c => c.symbol.toLowerCase()));
+              // Underlying → vault share mints (e.g. CVX → ysCVX at pps = 1) are deposits, not swaps
+              const hasSwap = sends.some(c =>
+                !depositSymbols.has(c.symbol.toLowerCase())
+                && !isVaultMintPair(c, [...deposits, ...receives])
               );
-              const hasSwap = sends.some(c => !depositSymbols.has(c.symbol.toLowerCase()));
               if (!hasSwap) return null;
 
               const sendUsd = sends
