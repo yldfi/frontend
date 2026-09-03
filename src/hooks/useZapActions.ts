@@ -87,13 +87,22 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   const usesLegacyMorphoPermit = !!quote?.legacyMorphoPermit;
   const tokenAddress = quote?.inputToken.address as `0x${string}` | undefined;
 
-  // User ERC20 approvals must target Enso Router V2. quote.tx.to is the
-  // transaction entry point and may differ from the token spender.
+  // Direct vault deposits/withdraws (quote.directVault) target the vault contract
+  // directly instead of the Enso router, so the token approval spender is the vault
+  // (deposit) — and withdraws need no approval at all (owner == msg.sender).
+  const approvalSpender = quote?.directVault?.vaultAddress
+    ? (quote.directVault.vaultAddress as `0x${string}`)
+    : ZAP_APPROVAL_SPENDER;
+  const approvalSpenderName = quote?.directVault?.symbol
+    ?? "Enso Router";
+
+  // User ERC20 approvals must target the tx entry point's spender — Enso Router
+  // V2 for zaps, the vault itself for a direct deposit.
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
     address: tokenAddress,
     abi: ERC20_APPROVAL_ABI,
     functionName: "allowance",
-    args: userAddress ? [userAddress, ZAP_APPROVAL_SPENDER] : undefined,
+    args: userAddress ? [userAddress, approvalSpender] : undefined,
     chainId, // Use connected chain
     query: {
       enabled: !!userAddress && !isEth && !usesLegacyMorphoPermit && !!tokenAddress,
@@ -219,6 +228,11 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     if (isEth || !quote || quote.legacyMorphoPermit) {
       return false;
     }
+    // Withdrawing shares back into the underlying requires no approval — the
+    // vault only pulls from msg.sender when owner != msg.sender (ERC4626).
+    if (quote.directVault?.action === "withdraw") {
+      return false;
+    }
     try {
       const amountWei = parseUnits(
         quote.inputAmount,
@@ -243,12 +257,12 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       total: 1,
       steps: [{
         label: pendingApproval.tokenSymbol,
-        description: `Approve ${pendingApproval.tokenSymbol} for Enso Router`,
+        description: `Approve ${pendingApproval.tokenSymbol} for ${approvalSpenderName}`,
         done: false,
-        spender: ZAP_APPROVAL_SPENDER,
+        spender: approvalSpender,
       }],
     };
-  }, [pendingApproval]);
+  }, [pendingApproval, approvalSpenderName, approvalSpender]);
 
   const isApproving = status === "approving" || status === "waitingApproval";
 
@@ -299,7 +313,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   const approve = useCallback(async (exact: boolean) => {
     if (!userAddress || isEth || !tokenAddress || !quote) return;
 
-    if (isForbiddenApprovalSpender(ZAP_APPROVAL_SPENDER)) {
+    if (isForbiddenApprovalSpender(approvalSpender)) {
       rejectForbiddenApproval();
       return;
     }
@@ -323,7 +337,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       console.log("[Approve TX]", {
         type: "erc20",
         token: tokenAddress,
-        spender: ZAP_APPROVAL_SPENDER,
+        spender: approvalSpender,
         amount: amount.toString(),
         exact,
       });
@@ -333,7 +347,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       publicClient,
       owner: userAddress,
       token: tokenAddress,
-      spender: ZAP_APPROVAL_SPENDER,
+      spender: approvalSpender,
       amount,
       currentAllowance: allowance as bigint | undefined,
     });
@@ -344,21 +358,21 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
         token: tokenAddress,
         amount,
         transactions: [
-          buildApprovalSimulationTransaction(tokenAddress, ZAP_APPROVAL_SPENDER, 0n),
-          buildApprovalSimulationTransaction(tokenAddress, ZAP_APPROVAL_SPENDER, amount),
+          buildApprovalSimulationTransaction(tokenAddress, approvalSpender, 0n),
+          buildApprovalSimulationTransaction(tokenAddress, approvalSpender, amount),
         ],
       };
       setApprovalResetFlow({
         stage: "reset",
         token: tokenAddress,
-        spender: ZAP_APPROVAL_SPENDER,
+        spender: approvalSpender,
         amount,
       });
       writeApprove({
         address: tokenAddress,
         abi: ERC20_APPROVAL_ABI,
         functionName: "approve",
-        args: [ZAP_APPROVAL_SPENDER, 0n],
+        args: [approvalSpender, 0n],
       });
       return;
     }
@@ -368,7 +382,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       token: tokenAddress,
       amount,
       transactions: [
-        buildApprovalSimulationTransaction(tokenAddress, ZAP_APPROVAL_SPENDER, amount),
+        buildApprovalSimulationTransaction(tokenAddress, approvalSpender, amount),
       ],
     };
     setApprovalResetFlow(null);
@@ -376,9 +390,9 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       address: tokenAddress,
       abi: ERC20_APPROVAL_ABI,
       functionName: "approve",
-      args: [ZAP_APPROVAL_SPENDER, amount],
+      args: [approvalSpender, amount],
     });
-  }, [userAddress, isEth, tokenAddress, quote, publicClient, allowance, rejectForbiddenApproval, writeApprove]);
+  }, [userAddress, isEth, tokenAddress, quote, publicClient, allowance, approvalSpender, rejectForbiddenApproval, writeApprove]);
 
   useEffect(() => {
     if (!isApprovalSuccess || !approvalHash || !approvalResetFlow || handledApprovalHashRef.current === approvalHash) return;
@@ -587,6 +601,9 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
                 data: txParams.data,
                 value: txParams.value.toString(),
                 inputToken: quote.inputToken.address,
+                // Non-Enso entry points (direct vault deposits) approve the
+                // vault, not the Enso router — the API validates this too.
+                spender: approvalSpender,
                 // Tenderly can lag the block containing a just-confirmed
                 // approval. Re-run the exact approval call(s) immediately
                 // before the zap in a bundled simulation so every token's own
@@ -725,7 +742,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       setActionState("idle");
     }
     return null;
-  }, [quote, userAddress, publicClient, prepareTxParams, sendTx, chainId, testNetworkType, simulationResult]);
+  }, [quote, userAddress, publicClient, prepareTxParams, sendTx, chainId, testNetworkType, simulationResult, approvalSpender]);
 
   // Keep ref in sync with latest executeZapInternal
   useEffect(() => {
@@ -770,7 +787,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
     // Check if approval is needed
     if (needsApproval()) {
-      if (isForbiddenApprovalSpender(ZAP_APPROVAL_SPENDER)) {
+      if (isForbiddenApprovalSpender(approvalSpender)) {
         rejectForbiddenApproval();
         return null;
       }
@@ -789,8 +806,8 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
         type: "erc20",
         token: tokenAddress!,
         tokenSymbol,
-        spender: ZAP_APPROVAL_SPENDER,
-        spenderName: "Enso Router",
+        spender: approvalSpender,
+        spenderName: approvalSpenderName,
         amount: amountWei,
       });
       setActionState("needsApproval");
@@ -799,7 +816,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
     // No approval needed — execute directly
     return executeZapInternal(options);
-  }, [quote, userAddress, needsApproval, tokenAddress, executeZapInternal, rejectForbiddenApproval, resetApprove]);
+  }, [quote, userAddress, needsApproval, tokenAddress, approvalSpender, approvalSpenderName, executeZapInternal, rejectForbiddenApproval, resetApprove]);
 
   // Reset state
   const reset = useCallback(() => {

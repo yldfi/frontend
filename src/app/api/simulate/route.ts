@@ -566,6 +566,63 @@ async function enrichTokenPricesFallback(assetChanges: AssetChange[]): Promise<A
   }
 }
 
+/**
+ * Equalizes the dollar value of a direct vault deposit/withdrawal pair.
+ *
+ * A deposit mints shares from the underlying at NAV (pps); a withdrawal redeems
+ * shares back into the underlying at NAV. Either way the user is exchanging the
+ * *underlying asset* for a claim on the same asset, so the two rows must carry the
+ * same USD value regardless of pps — pps only changes the share *count*, not what
+ * those shares are worth.
+ *
+ * The skip/swap distinction is made purely by matching addresses: when the sent
+ * token is a known vault's underlying and a vault-share row exists (deposit), or the
+ * sent token is a vault share and its underlying row exists (withdraw), the rows are
+ * paired and their dollar values equalized. Real swaps never match because the swap's
+ * opposite token is not the vault's underlying (e.g. CVX → yscvxCRV has underlying
+ * cvxCRV, not CVX).
+ *
+ * The two sides are priced by different sources (Tenderly's feed for the underlying,
+ * Enso/price API × convertToAssets for the share), so without this they'd drift and a
+ * plain deposit/withdraw would falsely show a tiny "loss". Runs after enrichment.
+ */
+function anchorVaultMintValues(assetChanges: AssetChange[]): AssetChange[] {
+  const result = assetChanges.map(c => ({ ...c }));
+
+  const equalize = (a: AssetChange, b: AssetChange) => {
+    const aVal = a.dollarValue && Number(a.dollarValue) > 0 ? a.dollarValue : null;
+    const bVal = b.dollarValue && Number(b.dollarValue) > 0 ? b.dollarValue : null;
+    if (aVal && !bVal) b.dollarValue = aVal;
+    else if (bVal && !aVal) a.dollarValue = bVal;
+    else if (aVal && bVal) b.dollarValue = aVal; // prefer the send side
+  };
+
+  for (const send of result.filter(c => c.type === "send")) {
+    const sendAddr = send.address.toLowerCase();
+    const sendVault = lookupVault(send.address);
+
+    if (sendVault) {
+      // Withdrawal: user sent vault shares → underlying is returned
+      const underlyingAddr = sendVault.underlying.toLowerCase();
+      for (const recv of result.filter(c =>
+        c.type === "receive" && c.address.toLowerCase() === underlyingAddr
+      )) {
+        equalize(send, recv);
+      }
+    } else {
+      // Deposit: user sent the underlying → vault shares are returned
+      for (const recv of result.filter(c =>
+        (c.type === "receive" || c.type === "deposit")
+        && lookupVault(c.address)?.underlying?.toLowerCase() === sendAddr
+      )) {
+        equalize(send, recv);
+      }
+    }
+  }
+
+  return result;
+}
+
 export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, { headers: getCorsHeaders(request) });
 }
@@ -604,6 +661,7 @@ export async function POST(request: NextRequest) {
     gas?: string | number;
     networkId?: string | number;
     inputToken?: string;
+    spender?: string;
     nonce?: string;
     expires?: number;
     sig?: string;
@@ -690,10 +748,20 @@ export async function POST(request: NextRequest) {
 
   let approvalTransactions;
   try {
+    // Bundled approval simulations may target the Enso router (zaps) or the
+    // entry-point vault itself (direct vault deposits). Validate the requested
+    // spender against the same allowlist used for `to`.
+    const requestedSpender = body.spender;
+    const effectiveSpender =
+      requestedSpender &&
+      typeof requestedSpender === "string" &&
+      allowedTargets.has(requestedSpender.toLowerCase())
+        ? requestedSpender
+        : ENSO_ROUTER_V2;
     approvalTransactions = parseApprovalSimulationTransactions(
       body.approvalTransactions,
       body.inputToken,
-      ENSO_ROUTER_V2,
+      effectiveSpender,
     );
   } catch (error) {
     return NextResponse.json(
@@ -997,6 +1065,10 @@ export async function POST(request: NextRequest) {
     });
     assetChanges = await enrichTokenPricesFallback(processedChanges);
   }
+
+  // Anchor direct vault deposits/withdrawals so send and receive carry the same
+  // USD value regardless of which price source priced which side (or the pps).
+  assetChanges = anchorVaultMintValues(assetChanges);
 
   logSimulate("finish", {
     success: Boolean(response.ok && status),
