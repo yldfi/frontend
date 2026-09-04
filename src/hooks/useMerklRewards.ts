@@ -95,11 +95,88 @@ export interface MerklOpportunity {
   type: string;
   apr: number;
   tvl: number;
+  campaigns?: Array<{
+    campaignId: string;
+  }>;
 }
 
+export const YLD_MERKL_OPPORTUNITY_IDENTIFIER = "0xc3a2c337584d829aa381aafad088b346addcd559";
+const YLD_MERKL_CAMPAIGN_IDS = [
+  "0xb12032fde1bfb5ba7a853ed91ddfb164764b0eb3813cbfa25799af06efe117be",
+] as const;
+
 async function fetchMerklOpportunities(): Promise<MerklOpportunity[]> {
-  const res = await merklFetch("/v4/opportunities?chainId=1&type=ENCOMPASSING");
+  const res = await merklFetch("/v4/opportunities?chainId=1&type=ENCOMPASSING&campaigns=true");
   return res.json();
+}
+
+export function getYldMerklCampaignIds(opportunities?: MerklOpportunity[]): Set<string> {
+  const ids = new Set<string>(YLD_MERKL_CAMPAIGN_IDS.map((id) => id.toLowerCase()));
+  const opportunity = opportunities?.find(
+    (item) => item.identifier.toLowerCase() === YLD_MERKL_OPPORTUNITY_IDENTIFIER,
+  );
+  for (const campaign of opportunity?.campaigns ?? []) {
+    ids.add(campaign.campaignId.toLowerCase());
+  }
+  return ids;
+}
+
+function sumBreakdownField(
+  breakdowns: MerklBreakdown[],
+  field: "amount" | "claimed" | "pending",
+): bigint {
+  return breakdowns.reduce((sum, breakdown) => sum + BigInt(breakdown[field]), 0n);
+}
+
+function rewardFromBreakdowns(reward: MerklReward, breakdowns: MerklBreakdown[]): MerklReward {
+  return {
+    ...reward,
+    amount: sumBreakdownField(breakdowns, "amount").toString(),
+    claimed: sumBreakdownField(breakdowns, "claimed").toString(),
+    pending: sumBreakdownField(breakdowns, "pending").toString(),
+    breakdowns,
+  };
+}
+
+export function splitMerklRewardsByCampaign(
+  rewards: MerklReward[],
+  yldCampaignIds: ReadonlySet<string>,
+): { yldRewards: MerklReward[]; otherRewards: MerklReward[] } {
+  const yldRewards: MerklReward[] = [];
+  const otherRewards: MerklReward[] = [];
+
+  for (const reward of rewards) {
+    const yldBreakdowns = reward.breakdowns.filter((breakdown) =>
+      yldCampaignIds.has(breakdown.campaignId.toLowerCase()),
+    );
+    if (yldBreakdowns.length === 0) {
+      otherRewards.push(reward);
+      continue;
+    }
+
+    const yldReward = rewardFromBreakdowns(reward, yldBreakdowns);
+    yldRewards.push(yldReward);
+
+    // Reward totals are token-level and Merkl notes that breakdown attribution
+    // can be incomplete. Subtract the known yld portion so unattributed and
+    // non-yld rewards remain visible in the "Other Merkl" section.
+    const remainingAmount = BigInt(reward.amount) - BigInt(yldReward.amount);
+    const remainingClaimed = BigInt(reward.claimed) - BigInt(yldReward.claimed);
+    const remainingPending = BigInt(reward.pending) - BigInt(yldReward.pending);
+    if (remainingAmount > 0n || remainingClaimed > 0n || remainingPending > 0n) {
+      otherRewards.push({
+        ...reward,
+        amount: (remainingAmount > 0n ? remainingAmount : 0n).toString(),
+        claimed: (remainingClaimed > 0n ? remainingClaimed : 0n).toString(),
+        pending: (remainingPending > 0n ? remainingPending : 0n).toString(),
+        breakdowns: reward.breakdowns.filter(
+          (breakdown) => !yldCampaignIds.has(breakdown.campaignId.toLowerCase()),
+        ),
+      });
+    }
+  }
+
+  return { yldRewards, otherRewards };
 }
 
 export function useMerklRewards(chainId = 1) {

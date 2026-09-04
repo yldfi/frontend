@@ -6,6 +6,8 @@ import { useAccount } from "wagmi";
 import { useCallback, useMemo } from "react";
 import { fetchWalletBalances, fetchTokenPrices, ETH_ADDRESS } from "@/lib/enso";
 import { useTestNetwork } from "@/contexts/TestNetworkContext";
+import { VAULTS } from "@/config/vaults";
+import { useVaultCache, type VaultCacheResponse } from "@/hooks/useVaultCache";
 import type { EnsoToken } from "@/types/enso";
 import { erc20Abi } from "viem";
 
@@ -39,6 +41,32 @@ export function shouldAutoIncludeWalletToken(
   return !SPAM_TOKEN_TEXT_PATTERN.test(displayText);
 }
 
+export function applyVaultSharePrices(
+  prices: Map<string, number>,
+  vaultCache?: VaultCacheResponse,
+): void {
+  if (!vaultCache) return;
+
+  const cachedUnderlyingPrices = new Map<string, number>([
+    ["cvx", vaultCache.cvxPrice],
+    ["cvxcrv", vaultCache.cvxCrvPrice],
+    ["cvgcvx", vaultCache.cvgCvxPrice],
+    ["pxcvx", vaultCache.pxCvxPrice],
+  ]);
+
+  for (const vault of Object.values(VAULTS)) {
+    const cacheEntry = vaultCache[vault.id as keyof VaultCacheResponse];
+    if (!cacheEntry || typeof cacheEntry !== "object" || !("pps" in cacheEntry)) continue;
+
+    const underlyingPrice =
+      prices.get(vault.assetAddress.toLowerCase()) ??
+      cachedUnderlyingPrices.get(vault.assetSymbol.toLowerCase());
+    if (!underlyingPrice || underlyingPrice <= 0 || cacheEntry.pps <= 0) continue;
+
+    prices.set(vault.address.toLowerCase(), cacheEntry.pps * underlyingPrice);
+  }
+}
+
 /**
  * Fetch wallet balances and return sorted tokens.
  * - Mainnet: Enso API (efficient, includes prices)
@@ -69,6 +97,7 @@ interface UseTokenBalancesOptions {
 export function useTokenBalances(tokens: EnsoToken[], options: UseTokenBalancesOptions = {}) {
   const { address: userAddress, isConnected } = useAccount();
   const { isTestNetwork } = useTestNetwork();
+  const { data: vaultCache } = useVaultCache();
   const publicClient = usePublicClient();
   const shouldFetchOnchain = isTestNetwork || options.preferOnchain;
   const walletTokenAllowlist = useMemo(
@@ -141,14 +170,28 @@ export function useTokenBalances(tokens: EnsoToken[], options: UseTokenBalancesO
   });
 
   // Prices (from Enso — works for both paths, prices are mainnet-based anyway)
-  const popularTokenAddresses = useMemo(() => {
-    return tokens.slice(0, 20).map((t) => t.address);
-  }, [tokens]);
+  const tokenPriceAddresses = useMemo(() => {
+    const addresses = new Map<string, string>();
+    for (const token of tokens.slice(0, 20)) {
+      addresses.set(token.address.toLowerCase(), token.address);
+    }
+    for (const item of ensoBalances ?? []) {
+      try {
+        if (BigInt(item.amount) > 0n) addresses.set(item.token.toLowerCase(), item.token);
+      } catch {
+        // Ignore malformed upstream balances.
+      }
+    }
+    for (const item of onchainBalances ?? []) {
+      if (item.balance > 0n) addresses.set(item.address.toLowerCase(), item.address);
+    }
+    return Array.from(addresses.values());
+  }, [ensoBalances, onchainBalances, tokens]);
 
   const { data: tokenPrices, isLoading: pricesLoading } = useQuery({
-    queryKey: ["enso-token-prices", popularTokenAddresses],
-    queryFn: () => fetchTokenPrices(popularTokenAddresses),
-    enabled: popularTokenAddresses.length > 0,
+    queryKey: ["enso-token-prices", tokenPriceAddresses],
+    queryFn: () => fetchTokenPrices(tokenPriceAddresses),
+    enabled: tokenPriceAddresses.length > 0,
     staleTime: 2 * 60 * 1000,
     retry: false,
   });
@@ -203,6 +246,10 @@ export function useTokenBalances(tokens: EnsoToken[], options: UseTokenBalancesO
       }
     }
 
+    // Enso does not consistently price custom ERC-4626 share tokens. Use the
+    // same PPS and underlying-price cache as the vault pages for yld shares.
+    applyVaultSharePrices(prices, vaultCache);
+
     // On-chain reads override Enso for requested tokens when enabled. This
     // keeps selected-token balances fresh immediately after tx receipts.
     if (shouldFetchOnchain && onchainBalances) {
@@ -227,6 +274,7 @@ export function useTokenBalances(tokens: EnsoToken[], options: UseTokenBalancesO
     onchainBalances,
     ethBalance,
     tokenPrices,
+    vaultCache,
     isTestNetwork,
     shouldFetchOnchain,
     options.includeWalletTokens,

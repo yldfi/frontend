@@ -581,7 +581,15 @@ async function fetchVaultData(env: Env, logger: Logger) {
       tvlUsd: yscvxData.tvl * cvxPrice,
       apy: apys.yscvx ?? null,
     },
-    // yspxcvx excluded until vault is live
+    yspxcvx: {
+      address: YSPXCVX_VAULT,
+      totalAssets: yspxcvxData.totalAssets,
+      pricePerShare: yspxcvxData.pricePerShare,
+      tvl: yspxcvxData.tvl,
+      pps: yspxcvxData.pps,
+      tvlUsd: yspxcvxData.tvl * pxCvxPrice,
+      apy: null,
+    },
     cvxCrvPrice,
     cvgCvxPrice,
     cvxPrice,
