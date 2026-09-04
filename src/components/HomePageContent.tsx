@@ -25,7 +25,12 @@ import {
   CURVE_CONTROLLERS,
   isVaultHiddenUnlessHolder,
 } from "@/config/vaults";
-import { useMerklRewards, useMerklOpportunities } from "@/hooks/useMerklRewards";
+import {
+  getYldMerklCampaignIds,
+  splitMerklRewardsByCampaign,
+  useMerklRewards,
+  useMerklOpportunities,
+} from "@/hooks/useMerklRewards";
 import { trackCtaClick, trackExternalLinkClick } from "@/lib/analytics";
 
 // Build vault configs from centralized config
@@ -167,7 +172,12 @@ export function HomePageContent() {
   // Fetch Merkl rewards for earnings display
   const { data: merklData } = useMerklRewards(1);
   const merklRewards = merklData?.flatMap((d) => d.rewards) ?? [];
-  const totalEarnedUsd = merklRewards.reduce((sum, r) => {
+  const { data: merklOpportunities } = useMerklOpportunities();
+  const { yldRewards } = splitMerklRewardsByCampaign(
+    merklRewards,
+    getYldMerklCampaignIds(merklOpportunities),
+  );
+  const totalEarnedUsd = yldRewards.reduce((sum, r) => {
     const claimable = BigInt(r.amount) - BigInt(r.claimed);
     const unclaimed = claimable > 0n ? claimable : 0n;
     const pending = BigInt(r.pending);
@@ -175,7 +185,6 @@ export function HomePageContent() {
   }, 0);
 
   // Merkl reward APR
-  const { data: merklOpportunities } = useMerklOpportunities();
   const rewardOpportunity = merklOpportunities?.find((o) => o.name === "Yld Borrow crvUSD");
   const rewardApr = rewardOpportunity?.apr;
   const isCampaignLive = rewardOpportunity?.status === "LIVE";

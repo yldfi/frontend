@@ -8,7 +8,14 @@ import Image from "next/image";
 import { Gift, Clock, CheckCircle2, ArrowUpRight, Check, ChevronRight, AlertTriangle } from "lucide-react";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
 import { LoadingDots } from "@/components/LoadingDots";
-import { useMerklRewards, useMerklOpportunities, getMerklOpportunityUrl, type MerklReward } from "@/hooks/useMerklRewards";
+import {
+  getMerklOpportunityUrl,
+  getYldMerklCampaignIds,
+  splitMerklRewardsByCampaign,
+  useMerklOpportunities,
+  useMerklRewards,
+  type MerklReward,
+} from "@/hooks/useMerklRewards";
 import { useVaultBalance } from "@/hooks/useVaultBalance";
 import { useCurveLendingPosition } from "@/hooks/useCurveLendingPosition";
 import { VAULT_ADDRESSES, VAULTS } from "@/config/vaults";
@@ -60,13 +67,16 @@ function Countdown({ target }: { target: number }) {
   );
 }
 
-function RewardRow({ reward }: { reward: MerklReward }) {
+function RewardRow({ reward, claimReward = reward }: { reward: MerklReward; claimReward?: MerklReward | null }) {
   const { address } = useAccount();
   const amount = BigInt(reward.amount);
   const claimed = BigInt(reward.claimed);
   const pending = BigInt(reward.pending);
-  const claimable = amount - claimed;
+  const claimable = amount > claimed ? amount - claimed : 0n;
   const hasClaimable = claimable > 0n;
+  const claimAmount = claimReward ? BigInt(claimReward.amount) : 0n;
+  const claimClaimed = claimReward ? BigInt(claimReward.claimed) : 0n;
+  const hasClaimAction = claimReward && claimAmount > claimClaimed;
 
   // Total earned = claimable + claimed + pending
   const totalEarned = amount > 0n ? amount : pending;
@@ -96,7 +106,7 @@ function RewardRow({ reward }: { reward: MerklReward }) {
   }, [writeError, receiptError]);
 
   const handleClaim = () => {
-    if (!address) return;
+    if (!address || !claimReward) return;
     trackRewardsClaimClick();
     writeContract({
       address: MERKL_DISTRIBUTOR,
@@ -104,9 +114,9 @@ function RewardRow({ reward }: { reward: MerklReward }) {
       functionName: "claim",
       args: [
         [address],
-        [reward.token.address as `0x${string}`],
-        [BigInt(reward.amount)],
-        [reward.proofs as `0x${string}`[]],
+        [claimReward.token.address as `0x${string}`],
+        [BigInt(claimReward.amount)],
+        [claimReward.proofs as `0x${string}`[]],
       ],
     });
   };
@@ -126,13 +136,13 @@ function RewardRow({ reward }: { reward: MerklReward }) {
             <div className="font-medium">{reward.token.symbol}</div>
           </div>
         </div>
-        {hasClaimable && !isConfirmed && (
+        {hasClaimable && hasClaimAction && !isConfirmed && (
           <button
             className="px-4 py-1.5 text-sm font-medium rounded-md bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
             onClick={handleClaim}
             disabled={isClaiming || isConfirming}
           >
-            {isClaiming ? <>Confirm <LoadingDots /></> : isConfirming ? <>Claiming <LoadingDots /></> : "Claim"}
+            {isClaiming ? <>Confirm <LoadingDots /></> : isConfirming ? <>Claiming <LoadingDots /></> : claimReward === reward ? "Claim" : "Claim all"}
           </button>
         )}
         {isConfirmed && (
@@ -226,6 +236,12 @@ export function RewardsPageContent() {
   // Flatten all rewards across chains. `useMerklRewards` already applies the
   // on-chain claimed override so `r.claimed` reflects the authoritative value.
   const rewards: MerklReward[] = data?.flatMap((d) => d.rewards) ?? [];
+  const yldCampaignIds = getYldMerklCampaignIds(opportunities);
+  const { yldRewards, otherRewards } = splitMerklRewardsByCampaign(rewards, yldCampaignIds);
+  const rewardKey = (reward: MerklReward) =>
+    `${reward.distributionChainId}:${reward.token.address.toLowerCase()}`;
+  const originalRewards = new Map(rewards.map((reward) => [rewardKey(reward), reward]));
+  const yldRewardKeys = new Set(yldRewards.map(rewardKey));
 
   // Use price from API, fallback to $1 for stablecoins
   const getPrice = (r: MerklReward) => r.token.price ?? (r.token.symbol === "crvUSD" ? 1 : 0);
@@ -237,6 +253,17 @@ export function RewardsPageContent() {
   }, 0);
 
   const totalPendingUsd = rewards.reduce((sum, r) => {
+    return sum + parseFloat(formatUnits(BigInt(r.pending), r.token.decimals)) * getPrice(r);
+  }, 0);
+
+  const yldClaimableUsd = yldRewards.reduce((sum, r) => {
+    const amount = BigInt(r.amount);
+    const claimed = BigInt(r.claimed);
+    const claimable = amount > claimed ? amount - claimed : 0n;
+    return sum + parseFloat(formatUnits(claimable, r.token.decimals)) * getPrice(r);
+  }, 0);
+
+  const yldPendingUsd = yldRewards.reduce((sum, r) => {
     return sum + parseFloat(formatUnits(BigInt(r.pending), r.token.decimals)) * getPrice(r);
   }, 0);
 
@@ -279,7 +306,7 @@ export function RewardsPageContent() {
             </a>
           </div>
           <p className="text-sm text-[var(--muted-foreground)]">
-            Claim your earned rewards from yld campaigns.
+            View and claim your Merkl rewards, separated by campaign source.
           </p>
         </div>
 
@@ -456,11 +483,11 @@ export function RewardsPageContent() {
                   <div className="flex items-center gap-3 text-sm">
                     <span className="text-[var(--muted-foreground)]">Your earnings</span>
                     <span className="font-medium mono text-green-400">
-                      {totalClaimableUsd + totalPendingUsd > 0 ? formatUsd(totalClaimableUsd + totalPendingUsd) : "$0.00"}
+                      {yldClaimableUsd + yldPendingUsd > 0 ? formatUsd(yldClaimableUsd + yldPendingUsd) : "$0.00"}
                     </span>
-                    {totalClaimableUsd > 0 && totalPendingUsd > 0 && (
+                    {yldClaimableUsd > 0 && yldPendingUsd > 0 && (
                       <span className="text-xs text-[var(--muted-foreground)]">
-                        ({formatUsd(totalClaimableUsd)} claimable)
+                        ({formatUsd(yldClaimableUsd)} claimable)
                       </span>
                     )}
                   </div>
@@ -528,11 +555,45 @@ export function RewardsPageContent() {
             </div>
 
             {/* Reward rows */}
-            <div className="space-y-3">
-              {rewards.map((reward) => (
-                <RewardRow key={`${reward.token.address}-${reward.distributionChainId}`} reward={reward} />
-              ))}
-            </div>
+            {yldRewards.length > 0 && (
+              <section className="mb-8">
+                <h3 className="text-sm font-medium mb-1">yld.fi campaign rewards</h3>
+                <p className="text-xs text-[var(--muted-foreground)] mb-3">
+                  Rewards earned through campaigns run by yld.fi.
+                </p>
+                <div className="space-y-3">
+                  {yldRewards.map((reward) => (
+                    <RewardRow
+                      key={`yld-${rewardKey(reward)}`}
+                      reward={reward}
+                      claimReward={originalRewards.get(rewardKey(reward))}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {otherRewards.length > 0 && (
+              <section>
+                <h3 className="text-sm font-medium mb-1">Other Merkl rewards</h3>
+                <p className="text-xs text-[var(--muted-foreground)] mb-3">
+                  Rewards earned from Merkl campaigns not run by yld.fi.
+                </p>
+                <div className="space-y-3">
+                  {otherRewards.map((reward) => (
+                    <RewardRow
+                      key={`other-${rewardKey(reward)}`}
+                      reward={reward}
+                      claimReward={
+                        yldRewardKeys.has(rewardKey(reward))
+                          ? null
+                          : originalRewards.get(rewardKey(reward))
+                      }
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
 
           </>
         )}

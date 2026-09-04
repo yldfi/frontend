@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { shouldAutoIncludeWalletToken } from "@/hooks/useTokenBalances";
+import { applyVaultSharePrices, shouldAutoIncludeWalletToken } from "@/hooks/useTokenBalances";
+import { TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
+import type { VaultCacheResponse } from "@/hooks/useVaultCache";
 
 // Test the useTokenBalances business logic directly
 // We test balance merging, price merging, and token sorting
@@ -34,6 +36,37 @@ describe("useTokenBalances logic", () => {
     symbol,
     decimals: 18,
     type: "base",
+  });
+
+  it("derives missing yscvxCRV and yspxCVX prices from backing", () => {
+    const vaultData = (address: string, pps: number) => ({
+      address,
+      totalAssets: "1",
+      pricePerShare: "1",
+      tvl: 1,
+      pps,
+      tvlUsd: 1,
+      apy: null,
+    });
+    const cache = {
+      ycvxcrv: vaultData(VAULT_ADDRESSES.YCVXCRV, 1),
+      yscvxcrv: vaultData(VAULT_ADDRESSES.YSCVXCRV, 1.1),
+      ycvgcvx: vaultData(VAULT_ADDRESSES.YCVGCVX, 1),
+      yscvgcvx: vaultData(VAULT_ADDRESSES.YSCVGCVX, 1),
+      yscvx: vaultData(VAULT_ADDRESSES.YSCVX, 1),
+      yspxcvx: vaultData(VAULT_ADDRESSES.YSPXCVX, 1.2),
+      cvxCrvPrice: 0.5,
+      cvgCvxPrice: 2,
+      pxCvxPrice: 3,
+      cvxPrice: 4,
+      lastUpdated: "2026-09-04T00:00:00Z",
+    } satisfies VaultCacheResponse;
+    const prices = new Map<string, number>([[TOKENS.CVXCRV.toLowerCase(), 0.5]]);
+
+    applyVaultSharePrices(prices, cache);
+
+    expect(prices.get(VAULT_ADDRESSES.YSCVXCRV.toLowerCase())).toBeCloseTo(0.55);
+    expect(prices.get(VAULT_ADDRESSES.YSPXCVX.toLowerCase())).toBeCloseTo(3.6);
   });
 
   describe("wallet token auto-include filter", () => {

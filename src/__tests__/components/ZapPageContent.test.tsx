@@ -302,6 +302,47 @@ describe("ZapPageContent", () => {
     });
   });
 
+  it("keeps the route visible while the zap is preparing and hides it after submission", () => {
+    sessionStorage.setItem("yldfi-universal-zap-amount", "0.1");
+    const preparingZap = {
+      needsApproval: () => false,
+      approve,
+      executeZap,
+      reset,
+      status: "zapping",
+      error: null,
+      isLoading: true,
+      isSuccess: false,
+      isReverted: false,
+      zapHash: undefined,
+      pendingApproval: null,
+      approvalProgress: null,
+      isApproving: false,
+      refetchAllowance,
+      isFlashbotsEnabled: false,
+      isFlashbotsSupported: false,
+      toggleFlashbots,
+      simulationResult: null,
+    } as ReturnType<typeof useZapActions>;
+    mockUseZapActions.mockReturnValue(preparingZap);
+
+    const { container, rerender } = render(<ZapPageContent />);
+
+    expect(container.querySelector("aside")?.getAttribute("aria-hidden")).toBe("false");
+    expect(screen.getByRole("button", { name: /Confirm in wallet/ })).toBeTruthy();
+
+    mockUseZapActions.mockReturnValue({
+      ...preparingZap,
+      status: "waitingTx",
+      zapHash: "0x1234",
+    } as ReturnType<typeof useZapActions>);
+
+    rerender(<ZapPageContent />);
+
+    expect(container.querySelector("aside")?.getAttribute("aria-hidden")).toBe("true");
+    expect(screen.getByText("View on Etherscan")).toBeTruthy();
+  });
+
   it("never simulates or sends a quote for the previous debounced amount", async () => {
     const staleQuote = {
       ...quote,

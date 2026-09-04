@@ -430,7 +430,8 @@ export function ZapPageContent() {
 
   // Error display
   const noRoute = !quoteSettling && !!quoteError && !!amount && Number(amount) > 0;
-  const isPendingTx = isZapTxPendingVisible(status) && !isSimulatingPreview && !showSimulationModal;
+  const isPendingTx =
+    isZapTxPendingVisible(status) && Boolean(zapHash) && !isSimulatingPreview && !showSimulationModal;
   const isZapSuccessVisible = !!showTxSuccess?.show;
   const isZapRevertedVisible = !!showTxReverted?.show;
   const isTxStateVisible = isPendingTx || isZapSuccessVisible || isZapRevertedVisible;

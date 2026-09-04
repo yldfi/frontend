@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 
 const CACHE_API_URL = "/api/vaults";
 
-interface VaultCacheData {
+export interface VaultCacheData {
   address: string;
   totalAssets: string;
   pricePerShare: string;
@@ -12,13 +12,13 @@ interface VaultCacheData {
   apy: number | null;
 }
 
-interface CacheResponse {
+export interface VaultCacheResponse {
   ycvxcrv: VaultCacheData;
   yscvxcrv: VaultCacheData;
   ycvgcvx: VaultCacheData;
   yscvgcvx: VaultCacheData;
   yscvx: VaultCacheData;
-  // yspxcvx: VaultCacheData; // uncomment when vault is live
+  yspxcvx: VaultCacheData;
   cvxCrvPrice: number;
   cvgCvxPrice: number;
   pxCvxPrice: number;
@@ -27,7 +27,7 @@ interface CacheResponse {
 }
 
 export function useVaultCache() {
-  return useQuery<CacheResponse>({
+  return useQuery<VaultCacheResponse>({
     queryKey: ["vault-cache"],
     queryFn: async () => {
       const response = await fetch(CACHE_API_URL);

@@ -50,7 +50,12 @@ import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { useSettings } from "@/hooks/useSettings";
-import { useMerklRewards, useMerklOpportunities } from "@/hooks/useMerklRewards";
+import {
+  getYldMerklCampaignIds,
+  splitMerklRewardsByCampaign,
+  useMerklRewards,
+  useMerklOpportunities,
+} from "@/hooks/useMerklRewards";
 import { formatUsd } from "@/lib/utils";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
@@ -669,7 +674,12 @@ export function VaultPageContent({ id }: { id: string }) {
 
   // Merkl rewards earnings
   const { data: merklData } = useMerklRewards(1);
-  const totalEarnedUsd = (merklData?.flatMap((d) => d.rewards) ?? []).reduce((sum, r) => {
+  const { data: merklOpportunities } = useMerklOpportunities();
+  const { yldRewards } = splitMerklRewardsByCampaign(
+    merklData?.flatMap((d) => d.rewards) ?? [],
+    getYldMerklCampaignIds(merklOpportunities),
+  );
+  const totalEarnedUsd = yldRewards.reduce((sum, r) => {
     const claimable = BigInt(r.amount) - BigInt(r.claimed);
     const unclaimed = claimable > 0n ? claimable : 0n;
     const pending = BigInt(r.pending);
@@ -677,7 +687,6 @@ export function VaultPageContent({ id }: { id: string }) {
   }, 0);
 
   // Merkl reward APR
-  const { data: merklOpportunities } = useMerklOpportunities();
   const rewardOpportunity = merklOpportunities?.find((o) => o.name === "Yld Borrow crvUSD");
   const rewardApr = rewardOpportunity?.apr;
   const isCampaignLive = rewardOpportunity?.status === "LIVE";
