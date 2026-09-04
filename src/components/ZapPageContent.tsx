@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useAccount, useBalance, useBlockNumber, useGasPrice } from "wagmi";
-import { parseUnits, formatUnits } from "viem";
+import { parseUnits, formatUnits, isAddress } from "viem";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { ArrowUpDown, ArrowRightLeft, Check, ChevronRight, ExternalLink, Route, RouteOff, X, Zap } from "lucide-react";
 import { toast } from "sonner";
@@ -27,7 +27,7 @@ import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { useSettings } from "@/hooks/useSettings";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
 
-import { ETH_ADDRESS, applyKnownTokenMetadata } from "@/lib/enso";
+import { ETH_ADDRESS, applyKnownTokenMetadata, getCustomTokenMetadata } from "@/lib/enso";
 import { cn } from "@/lib/utils";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { getMaxEthAmount } from "@/lib/eth-gas";
@@ -74,6 +74,40 @@ function loadToken(key: string, fallback: EnsoToken): EnsoToken {
   }
 }
 
+function loadRequestedToken(key: "input" | "output", fallback: EnsoToken): EnsoToken {
+  if (typeof window === "undefined") return fallback;
+  const searchParams = new URLSearchParams(window.location.search);
+  const requestedAddress = searchParams.get(key);
+  const knownToken = getCustomTokenMetadata(requestedAddress ?? undefined);
+  if (knownToken) return knownToken;
+  if (!requestedAddress || !isAddress(requestedAddress)) return fallback;
+
+  const symbol = searchParams.get(`${key}Symbol`)?.trim();
+  const decimals = Number(searchParams.get(`${key}Decimals`));
+  if (!symbol || !Number.isInteger(decimals) || decimals < 0 || decimals > 255) return fallback;
+
+  return applyKnownTokenMetadata({
+    address: requestedAddress,
+    chainId: 1,
+    name: symbol,
+    symbol,
+    decimals,
+    logoURI: searchParams.get(`${key}Logo`) || undefined,
+    type: "base",
+  });
+}
+
+function hasRequestedPair(): boolean {
+  if (typeof window === "undefined") return false;
+  const searchParams = new URLSearchParams(window.location.search);
+  return searchParams.has("input") || searchParams.has("output");
+}
+
+function loadRequestedOutputAmount(): string {
+  if (typeof window === "undefined") return "";
+  return sanitizeAmount(new URLSearchParams(window.location.search).get("outputAmount") ?? "");
+}
+
 function saveToken(key: string, token: EnsoToken | null) {
   if (typeof window === "undefined") return;
   try {
@@ -106,16 +140,20 @@ export function ZapPageContent() {
   } = useSettings();
   const [isSimulatingPreview, setIsSimulatingPreview] = useState(false);
   const [rateInverted, setRateInverted] = useState(false);
+  const [requestedOutputAmount] = useState(loadRequestedOutputAmount);
+  const [targetQuoteAdjustments, setTargetQuoteAdjustments] = useState(0);
 
   // Token state
   const [inputToken, setInputTokenState] = useState<EnsoToken>(() =>
-    loadToken("input", DEFAULT_ETH_TOKEN),
+    loadRequestedToken("input", loadToken("input", DEFAULT_ETH_TOKEN)),
   );
   const [outputToken, setOutputTokenState] = useState<EnsoToken>(() =>
-    loadToken("output", DEFAULT_OUTPUT_TOKEN),
+    loadRequestedToken("output", loadToken("output", DEFAULT_OUTPUT_TOKEN)),
   );
   const [amount, setAmountState] = useState(() => {
     if (typeof window === "undefined") return "";
+    if (requestedOutputAmount) return "1";
+    if (hasRequestedPair()) return "";
     try {
       return sanitizeAmount(sessionStorage.getItem(`${STORAGE_PREFIX}-amount`) ?? "");
     } catch {
@@ -222,12 +260,35 @@ export function ZapPageContent() {
     rawQuote.inputAmount === debouncedAmount &&
     rawQuote.inputToken.address.toLowerCase() === inputToken.address.toLowerCase()
   );
-  const quote = quoteIsCurrent ? rawQuote : null;
+  const currentQuote = quoteIsCurrent ? rawQuote : null;
+  const targetQuoteNeedsAdjustment = !!(
+    requestedOutputAmount &&
+    currentQuote &&
+    targetQuoteAdjustments < 2 &&
+    Math.abs(Number(currentQuote.outputAmountFormatted) - Number(requestedOutputAmount)) / Number(requestedOutputAmount) > 0.001
+  );
+  const quote = currentQuote && !targetQuoteNeedsAdjustment ? currentQuote : null;
   const quoteSettling = !!amount && (
     amount !== debouncedAmount ||
     quoteLoading ||
-    (!!rawQuote && !quoteIsCurrent)
+    (!!rawQuote && !quoteIsCurrent) ||
+    targetQuoteNeedsAdjustment
   );
+
+  useEffect(() => {
+    if (!requestedOutputAmount || !quoteIsCurrent || !rawQuote || targetQuoteAdjustments >= 2) return;
+    const target = Number(requestedOutputAmount);
+    const quotedOutput = Number(rawQuote.outputAmountFormatted);
+    const quotedInput = Number(amount);
+    if (!Number.isFinite(target) || !Number.isFinite(quotedOutput) || !Number.isFinite(quotedInput) || target <= 0 || quotedOutput <= 0 || quotedInput <= 0) return;
+    if (Math.abs(quotedOutput - target) / target <= 0.001) return;
+
+    // Token swap quotes are locally linear enough for this ratio to converge in
+    // one or two passes; the final executable quote still supplies slippage protection.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTargetQuoteAdjustments((count) => count + 1);
+    setAmount((quotedInput * target / quotedOutput).toPrecision(12).replace(/\.?0+$/, ""));
+  }, [amount, quoteIsCurrent, rawQuote, requestedOutputAmount, setAmount, targetQuoteAdjustments]);
 
   const swapTokens = useCallback(() => {
     if (isEntryDisabledOutput(inputToken.address)) {
@@ -520,10 +581,10 @@ export function ZapPageContent() {
                   <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2">
                     <span className="mono text-base text-[var(--foreground)] flex-1">
                       {quoteSettling
-                        ? "—"
+                        ? requestedOutputAmount || "—"
                         : quote
                         ? Number(quote.outputAmountFormatted).toFixed(4)
-                        : "0.00"}
+                        : requestedOutputAmount || "0.00"}
                     </span>
                     <TokenSelector
                       selectedToken={outputToken}

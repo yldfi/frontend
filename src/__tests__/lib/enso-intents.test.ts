@@ -38,6 +38,7 @@ const ENSO_ROUTER_ENTRYPOINT_ABI = parseAbi([
   "function safeRouteMulti((uint8 tokenType, bytes data)[] tokensIn, (uint8 tokenType, bytes data)[] tokensOut, address receiver, bytes data) payable returns (bytes)",
 ]);
 const TOKEN_AMOUNT_PARAMETERS = parseAbiParameters("address token, uint256 amount");
+const NATIVE_AMOUNT_PARAMETERS = parseAbiParameters("uint256 amount");
 const MORPHO_ADAPTER_ABI = parseAbi([
   "function erc20TransferFrom(address token, address receiver, uint256 amount)",
   "function morphoWrapperDepositFor(address receiver, uint256 amount)",
@@ -930,6 +931,26 @@ describe("Enso intent response protection", () => {
       nativeRequest,
       makeRouteResponse(rawData, { value: "1" })
     )).toThrow("native value does not match amountIn");
+
+    const encodedNativeAmount = encodeFunctionData({
+      abi: ENSO_ROUTER_ENTRYPOINT_ABI,
+      functionName: "routeSingle",
+      args: [{ tokenType: 0, data: encodeAbiParameters(NATIVE_AMOUNT_PARAMETERS, [BigInt(ONE_ETHER)]) }, "0x1234"],
+    });
+    expect(() => protectEnsoIntentResponse(
+      nativeRequest,
+      makeRouteResponse(encodedNativeAmount, { value: ONE_ETHER })
+    )).not.toThrow();
+
+    const wrongEncodedNativeAmount = encodeFunctionData({
+      abi: ENSO_ROUTER_ENTRYPOINT_ABI,
+      functionName: "routeSingle",
+      args: [{ tokenType: 0, data: encodeAbiParameters(NATIVE_AMOUNT_PARAMETERS, [1n]) }, "0x1234"],
+    });
+    expect(() => protectEnsoIntentResponse(
+      nativeRequest,
+      makeRouteResponse(wrongEncodedNativeAmount, { value: ONE_ETHER })
+    )).toThrow("native input amount does not match amountIn");
   });
 
   it("locks legacy MORPHO permits to fixed adapter calls and a protected nested route", () => {

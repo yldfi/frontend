@@ -1063,8 +1063,19 @@ function assertBoundInput(
   const expectedToken = getIntentInputToken(request);
   const expectedAmount = BigInt(request.amountIn);
   if (normalizeAddress(expectedToken) === ENSO_NATIVE_TOKEN) {
-    if (tokenIn.tokenType !== TOKEN_TYPE_NATIVE || tokenIn.data !== "0x") {
+    if (tokenIn.tokenType !== TOKEN_TYPE_NATIVE) {
       failResponse("Enso intent native input does not match the request");
+    }
+    if (tokenIn.data !== "0x") {
+      let encodedAmount: bigint;
+      try {
+        [encodedAmount] = decodeAbiParameters(NATIVE_AMOUNT_PARAMETERS, tokenIn.data);
+      } catch {
+        failResponse("Enso intent native input does not match the request");
+      }
+      if (encodedAmount !== expectedAmount) {
+        failResponse("Enso intent native input amount does not match amountIn");
+      }
     }
     if (BigInt(txValue) !== expectedAmount) {
       failResponse("Enso intent native value does not match amountIn");
