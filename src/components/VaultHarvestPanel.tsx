@@ -1,11 +1,12 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useAccount, useReadContract, useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { formatUnits, hexToString } from "viem";
-import { Gavel, Gift, Loader2 } from "lucide-react";
+import { AlertTriangle, CircleDot, Gavel, Gift, Loader2, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 import { useDirectWriteContract } from "@/hooks/useDirectWriteContract";
@@ -30,6 +31,13 @@ const CUSTOM_REPORT_TRIGGER_ABI = [{
   inputs: [{ name: "strategy", type: "address" }],
   outputs: [{ name: "shouldReport", type: "bool" }, { name: "data", type: "bytes" }],
 }] as const;
+
+const subscribeToAuctionPreview = () => () => {};
+const getAuctionPreviewSnapshot = () =>
+  process.env.NODE_ENV === "development" &&
+  new URLSearchParams(window.location.search).get("auction-preview");
+const getAuctionPreviewServerSnapshot = () => null;
+
 const KEEPER_ABI = [{
   name: "report", type: "function", stateMutability: "nonpayable",
   inputs: [{ name: "strategy", type: "address" }], outputs: [{ name: "profit", type: "uint256" }, { name: "loss", type: "uint256" }],
@@ -79,10 +87,14 @@ type TokenAmount = { token: `0x${string}`; amount: bigint };
 type AuctionState = {
   active: boolean;
   available: bigint;
+  startsAt: number | undefined;
   endsAt: number | undefined;
   likelySettlesAt: number | undefined;
+  auctionRate: number | undefined;
+  marketRate: number | undefined;
   takeAmount: bigint;
   takePayment: bigint;
+  requiredPayment: bigint;
   paymentBalance: bigint;
   paymentAllowance: bigint;
 };
@@ -117,6 +129,84 @@ function relativeTime(timestamp: number, nowTimestamp: number): string {
   if (seconds === 0) return "now";
   if (seconds >= 3_600) return `in about ${Math.ceil(seconds / 3_600)} hours`;
   return `in about ${Math.max(1, Math.ceil(seconds / 60))} minutes`;
+}
+
+function compactRelativeTime(timestamp: number, nowTimestamp: number): string {
+  const seconds = Math.max(0, timestamp - nowTimestamp);
+  if (seconds === 0) return "now";
+  if (seconds >= 3_600) return `in ~${Math.ceil(seconds / 3_600)} hrs`;
+  return `in ~${Math.max(1, Math.ceil(seconds / 60))} mins`;
+}
+
+function formatRate(rate: number): string {
+  return rate.toLocaleString("en-US", { maximumSignificantDigits: 6 });
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds >= 3_600) return `${Math.floor(seconds / 3_600)}h ${Math.floor((seconds % 3_600) / 60)}m`;
+  return `${Math.max(0, Math.floor(seconds / 60))}m`;
+}
+
+function AuctionTimeline({
+  startsAt,
+  endsAt,
+  marketAt,
+  now,
+  fromSymbol,
+  toSymbol,
+}: {
+  startsAt: number;
+  endsAt: number;
+  marketAt?: number;
+  now: number;
+  fromSymbol: string;
+  toSymbol: string;
+}) {
+  const duration = Math.max(1, endsAt - startsAt);
+  const elapsed = Math.min(duration, Math.max(0, now - startsAt));
+  const progress = (elapsed / duration) * 100;
+  const marketProgress = marketAt === undefined
+    ? undefined
+    : Math.min(100, Math.max(0, ((marketAt - startsAt) / duration) * 100));
+  const hasReachedMarket = marketAt !== undefined && marketAt <= now;
+  const markerAlignment = marketProgress !== undefined && marketProgress < 20
+    ? "translate-x-0 text-left"
+    : marketProgress !== undefined && marketProgress > 80
+      ? "-translate-x-full text-right"
+      : "-translate-x-1/2 text-center";
+
+  return (
+    <div className="space-y-2" aria-label="Auction timeline">
+      <div className="flex items-start justify-between gap-3 text-xs">
+        <span className={hasReachedMarket ? "font-medium text-[var(--success)]" : "text-[var(--muted-foreground)]"}>
+          {hasReachedMarket
+            ? `Auction is at the current ${fromSymbol}/${toSymbol} market price`
+            : marketAt
+              ? `Auction will reach the current ${fromSymbol}/${toSymbol} market price ${compactRelativeTime(marketAt, now)}`
+              : "Market price estimate unavailable"}
+        </span>
+        <span className="shrink-0 tabular-nums text-[var(--muted-foreground)]">{formatDuration(elapsed)} / {formatDuration(duration)}</span>
+      </div>
+      <div className="relative pb-7">
+        <div className="relative h-2.5 overflow-hidden rounded-full bg-[var(--muted)]">
+          <div
+            className={`h-full rounded-full transition-[width] duration-500 ${hasReachedMarket ? "bg-[var(--success)]" : "bg-[var(--foreground)]"}`}
+            style={{ width: `${progress}%` }}
+          />
+          {marketProgress !== undefined && (
+            <div className="absolute inset-y-0 z-10 w-0.5 bg-[var(--success)]" style={{ left: `${marketProgress}%` }} />
+          )}
+        </div>
+        <span className="absolute left-0 top-3.5 text-[10px] text-[var(--muted-foreground)]">Start</span>
+        {marketProgress !== undefined && (
+          <span className={`absolute top-3.5 whitespace-nowrap text-[10px] font-medium text-[var(--success)] ${markerAlignment}`} style={{ left: `${marketProgress}%` }}>
+            Market price · {formatLocalDate(marketAt!).replace(/^.*?,\s*/, "")}
+          </span>
+        )}
+        <span className="absolute right-0 top-3.5 text-[10px] text-[var(--muted-foreground)]">Close</span>
+      </div>
+    </div>
+  );
 }
 
 export function estimateLikelySettlementAt({
@@ -192,44 +282,44 @@ function triggerMessage(
   nextReportAt?: number,
   thresholdProgress?: string,
 ): string {
-  if (status === "pending") return "Checking when these rewards can be claimed…";
-  if (status === "error" || !trigger) return "We could not check when these rewards can be claimed. Try again shortly.";
-  if (trigger[0]) return "These rewards are ready to be claimed into the strategy.";
+  if (status === "pending") return "Checking when the strategy can harvest these rewards…";
+  if (status === "error" || !trigger) return "We could not check when the strategy can harvest. Try again shortly.";
+  if (trigger[0]) return "The strategy rewards are ready to be harvested for the vault.";
   if (trigger[1].toLowerCase() === "0x2606a10b") {
-    if (!nextReportAt) return "These rewards need to wait a little longer before they can be claimed.";
+    if (!nextReportAt) return "The strategy needs to wait a little longer before it can harvest.";
     const remainingSeconds = Math.max(0, nextReportAt - Math.floor(Date.now() / 1000));
     const relative = remainingSeconds >= 86_400
       ? `in ${Math.ceil(remainingSeconds / 86_400)} days`
       : remainingSeconds >= 3_600
         ? `in about ${Math.ceil(remainingSeconds / 3_600)} hours`
         : `in about ${Math.max(1, Math.ceil(remainingSeconds / 60))} minutes`;
-    return `These rewards can be claimed around ${formatLocalDate(nextReportAt)} (${relative}).`;
+    return `The strategy can harvest these rewards around ${formatLocalDate(nextReportAt)} (${relative}).`;
   }
   try {
     const reason = hexToString(trigger[1], { size: undefined }).replaceAll("\0", "").trim();
     const normalized = reason.toLowerCase();
     if (normalized.includes("not enough pending") || normalized.includes("not enough rewards")) {
-      if (thresholdProgress) return `${thresholdProgress} collected. More rewards need to build up before they can be claimed.`;
-      return "More rewards need to build up before they can be claimed.";
+      if (thresholdProgress) return `${thresholdProgress} accumulated by the strategy. It needs more before it can harvest.`;
+      return "The strategy needs to accumulate more rewards before it can harvest.";
     }
     if (normalized.includes("base fee")) {
       return "Network fees are currently too high. Try again later.";
     }
     if (normalized.includes("zero asset") || normalized.includes("no assets")) {
-      return "This strategy has no deposited assets to earn rewards on.";
+      return "The strategy has no deposited assets earning rewards.";
     }
     if (normalized.includes("no rewards")) {
-      return "There are no rewards ready to claim yet.";
+      return "There are no strategy rewards ready to harvest yet.";
     }
     if (normalized.includes("shutdown")) {
-      return "Reward claiming is unavailable while this strategy is shut down.";
+      return "Harvesting is unavailable while this strategy is shut down.";
     }
     if (normalized.includes("paused")) {
-      return "Reward claiming is temporarily paused.";
+      return "Harvesting is temporarily paused.";
     }
-    return reason || "These rewards cannot be claimed yet.";
+    return reason || "The strategy rewards cannot be harvested yet.";
   } catch {
-    return "These rewards cannot be claimed yet.";
+    return "The strategy rewards cannot be harvested yet.";
   }
 }
 
@@ -288,7 +378,22 @@ export function VaultHarvestPanel({ vaultAddress }: { vaultAddress: string }) {
   const { openConnectModal } = useConnectModal();
   const { data: vaultCache } = useVaultCache();
   const [currentTimestamp, setCurrentTimestamp] = useState(() => Math.floor(Date.now() / 1000));
+  const auctionPreview = useSyncExternalStore(
+    subscribeToAuctionPreview,
+    getAuctionPreviewSnapshot,
+    getAuctionPreviewServerSnapshot,
+  );
   const [action, setAction] = useState<"report" | "auction" | "approve-take" | "take" | null>(null);
+  const [pendingTakeWarning, setPendingTakeWarning] = useState<{
+    item: TokenAmount;
+    index: number;
+    fromSymbol: string;
+    toSymbol: string;
+    auctionRate: number;
+    marketRate: number;
+    likelySettlesAt: number | undefined;
+    takeLabel: string;
+  } | null>(null);
   const { writeContractAsync, data: txHash, status: writeStatus, error: writeError, reset } = useDirectWriteContract();
 
   const reads = useReadContracts({
@@ -372,13 +477,34 @@ export function VaultHarvestPanel({ vaultAddress }: { vaultAddress: string }) {
   }, []);
 
   const getAuctionState = (index: number): AuctionState => {
+    if (auctionPreview) {
+      const hasPaymentBalance = auctionPreview !== "no-balance";
+      return {
+      active: true,
+      available: 2_500n * 10n ** 18n,
+      startsAt: currentTimestamp - 3 * 3_600,
+      endsAt: currentTimestamp + 21 * 3_600,
+      likelySettlesAt: currentTimestamp + 2 * 3_600,
+      auctionRate: 0.06,
+      marketRate: 0.05,
+      takeAmount: hasPaymentBalance ? 2_500n * 10n ** 18n : 0n,
+      takePayment: hasPaymentBalance ? 150n * 10n ** 18n : 0n,
+      requiredPayment: 150n * 10n ** 18n,
+      paymentBalance: hasPaymentBalance ? 150n * 10n ** 18n : 0n,
+      paymentAllowance: hasPaymentBalance ? 150n * 10n ** 18n : 0n,
+      };
+    }
     if (!auctionAddress) return {
       active: false,
       available: 0n,
+      startsAt: undefined,
       endsAt: undefined,
       likelySettlesAt: undefined,
+      auctionRate: undefined,
+      marketRate: undefined,
       takeAmount: 0n,
       takePayment: 0n,
+      requiredPayment: 0n,
       paymentBalance: 0n,
       paymentAllowance: 0n,
     };
@@ -397,6 +523,7 @@ export function VaultHarvestPanel({ vaultAddress }: { vaultAddress: string }) {
     const amountNeeded = results?.[offset + 8]?.status === "success" ? results[offset + 8].result as bigint : 0n;
     const paymentBalance = results?.[offset + 9]?.status === "success" ? results[offset + 9].result as bigint : 0n;
     const paymentAllowance = results?.[offset + 10]?.status === "success" ? results[offset + 10].result as bigint : 0n;
+    const startsAt = kicked > 0n ? Number(kicked) : undefined;
     const endsAt = kicked > 0n && length > 0n ? Number(kicked + length) : undefined;
     const outputToken = config?.auctionOutputToken;
     const fromToken = KNOWN_TOKENS[auctionItems[index]?.token.toLowerCase()];
@@ -423,6 +550,12 @@ export function VaultHarvestPanel({ vaultAddress }: { vaultAddress: string }) {
       toPriceUsd: tokenPriceUsd(outputToken),
       endsAt,
     });
+    const availableTokens = Number(formatUnits(available, fromToken?.decimals ?? 18));
+    const paymentTokens = Number(formatUnits(amountNeeded, toToken?.decimals ?? 18));
+    const auctionRate = availableTokens > 0 && paymentTokens > 0 ? paymentTokens / availableTokens : undefined;
+    const fromPriceUsd = tokenPriceUsd(auctionItems[index]?.token);
+    const toPriceUsd = tokenPriceUsd(outputToken);
+    const marketRate = fromPriceUsd > 0 && toPriceUsd > 0 ? fromPriceUsd / toPriceUsd : undefined;
     // getAmountNeeded(from) is the contract's exact cost for everything still available.
     // For a partial take, divide by one more than that rounded-down total so the
     // resulting amount cannot cost more than the wallet balance.
@@ -432,15 +565,17 @@ export function VaultHarvestPanel({ vaultAddress }: { vaultAddress: string }) {
         : (available * paymentBalance) / (amountNeeded + 1n)
       : 0n;
     const takePayment = available > 0n && takeAmount > 0n
-      ? ((amountNeeded + 1n) * takeAmount + available - 1n) / available
+      ? takeAmount === available
+        ? amountNeeded
+        : ((amountNeeded + 1n) * takeAmount + available - 1n) / available
       : 0n;
-    return { active, available, endsAt, likelySettlesAt, takeAmount, takePayment, paymentBalance, paymentAllowance };
+    return { active, available, startsAt, endsAt, likelySettlesAt, auctionRate, marketRate, takeAmount, takePayment, requiredPayment: amountNeeded, paymentBalance, paymentAllowance };
   };
 
   useEffect(() => {
     if (!receipt.isSuccess) return;
     toast.success(
-      action === "auction" ? "Rewards sent to auction"
+      action === "auction" ? "Strategy rewards sent to auction"
         : action === "approve-take" ? "Auction payment approved"
           : action === "take" ? "Auction take completed"
             : "Harvest report submitted",
@@ -508,21 +643,53 @@ export function VaultHarvestPanel({ vaultAddress }: { vaultAddress: string }) {
     } catch { setAction(null); }
   };
 
+  const requestTake = (
+    item: TokenAmount,
+    index: number,
+    auctionState: AuctionState,
+    fromSymbol: string,
+    toSymbol: string,
+    takeLabel: string,
+  ) => {
+    const needsApproval = auctionState.paymentAllowance < auctionState.takePayment;
+    if (
+      !needsApproval && auctionState.auctionRate !== undefined && auctionState.marketRate !== undefined &&
+      auctionState.auctionRate > auctionState.marketRate
+    ) {
+      setPendingTakeWarning({
+        item,
+        index,
+        fromSymbol,
+        toSymbol,
+        auctionRate: auctionState.auctionRate,
+        marketRate: auctionState.marketRate,
+        likelySettlesAt: auctionState.likelySettlesAt,
+        takeLabel,
+      });
+      return;
+    }
+    void submitTake(item, auctionState);
+  };
+
+  const pendingMarketMatchAt = pendingTakeWarning
+    ? getAuctionState(pendingTakeWarning.index).likelySettlesAt ?? pendingTakeWarning.likelySettlesAt
+    : undefined;
+
   return (
     <div className="p-4 sm:p-5 space-y-4">
       <div className="rounded-lg border border-[var(--border)] p-4 hover:border-[var(--border-hover)] transition-colors">
         <div className="flex items-center gap-2 text-sm font-medium">
           <Gift size={16} className="text-[var(--muted-foreground)]" />
-          Pending rewards
+          Vault strategy rewards
         </div>
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mt-2">
           <div className="min-w-0 flex-1 divide-y divide-[var(--border)]">
             {readsLoading ? <div className="h-14 flex items-center"><Loader2 className="animate-spin text-[var(--muted-foreground)]" size={18} /></div> : rewards.length ? (
               rewards.map((item) => <TokenAmountRow key={item.token} item={item} />)
-            ) : <div className="py-4 text-sm text-[var(--muted-foreground)]">No pending rewards</div>}
+            ) : <div className="py-4 text-sm text-[var(--muted-foreground)]">No strategy rewards available</div>}
           </div>
           <button disabled={!shouldReport || busy} onClick={() => void submit("report")} className="w-full sm:w-auto shrink-0 px-4 py-1.5 text-sm font-medium rounded-md bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 transition-all disabled:bg-[var(--muted)] disabled:text-[var(--muted-foreground)] disabled:opacity-100 disabled:hover:opacity-100 disabled:cursor-not-allowed">
-            {busy && action === "report" ? "Claiming…" : "Claim rewards"}
+            {busy && action === "report" ? "Harvesting…" : "Harvest for vault"}
           </button>
         </div>
         <p className={`pt-3 mt-1 border-t border-[var(--border)] text-xs ${shouldReport ? "text-[var(--success)]" : "text-[var(--muted-foreground)]"}`}>
@@ -535,51 +702,131 @@ export function VaultHarvestPanel({ vaultAddress }: { vaultAddress: string }) {
         const displayedItem = auctionState.active ? { ...item, amount: auctionState.available } : item;
         const fromToken = KNOWN_TOKENS[item.token.toLowerCase()];
         const toToken = config.auctionOutputToken ? KNOWN_TOKENS[config.auctionOutputToken.toLowerCase()] : undefined;
-        const isAttractive = auctionState.likelySettlesAt !== undefined && auctionState.likelySettlesAt <= currentTimestamp;
         const canTake = auctionState.active && auctionState.takeAmount > 0n && auctionState.takePayment > 0n;
         const needsTakeApproval = auctionState.paymentAllowance < auctionState.takePayment;
+        const takeLabel = `Take ${Number(formatUnits(auctionState.takeAmount, fromToken?.decimals ?? 18)).toLocaleString("en-US", { maximumFractionDigits: 4 })} ${fromToken?.symbol ?? "tokens"} with ${Number(formatUnits(auctionState.takePayment, toToken?.decimals ?? 18)).toLocaleString("en-US", { maximumFractionDigits: 4 })} ${toToken?.symbol ?? "payment tokens"}`;
         return <div key={item.token} className="rounded-lg border border-[var(--border)] p-4 hover:border-[var(--border-hover)] transition-colors">
           <div className="flex items-center gap-2 text-sm font-medium">
             <Gavel size={16} className="text-[var(--muted-foreground)]" />
             Auction
+            {auctionState.active && (
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--success)]">
+                <CircleDot size={12} aria-hidden="true" className="motion-safe:animate-[pulse_3s_ease-in-out_infinite]" />
+                Auction in progress
+              </span>
+            )}
           </div>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mt-2">
             {config.auctionOutputToken && <AuctionRoute item={displayedItem} to={config.auctionOutputToken} />}
             <div className="flex flex-col gap-2 w-full sm:w-auto shrink-0">
-              <button disabled={auctionState.active || item.amount === 0n || busy} onClick={() => void submit("auction", item.token)} className="w-full inline-flex items-center justify-center px-4 py-1.5 rounded-md bg-[var(--foreground)] text-[var(--background)] text-sm font-medium hover:opacity-90 transition-all disabled:bg-[var(--muted)] disabled:text-[var(--muted-foreground)] disabled:opacity-100 disabled:hover:opacity-100 disabled:cursor-not-allowed">
-                {auctionState.active ? "Auction in progress" : busy && action === "auction" ? "Starting…" : "Start auction"}
-              </button>
+              {!auctionState.active && (
+                <button disabled={item.amount === 0n || busy} onClick={() => void submit("auction", item.token)} className="w-full inline-flex items-center justify-center px-4 py-1.5 rounded-md bg-[var(--foreground)] text-[var(--background)] text-sm font-medium hover:opacity-90 transition-all disabled:bg-[var(--muted)] disabled:text-[var(--muted-foreground)] disabled:opacity-100 disabled:hover:opacity-100 disabled:cursor-not-allowed">
+                  {busy && action === "auction" ? "Starting…" : "Start auction"}
+                </button>
+              )}
               {auctionState.active && (
-                <button disabled={!canTake || busy} onClick={() => void submitTake(item, auctionState)} className="w-full inline-flex items-center justify-center px-4 py-1.5 rounded-md border border-[var(--border)] text-sm font-medium hover:bg-[var(--muted)] transition-all disabled:text-[var(--muted-foreground)] disabled:cursor-not-allowed">
+                <button disabled={!canTake || busy} onClick={() => requestTake(item, index, auctionState, fromToken?.symbol ?? "token", toToken?.symbol ?? "payment token", takeLabel)} className="w-full inline-flex items-center justify-center px-4 py-1.5 rounded-md border border-[var(--border)] text-sm font-medium hover:bg-[var(--muted)] transition-all disabled:text-[var(--muted-foreground)] disabled:cursor-not-allowed">
                   {busy && action === "approve-take" ? "Approving…"
                     : busy && action === "take" ? "Taking…"
-                      : needsTakeApproval ? `Approve ${toToken?.symbol ?? "payment token"}` : "Take auction"}
+                      : auctionState.paymentBalance <= 0n
+                        ? `No ${toToken?.symbol ?? "payment token"} balance`
+                      : needsTakeApproval
+                        ? `Approve ${toToken?.symbol ?? "payment token"} to participate`
+                        : takeLabel}
                 </button>
               )}
             </div>
           </div>
           {auctionState.active ? (
-            <div className="pt-3 mt-1 border-t border-[var(--border)] text-xs text-[var(--muted-foreground)] space-y-1">
-              <p>
-                {auctionState.likelySettlesAt !== undefined
-                  ? isAttractive
-                    ? "The auction price is near the estimated market level now. "
-                    : `The auction price is expected to reach the estimated market level around ${formatLocalDate(auctionState.likelySettlesAt)} (${relativeTime(auctionState.likelySettlesAt, currentTimestamp)}). `
-                  : "The auction is live. "}
-                {auctionState.endsAt ? `It ends by ${formatLocalDate(auctionState.endsAt)}. ` : ""}
-                Actual settlement depends on market prices and taker activity.
-              </p>
+            <div className="pt-3 mt-1 border-t border-[var(--border)] text-xs text-[var(--muted-foreground)] space-y-3">
+              {auctionState.startsAt !== undefined && auctionState.endsAt !== undefined ? (
+                <AuctionTimeline
+                  startsAt={auctionState.startsAt}
+                  endsAt={auctionState.endsAt}
+                  marketAt={auctionState.likelySettlesAt}
+                  now={currentTimestamp}
+                  fromSymbol={fromToken?.symbol ?? "auction token"}
+                  toSymbol={toToken?.symbol ?? "payment token"}
+                />
+              ) : (
+                <p>The auction is live.</p>
+              )}
+              {auctionState.auctionRate !== undefined && auctionState.marketRate !== undefined && (
+                <div className="grid grid-cols-2 gap-2" aria-label="Auction and market price comparison">
+                  <div className="rounded-md bg-[var(--muted)] px-3 py-2">
+                    <span className="block text-[10px] uppercase tracking-wide">Auction now</span>
+                    <span className="mt-0.5 block font-medium text-[var(--foreground)]">{formatRate(auctionState.auctionRate)} {toToken?.symbol ?? "payment tokens"}</span>
+                  </div>
+                  <div className="rounded-md bg-[var(--muted)] px-3 py-2">
+                    <span className="block text-[10px] uppercase tracking-wide">Market</span>
+                    <span className="mt-0.5 block font-medium text-[var(--success)]">≈ {formatRate(auctionState.marketRate)} {toToken?.symbol ?? "payment tokens"}</span>
+                  </div>
+                </div>
+              )}
               {auctionState.takeAmount > 0n && auctionState.takePayment > 0n ? (
                 <p>
-                  Your balance can take up to {Number(formatUnits(auctionState.takeAmount, fromToken?.decimals ?? 18)).toLocaleString("en-US", { maximumFractionDigits: 4 })} {fromToken?.symbol ?? "tokens"} for approximately {Number(formatUnits(auctionState.takePayment, toToken?.decimals ?? 18)).toLocaleString("en-US", { maximumFractionDigits: 4 })} {toToken?.symbol ?? "payment tokens"}.
+                  You can participate with up to {Number(formatUnits(auctionState.takePayment, toToken?.decimals ?? 18)).toLocaleString("en-US", { maximumFractionDigits: 4 })} {toToken?.symbol ?? "payment tokens"} and receive approximately {Number(formatUnits(auctionState.takeAmount, fromToken?.decimals ?? 18)).toLocaleString("en-US", { maximumFractionDigits: 4 })} {fromToken?.symbol ?? "tokens"}.
+                  {needsTakeApproval ? ` If you’d like to participate, approve ${toToken?.symbol ?? "the payment token"} first.` : ""}
                 </p>
               ) : (
-                <p>You need {toToken?.symbol ?? "the payment token"} to take this auction.</p>
+                <p>
+                  You need {toToken?.symbol ?? "the payment token"} to take this auction.{" "}
+                  {config.auctionOutputToken && (
+                    <Link
+                      href={`/zap?${new URLSearchParams({
+                        input: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                        output: config.auctionOutputToken,
+                        outputSymbol: toToken?.symbol ?? "token",
+                        outputDecimals: String(toToken?.decimals ?? 18),
+                        ...(toToken?.logo ? { outputLogo: toToken.logo } : {}),
+                        outputAmount: formatUnits(auctionState.requiredPayment, toToken?.decimals ?? 18),
+                      }).toString()}`}
+                      className="whitespace-nowrap font-medium text-[var(--foreground)] transition-colors hover:text-[var(--accent)]"
+                    >
+                      <Zap size={12} aria-hidden="true" className="mr-1 inline-block align-[-0.125em]" />
+                      Buy {toToken?.symbol ?? "token"}
+                    </Link>
+                  )}
+                </p>
               )}
             </div>
-          ) : item.amount === 0n && <p className="pt-3 mt-1 border-t border-[var(--border)] text-xs text-[var(--muted-foreground)]">No claimed rewards are waiting for an auction.</p>}
+          ) : item.amount === 0n && <p className="pt-3 mt-1 border-t border-[var(--border)] text-xs text-[var(--muted-foreground)]">No strategy-owned tokens are waiting for an auction.</p>}
         </div>
       })}
+      {pendingTakeWarning && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="auction-price-warning-title">
+          <div className="w-full max-w-md rounded-xl border border-[var(--warning)]/40 bg-[var(--background)] p-5 shadow-xl">
+            <div className="flex items-start gap-3">
+              <span className="mt-0.5 rounded-full bg-[var(--warning)]/15 p-2 text-[var(--warning)]">
+                <AlertTriangle size={18} aria-hidden="true" />
+              </span>
+              <div>
+                <h2 id="auction-price-warning-title" className="text-base font-semibold">Auction price is above market value</h2>
+                <p className="mt-1 text-sm text-[var(--warning)]">
+                  You would pay approximately {(((pendingTakeWarning.auctionRate / pendingTakeWarning.marketRate) - 1) * 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}% more than the estimated market price.
+                </p>
+              </div>
+            </div>
+            <p className="mt-4 rounded-lg bg-[var(--warning)]/10 px-3 py-2.5 text-sm text-[var(--foreground)]">
+              Auction: {formatRate(pendingTakeWarning.auctionRate)} {pendingTakeWarning.toSymbol} per {pendingTakeWarning.fromSymbol}<br />
+              Market: approximately {formatRate(pendingTakeWarning.marketRate)} {pendingTakeWarning.toSymbol} per {pendingTakeWarning.fromSymbol}
+            </p>
+            <p className="mt-2 text-sm text-[var(--muted-foreground)]">
+              {pendingMarketMatchAt !== undefined
+                ? `Estimated to reach the market price ${relativeTime(pendingMarketMatchAt, currentTimestamp)} · ${formatLocalDate(pendingMarketMatchAt)}. You may want to wait until then.`
+                : "The auction price falls over time toward the estimated market price."}
+            </p>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" onClick={() => setPendingTakeWarning(null)} className="rounded-md border border-[var(--border)] px-4 py-2 text-sm font-medium hover:bg-[var(--muted)]">Cancel</button>
+              <button type="button" onClick={() => {
+                const warning = pendingTakeWarning;
+                setPendingTakeWarning(null);
+                void submitTake(warning.item, getAuctionState(warning.index));
+              }} className="rounded-md bg-[var(--warning)] px-4 py-2 text-sm font-semibold text-black hover:opacity-90">{pendingTakeWarning.takeLabel}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

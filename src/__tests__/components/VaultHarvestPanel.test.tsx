@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useAccount, useReadContract, useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import { stringToHex } from "viem";
@@ -33,6 +33,8 @@ const refetch = vi.fn();
 describe("VaultHarvestPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
+    window.history.replaceState({}, "", "/vaults/yscvx");
     mockUseAccount.mockReturnValue({
       isConnected: true,
       address: "0x0000000000000000000000000000000000000002",
@@ -54,6 +56,19 @@ describe("VaultHarvestPanel", () => {
         pxCvxPrice: 0.9,
       },
     } as unknown as ReturnType<typeof useVaultCache>);
+  });
+
+  it("links a wallet without the payment token to a prefilled Zap", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    window.history.replaceState({}, "", "/vaults/yscvx?auction-preview=no-balance");
+    mockUseReadContracts.mockReturnValue({ data: [], isLoading: false, refetch } as unknown as ReturnType<typeof useReadContracts>);
+
+    render(<VaultHarvestPanel vaultAddress={VAULT_ADDRESSES.YSCVX} />);
+
+    const link = screen.getByRole("link", { name: "Buy CVX" });
+    expect(link.getAttribute("href")).toContain("/zap?input=0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    expect(link.getAttribute("href")).toContain(`output=${TOKENS.CVX}`);
+    expect(link.getAttribute("href")).toContain("outputAmount=150");
   });
 
   it("shows ysCVX pending cvxCRV and submits report through the permissionless keeper", () => {
@@ -80,7 +95,7 @@ describe("VaultHarvestPanel", () => {
     expect(screen.getByText("16.4138 cvxCRV")).toBeTruthy();
     expect(screen.getByText("4.2 cvxCRV")).toBeTruthy();
     expect(screen.getByLabelText("Auction route cvxCRV to CVX")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Claim rewards" }));
+    fireEvent.click(screen.getByRole("button", { name: "Harvest for vault" }));
     expect(writeContractAsync).toHaveBeenCalledWith(expect.objectContaining({
       address: PERMISSIONLESS_KEEPER,
       functionName: "report",
@@ -103,9 +118,9 @@ describe("VaultHarvestPanel", () => {
 
     render(<VaultHarvestPanel vaultAddress={VAULT_ADDRESSES.YSCVX} />);
 
-    expect(screen.getByRole("button", { name: "Claim rewards" }).hasAttribute("disabled")).toBe(true);
-    expect(screen.getByText(/These rewards can be claimed around/)).toBeTruthy();
-    expect(screen.getByText("No claimed rewards are waiting for an auction.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Harvest for vault" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByText(/The strategy can harvest these rewards around/)).toBeTruthy();
+    expect(screen.getByText("No strategy-owned tokens are waiting for an auction.")).toBeTruthy();
   });
 
   it("shows progress toward the minimum reward threshold", () => {
@@ -127,7 +142,7 @@ describe("VaultHarvestPanel", () => {
 
     render(<VaultHarvestPanel vaultAddress={VAULT_ADDRESSES.YSCVX} />);
 
-    expect(screen.getByText("16.41 / 100 cvxCRV collected. More rewards need to build up before they can be claimed.")).toBeTruthy();
+    expect(screen.getByText("16.41 / 100 cvxCRV accumulated by the strategy. It needs more before it can harvest.")).toBeTruthy();
   });
 
   it("omits auction controls for yscvgCVX", () => {
@@ -157,7 +172,7 @@ describe("VaultHarvestPanel", () => {
     expect(screen.queryByRole("button", { name: "Start auction" })).toBeNull();
   });
 
-  it("shows the remaining rewards and end time for an active auction", () => {
+  it("shows an active auction timeline and market-price comparison", () => {
     const kicked = BigInt(Math.floor(Date.now() / 1000) - 3_600);
     mockUseReadContract.mockImplementation((parameters) => ({
       data: parameters?.functionName === "auction" ? "0x0000000000000000000000000000000000000001" : undefined,
@@ -176,6 +191,9 @@ describe("VaultHarvestPanel", () => {
           { status: "success", result: 60n },
           { status: "success", result: 150n },
           { status: "success", result: [kicked, 1n, 100n * 10n ** 18n] },
+          { status: "success", result: 10n ** 17n },
+          { status: "success", result: 10n ** 17n },
+          { status: "success", result: 0n },
         ] : [
           { status: "success", result: 16413800000000000000n },
           { status: "success", result: [false, stringToHex("Not enough pending cvxCRV rewards")] },
@@ -191,15 +209,16 @@ describe("VaultHarvestPanel", () => {
     render(<VaultHarvestPanel vaultAddress={VAULT_ADDRESSES.YSCVX} />);
 
     expect(screen.getByText("2.5 cvxCRV")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Auction in progress" }).hasAttribute("disabled")).toBe(true);
-    expect(screen.getByText((_, element) => {
-      const text = element?.textContent ?? "";
-      return element?.tagName === "P" &&
-        text.includes("The auction price is expected to reach the estimated market level around") &&
-        text.includes("in about 2 hours") &&
-        text.includes("It ends by") &&
-        text.includes("Actual settlement depends on market prices and taker activity");
-    })).toBeTruthy();
+    expect(screen.getByText("Auction in progress")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Auction in progress" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Approve CVX to participate" })).toBeTruthy();
+    expect(screen.getByText(/If you’d like to participate, approve CVX first/)).toBeTruthy();
+    expect(screen.getByLabelText("Auction timeline")).toBeTruthy();
+    expect(screen.getByText("Auction will reach the current cvxCRV/CVX market price in ~2 hrs")).toBeTruthy();
+    expect(screen.getByText("Auction now")).toBeTruthy();
+    expect(screen.getByText("0.04 CVX")).toBeTruthy();
+    expect(screen.getByText("Market")).toBeTruthy();
+    expect(screen.getByText("≈ 0.05 CVX")).toBeTruthy();
   });
 
   it("allows a wallet with the payment token to take part of an attractive auction", () => {
@@ -240,12 +259,63 @@ describe("VaultHarvestPanel", () => {
 
     render(<VaultHarvestPanel vaultAddress={VAULT_ADDRESSES.YSCVX} />);
 
-    expect(screen.getByText(/Your balance can take up to/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Take auction" }));
+    expect(screen.getByText(/You can participate with up to/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Take .* with .*/ }));
     expect(writeContractAsync).toHaveBeenCalledWith(expect.objectContaining({
       address: auction,
       functionName: "take",
       args: [TOKENS.CVXCRV, 1249999999999999987n, account],
+    }));
+  });
+
+  it("warns before participating when the auction price is above market value", () => {
+    const account = "0x0000000000000000000000000000000000000002" as const;
+    const auction = "0x0000000000000000000000000000000000000001" as const;
+    const kicked = BigInt(Math.floor(Date.now() / 1000) - 4 * 3_600);
+    mockUseReadContract.mockImplementation((parameters) => ({
+      data: parameters?.functionName === "auction" ? auction : undefined,
+      refetch,
+    }) as unknown as ReturnType<typeof useReadContract>);
+    mockUseReadContracts.mockImplementation((parameters) => {
+      const contracts = parameters?.contracts as readonly { functionName?: string }[] | undefined;
+      return {
+        data: contracts?.[0]?.functionName === "isActive" ? [
+          { status: "success", result: true },
+          { status: "success", result: 25n * 10n ** 17n },
+          { status: "success", result: kicked },
+          { status: "success", result: 86400n },
+          { status: "success", result: 60n * 10n ** 18n },
+          { status: "success", result: 60n },
+          { status: "success", result: 150n },
+          { status: "success", result: [kicked, 1n, 100n * 10n ** 18n] },
+          { status: "success", result: 15n * 10n ** 16n },
+          { status: "success", result: 15n * 10n ** 16n },
+          { status: "success", result: 15n * 10n ** 16n },
+        ] : [
+          { status: "success", result: 16413800000000000000n },
+          { status: "success", result: [false, stringToHex("Not enough pending cvxCRV rewards")] },
+          { status: "success", result: 0n },
+          { status: "success", result: 0n },
+          { status: "success", result: 864000n },
+        ],
+        isLoading: false,
+        refetch,
+      } as unknown as ReturnType<typeof useReadContracts>;
+    });
+
+    render(<VaultHarvestPanel vaultAddress={VAULT_ADDRESSES.YSCVX} />);
+    fireEvent.click(screen.getByRole("button", { name: /Take .* with .*/ }));
+
+    const warningDialog = screen.getByRole("dialog", { name: "Auction price is above market value" });
+    expect(warningDialog).toBeTruthy();
+    expect(screen.getByText(/approximately 20% more than the estimated market price/)).toBeTruthy();
+    expect(writeContractAsync).not.toHaveBeenCalled();
+
+    fireEvent.click(within(warningDialog).getByRole("button", { name: /Take .* with .*/ }));
+    expect(writeContractAsync).toHaveBeenCalledWith(expect.objectContaining({
+      address: auction,
+      functionName: "take",
+      args: [TOKENS.CVXCRV, 25n * 10n ** 17n, account],
     }));
   });
 });
