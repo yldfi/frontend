@@ -288,6 +288,38 @@ describe("route step amounts", () => {
     }) as unknown as typeof fetch;
   });
 
+  it("shows both underlying amounts for a standard vault-to-vault route", async () => {
+    mockGetRouteData.mockResolvedValueOnce({
+      amountOut: "900000000000000000",
+      tx: { to: "0xroute", data: "0x4", value: "0" },
+      route: [],
+    });
+    mockGetBundleData.mockResolvedValueOnce({
+      ...BUNDLE_RESPONSE,
+      amountsOut: {
+        [VAULT_ADDRESSES.YSCVXCRV.toLowerCase()]: "800000000000000000",
+      },
+    });
+
+    const result = await fetchVaultToVaultRoute({
+      fromAddress: TEST_WALLET,
+      sourceVault: VAULT_ADDRESSES.YSCVX,
+      targetVault: VAULT_ADDRESSES.YSCVXCRV,
+      amountIn: "1000000000000000000",
+      slippage: "100",
+    });
+
+    expect(result.routeInfo?.steps.map((step) => ({
+      token: step.tokenSymbol,
+      amount: step.amount,
+    }))).toEqual([
+      { token: "ysCVX", amount: "1.0000" },
+      { token: "CVX", amount: "1.0000" },
+      { token: "cvxCRV", amount: "0.9000" },
+      { token: "yscvxCRV", amount: "0.8000" },
+    ]);
+  });
+
   it("wraps legacy MORPHO before routing through current MORPHO", async () => {
     mockGetRouteData.mockResolvedValueOnce({
       amountOut: "1110269870387989",
