@@ -3395,12 +3395,73 @@ export async function fetchVaultToVaultRoute(params: {
   ];
   appendTerminalSlippageGuard(actions, slippage);
 
-  return fetchBundle({
+  const bundleResult = await fetchBundle({
     fromAddress: params.fromAddress,
     actions,
     receiver: params.fromAddress,
     skipQuote: false, // Standard V2V doesn't depend on account state — need amountsOut
   });
+  let redeemedUnderlyingAmount: string | undefined;
+  let expectedTargetUnderlying =
+    bundleResult.amountsOut[targetUnderlying.toLowerCase()] ??
+    bundleResult.amountsOut[targetUnderlying];
+  try {
+    redeemedUnderlyingAmount = await previewRedeem(params.sourceVault, amountIn);
+    expectedTargetUnderlying ??= await estimateRouteOutput(
+      params.fromAddress,
+      sourceUnderlying,
+      targetUnderlying,
+      redeemedUnderlyingAmount,
+      slippage,
+    );
+  } catch {
+    // Amounts are display-only metadata; never reject an executable bundle if
+    // an optional preview endpoint is temporarily unavailable.
+  }
+  const targetShares =
+    bundleResult.amountsOut[params.targetVault.toLowerCase()] ??
+    bundleResult.amountsOut[params.targetVault];
+  const steps: RouteStep[] = [
+    createRouteStep({
+      tokenAddress: params.sourceVault,
+      tokenSymbol: sourceVaultSymbol,
+      amount: amountIn,
+      action: "Redeem",
+      description: `${sourceVaultSymbol} for ${sourceUnderlyingSymbol}`,
+      protocol: "yld",
+    }),
+    createRouteStep({
+      tokenAddress: sourceUnderlying,
+      tokenSymbol: sourceUnderlyingSymbol,
+      amount: redeemedUnderlyingAmount,
+      action: "Swap",
+      description: `${sourceUnderlyingSymbol} for ${getTokenSymbol(targetUnderlying)}`,
+      protocol: "Enso",
+    }),
+    createRouteStep({
+      tokenAddress: targetUnderlying,
+      amount: expectedTargetUnderlying,
+      action: "Deposit",
+      description: `into ${targetVaultSymbol}`,
+      protocol: "yld",
+    }),
+    createRouteStep({
+      tokenAddress: params.targetVault,
+      tokenSymbol: targetVaultSymbol,
+      amount: targetShares,
+      action: "Receive",
+      description: `${targetVaultSymbol} shares`,
+      protocol: "yld",
+    }),
+  ];
+
+  return {
+    ...bundleResult,
+    routeInfo: {
+      steps,
+      ...buildRouteMetadataFromSteps(steps),
+    },
+  };
 }
 
 /**

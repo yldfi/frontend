@@ -1659,7 +1659,11 @@ export function useUniversalZap({
     enabled,
     staleTime: 15 * 1000,
     refetchInterval: enabled ? 60 * 1000 : false,
-    retry: false,
+    // Route discovery depends on several upstream RPC/API reads. A single
+    // transient failure should not become a sticky "No route found" state
+    // that only a full page refresh can clear.
+    retry: 2,
+    retryDelay: (attemptIndex) => Math.min(500 * 2 ** attemptIndex, 2_000),
   });
 
   return {
