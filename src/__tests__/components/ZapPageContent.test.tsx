@@ -12,6 +12,7 @@ import { useUniversalZap } from "@/hooks/useUniversalZap";
 import { useZapActions } from "@/hooks/useZapActions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { ETH_ADDRESS } from "@/lib/enso";
+import { TOKENS } from "@/config/vaults";
 import type { SimulationResult, ZapQuote } from "@/types/enso";
 
 vi.mock("next/link", () => ({
@@ -85,7 +86,9 @@ vi.mock("@/components/LoadingDots", () => ({
 }));
 
 vi.mock("@/components/RouteDisplay", () => ({
-  RouteDisplay: () => <div data-testid="route-display" />,
+  RouteDisplay: ({ routeInfo, isLoading }: { routeInfo?: unknown; isLoading?: boolean }) => (
+    <div data-testid="route-display" data-has-route={routeInfo ? "true" : "false"} data-loading={isLoading ? "true" : "false"} />
+  ),
 }));
 
 vi.mock("@/components/SlippageModal", () => ({
@@ -176,6 +179,7 @@ describe("ZapPageContent", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionStorage.clear();
+    window.history.replaceState({}, "", "/zap");
 
     mockUseAccount.mockReturnValue({
       address: "0x1234567890123456789012345678901234567890",
@@ -254,6 +258,53 @@ describe("ZapPageContent", () => {
     } as ReturnType<typeof useTokenBalances>);
 
     mockUseDebouncedValue.mockImplementation((value) => value);
+  });
+
+  it("loads an auction payment target from the URL", () => {
+    window.history.replaceState(
+      {},
+      "",
+      `/zap?input=${ETH_ADDRESS}&output=${TOKENS.CVX}&outputSymbol=CVX&outputDecimals=18&outputLogo=%2Ftokens%2Fcvx.png&outputAmount=150`,
+    );
+
+    render(<ZapPageContent />);
+
+    expect(screen.getByTestId("token-ETH")).toBeTruthy();
+    expect(screen.getByTestId("token-CVX")).toBeTruthy();
+    expect(mockUseTokenBalances).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({ symbol: "ETH" }),
+        expect.objectContaining({ address: TOKENS.CVX, symbol: "CVX" }),
+      ],
+      { preferOnchain: true },
+    );
+    expect((screen.getByPlaceholderText("0.00") as HTMLInputElement).value).toBe("1");
+    expect(screen.getByText("150")).toBeTruthy();
+  });
+
+  it("does not flash provisional route details while calibrating an auction target", () => {
+    window.history.replaceState(
+      {},
+      "",
+      `/zap?input=${ETH_ADDRESS}&output=${TOKENS.CVX}&outputSymbol=CVX&outputDecimals=18&outputAmount=150`,
+    );
+    mockUseUniversalZap.mockReturnValue({
+      quote: {
+        ...quote,
+        inputAmount: "1",
+        outputAmountFormatted: "1000",
+      },
+      isLoading: false,
+      error: null,
+      refetch: refetchQuote,
+    } as unknown as ReturnType<typeof useUniversalZap>);
+
+    render(<ZapPageContent />);
+
+    for (const routeDisplay of screen.getAllByTestId("route-display")) {
+      expect(routeDisplay.getAttribute("data-has-route")).toBe("false");
+      expect(routeDisplay.getAttribute("data-loading")).toBe("true");
+    }
   });
 
   it("runs preview mode instead of sending immediately when simulation preview is enabled", async () => {
@@ -341,6 +392,20 @@ describe("ZapPageContent", () => {
 
     expect(container.querySelector("aside")?.getAttribute("aria-hidden")).toBe("true");
     expect(screen.getByText("View on Etherscan")).toBeTruthy();
+  });
+
+  it("keeps route details visible when the input balance is insufficient", () => {
+    sessionStorage.setItem("yldfi-universal-zap-amount", "0.1");
+    mockUseBalance.mockReturnValue({
+      data: { value: 0n },
+      refetch: refetchBalance,
+    } as unknown as ReturnType<typeof useBalance>);
+
+    const { container } = render(<ZapPageContent />);
+
+    expect(screen.getByRole("button", { name: "Insufficient balance" })).toBeTruthy();
+    expect(container.querySelector("aside")?.getAttribute("aria-hidden")).toBe("false");
+    expect(screen.getAllByTestId("route-display").length).toBeGreaterThan(0);
   });
 
   it("never simulates or sends a quote for the previous debounced amount", async () => {
