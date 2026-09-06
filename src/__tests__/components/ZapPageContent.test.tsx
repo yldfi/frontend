@@ -282,6 +282,28 @@ describe("ZapPageContent", () => {
     expect(screen.getByText("150")).toBeTruthy();
   });
 
+  it.each([null, "", "0", "0.000", "-1", "abc", "1e3", "1.2.3", "9".repeat(400)])("ignores invalid auction target %s and displays the initial quote", (target) => {
+    const targetParam = target === null ? "" : `&outputAmount=${encodeURIComponent(target)}`;
+    window.history.replaceState({}, "", `/zap?input=${ETH_ADDRESS}&output=${TOKENS.CVXCRV}${targetParam}`);
+    mockUseUniversalZap.mockReturnValue({
+      quote: { ...quote, inputAmount: "1" },
+      isLoading: false,
+      error: null,
+      refetch: refetchQuote,
+    } as unknown as ReturnType<typeof useUniversalZap>);
+
+    render(<ZapPageContent />);
+
+    const input = screen.getByPlaceholderText("0.00") as HTMLInputElement;
+    expect(input.value).toBe("1");
+    expect(mockUseUniversalZap).toHaveBeenLastCalledWith(expect.objectContaining({ inputAmount: "1" }));
+
+    for (const routeDisplay of screen.getAllByTestId("route-display")) {
+      expect(routeDisplay.getAttribute("data-has-route")).toBe("true");
+      expect(routeDisplay.getAttribute("data-loading")).toBe("false");
+    }
+  });
+
   it("does not flash provisional route details while calibrating an auction target", () => {
     window.history.replaceState(
       {},
