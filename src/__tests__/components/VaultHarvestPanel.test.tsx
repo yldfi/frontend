@@ -71,6 +71,69 @@ describe("VaultHarvestPanel", () => {
     expect(link.getAttribute("href")).toContain("outputAmount=150");
   });
 
+  it.each(["zero", "failed"])("omits the Zap output target when the auction payment read is %s", (paymentRead) => {
+    mockUseReadContract.mockImplementation((parameters) => ({
+      data: parameters?.functionName === "auction" ? "0x0000000000000000000000000000000000000001" : undefined,
+      refetch,
+    }) as unknown as ReturnType<typeof useReadContract>);
+    mockUseReadContracts.mockImplementation((parameters) => {
+      const contracts = parameters?.contracts as readonly { functionName?: string }[] | undefined;
+      return {
+        data: contracts?.[0]?.functionName === "isActive"
+          ? contracts.map(({ functionName }) => {
+            if (functionName === "isActive") return { status: "success", result: true };
+            if (functionName === "available") return { status: "success", result: 10n ** 18n };
+            if (functionName === "getAmountNeeded" && paymentRead === "failed") return { status: "failure", error: new Error("Read failed") };
+            return { status: "success", result: 0n };
+          })
+          : [],
+        isLoading: false,
+        refetch,
+      } as unknown as ReturnType<typeof useReadContracts>;
+    });
+
+    render(<VaultHarvestPanel vaultAddress={VAULT_ADDRESSES.YSCVX} />);
+
+    const href = screen.getByRole("link", { name: "Buy CVX" }).getAttribute("href")!;
+    const params = new URL(href, "https://yldfi.co").searchParams;
+    expect(params.get("output")).toBe(TOKENS.CVX);
+    expect(params.has("outputAmount")).toBe(false);
+  });
+
+  it.each([0n, 1n])("requires a positive remaining amount to display an active auction (%s wei)", (available) => {
+    mockUseReadContract.mockImplementation((parameters) => ({
+      data: parameters?.functionName === "auction" ? "0x0000000000000000000000000000000000000001" : undefined,
+      refetch,
+    }) as unknown as ReturnType<typeof useReadContract>);
+    mockUseReadContracts.mockImplementation((parameters) => {
+      const contracts = parameters?.contracts as readonly { functionName?: string }[] | undefined;
+      return {
+        data: contracts?.[0]?.functionName === "isActive"
+          ? contracts.map(({ functionName }) => {
+            if (functionName === "isActive") return { status: "success", result: true };
+            if (functionName === "available") return { status: "success", result: available };
+            return { status: "success", result: 0n };
+          })
+          : [],
+        isLoading: false,
+        refetch,
+      } as unknown as ReturnType<typeof useReadContracts>;
+    });
+
+    render(<VaultHarvestPanel vaultAddress={VAULT_ADDRESSES.YSCVX} />);
+
+    if (available === 0n) {
+      expect(screen.queryByText("Auction in progress")).toBeNull();
+      expect(screen.queryByRole("link", { name: "Buy CVX" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "No CVX balance" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Start auction" }).hasAttribute("disabled")).toBe(true);
+      expect(screen.getByText("No strategy-owned tokens are waiting for an auction.")).toBeTruthy();
+    } else {
+      expect(screen.getByText("Auction in progress")).toBeTruthy();
+      expect(screen.getByRole("link", { name: "Buy CVX" })).toBeTruthy();
+    }
+  });
+
   it("shows ysCVX pending cvxCRV and submits report through the permissionless keeper", () => {
     mockUseReadContracts.mockReturnValue({
       data: [
@@ -259,7 +322,7 @@ describe("VaultHarvestPanel", () => {
 
     render(<VaultHarvestPanel vaultAddress={VAULT_ADDRESSES.YSCVX} />);
 
-    expect(screen.getByText(/You can participate with up to/)).toBeTruthy();
+    expect(screen.getByText(/Swap up to/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Take .* with .*/ }));
     expect(writeContractAsync).toHaveBeenCalledWith(expect.objectContaining({
       address: auction,

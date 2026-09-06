@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useAccount, useReadContract, useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { formatUnits, hexToString } from "viem";
-import { AlertTriangle, CircleDot, Gavel, Gift, Loader2, Zap } from "lucide-react";
+import { AlertTriangle, CircleDot, ExternalLink, Gavel, Gift, Loader2, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 import { useDirectWriteContract } from "@/hooks/useDirectWriteContract";
@@ -480,7 +480,7 @@ export function VaultHarvestPanel({ vaultAddress }: { vaultAddress: string }) {
     if (auctionPreview) {
       const hasPaymentBalance = auctionPreview !== "no-balance";
       return {
-      active: true,
+      active: auctionPreview !== "waiting" && auctionPreview !== "empty",
       available: 2_500n * 10n ** 18n,
       startsAt: currentTimestamp - 3 * 3_600,
       endsAt: currentTimestamp + 21 * 3_600,
@@ -510,8 +510,10 @@ export function VaultHarvestPanel({ vaultAddress }: { vaultAddress: string }) {
     };
     const offset = index * 11;
     const results = auctionStateData;
-    const active = results?.[offset]?.status === "success" ? results[offset].result as boolean : false;
+    const contractActive = results?.[offset]?.status === "success" ? results[offset].result as boolean : false;
     const available = results?.[offset + 1]?.status === "success" ? results[offset + 1].result as bigint : 0n;
+    // The contract's price can remain active after every token has been bought.
+    const active = contractActive && available > 0n;
     const kicked = results?.[offset + 2]?.status === "success" ? results[offset + 2].result as bigint : 0n;
     const length = results?.[offset + 3]?.status === "success" ? results[offset + 3].result as bigint : 0n;
     const startingPrice = results?.[offset + 4]?.status === "success" ? results[offset + 4].result as bigint : 0n;
@@ -697,7 +699,10 @@ export function VaultHarvestPanel({ vaultAddress }: { vaultAddress: string }) {
         </p>
       </div>
 
-      {auctionItems.length > 0 && auctionItems.map((item, index) => {
+      {auctionItems.length > 0 && auctionItems.map((liveItem, index) => {
+        const item = auctionPreview === "waiting"
+          ? { ...liveItem, amount: 2_500n * 10n ** BigInt(KNOWN_TOKENS[liveItem.token.toLowerCase()]?.decimals ?? 18) }
+          : auctionPreview === "empty" ? { ...liveItem, amount: 0n } : liveItem;
         const auctionState = getAuctionState(index);
         const displayedItem = auctionState.active ? { ...item, amount: auctionState.available } : item;
         const fromToken = KNOWN_TOKENS[item.token.toLowerCase()];
@@ -763,10 +768,13 @@ export function VaultHarvestPanel({ vaultAddress }: { vaultAddress: string }) {
                   </div>
                 </div>
               )}
-              {auctionState.takeAmount > 0n && auctionState.takePayment > 0n ? (
+            </div>
+          ) : null}
+          {(auctionState.active || item.amount === 0n || auctionAddress && auctionAddress !== ZERO_ADDRESS) && (
+            <div className={`flex items-baseline justify-between gap-3 text-xs text-[var(--muted-foreground)] ${!auctionState.active ? "pt-3 mt-1 border-t border-[var(--border)]" : "pt-3"}`}>
+              {auctionState.active && (auctionState.takeAmount > 0n && auctionState.takePayment > 0n ? (
                 <p>
-                  You can participate with up to {Number(formatUnits(auctionState.takePayment, toToken?.decimals ?? 18)).toLocaleString("en-US", { maximumFractionDigits: 4 })} {toToken?.symbol ?? "payment tokens"} and receive approximately {Number(formatUnits(auctionState.takeAmount, fromToken?.decimals ?? 18)).toLocaleString("en-US", { maximumFractionDigits: 4 })} {fromToken?.symbol ?? "tokens"}.
-                  {needsTakeApproval ? ` If you’d like to participate, approve ${toToken?.symbol ?? "the payment token"} first.` : ""}
+                  Swap up to {Number(formatUnits(auctionState.takePayment, toToken?.decimals ?? 18)).toLocaleString("en-US", { maximumFractionDigits: 4 })} {toToken?.symbol ?? "payment tokens"} for ≈{Number(formatUnits(auctionState.takeAmount, fromToken?.decimals ?? 18)).toLocaleString("en-US", { maximumFractionDigits: 4 })} {fromToken?.symbol ?? "tokens"}.
                 </p>
               ) : (
                 <p>
@@ -779,7 +787,9 @@ export function VaultHarvestPanel({ vaultAddress }: { vaultAddress: string }) {
                         outputSymbol: toToken?.symbol ?? "token",
                         outputDecimals: String(toToken?.decimals ?? 18),
                         ...(toToken?.logo ? { outputLogo: toToken.logo } : {}),
-                        outputAmount: formatUnits(auctionState.requiredPayment, toToken?.decimals ?? 18),
+                        ...(auctionState.requiredPayment > 0n
+                          ? { outputAmount: formatUnits(auctionState.requiredPayment, toToken?.decimals ?? 18) }
+                          : {}),
                       }).toString()}`}
                       className="whitespace-nowrap font-medium text-[var(--foreground)] transition-colors hover:text-[var(--accent)]"
                     >
@@ -788,9 +798,27 @@ export function VaultHarvestPanel({ vaultAddress }: { vaultAddress: string }) {
                     </Link>
                   )}
                 </p>
+              ))}
+              {!auctionState.active && item.amount === 0n && (
+                <p>No strategy-owned tokens are waiting for an auction.</p>
+              )}
+              {auctionAddress && auctionAddress !== ZERO_ADDRESS && (
+              <a
+                href={`https://auctionscan.info/auction/1/${auctionAddress}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="View current and previous auctions on AuctionScan (opens in a new tab)"
+                className="ml-auto inline-flex shrink-0 items-center gap-1 font-medium transition-colors hover:text-[var(--accent)]"
+              >
+                AuctionScan
+                <ExternalLink size={12} aria-hidden="true" />
+              </a>
               )}
             </div>
-          ) : item.amount === 0n && <p className="pt-3 mt-1 border-t border-[var(--border)] text-xs text-[var(--muted-foreground)]">No strategy-owned tokens are waiting for an auction.</p>}
+          )}
+          {canTake && needsTakeApproval && (
+            <p className="pt-2 text-xs text-[var(--muted-foreground)]">If you’d like to participate, approve {toToken?.symbol ?? "the payment token"} first.</p>
+          )}
         </div>
       })}
       {pendingTakeWarning && (
