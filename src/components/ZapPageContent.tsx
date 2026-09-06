@@ -105,7 +105,12 @@ function hasRequestedPair(): boolean {
 
 function loadRequestedOutputAmount(): string {
   if (typeof window === "undefined") return "";
-  return sanitizeAmount(new URLSearchParams(window.location.search).get("outputAmount") ?? "");
+  const amount = new URLSearchParams(window.location.search).get("outputAmount")?.trim() ?? "";
+  // URL targets must be positive decimals, not editable input to sanitize.
+  // In particular, "0" would keep quote calibration waiting forever.
+  return /^(?:\d+(?:\.\d*)?|\.\d+)$/.test(amount) && Number.isFinite(Number(amount)) && Number(amount) > 0
+    ? amount
+    : "";
 }
 
 function saveToken(key: string, token: EnsoToken | null) {
@@ -153,7 +158,7 @@ export function ZapPageContent() {
   const [amount, setAmountState] = useState(() => {
     if (typeof window === "undefined") return "";
     if (requestedOutputAmount) return "1";
-    if (hasRequestedPair()) return "";
+    if (hasRequestedPair()) return "1";
     try {
       return sanitizeAmount(sessionStorage.getItem(`${STORAGE_PREFIX}-amount`) ?? "");
     } catch {
