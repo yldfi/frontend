@@ -1,5 +1,5 @@
 /* eslint-disable */
-// Runtime types generated with workerd@1.20260831.1 2026-09-02 nodejs_compat
+// Runtime types generated with workerd@1.20260903.1 2026-09-02 nodejs_compat
 // Begin runtime types
 /*! *****************************************************************************
 Copyright (c) Cloudflare. All rights reserved.
@@ -3413,18 +3413,14 @@ interface Container {
     setInactivityTimeout(durationMs: number | bigint): Promise<void>;
     interceptOutboundHttp(addr: string, binding: Fetcher): Promise<void>;
     interceptAllOutboundHttp(binding: Fetcher): Promise<void>;
-    snapshotDirectory(options: ContainerDirectorySnapshotOptions): Promise<ContainerDirectorySnapshot>;
     snapshotContainer(options: ContainerSnapshotOptions): Promise<ContainerSnapshot>;
     interceptOutboundHttps(addr: string, binding: Fetcher): Promise<void>;
     exec(cmd: string[], options?: ContainerExecOptions): Promise<ExecProcess>;
+    inspect(): Promise<ContainerInfo | null>;
 }
 interface ContainerDirectorySnapshot {
     id: string;
     size: number;
-    dir: string;
-    name?: string;
-}
-interface ContainerDirectorySnapshotOptions {
     dir: string;
     name?: string;
 }
@@ -3460,6 +3456,10 @@ type ContainerStartupOptions = {
     image?: never;
     containerSnapshot?: ContainerSnapshotRestoreParams;
 });
+interface ContainerInfo {
+    labels: Record<string, string>;
+    image: string;
+}
 interface ContainerStartResources {
     vcpu: number;
     memoryMib: number;
@@ -3612,6 +3612,22 @@ declare abstract class Span {
     get isTraced(): boolean;
     setAttribute(key: string, value: boolean | number | string): this;
     setAttributes(attributes: Record<string, boolean | number | string | undefined>): this;
+    recordException(exception: string | {
+        code: string | number;
+        name?: string;
+        message?: string;
+        stack?: string;
+    } | {
+        code?: string | number;
+        name: string;
+        message?: string;
+        stack?: string;
+    } | {
+        code?: string | number;
+        name?: string;
+        message: string;
+        stack?: string;
+    }): void;
     end(): void;
 }
 /**
@@ -14723,6 +14739,7 @@ declare namespace TailStream {
     }
     interface Exception {
         readonly type: "exception";
+        readonly code?: string | number;
         readonly name: string;
         readonly message: string;
         readonly stack?: string;
