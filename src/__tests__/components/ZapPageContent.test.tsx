@@ -354,6 +354,8 @@ describe("ZapPageContent", () => {
     await waitFor(() => {
       expect(executeZap).toHaveBeenCalledWith({ previewOnly: true });
     });
+    // A null preview (approval needed or read failed) must not fall through to send.
+    expect(executeZap).toHaveBeenCalledTimes(1);
   });
 
   it("sends directly when simulation preview is disabled", async () => {
