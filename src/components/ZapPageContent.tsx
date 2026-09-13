@@ -443,11 +443,11 @@ export function ZapPageContent() {
     if (showSimulationPreview) {
       const result = await runSimulationPreview();
       if (result) return;
-      if (needsApproval()) return;
+      return;
     }
     stagePendingTxDetails();
     await executeZap();
-  }, [clearCompletionResetTimer, executeZap, needsApproval, runSimulationPreview, showSimulationPreview, stagePendingTxDetails]);
+  }, [clearCompletionResetTimer, executeZap, runSimulationPreview, showSimulationPreview, stagePendingTxDetails]);
 
   useEffect(() => {
     return () => clearCompletionResetTimer();
@@ -782,6 +782,8 @@ export function ZapPageContent() {
                   >
                     {isSimulatingPreview || showSimulationModal ? (
                       <>Simulating<LoadingDots /></>
+                    ) : status === "checkingApproval" ? (
+                      <>Checking approval<LoadingDots /></>
                     ) : status === "waitingApproval" ? (
                       <>Waiting for approval<LoadingDots /></>
                     ) : isLoading ? (
