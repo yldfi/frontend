@@ -15,6 +15,7 @@ import type { Hash, Hex, ReplacementReturnType } from "viem";
 import { buildLegacyMorphoPermitTransaction, ENSO_ROUTER_V2, ETH_ADDRESS, LEGACY_MORPHO_ADDRESS } from "@/lib/enso";
 import { FORBIDDEN_APPROVAL_SPENDER_ERROR, assertSafeApprovalSpender, isForbiddenApprovalSpender } from "@/lib/approval-safety";
 import { ERC20_APPROVAL_ABI, ERC20_PERMIT_ABI } from "@/lib/abis";
+import { readZapAllowance } from "@/lib/zap-allowance";
 import { shouldResetApprovalToZeroFirst } from "@/lib/approval-reset";
 import { useTestNetwork } from "@/contexts/TestNetworkContext";
 import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
@@ -34,6 +35,7 @@ export type ZapStatus =
   | "idle"
   | "needsApproval"
   | "approving"
+  | "checkingApproval"
   | "waitingApproval"
   | "zapping"
   | "waitingTx"
@@ -49,7 +51,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   const { testNetworkType } = useTestNetwork();
   const { isFlashbotsEnabled, isFlashbotsSupported, toggleFlashbots } = useFlashbotsProtect();
   const { sendTx } = useSendTx();
-  const [actionState, setActionState] = useState<"idle" | "needsApproval" | "approving" | "simulating" | "zapping">("idle");
+  const [actionState, setActionState] = useState<"idle" | "needsApproval" | "approving" | "checkingApproval" | "simulating" | "zapping">("idle");
   const [simulationError, setSimulationError] = useState<string | null>(null);
   const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
   const [zapHash, setZapHash] = useState<Hash | undefined>(undefined);
@@ -98,7 +100,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
   // User ERC20 approvals must target the tx entry point's spender — Enso Router
   // V2 for zaps, the vault itself for a direct deposit.
-  const { data: allowance, refetch: refetchAllowance } = useReadContract({
+  const { data: allowance, refetch: refetchAllowance, queryKey: allowanceQueryKey } = useReadContract({
     address: tokenAddress,
     abi: ERC20_APPROVAL_ABI,
     functionName: "allowance",
@@ -108,6 +110,31 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       enabled: !!userAddress && !isEth && !usesLegacyMorphoPermit && !!tokenAddress,
     },
   });
+
+  const approvalScope = [chainId, userAddress?.toLowerCase(), tokenAddress?.toLowerCase(), approvalSpender.toLowerCase(), quote?.inputAmount].join(":");
+  const allowanceCheckRef = useRef<AbortController | null>(null);
+  const confirmedApprovalRef = useRef<{ scope: string; block: bigint } | null>(null);
+  const submittedApprovalScopeRef = useRef<string | null>(null);
+
+  const previousScopeRef = useRef(approvalScope);
+
+  // A read for a previous wallet/token/amount must never continue a new zap.
+  useEffect(() => {
+    if (previousScopeRef.current !== approvalScope) {
+      previousScopeRef.current = approvalScope;
+      queueMicrotask(() => {
+        setActionState("idle");
+        setPendingApproval(null);
+        setApprovalResetFlow(null);
+      });
+    }
+    return () => {
+      allowanceCheckRef.current?.abort();
+      allowanceCheckRef.current = null;
+      autoExecuteRef.current = false;
+      confirmedApprovalRef.current = null;
+    };
+  }, [approvalScope]);
 
   // Approve contract
   const {
@@ -190,39 +217,6 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     }
   }, [zapReceipt]);
 
-  // Derive status from state (avoids setState in effects)
-  const status: ZapStatus = useMemo(() => {
-    // Terminal on-chain states (receipt exists and shows final result)
-    if (replacementError) return "error";
-    if (isZapReverted || isApprovalReverted) return "reverted";
-    if (isZapSuccess) return "success";
-    // Error states for pre-send failures (wallet rejection, simulation failure, RPC errors)
-    if (approveError || txError || simulationError) return "error";
-    // Active on-chain pending states
-    if (approvalResetFlow && (isApprovalPending || isApprovalSuccess)) return "waitingApproval";
-    if (isZapPending) return "waitingTx";
-    if (isApprovalPending) return "waitingApproval";
-    // Active action states (pre-send) — must be checked AFTER on-chain states
-    // but BEFORE isApprovalSuccess, which stays true after approval and would
-    // mask the simulating/zapping states during the approve→zap transition
-    if (actionState === "approving") return "approving";
-    if (actionState === "needsApproval") return "needsApproval";
-    if (actionState === "simulating") return "zapping";
-    if (actionState === "zapping") return "zapping";
-    return "idle";
-  }, [approveError, txError, simulationError, replacementError, isZapReverted, isApprovalReverted, isZapSuccess, isApprovalPending, isApprovalSuccess, isZapPending, actionState, approvalResetFlow]);
-
-  // Derive error message from errors or reverts
-  const error = useMemo(() => {
-    if (simulationError) return simulationError;
-    if (replacementError) return replacementError.message;
-    if (approveError) return parseErrorMessage(approveError, "Approval failed");
-    if (txError) return parseErrorMessage(txError, "Zap transaction failed");
-    if (isApprovalReverted) return "Approval transaction reverted";
-    if (isZapReverted) return "Zap transaction reverted";
-    return null;
-  }, [simulationError, replacementError, approveError, txError, isApprovalReverted, isZapReverted]);
-
   // Check if approval needed
   const needsApproval = useCallback((): boolean => {
     if (isEth || !quote || quote.legacyMorphoPermit) {
@@ -249,6 +243,49 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     }
   }, [isEth, quote, allowance]);
 
+  // Derive status from state (avoids setState in effects)
+  const status: ZapStatus = useMemo(() => {
+    // Terminal on-chain states (receipt exists and shows final result)
+    if (replacementError) return "error";
+    if (isZapReverted || isApprovalReverted) return "reverted";
+    if (isZapSuccess) return "success";
+    // Error states for pre-send failures (wallet rejection, simulation failure, RPC errors)
+    if (approveError || txError || simulationError) return "error";
+    // Active on-chain pending states
+    if (approvalResetFlow && (isApprovalPending || isApprovalSuccess)) return "waitingApproval";
+    if (isZapPending) return "waitingTx";
+    if (isApprovalPending) return "waitingApproval";
+    // Active action states (pre-send) — must be checked AFTER on-chain states
+    // but BEFORE isApprovalSuccess, which stays true after approval and would
+    // mask the simulating/zapping states during the approve→zap transition
+    if (actionState === "approving") return "approving";
+    if (actionState === "checkingApproval") return "checkingApproval";
+    if (actionState === "needsApproval" && needsApproval()) return "needsApproval";
+    if (actionState === "simulating") return "zapping";
+    if (actionState === "zapping") return "zapping";
+    return "idle";
+  }, [approveError, txError, simulationError, replacementError, isZapReverted, isApprovalReverted, isZapSuccess, isApprovalPending, isApprovalSuccess, isZapPending, actionState, approvalResetFlow, needsApproval]);
+
+  // Derive error message from errors or reverts
+  const error = useMemo(() => {
+    if (simulationError) return simulationError;
+    if (replacementError) return replacementError.message;
+    if (approveError) return parseErrorMessage(approveError, "Approval failed");
+    if (txError) return parseErrorMessage(txError, "Zap transaction failed");
+    if (isApprovalReverted) return "Approval transaction reverted";
+    if (isZapReverted) return "Zap transaction reverted";
+    return null;
+  }, [simulationError, replacementError, approveError, txError, isApprovalReverted, isZapReverted]);
+
+  useEffect(() => {
+    if (actionState === "needsApproval" && !needsApproval()) {
+      queueMicrotask(() => {
+        setPendingApproval(null);
+        setActionState(current => current === "needsApproval" ? "idle" : current);
+      });
+    }
+  }, [actionState, needsApproval]);
+
   // Derive approvalProgress and isApproving for ApprovalCard
   const approvalProgress: ApprovalProgress | null = useMemo(() => {
     if (!pendingApproval) return null;
@@ -266,13 +303,6 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
   const isApproving = status === "approving" || status === "waitingApproval";
 
-  // Refetch allowance after approval success (external side effect only)
-  useEffect(() => {
-    if (isApprovalSuccess) {
-      refetchAllowance();
-    }
-  }, [isApprovalSuccess, refetchAllowance]);
-
   useEffect(() => {
     if (isZapSuccess) {
       preparedApprovalSimulationRef.current = null;
@@ -281,8 +311,8 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     }
   }, [invalidateBalances, isZapSuccess, refetchAllowance]);
 
-  // Ref to hold latest executeZapInternal for use in auto-execute effect
-  const executeZapInternalRef = useRef<(options?: { skipSimulation?: boolean; previewOnly?: boolean }) => Promise<SimulationResult | null>>(async () => null);
+  // Auto-continuation uses the same fresh allowance check as manual execution.
+  const executeZapRef = useRef<(options?: { skipSimulation?: boolean; previewOnly?: boolean }) => Promise<SimulationResult | null>>(async () => null);
 
   useEffect(() => {
     if (status === "error" || approveError) {
@@ -318,6 +348,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       return;
     }
 
+    submittedApprovalScopeRef.current = approvalScope;
     setActionState("approving");
     setReplacementError(null);
     setReplacementApprovalHash(undefined);
@@ -392,10 +423,10 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       functionName: "approve",
       args: [approvalSpender, amount],
     });
-  }, [userAddress, isEth, tokenAddress, quote, publicClient, allowance, approvalSpender, rejectForbiddenApproval, writeApprove]);
+  }, [userAddress, isEth, tokenAddress, quote, publicClient, allowance, approvalSpender, rejectForbiddenApproval, writeApprove, approvalScope]);
 
   useEffect(() => {
-    if (!isApprovalSuccess || !approvalHash || !approvalResetFlow || handledApprovalHashRef.current === approvalHash) return;
+    if (!isApprovalSuccess || approvalReceipt?.status !== "success" || replacementError || submittedApprovalScopeRef.current !== approvalScope || !approvalHash || !approvalResetFlow || handledApprovalHashRef.current === approvalHash) return;
 
     handledApprovalHashRef.current = approvalHash;
 
@@ -416,7 +447,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     }
 
     queueMicrotask(() => setApprovalResetFlow(null));
-  }, [isApprovalSuccess, approvalHash, approvalResetFlow, resetApprove, writeApprove]);
+  }, [isApprovalSuccess, approvalReceipt, replacementError, approvalScope, approvalHash, approvalResetFlow, resetApprove, writeApprove]);
 
   const prepareTxParams = useCallback(async (): Promise<{ to: `0x${string}`; data: `0x${string}`; value: bigint }> => {
     if (!quote || !userAddress || !publicClient) {
@@ -504,7 +535,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   //   - skipSimulation: skip simulation and send tx directly (used after preview confirmation)
   //   - previewOnly: run simulation but don't send tx (for preview mode)
   // Returns the simulation result when previewOnly is true, otherwise returns null
-  const executeZapInternal = useCallback(async (options?: { skipSimulation?: boolean; previewOnly?: boolean }): Promise<SimulationResult | null> => {
+  const executeZapInternal = useCallback(async (options?: { skipSimulation?: boolean; previewOnly?: boolean }, signal?: AbortSignal): Promise<SimulationResult | null> => {
     if (!quote || !userAddress || !publicClient) return null;
 
     // Clear any previous simulation error
@@ -533,6 +564,8 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
         skipSimulation: !!options?.skipSimulation,
       });
     }
+
+    if (signal?.aborted) return null;
 
     const approvalTransactions = (() => {
       if (quote.legacyMorphoPermit) return undefined;
@@ -676,6 +709,8 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       ethCallPromise,
     ]);
 
+    if (signal?.aborted) return null;
+
     // Store the simulation result for preview mode
     if (simResult.result) {
       setSimulationResult(simResult.result);
@@ -744,38 +779,13 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     return null;
   }, [quote, userAddress, publicClient, prepareTxParams, sendTx, chainId, testNetworkType, simulationResult, approvalSpender]);
 
-  // Keep ref in sync with latest executeZapInternal
-  useEffect(() => {
-    executeZapInternalRef.current = executeZapInternal;
-  }, [executeZapInternal]);
-
-  // Auto-execute zap after approval succeeds
-  // After approval confirms, isApprovalPending goes false but actionState stays "approving",
-  // so status transitions from "waitingApproval" → "approving" (not "idle").
-  const prevStatus = useRef<ZapStatus>("idle");
-  useEffect(() => {
-    if (
-      autoExecuteRef.current &&
-      prevStatus.current === "waitingApproval" &&
-      !approvalResetFlow &&
-      (status === "idle" || status === "needsApproval" || status === "approving")
-    ) {
-      // Approval completed — preserve original options and continue into execution.
-      autoExecuteRef.current = false;
-      const options = pendingOptionsRef.current;
-      pendingOptionsRef.current = undefined;
-      setTimeout(() => {
-        executeZapInternalRef.current(options);
-      }, 100);
-    }
-    prevStatus.current = status;
-  }, [status, approvalResetFlow]);
-
   // Public executeZap — checks approval before executing.
   // If approval is needed, sets pendingApproval and shows the approval card.
   // The zap auto-executes after approval via the effect above.
   const executeZap = useCallback(async (options?: { skipSimulation?: boolean; previewOnly?: boolean }): Promise<SimulationResult | null> => {
-    if (!quote || !userAddress) return null;
+    if (!quote || !userAddress || allowanceCheckRef.current) return null;
+    const controller = new AbortController();
+    allowanceCheckRef.current = controller;
 
     // Clear stale state from previous attempts (e.g., wallet rejection)
     resetApprove();
@@ -785,41 +795,88 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     setReplacementError(null);
     setPendingApproval(null);
 
-    // Check if approval is needed
-    if (needsApproval()) {
-      if (isForbiddenApprovalSpender(approvalSpender)) {
-        rejectForbiddenApproval();
+    setSimulationError(null);
+    setActionState("checkingApproval");
+    try {
+      const requiresAllowance = !isEth && !quote.legacyMorphoPermit && quote.directVault?.action !== "withdraw";
+      let insufficient = false;
+      if (requiresAllowance) {
+        if (!publicClient || !tokenAddress) throw new Error("Wallet is not ready to check token approval. Please try again.");
+        const confirmed = confirmedApprovalRef.current;
+        const freshAllowance = await readZapAllowance({
+          client: publicClient, owner: userAddress, token: tokenAddress, spender: approvalSpender,
+          minimumBlock: confirmed?.scope === approvalScope ? confirmed.block : undefined,
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return null;
+        queryClient.setQueryData(allowanceQueryKey, freshAllowance);
+        insufficient = freshAllowance < parseUnits(quote.inputAmount, quote.inputToken.decimals);
+      }
+
+      // Only a successful read can lead to another approval request.
+      if (insufficient) {
+        if (isForbiddenApprovalSpender(approvalSpender)) {
+          rejectForbiddenApproval();
+          return null;
+        }
+
+        // Store options so auto-execute after approval preserves intent (e.g. previewOnly)
+        pendingOptionsRef.current = options;
+        // Set pending approval state to show the approval card
+        const tokenSymbol = quote.inputToken.symbol;
+        let amountWei: bigint | undefined;
+        try {
+          amountWei = parseUnits(quote.inputAmount, quote.inputToken.decimals);
+        } catch {
+          // fallback: don't show exact amount
+        }
+        setPendingApproval({
+          type: "erc20",
+          token: tokenAddress!,
+          tokenSymbol,
+          spender: approvalSpender,
+          spenderName: approvalSpenderName,
+          amount: amountWei,
+        });
+        setActionState("needsApproval");
         return null;
       }
 
-      // Store options so auto-execute after approval preserves intent (e.g. previewOnly)
-      pendingOptionsRef.current = options;
-      // Set pending approval state to show the approval card
-      const tokenSymbol = quote.inputToken.symbol;
-      let amountWei: bigint | undefined;
-      try {
-        amountWei = parseUnits(quote.inputAmount, quote.inputToken.decimals);
-      } catch {
-        // fallback: don't show exact amount
+      // No approval needed — execute directly
+      return await executeZapInternal(options, controller.signal);
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        setTxError(err instanceof Error ? err : new Error("Unable to verify token approval. Please try again."));
+        setActionState("idle");
       }
-      setPendingApproval({
-        type: "erc20",
-        token: tokenAddress!,
-        tokenSymbol,
-        spender: approvalSpender,
-        spenderName: approvalSpenderName,
-        amount: amountWei,
-      });
-      setActionState("needsApproval");
       return null;
+    } finally {
+      if (allowanceCheckRef.current === controller) allowanceCheckRef.current = null;
     }
+  }, [quote, userAddress, isEth, publicClient, tokenAddress, approvalSpender, approvalSpenderName, approvalScope, queryClient, allowanceQueryKey, executeZapInternal, rejectForbiddenApproval, resetApprove]);
 
-    // No approval needed — execute directly
-    return executeZapInternal(options);
-  }, [quote, userAddress, needsApproval, tokenAddress, approvalSpender, approvalSpenderName, executeZapInternal, rejectForbiddenApproval, resetApprove]);
+  useEffect(() => {
+    executeZapRef.current = executeZap;
+  }, [executeZap]);
+
+  useEffect(() => {
+    if (!autoExecuteRef.current || approvalResetFlow || !isApprovalSuccess || approvalReceipt?.status !== "success" || replacementError) return;
+    autoExecuteRef.current = false;
+    if (submittedApprovalScopeRef.current !== approvalScope) return;
+    confirmedApprovalRef.current = { scope: approvalScope, block: approvalReceipt.blockNumber };
+    const options = pendingOptionsRef.current;
+    pendingOptionsRef.current = undefined;
+    // Defer state updates out of the effect; no timing assumption about RPC sync.
+    queueMicrotask(() => {
+      if (confirmedApprovalRef.current?.scope === approvalScope) void executeZapRef.current(options);
+    });
+  }, [isApprovalSuccess, approvalReceipt, approvalResetFlow, replacementError, approvalScope]);
 
   // Reset state
   const reset = useCallback(() => {
+    allowanceCheckRef.current?.abort();
+    allowanceCheckRef.current = null;
+    confirmedApprovalRef.current = null;
     setActionState("idle");
     setSimulationError(null);
     setSimulationResult(null);
