@@ -266,7 +266,7 @@ async function getVaultAPY(vaultAddress: string, currentBlock: bigint, rpcUrls: 
 
     const ratio = Number(priceNow) / Number(priceYesterday);
     const apy = (ratio ** 365 - 1) * 100;
-    return apy;
+    return Number.isFinite(apy) ? apy : null;
   } catch (e) {
     logger.warn("getVaultAPY", `Failed for ${vaultAddress}`, { error: String(e) });
     return null;
@@ -281,6 +281,9 @@ async function getVaultData(vaultAddress: string, rpcUrls: string[], logger: Log
 
   const totalAssets = BigInt(totalAssetsHex);
   const pricePerShare = BigInt(pricePerShareHex);
+  if (totalAssets < 0n || pricePerShare <= 0n) {
+    throw new Error("Invalid vault assets or share price");
+  }
 
   return {
     totalAssets: totalAssets.toString(),
@@ -377,6 +380,7 @@ interface KongVaultData {
 }
 
 interface KongResponse {
+  errors?: { message: string }[];
   data: {
     ycvxcrv: KongVaultData | null;
     yscvxcrv: KongVaultData | null;
@@ -428,7 +432,18 @@ async function fetchKongVaults(): Promise<KongResponse> {
     throw new Error(`Kong API error: ${response.status}`);
   }
 
-  return (await response.json()) as KongResponse;
+  const result = (await response.json()) as KongResponse;
+  if (result.errors?.length || !result.data) {
+    throw new Error("Kong returned an incomplete vault response");
+  }
+  for (const key of ["ycvxcrv", "yscvxcrv", "ycvgcvx", "yscvgcvx"] as const) {
+    const vault = result.data[key];
+    if (!vault || !/^\d+$/.test(vault.totalAssets ?? "") ||
+        !/^\d+$/.test(vault.pricePerShare ?? "") || BigInt(vault.pricePerShare!) <= 0n) {
+      throw new Error(`Kong returned invalid data for ${key}`);
+    }
+  }
+  return result;
 }
 
 /**
@@ -444,6 +459,7 @@ function formatKongVault(address: string, data: KongVaultData | null, price: num
 
   const totalAssetsUsd = bigIntToNumber18(totalAssets) * price;
   const tvlUsd = data?.tvl?.close ? Number(data.tvl.close) : totalAssetsUsd;
+  if (!Number.isFinite(tvlUsd) || tvlUsd < 0) throw new Error("Invalid vault TVL");
 
   return {
     address,
@@ -481,13 +497,13 @@ async function fetchVaultData(env: Env, logger: Logger) {
   const kongData = kongResult.value;
   logger.info("fetchVaultData", "Kong data fetched");
 
-  // yspxcvx, yscvx and prices are non-critical — use fallback values
-  const yspxcvxData = yspxcvxResult.status === "fulfilled"
-    ? yspxcvxResult.value
-    : { totalAssets: "0", pricePerShare: "0", tvl: 0, pps: 0 };
-  const yscvxData = yscvxResult.status === "fulfilled"
-    ? yscvxResult.value
-    : { totalAssets: "0", pricePerShare: "0", tvl: 0, pps: 0 };
+  // Publish complete snapshots only. A failed read is not a zero balance:
+  // throwing leaves the previous KV snapshot and its timestamp unchanged.
+  if (yspxcvxResult.status === "rejected" || yscvxResult.status === "rejected") {
+    throw new Error("Vault RPC data unavailable; retaining previous snapshot");
+  }
+  const yspxcvxData = yspxcvxResult.value;
+  const yscvxData = yscvxResult.value;
   const cvxCrvPrice = cvxCrvPriceResult.status === "fulfilled"
     ? cvxCrvPriceResult.value
     : 0;
@@ -522,27 +538,10 @@ async function fetchVaultData(env: Env, logger: Logger) {
     }
   }
 
-  if (yspxcvxResult.status === "rejected") {
-    logger.error("fetchVaultData", "yspxcvx RPC failed (using zeros)", { error: String(yspxcvxResult.reason) });
-  } else {
-    logger.info("fetchVaultData", "yspxcvx data fetched", { tvl: yspxcvxData.tvl });
-  }
-  if (yscvxResult.status === "rejected") {
-    logger.error("fetchVaultData", "yscvx RPC failed (using zeros)", { error: String(yscvxResult.reason) });
-  } else {
-    logger.info("fetchVaultData", "yscvx data fetched", { tvl: yscvxData.tvl });
-  }
-  if (cvxCrvPriceResult.status === "rejected") {
-    logger.error("fetchVaultData", "cvxCRV price failed (using 0)", { error: String(cvxCrvPriceResult.reason) });
-  }
-  if (cvgCvxPriceResult.status === "rejected") {
-    logger.error("fetchVaultData", "cvgCVX Enso price failed (trying Curve fallback)", { error: String(cvgCvxPriceResult.reason) });
-  }
-  if (pxCvxPriceResult.status === "rejected") {
-    logger.error("fetchVaultData", "pxCVX Enso price failed (trying Curve fallback)", { error: String(pxCvxPriceResult.reason) });
-  }
-  if (cvxPriceResult.status === "rejected") {
-    logger.error("fetchVaultData", "CVX price failed (Curve fallback disabled)", { error: String(cvxPriceResult.reason) });
+  for (const [token, price] of Object.entries({ cvxCrvPrice, cvgCvxPrice, pxCvxPrice, cvxPrice })) {
+    if (!Number.isFinite(price) || price <= 0) {
+      throw new Error(`${token} unavailable; retaining previous snapshot`);
+    }
   }
 
   // On-chain APY: convertToAssets now vs 24h ago (matches DefiLlama getERC4626Info)
@@ -947,14 +946,23 @@ export default {
       }
 
       const logger = new Logger();
-      const data = await fetchVaultData(env, logger);
-      await env.VAULT_CACHE.put("vault-data", JSON.stringify(data), {
-        expirationTtl: 600,
-      });
-      ctx.waitUntil(logger.flush(env.LOGS));
-      return new Response(JSON.stringify(data), {
-        headers: { "Content-Type": "application/json" },
-      });
+      try {
+        const data = await fetchVaultData(env, logger);
+        await env.VAULT_CACHE.put("vault-data", JSON.stringify(data), {
+          expirationTtl: 86400,
+        });
+        return new Response(JSON.stringify(data), {
+          headers: { "Content-Type": "application/json" },
+        });
+      } catch {
+        logger.warn("refresh", "Refresh failed; previous snapshot retained");
+        return new Response(JSON.stringify({ error: "Refresh failed; previous snapshot retained" }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        });
+      } finally {
+        ctx.waitUntil(logger.flush(env.LOGS));
+      }
     }
 
     // POST /api/backfill - One-shot archive backfill of self-sampled history
