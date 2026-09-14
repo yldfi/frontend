@@ -23,18 +23,19 @@ export async function GET(request: NextRequest) {
   const upstream = new URL("/api/history", cacheWorkerUrl);
   upstream.searchParams.set("key", key);
   upstream.searchParams.set("metric", metric);
+  upstream.searchParams.set("version", "2");
 
   try {
     const response = await fetch(upstream.toString(), {
       headers: { "Content-Type": "application/json" },
-      next: { revalidate: 3600 },
+      next: { revalidate: 60 },
     });
     if (!response.ok) {
       return NextResponse.json({ error: "Failed to fetch history" }, { status: response.status });
     }
     const data = await response.json();
     return NextResponse.json(data, {
-      headers: { "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400" },
+      headers: { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120" },
     });
   } catch (error) {
     console.error("History proxy error:", error);
