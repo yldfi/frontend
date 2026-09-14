@@ -81,6 +81,9 @@ jobs:
       - name: Replay vault cache worker failure handling
         run: node workers/testing/replay-vault-cache.mjs
 
+      - name: Replay archive history runtime
+        run: node workers/testing/replay-vault-history.mjs
+
       - name: Run unit tests
         run: pnpm test:unit
 

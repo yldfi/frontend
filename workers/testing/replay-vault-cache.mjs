@@ -77,7 +77,7 @@ async function outbound(req) {
     assert(entry.expiration - Math.floor(Date.now()/1000) > 86000);
     console.log('PASS recovery and 24-hour retention');
     await (await mf.getWorker()).scheduled({ cron: '*/5 * * * *' });
-    assert(await env.HISTORY.get('history/yscvx.json'));
+    assert(await env.HISTORY.get('history/yspxcvx.json'));
     console.log('PASS healthy scheduled refresh and R2 history sampling');
   } finally { await mf.dispose(); }
 })().catch(e => { console.error(e); process.exitCode = 1; });

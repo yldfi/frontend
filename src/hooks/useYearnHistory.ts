@@ -25,12 +25,14 @@ const KONG_EXCLUDED_VAULTS = new Set([
 // Map excluded vault addresses → the key under which the cache worker samples
 // history into R2 (served via /api/history?key=<key>).
 const SELF_SAMPLED_KEYS: Record<string, string> = {
+  ["0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359".toLowerCase()]: "yscvgcvx",
+  ["0xCa960E6DF1150100586c51382f619efCCcF72706".toLowerCase()]: "yscvxcrv",
   ["0xB246DB2A73EEE3ee026153660c74657C123f8E42".toLowerCase()]: "yspxcvx",
   ["0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e".toLowerCase()]: "yscvx",
 };
 
 interface TimeseriesPoint {
-  value: number;
+  value: number | null;
   time: string;
 }
 
@@ -46,11 +48,11 @@ async function fetchTimeseries(op: "tvl" | "pps", params: {
   // Strategies without a Kong timeseries fetch from our own R2-backed history
   // (sampled on-chain by the cache worker cron). Return empty on any failure so
   // the chart renders "No history available" rather than crashing.
-  if (KONG_EXCLUDED_VAULTS.has(params.address.toLowerCase())) {
+  if (SELF_SAMPLED_KEYS[params.address.toLowerCase()]) {
     const vaultKey = SELF_SAMPLED_KEYS[params.address.toLowerCase()];
     if (!vaultKey) return [];
     try {
-      const response = await fetch(`/api/history?key=${vaultKey}&metric=${op}`);
+      const response = await fetch(`/api/history?key=${vaultKey}&metric=${op}&version=2`);
       if (!response.ok) return [];
       const result: TimeseriesResponse = await response.json();
       return result.data?.timeseries ?? [];
@@ -81,7 +83,7 @@ function isQueryable(address: string) {
 
 export interface HistoryPoint {
   time: number; // unix seconds
-  value: number;
+  value: number | null;
 }
 
 // Kong occasionally returns multiple points with identical timestamps
@@ -89,7 +91,7 @@ export interface HistoryPoint {
 // requires strictly ascending time, so collapse duplicates keeping the last
 // value for each timestamp.
 function dedupeByTime(points: HistoryPoint[]): HistoryPoint[] {
-  const byTime = new Map<number, number>();
+  const byTime = new Map<number, number | null>();
   for (const p of points) byTime.set(p.time, p.value);
   return Array.from(byTime, ([time, value]) => ({ time, value })).sort(
     (a, b) => a.time - b.time,
@@ -103,6 +105,7 @@ function dedupeByTime(points: HistoryPoint[]): HistoryPoint[] {
 function forwardFillZeros(points: HistoryPoint[]): HistoryPoint[] {
   let lastNonZero = 0;
   return points.map((p) => {
+    if (p.value === null) return p;
     if (p.value > 0) {
       lastNonZero = p.value;
       return p;
@@ -117,9 +120,9 @@ export function useVaultTvlHistory(address: string, chainId = 1, limit = 365) {
     queryKey: ["yearn-history", "tvl", chainId, address, limit],
     queryFn: async (): Promise<HistoryPoint[]> => {
       const points = await fetchTimeseries("tvl", { chainId, address, limit });
-      return forwardFillZeros(
-        dedupeByTime(points.map((p) => ({ time: Number(p.time), value: p.value }))),
-      );
+      const daily = dedupeByTime(points.map((p) => ({ time: Number(p.time), value: p.value })));
+      // Archive-backed zero balances are real; unavailable valuations stay null.
+      return SELF_SAMPLED_KEYS[address.toLowerCase()] ? daily : forwardFillZeros(daily);
     },
     ...HISTORY_CACHE,
     enabled,
@@ -166,7 +169,7 @@ export function useVault30dApyHistory(address: string, chainId = 1) {
         else break;
       }
       if (Math.abs(closest.time - targetTs) > 2 * 86400) return { time: current.time, apy: null };
-      if (closest.value <= 0 || current.value <= 0) return { time: current.time, apy: null };
+      if (closest.value === null || current.value === null || closest.value <= 0 || current.value <= 0) return { time: current.time, apy: null };
       const growth = current.value / closest.value - 1;
       const apy = growth * (365 / DAYS_AGO) * 100;
       if (!Number.isFinite(apy) || Math.abs(apy) > MAX_SANE_APY) return { time: current.time, apy: null };

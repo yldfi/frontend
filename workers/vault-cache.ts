@@ -1,5 +1,6 @@
 // Cloudflare Worker for caching vault data
 // Runs on a cron schedule to fetch vault data from Kong/Yearn API
+import { historyResponse, isHistoryKey, maintainHistory } from "./vault-history";
 
 const KONG_API_URL = "https://kong.yearn.farm/api/gql";
 
@@ -598,12 +599,11 @@ async function fetchVaultData(env: Env, logger: Logger) {
 }
 
 /**
- * Vaults with no Kong timeseries (standalone strategies not indexed by Kong).
+ * Legacy sampler for yspxCVX. The three tracked vaults use vault-history.ts.
  * We sample totalAssets/pricePerShare ourselves on each cron and append to the
  * R2 history so the frontend can render TVL/performance charts for them.
  */
 const SELF_SAMPLED_VAULTS = [
-  { key: "yscvx", address: YSCVX_VAULT },
   { key: "yspxcvx", address: YSPXCVX_VAULT },
 ] as const;
 
@@ -671,7 +671,7 @@ async function sampleHistory(env: Env, logger: Logger, rpcUrls: string[], cvxPri
   for (const { key, address } of SELF_SAMPLED_VAULTS) {
     try {
       const data = await getVaultData(address, rpcUrls, logger);
-      const underlyingPrice = key === "yscvx" ? cvxPrice : pxCvxPrice;
+      const underlyingPrice = pxCvxPrice;
       if (underlyingPrice <= 0) {
         logger.warn("sampleHistory", `Skipping ${key} — underlying price unavailable`, { cvxPrice, pxCvxPrice });
         continue;
@@ -693,10 +693,8 @@ async function sampleHistory(env: Env, logger: Logger, rpcUrls: string[], cvxPri
 
 // Inception (deploy) block for the self-sampled strategies. Used by the
 // archive backfill to scope the historical range. Verified on-chain:
-//   yscvx:    tx 0xc2e9... created block 25565641
 //   yspxcvx:  tx 0xe7b7... created block 23926415
 const BACKFILL_INCEPTION: Record<string, { block: number }> = {
-  yscvx: { block: 25565641 },
   yspxcvx: { block: 23926415 },
 };
 
@@ -851,6 +849,22 @@ export default {
     ctx: ExecutionContext
   ): Promise<void> {
     const logger = new Logger();
+    // Historical sampling is independent of the current-value cache and Kong.
+    // Use the configured archive provider only; don't hide archive failures
+    // behind a different public endpoint.
+    if (env.RPC_URL) {
+      try {
+        const { url, headers } = rpcHeaders(env.RPC_URL);
+        await maintainHistory(env.HISTORY, async (method, params) => {
+          const response = await fetch(url, { method: "POST", headers,
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), signal: AbortSignal.timeout(15000) });
+          if (!response.ok) throw new Error(`Archive HTTP ${response.status}`);
+          const body = await response.json() as { result?: unknown; error?: unknown };
+          if (body.error || body.result === undefined) throw new Error("Archive read unavailable");
+          return body.result;
+        });
+      } catch { logger.warn("history", "Archive sampling failed; stored history retained"); }
+    }
     try {
       const data = await fetchVaultData(env, logger);
       await env.VAULT_CACHE.put("vault-data", JSON.stringify(data), {
@@ -858,7 +872,7 @@ export default {
       });
       logger.info("scheduled", "Vault data cached", { lastUpdated: data.lastUpdated });
 
-      // Sample on-chain history for strategies Kong doesn't index (yscvx, yspxcvx).
+      // Retain the legacy yspxCVX sampler; tracked history runs independently above.
       // Must not block/short-circuit the main cache write if it fails.
       try {
         const privateRpcs = [env.RPC_URL, env.ALCHEMY_RPC_URL, env.INFURA_RPC_URL].filter(Boolean) as string[];
@@ -1003,6 +1017,7 @@ export default {
     if (url.pathname === "/api/history") {
       const key = url.searchParams.get("key");
       const metric = url.searchParams.get("metric") === "pps" ? "pps" : "tvl";
+      if (isHistoryKey(key)) return historyResponse(env.HISTORY, key, metric);
       const allowed = SELF_SAMPLED_VAULTS.some((v) => v.key === key);
       if (!key || !allowed) {
         return new Response(JSON.stringify({ error: "Invalid key" }), {

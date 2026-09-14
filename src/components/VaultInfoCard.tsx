@@ -13,6 +13,7 @@ import {
   type Time,
   type AreaData,
   type HistogramData,
+  type WhitespaceData,
 } from "lightweight-charts";
 import { Info, Sprout, TrendingUp, Wallet } from "lucide-react";
 import { useVaultTvlHistory, useVault30dApyHistory, type HistoryPoint, type ApyPoint } from "@/hooks/useYearnHistory";
@@ -241,7 +242,11 @@ function TvlChart({ tvlData, height = 320 }: TvlChartProps) {
         return;
       }
       const d = param.seriesData.get(series);
-      const value = d && "value" in d ? (d.value as number) : 0;
+      if (!d || !("value" in d)) {
+        setTooltip((p) => ({ ...p, visible: false }));
+        return;
+      }
+      const value = d.value as number;
       const dateStr = new Date((param.time as number) * 1000).toLocaleDateString(undefined, {
         month: "short",
         day: "numeric",
@@ -273,7 +278,7 @@ function TvlChart({ tvlData, height = 320 }: TvlChartProps) {
     if (!seriesRef.current || !chartRef.current) return;
     const cs = getComputedStyle(document.documentElement);
     const accentColor = cs.getPropertyValue("--accent").trim() || "#f59e0b";
-    const data: HistogramData[] = tvlData.map((p) => ({
+    const data: (HistogramData | WhitespaceData)[] = tvlData.map((p) => p.value === null ? { time: p.time as Time } : ({
       time: p.time as Time,
       value: p.value,
       color: `${accentColor}AA`,
