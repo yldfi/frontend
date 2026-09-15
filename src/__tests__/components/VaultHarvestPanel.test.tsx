@@ -1,9 +1,9 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useAccount, useReadContract, useReadContracts, useWaitForTransactionReceipt } from "wagmi";
-import { stringToHex } from "viem";
+import { parseUnits, stringToHex } from "viem";
 
-import { VaultHarvestPanel } from "@/components/VaultHarvestPanel";
+import { estimateLikelySettlementAt, VaultHarvestPanel } from "@/components/VaultHarvestPanel";
 import { CVGCVX_STRATEGY_TRIGGER, PERMISSIONLESS_KEEPER } from "@/config/harvest";
 import { TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 import { useDirectWriteContract } from "@/hooks/useDirectWriteContract";
@@ -29,6 +29,36 @@ const mockUseDirectWrite = vi.mocked(useDirectWriteContract);
 const mockUseVaultCache = vi.mocked(useVaultCache);
 const writeContractAsync = vi.fn(async () => "0x123" as `0x${string}`);
 const refetch = vi.fn();
+
+describe("auction market crossing", () => {
+  const params = {
+    kicked: 1_000_000n,
+    initialAvailable: parseUnits("15.8117", 18),
+    startingPrice: 1000n,
+    stepDuration: 36n,
+    stepDecayRate: 50n,
+    fromDecimals: 18,
+    fromPriceUsd: 1,
+    toPriceUsd: 1 / 6.9559,
+  };
+
+  it("uses the contract's raw startingPrice and rounds to the first qualifying step", () => {
+    expect(estimateLikelySettlementAt(params)).toBe(1_000_000 + 442 * 36);
+    const target = 6.9559 / 1.0045;
+    expect((1000 / 15.8117) * 0.995 ** 441).toBeGreaterThan(target);
+    expect((1000 / 15.8117) * 0.995 ** 442).toBeLessThanOrEqual(target);
+  });
+
+  it("normalizes the auctioned token's decimals", () => {
+    expect(estimateLikelySettlementAt({ ...params, fromDecimals: 6, initialAvailable: parseUnits("15.8117", 6) }))
+      .toBe(1_000_000 + 442 * 36);
+  });
+
+  it("omits an estimate without initial inventory or when crossing is after close", () => {
+    expect(estimateLikelySettlementAt({ ...params, initialAvailable: 0n })).toBeUndefined();
+    expect(estimateLikelySettlementAt({ ...params, endsAt: 1_000_000 + 441 * 36 })).toBeUndefined();
+  });
+});
 
 describe("VaultHarvestPanel", () => {
   beforeEach(() => {
@@ -235,6 +265,53 @@ describe("VaultHarvestPanel", () => {
     expect(screen.queryByRole("button", { name: "Start auction" })).toBeNull();
   });
 
+  it.each(["full", "partial", "missing-initial"])("keeps the screenshot auction above market with %s inventory data", (scenario) => {
+    const kicked = BigInt(Math.floor(Date.now() / 1000) - (4 * 3600 + 6 * 60));
+    const available = parseUnits(scenario === "partial" ? "1" : "15.8117", 18);
+    mockUseVaultCache.mockReturnValue({ data: { cvxCrvPrice: 1 / 6.9559 } } as unknown as ReturnType<typeof useVaultCache>);
+    mockUseReadContract.mockImplementation((parameters) => ({
+      data: parameters?.functionName === "auction" ? "0x0000000000000000000000000000000000000001" : undefined,
+      refetch,
+    }) as unknown as ReturnType<typeof useReadContract>);
+    mockUseReadContracts.mockImplementation((parameters) => {
+      const contracts = parameters?.contracts as readonly { functionName?: string }[] | undefined;
+      const values: Record<string, unknown> = {
+        isActive: true,
+        available,
+        kicked,
+        auctionLength: 86400n,
+        startingPrice: 1000n,
+        stepDuration: 36n,
+        stepDecayRate: 50n,
+        auctions: [kicked, 1n, parseUnits("15.8117", 18)],
+        getAmountNeeded: available * 80595n / 10000n,
+        balanceOf: 0n,
+        allowance: 0n,
+      };
+      return {
+        data: contracts?.[0]?.functionName === "isActive"
+          ? contracts.map(({ functionName }) => functionName === "auctions" && scenario === "missing-initial"
+            ? { status: "failure", error: new Error("Read failed") }
+            : { status: "success", result: values[functionName!] })
+          : [],
+        isLoading: false,
+        refetch,
+      } as unknown as ReturnType<typeof useReadContracts>;
+    });
+
+    render(<VaultHarvestPanel vaultAddress={VAULT_ADDRESSES.YSCVXCRV} />);
+
+    expect(screen.queryByText("Auction is at the current crvUSD/cvxCRV market price")).toBeNull();
+    expect(screen.getByText(scenario === "missing-initial"
+      ? "Market price estimate unavailable"
+      : "Auction will reach the current crvUSD/cvxCRV market price in ~20 mins")).toBeTruthy();
+    expect(screen.getByText("8.0595 cvxCRV")).toBeTruthy();
+    expect(screen.getByText("≈ 6.9559 cvxCRV")).toBeTruthy();
+    expect(screen.getAllByText("per crvUSD")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "No cvxCRV balance" }).hasAttribute("disabled")).toBe(true);
+    expect(writeContractAsync).not.toHaveBeenCalled();
+  });
+
   it("shows an active auction timeline and market-price comparison", () => {
     const kicked = BigInt(Math.floor(Date.now() / 1000) - 3_600);
     mockUseReadContract.mockImplementation((parameters) => ({
@@ -250,7 +327,7 @@ describe("VaultHarvestPanel", () => {
           { status: "success", result: 2500000000000000000n },
           { status: "success", result: kicked },
           { status: "success", result: 86400n },
-          { status: "success", result: 60n * 10n ** 18n },
+          { status: "success", result: 60n },
           { status: "success", result: 60n },
           { status: "success", result: 150n },
           { status: "success", result: [kicked, 1n, 100n * 10n ** 18n] },
@@ -301,7 +378,7 @@ describe("VaultHarvestPanel", () => {
           { status: "success", result: 25n * 10n ** 17n },
           { status: "success", result: kicked },
           { status: "success", result: 86400n },
-          { status: "success", result: 60n * 10n ** 18n },
+          { status: "success", result: 60n },
           { status: "success", result: 60n },
           { status: "success", result: 150n },
           { status: "success", result: [kicked, 1n, 100n * 10n ** 18n] },
@@ -347,7 +424,7 @@ describe("VaultHarvestPanel", () => {
           { status: "success", result: 25n * 10n ** 17n },
           { status: "success", result: kicked },
           { status: "success", result: 86400n },
-          { status: "success", result: 60n * 10n ** 18n },
+          { status: "success", result: 60n },
           { status: "success", result: 60n },
           { status: "success", result: 150n },
           { status: "success", result: [kicked, 1n, 100n * 10n ** 18n] },

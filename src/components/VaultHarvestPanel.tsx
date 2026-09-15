@@ -187,7 +187,7 @@ function AuctionTimeline({
         </span>
         <span className="shrink-0 tabular-nums text-[var(--muted-foreground)]">{formatDuration(elapsed)} / {formatDuration(duration)}</span>
       </div>
-      <div className="relative pb-7">
+      <div className="relative pb-12">
         <div className="relative h-2.5 overflow-hidden rounded-full bg-[var(--muted)]">
           <div
             className={`h-full rounded-full transition-[width] duration-500 ${hasReachedMarket ? "bg-[var(--success)]" : "bg-[var(--foreground)]"}`}
@@ -199,7 +199,7 @@ function AuctionTimeline({
         </div>
         <span className="absolute left-0 top-3.5 text-[10px] text-[var(--muted-foreground)]">Start</span>
         {marketProgress !== undefined && (
-          <span className={`absolute top-3.5 whitespace-nowrap text-[10px] font-medium text-[var(--success)] ${markerAlignment}`} style={{ left: `${marketProgress}%` }}>
+          <span className={`absolute top-7 whitespace-nowrap text-[10px] font-medium text-[var(--success)] ${markerAlignment}`} style={{ left: `${marketProgress}%` }}>
             Market price · {formatLocalDate(marketAt!).replace(/^.*?,\s*/, "")}
           </span>
         )}
@@ -216,7 +216,6 @@ export function estimateLikelySettlementAt({
   stepDuration,
   stepDecayRate,
   fromDecimals,
-  toDecimals,
   fromPriceUsd,
   toPriceUsd,
   endsAt,
@@ -227,7 +226,6 @@ export function estimateLikelySettlementAt({
   stepDuration: bigint;
   stepDecayRate: bigint;
   fromDecimals: number;
-  toDecimals: number;
   fromPriceUsd: number;
   toPriceUsd: number;
   endsAt?: number;
@@ -237,7 +235,9 @@ export function estimateLikelySettlementAt({
     stepDecayRate <= 0n || stepDecayRate >= 10_000n || fromPriceUsd <= 0 || toPriceUsd <= 0
   ) return undefined;
 
-  const initialUnitPrice = Number(formatUnits(startingPrice, toDecimals)) /
+  // Auction._price applies wdiv(startingPrice * 1e18, scaledAvailable).
+  // startingPrice is an unscaled whole-token value, not payment-token wei.
+  const initialUnitPrice = Number(startingPrice) /
     Number(formatUnits(initialAvailable, fromDecimals));
   // Match Zaplet's conservative market-crossing estimate by allowing 45 bps
   // for swap slippage and execution costs.
@@ -542,12 +542,11 @@ export function VaultHarvestPanel({ vaultAddress }: { vaultAddress: string }) {
     };
     const likelySettlesAt = estimateLikelySettlementAt({
       kicked,
-      initialAvailable: auctionInfo?.[2] ?? available,
+      initialAvailable: auctionInfo?.[2] ?? 0n,
       startingPrice,
       stepDuration,
       stepDecayRate,
       fromDecimals: fromToken?.decimals ?? 18,
-      toDecimals: toToken?.decimals ?? 18,
       fromPriceUsd: tokenPriceUsd(auctionItems[index]?.token),
       toPriceUsd: tokenPriceUsd(outputToken),
       endsAt,
@@ -761,10 +760,12 @@ export function VaultHarvestPanel({ vaultAddress }: { vaultAddress: string }) {
                   <div className="rounded-md bg-[var(--muted)] px-3 py-2">
                     <span className="block text-[10px] uppercase tracking-wide">Auction now</span>
                     <span className="mt-0.5 block font-medium text-[var(--foreground)]">{formatRate(auctionState.auctionRate)} {toToken?.symbol ?? "payment tokens"}</span>
+                    <span className="block text-[10px]">per {fromToken?.symbol ?? "auction token"}</span>
                   </div>
                   <div className="rounded-md bg-[var(--muted)] px-3 py-2">
                     <span className="block text-[10px] uppercase tracking-wide">Market</span>
                     <span className="mt-0.5 block font-medium text-[var(--success)]">≈ {formatRate(auctionState.marketRate)} {toToken?.symbol ?? "payment tokens"}</span>
+                    <span className="block text-[10px]">per {fromToken?.symbol ?? "auction token"}</span>
                   </div>
                 </div>
               )}
