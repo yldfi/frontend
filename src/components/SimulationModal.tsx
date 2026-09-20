@@ -3,6 +3,7 @@
 import { createPortal } from "react-dom";
 import { ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { validSimulationUsd } from "@/lib/simulation-pricing";
 import { VAULTS } from "@/config/vaults";
 import { CUSTOM_TOKENS } from "@/lib/enso";
 import type { SimulationAssetChange } from "@/types/enso";
@@ -50,6 +51,8 @@ function AssetChangeRow({ change }: { change: SimulationAssetChange }) {
     || (change.symbol === "ETH" ? "https://assets.coingecko.com/coins/images/279/thumb/ethereum.png" : undefined)
     || (change.symbol.toLowerCase() === "crvusd" ? "/tokens/crvusd.png" : undefined);
 
+  const dollarValue = validSimulationUsd(change.dollarValue);
+
   return (
     <div className="flex items-center gap-3 bg-[var(--muted)] rounded-lg p-3">
       {tokenLogo ? (
@@ -61,9 +64,11 @@ function AssetChangeRow({ change }: { change: SimulationAssetChange }) {
       <span className="mono text-sm flex-1">
         {Number(change.amount).toLocaleString(undefined, { maximumFractionDigits: 6 })} {change.symbol}
       </span>
-      <span className="text-sm text-[var(--muted-foreground)]">
-        ~${change.dollarValue ? Number(change.dollarValue).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}
-      </span>
+      {dollarValue !== undefined && (
+        <span className="text-sm text-[var(--muted-foreground)]">
+          ~${dollarValue < 0.01 ? "<0.01" : dollarValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </span>
+      )}
     </div>
   );
 }
@@ -108,8 +113,9 @@ function PriceImpactBadge({ impact }: { impact: number }) {
 
 // Compute price impact from dollar values: ((inUsd - outUsd) / inUsd) * 100
 function computeImpact(inChanges: SimulationAssetChange[], outChanges: SimulationAssetChange[]): number | null {
-  const inUsd = inChanges.filter(c => c.dollarValue).reduce((sum, c) => sum + Number(c.dollarValue), 0);
-  const outUsd = outChanges.filter(c => c.dollarValue).reduce((sum, c) => sum + Number(c.dollarValue), 0);
+  if ([...inChanges, ...outChanges].some(c => validSimulationUsd(c.dollarValue) === undefined)) return null;
+  const inUsd = inChanges.reduce((sum, c) => sum + Number(c.dollarValue), 0);
+  const outUsd = outChanges.reduce((sum, c) => sum + Number(c.dollarValue), 0);
   if (inUsd > 0 && outUsd > 0) return ((inUsd - outUsd) / inUsd) * 100;
   return null;
 }
@@ -328,7 +334,10 @@ export function SimulationModal({
             // --- Leverage mode ---
             // Split deposits into "from input swap" vs "from leverage borrow"
             // The leverage deposit's dollar value is closest to the borrow's dollar value
-            const borrowDollar = borrows.reduce((sum, c) => sum + Number(c.dollarValue ?? 0), 0);
+            const allLeverageValuesKnown = [...borrows, ...deposits]
+              .every(c => validSimulationUsd(c.dollarValue) !== undefined);
+            const borrowDollar = allLeverageValuesKnown
+              ? borrows.reduce((sum, c) => sum + Number(c.dollarValue), 0) : 0;
             const depositToken = deposits[0]; // all deposits are same token in leverage
 
             let inputDeposits: SimulationAssetChange[];
@@ -355,7 +364,8 @@ export function SimulationModal({
             }
 
             const inputDepositAmount = inputDeposits.reduce((sum, c) => sum + Number(c.amount), 0);
-            const inputDepositDollar = inputDeposits.reduce((sum, c) => sum + Number(c.dollarValue ?? 0), 0);
+            const inputDepositDollar = inputDeposits.every(c => validSimulationUsd(c.dollarValue) !== undefined)
+              ? inputDeposits.reduce((sum, c) => sum + Number(c.dollarValue), 0) : 0;
 
             // Input group: user's token → collateral from input swap
             if (sends.length > 0) {
@@ -546,14 +556,8 @@ export function SimulationModal({
               );
               if (!hasSwap) return null;
 
-              const sendUsd = sends
-                .filter(c => c.dollarValue)
-                .reduce((sum, c) => sum + Number(c.dollarValue), 0);
-              const outUsd = simulationResult.assetChanges
-                .filter(c => (c.type === "receive" || c.type === "deposit") && c.dollarValue)
-                .reduce((sum, c) => sum + Number(c.dollarValue), 0);
-              if (sendUsd > 0 && outUsd > 0) {
-                const impact = ((sendUsd - outUsd) / sendUsd) * 100;
+              const impact = computeImpact(sends, [...receives, ...deposits]);
+              if (impact !== null) {
                 return (
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-[var(--muted-foreground)]">Price Impact</span>

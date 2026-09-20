@@ -1,0 +1,87 @@
+{
+  "provenance": {
+    "simulationId": "3b0f453a-2cb3-47c4-ac3c-01c3eb54531b",
+    "block": 26019865,
+    "capturedAt": "2026-09-20",
+    "note": "Tenderly quick replay asset changes; Enso prices from captured production response. Wallet replaced."
+  },
+  "wallet": "0x1111111111111111111111111111111111111111",
+  "tenderly": {
+    "simulation": {
+      "id": "3b0f453a-2cb3-47c4-ac3c-01c3eb54531b",
+      "status": true,
+      "gas_used": 613991,
+      "block_number": 26019865
+    },
+    "transaction": {
+      "status": true,
+      "gas_used": 613991,
+      "transaction_info": {
+        "asset_changes": [
+          {
+            "token_info": {
+              "standard": "ERC20",
+              "type": "Fungible",
+              "contract_address": "0x1fd0a85084fc61c397ac619c4f0ba2350ea1ce9e",
+              "symbol": "ysCVX",
+              "name": "CVX Compounder",
+              "decimals": 18,
+              "dollar_value": "0"
+            },
+            "from": "0x1111111111111111111111111111111111111111",
+            "to": "0x4fe93ebc4ce6ae4f81601cc7ce7139023919e003",
+            "amount": "1746",
+            "raw_amount": "1746000000000000000000",
+            "dollar_value": "0"
+          },
+          {
+            "token_info": {
+              "standard": "ERC20",
+              "type": "Fungible",
+              "contract_address": "0xbce0cf87f513102f22232436cca2ca49e815c3ac",
+              "symbol": "pxCVX",
+              "name": "Pirex CVX",
+              "decimals": 18,
+              "dollar_value": "0"
+            },
+            "from": "0x4fe93ebc4ce6ae4f81601cc7ce7139023919e003",
+            "to": "0x1111111111111111111111111111111111111111",
+            "amount": "1854.181861460125248314",
+            "raw_amount": "1854181861460125248314",
+            "dollar_value": "0"
+          }
+        ]
+      }
+    }
+  },
+  "prices": [
+    {
+      "decimals": 18,
+      "symbol": "CVX",
+      "price": 1.9291830487595751,
+      "timestamp": 1789921013635,
+      "chainId": 1,
+      "address": "0x4e3fbd56cd56c3e72c1403e103b45db9da5b9d2b",
+      "name": "Convex Finance"
+    },
+    {
+      "address": "0xBCe0Cf87F513102F22232436CCa2ca49e815C3aC",
+      "chainId": 1,
+      "decimals": 18,
+      "name": "Pirex CVX",
+      "price": 1.9433860215757002,
+      "symbol": "pxCVX",
+      "timestamp": 1789921014209,
+      "oracle": "debank"
+    },
+    {
+      "decimals": 18,
+      "symbol": "CVX",
+      "price": 1.9291830487595751,
+      "timestamp": 1789921013635,
+      "chainId": 1,
+      "address": "0x4e3fbd56cd56c3e72c1403e103b45db9da5b9d2b",
+      "name": "Convex Finance"
+    }
+  ]
+}
