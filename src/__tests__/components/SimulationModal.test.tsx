@@ -59,3 +59,28 @@ describe("SimulationModal", () => {
     expect(screen.queryByText("-3.08%")).toBeNull();
   });
 });
+
+describe("simulation dollar value visibility", () => {
+  function show(changes: SimulationAssetChange[]) {
+    return render(<SimulationModal isOpen onClose={vi.fn()} onConfirm={vi.fn()}
+      simulationResult={{ success: true, gasUsed: 613983, errorMessage: null, tenderlyUrl: null, assetChanges: changes }} />);
+  }
+
+  it.each([undefined, "0", "-10", "NaN", "Infinity"])("omits unusable dollar values (%s) but keeps token amounts", dollarValue => {
+    show(assetChanges.map(c => ({ ...c, dollarValue })));
+    expect(screen.getByText(/432.886349 yvUSDC-1/)).toBeTruthy();
+    expect(screen.queryByText(/\$/)).toBeNull();
+    expect(screen.queryByText("Price Impact")).toBeNull();
+  });
+
+  it("shows the priced row but omits impact for a partially priced swap", () => {
+    show([{ ...assetChanges[0], dollarValue: undefined }, assetChanges[1]]);
+    expect(screen.getByText("~$463.55")).toBeTruthy();
+    expect(screen.queryByText("Price Impact")).toBeNull();
+  });
+
+  it("does not display a tiny positive value as zero", () => {
+    show([{ ...assetChanges[0], dollarValue: "0.001" }]);
+    expect(screen.getByText("~$<0.01")).toBeTruthy();
+  });
+});
