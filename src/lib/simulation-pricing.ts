@@ -1,56 +1,8 @@
-import { TOKENS } from "@/config/vaults";
-
-const CVX_ADDRESS_LOWER = TOKENS.CVX.toLowerCase();
-
-const CVX_EQUIVALENT_PRICE_TOKENS = new Set([
-  TOKENS.CVGCVX.toLowerCase(),
-  TOKENS.PXCVX.toLowerCase(),
-  TOKENS.LPXCVX.toLowerCase(),
-]);
-
-export function isCvxEquivalentPriceToken(address: string | null | undefined): boolean {
-  if (!address) return false;
-  return CVX_EQUIVALENT_PRICE_TOKENS.has(address.toLowerCase());
-}
-
-export function getSimulationPriceLookupAddresses(addresses: string[]): string[] {
-  const deduped = new Set<string>();
-  let needsCvxFallback = false;
-
-  for (const address of addresses) {
-    const normalized = address.toLowerCase();
-    deduped.add(normalized);
-    if (isCvxEquivalentPriceToken(normalized)) {
-      needsCvxFallback = true;
-    }
-  }
-
-  if (needsCvxFallback) {
-    deduped.add(CVX_ADDRESS_LOWER);
-  }
-
-  return [...deduped];
-}
-
-export function resolveSimulationTokenPrice(
-  address: string,
-  priceMap: Map<string, number>,
-): number | undefined {
-  const normalized = address.toLowerCase();
-  const directPrice = priceMap.get(normalized);
-
-  if (directPrice !== undefined && directPrice !== 0) {
-    return directPrice;
-  }
-
-  if (isCvxEquivalentPriceToken(normalized)) {
-    const cvxFallbackPrice = priceMap.get(CVX_ADDRESS_LOWER);
-    if (cvxFallbackPrice !== undefined && cvxFallbackPrice !== 0) {
-      return cvxFallbackPrice;
-    }
-  }
-
-  return directPrice;
+/** A zero, negative or non-finite quote is not usable USD pricing. */
+export function validSimulationUsd(value: unknown): number | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 export interface SimulationVaultPriceInfo {
@@ -58,38 +10,97 @@ export interface SimulationVaultPriceInfo {
   underlyingDecimals: number;
 }
 
-interface ResolveSimulationDollarValueParams {
+export interface PricedSimulationAsset {
   address: string;
-  rawAmount: string | bigint;
+  rawAmount: string;
   decimals: number;
-  priceMap: Map<string, number>;
-  vaultInfo?: SimulationVaultPriceInfo | null;
-  underlyingAmount?: string | bigint;
+  dollarValue?: string;
 }
 
-export function resolveSimulationDollarValue({
-  address,
-  rawAmount,
-  decimals,
-  priceMap,
-  vaultInfo,
-  underlyingAmount,
-}: ResolveSimulationDollarValueParams): string | undefined {
-  const directPrice = resolveSimulationTokenPrice(address, priceMap);
-  if (directPrice !== undefined && directPrice !== 0) {
-    const amount = Number(rawAmount) / 10 ** decimals;
-    return (amount * directPrice).toString();
+interface PricingDependencies {
+  fetchPrice: (address: string) => Promise<number | undefined>;
+  knownVault?: (address: string) => SimulationVaultPriceInfo | null;
+  lookupVault: (address: string) => Promise<SimulationVaultPriceInfo | null>;
+  convertToAssets: (address: string, rawAmount: string) => Promise<bigint>;
+  timeoutMs: number;
+  onFailure?: (stage: string, address: string, reason: "timeout" | "lookup_failed") => void;
+}
+
+/**
+ * Prefer Enso even for nonzero Tenderly values. Vault shares use on-chain NAV
+ * and the underlying's actual price when available. Independent lookups share
+ * one deadline, so a slow/unpriced token cannot discard another token's price.
+ */
+export async function enrichSimulationPrices<T extends PricedSimulationAsset>(
+  changes: T[],
+  dependencies: PricingDependencies,
+): Promise<T[]> {
+  const deadline = Date.now() + dependencies.timeoutMs;
+  const prices = new Map<string, Promise<number | undefined>>();
+  const vaults = new Map<string, Promise<SimulationVaultPriceInfo | null | undefined>>();
+  const conversions = new Map<string, Promise<bigint | undefined>>();
+
+  async function bounded<V>(stage: string, address: string, work: () => Promise<V>): Promise<V | undefined> {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Error("pricing deadline");
+    try {
+      return await Promise.race([
+        Promise.resolve().then(work),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(timeout), remaining); }),
+      ]);
+    } catch (error) {
+      // Upstream errors/URLs may contain credentials; record only the failure class.
+      dependencies.onFailure?.(stage, address, error === timeout ? "timeout" : "lookup_failed");
+      return undefined;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
-  if (!vaultInfo || underlyingAmount === undefined) {
-    return undefined;
+  function price(address: string) {
+    const key = address.toLowerCase();
+    if (!prices.has(key)) {
+      prices.set(key, bounded("enso_price", key, () => dependencies.fetchPrice(key))
+        .then(validSimulationUsd));
+    }
+    return prices.get(key)!;
   }
 
-  const underlyingPrice = resolveSimulationTokenPrice(vaultInfo.underlying, priceMap);
-  if (underlyingPrice === undefined || underlyingPrice === 0) {
-    return undefined;
+  function vault(address: string) {
+    const key = address.toLowerCase();
+    if (!vaults.has(key)) vaults.set(key, bounded("vault_lookup", key, () => dependencies.lookupVault(key)));
+    return vaults.get(key)!;
   }
 
-  const underlyingValue = Number(underlyingAmount) / 10 ** vaultInfo.underlyingDecimals;
-  return (underlyingValue * underlyingPrice).toString();
+  async function nav(change: T): Promise<number | undefined> {
+    const info = await vault(change.address);
+    if (!info) return undefined;
+    // Two rows for the same vault can have different amounts.
+    const key = `${change.address.toLowerCase()}:${change.rawAmount}`;
+    if (!conversions.has(key)) {
+      conversions.set(key, bounded("vault_conversion", change.address,
+        () => dependencies.convertToAssets(change.address, change.rawAmount)));
+    }
+    const [underlyingPrice, assets] = await Promise.all([price(info.underlying), conversions.get(key)!]);
+    if (underlyingPrice === undefined || assets === undefined) return undefined;
+    return validSimulationUsd(Number(assets) / 10 ** info.underlyingDecimals * underlyingPrice);
+  }
+
+  return Promise.all(changes.map(async (change) => {
+    // Avoid asking Enso for known vault shares unless their NAV cannot be priced.
+    let directPrice: number | undefined;
+    let vaultValue: number | undefined;
+    if (dependencies.knownVault?.(change.address)) {
+      vaultValue = await nav(change);
+      if (vaultValue === undefined) directPrice = await price(change.address);
+    } else {
+      [directPrice, vaultValue] = await Promise.all([price(change.address), nav(change)]);
+    }
+    const directValue = directPrice === undefined ? undefined
+      : validSimulationUsd(Number(change.rawAmount) / 10 ** change.decimals * directPrice);
+    const dollarValue = vaultValue ?? directValue ?? validSimulationUsd(change.dollarValue);
+    return { ...change, dollarValue: dollarValue?.toString() };
+  }));
 }
