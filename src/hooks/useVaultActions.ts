@@ -110,18 +110,18 @@ export function useVaultActions(
     // This handles the case where a tx is mined but reverts on-chain
     if (isApprovalReverted || isDepositReverted || isWithdrawReverted) return "reverted";
     if (isDepositSuccess || isWithdrawSuccess) return "success";
-    if (approvalResetFlow && (isApprovalPending || isApprovalSuccess)) return "waitingApproval";
-    if (isApprovalSuccess) return "idle";
     // Error states for pre-send failures (wallet rejection, simulation failure, RPC errors)
     if (approveError || txError || simulationError) return "error";
-    // Pending transaction states
-    if (isApprovalPending) return "waitingApproval";
+    // A confirmed approval remains in wagmi while the deposit is prepared and sent.
+    // The active deposit must take priority over that earlier receipt.
     if (isDepositPending || isWithdrawPending) return "waitingTx";
-    // User-initiated action states
-    if (actionState === "approving") return "approving";
     if (actionState === "simulating") return "depositing"; // Show as depositing/withdrawing to user
     if (actionState === "depositing") return "depositing";
     if (actionState === "withdrawing") return "withdrawing";
+    if (approvalResetFlow && (isApprovalPending || isApprovalSuccess)) return "waitingApproval";
+    if (isApprovalPending) return "waitingApproval";
+    if (isApprovalSuccess) return "idle";
+    if (actionState === "approving") return "approving";
     return "idle";
   }, [
     approveError, txError, simulationError,

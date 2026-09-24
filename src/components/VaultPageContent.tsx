@@ -1258,17 +1258,22 @@ export function VaultPageContent({ id }: { id: string }) {
       prevTxStatusRef.current === "waitingApproval" &&
       txStatus === "idle"
     ) {
-      // Approval succeeded - auto-execute the deposit
-      setPendingMultiStep(prev => prev ? { ...prev, step: 2 } : null);
-      // Small delay to ensure allowance is refetched
-      setTimeout(() => {
+      // Approval is complete. Restore the form so its simulation modal can render.
+      const timer = setTimeout(() => {
+        setPendingMultiStep(null);
         if (amount) {
-          deposit(amount);
+          if (showSimulationPreview) {
+            void runVaultSimulationPreview();
+          } else {
+            void deposit(amount);
+          }
         }
-      }, 100);
+      }, 0);
+      prevTxStatusRef.current = txStatus;
+      return () => clearTimeout(timer);
     }
     prevTxStatusRef.current = txStatus;
-  }, [txStatus, pendingMultiStep, activeTab, amount, deposit]);
+  }, [txStatus, pendingMultiStep, amount, deposit, showSimulationPreview, runVaultSimulationPreview]);
 
   // Clear multi-step state on error or user cancellation (vault actions)
   useEffect(() => {
