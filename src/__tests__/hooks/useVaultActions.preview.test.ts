@@ -15,17 +15,19 @@ const {
   mockSendTx,
   mockWriteApprove,
   mockResetApprove,
+  approvalHashState,
 } = vi.hoisted(() => ({
   mockAnvilCall: vi.fn(),
   mockSendTx: vi.fn(),
   mockWriteApprove: vi.fn(),
   mockResetApprove: vi.fn(),
+  approvalHashState: { current: undefined as `0x${string}` | undefined },
 }));
 
 vi.mock("@/hooks/useDirectWriteContract", () => ({
   useDirectWriteContract: vi.fn(() => ({
     writeContract: mockWriteApprove,
-    data: undefined,
+    data: approvalHashState.current,
     reset: mockResetApprove,
     error: null,
   })),
@@ -61,6 +63,7 @@ describe("useVaultActions preview fallback", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    approvalHashState.current = undefined;
 
     // Simulate a client-side timeout/network error against /api/simulate
     // (e.g. Tenderly's first-ever look at a freshly deployed vault runs slow)
@@ -141,5 +144,47 @@ describe("useVaultActions preview fallback", () => {
     expect(mockSendTx).toHaveBeenCalledWith(
       expect.objectContaining({ to: vaultAddress })
     );
+  });
+
+  it("keeps the deposit pending when an earlier approval receipt remains successful", async () => {
+    approvalHashState.current = "0xapproval";
+    mockUseWaitForTransactionReceipt.mockImplementation((options) => ({
+      isLoading: Boolean(options?.hash) && options?.hash !== "0xapproval",
+      isSuccess: options?.hash === "0xapproval",
+      data: undefined,
+    } as unknown as ReturnType<typeof useWaitForTransactionReceipt>));
+    mockUsePublicClient.mockReturnValue({
+      simulateContract: vi.fn().mockResolvedValue({}),
+    } as unknown as ReturnType<typeof usePublicClient>);
+
+    const { result } = renderHook(() => useVaultActions(vaultAddress, tokenAddress, 18));
+    await act(async () => {
+      await result.current.deposit("100");
+    });
+
+    expect(result.current.status).toBe("waitingTx");
+    expect(mockSendTx).toHaveBeenCalledTimes(1);
+  });
+
+  it("previews after approval and sends only after confirmation", async () => {
+    approvalHashState.current = "0xapproval";
+    mockUseWaitForTransactionReceipt.mockImplementation((options) => ({
+      isLoading: Boolean(options?.hash) && options?.hash !== "0xapproval",
+      isSuccess: options?.hash === "0xapproval",
+      data: undefined,
+    } as unknown as ReturnType<typeof useWaitForTransactionReceipt>));
+
+    const { result } = renderHook(() => useVaultActions(vaultAddress, tokenAddress, 18));
+    await act(async () => {
+      await result.current.deposit("100", { previewOnly: true });
+    });
+    expect(result.current.simulationResult).toMatchObject({ simulationUnavailable: true });
+    expect(mockSendTx).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await result.current.executeAfterPreview();
+    });
+    expect(mockSendTx).toHaveBeenCalledTimes(1);
+    expect(result.current.status).toBe("waitingTx");
   });
 });
