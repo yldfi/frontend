@@ -12,6 +12,7 @@ await build({entryPoints:['workers/vault-history.ts'],outfile:`${dir}/history.mj
 const h=await import(pathToFileURL(`${dir}/history.mjs`));
 const fixture=JSON.parse(readFileSync(new URL('./fixtures/archive-history-day.json',import.meta.url)));
 const pad=n=>BigInt(n).toString(16).padStart(64,'0');
+const HISTORY_CRON='2,17,32,47 * * * *';
 const rpc=async(method,params)=>{const r=fixture.rpc[JSON.stringify([method,params])];if(!r)throw new Error('Unexpected archive request');return r;};
 const point=await h.sampleDay(rpc,fixture.key,fixture.point.time,fixture.point.block);
 assert.deepEqual(point,fixture.point);console.log('PASS real archive balance, PPS and USD valuation reproduced');
@@ -69,13 +70,16 @@ try {
  const body=await response.json();assert.equal(body.version,2);assert.equal(body.data.timeseries[0].value,point.tvl);assert.equal(body.data.timeseries[1].value,null);
  console.log('PASS public worker history preserves missing dates as null');
  await (await mf.getWorker()).scheduled({cron:'*/5 * * * *'});
+ for(const key of Object.keys(h.HISTORY_VAULTS))if(key!==fixture.key)assert.equal(await env.HISTORY.get(h.historyPath(key)),null,key);
+ console.log('PASS 5-minute cache cron leaves archive history to its own cron');
+ await (await mf.getWorker()).scheduled({cron:HISTORY_CRON});
  for(const key of Object.keys(h.HISTORY_VAULTS)){
   const doc=(await h.loadHistory(env.HISTORY,key)).doc;
   assert(doc.points.some(p=>p.time===h.dayBucket(now)-86400&&p.tvl>0),key);
  }
  console.log('PASS cron samples all three vaults despite Kong outage');
  const before=await(await env.HISTORY.get(h.historyPath('yscvx'))).text();archiveFail=true;
- await(await mf.getWorker()).scheduled({cron:'*/5 * * * *'});
+ await(await mf.getWorker()).scheduled({cron:HISTORY_CRON});
  assert.equal(await(await env.HISTORY.get(h.historyPath('yscvx'))).text(),before);
  console.log('PASS cron archive failure preserves stored history');
  await env.HISTORY.put(h.historyPath('yscvx'),'corrupt');
