@@ -8,7 +8,9 @@ compatibility_flags = ["no_nodejs_compat", "no_nodejs_compat_v2"]
 subrequest_limit = 1000
 
 [triggers]
-crons = ["*/5 * * * *"]  # Every 5 minutes
+# Every 5 minutes: vault cache. Every 15 minutes: archive history (must match
+# HISTORY_CRON in vault-cache.ts; separate invocations get separate budgets).
+crons = ["*/5 * * * *", "2,17,32,47 * * * *"]
 
 [[kv_namespaces]]
 binding = "VAULT_CACHE"
