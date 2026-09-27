@@ -4,69 +4,43 @@ import { historyResponse, isHistoryKey, maintainHistory } from "./vault-history"
 
 const KONG_API_URL = "https://kong.yearn.farm/api/gql";
 
-const CHAINLIST_URL = "https://chainid.network/chains.json";
-const RPC_CACHE_KEY = "eth-rpc-urls";
-const RPC_CACHE_TTL = 3600; // 1 hour
+// Keyless, privacy-safe public RPCs (tracking: "none" in DefiLlama chainlist).
+// This is the exact output of the previous chainid.network filter; the list is
+// static because parsing the 1.2 MB chains.json used most of the Free-plan
+// 10 ms CPU budget and pushed invocations into exceededCpu.
+const PUBLIC_RPC_URLS = [
+  "https://ethereum-rpc.publicnode.com",
+  "https://rpc.flashbots.net",
+  "https://rpc.flashbots.net/fast",
+  "https://rpc.mevblocker.io",
+  "https://rpc.mevblocker.io/fast",
+  "https://rpc.mevblocker.io/noreverts",
+  "https://rpc.mevblocker.io/fullprivacy",
+  "https://eth.drpc.org",
+  "https://api.securerpc.com/v1",
+];
 
-// Domains verified as tracking: "none" in DefiLlama chainlist
-const PRIVACY_SAFE_DOMAINS = new Set([
-  "eth.drpc.org",
-  "ethereum-rpc.publicnode.com",
-  "1rpc.io",
-  "rpc.mevblocker.io",
-  "rpc.flashbots.net",
-  "rpc.payload.de",
-  "eth.meowrpc.com",
-  "api.securerpc.com",
-  "rpc.builder0x69.io",
-]);
+// Each read falls through every URL in order, so the list length bounds the
+// subrequests one failing read can use (Free plan: 50 per invocation).
+const MAX_PUBLIC_RPCS = 3;
+
+// Separate cron for archive history so its block search and R2 rewrites get
+// their own CPU/subrequest budget instead of starving the 5-minute cache refresh.
+const HISTORY_CRON = "2,17,32,47 * * * *";
 
 /**
- * Fetch public keyless Ethereum RPCs from chainlist.org, cached in KV for 1h.
- * Filters to HTTPS-only, no API keys, no websocket, privacy-safe domains only,
- * shuffled for load distribution.
+ * Priority: muupe → alchemy → infura → a shuffled sample of public RPCs.
  */
-async function getPublicRpcUrls(kv: KVNamespace): Promise<string[]> {
-  // Check KV cache first
-  const cached = await kv.get(RPC_CACHE_KEY);
-  if (cached) return JSON.parse(cached) as string[];
-
-  try {
-    const response = await fetch(CHAINLIST_URL);
-    if (!response.ok) throw new Error(`chainid.network ${response.status}`);
-
-    const chains = (await response.json()) as { chainId: number; rpc: string[] }[];
-    const eth = chains.find((c) => c.chainId === 1);
-    if (!eth) throw new Error("Ethereum not found in chainlist");
-
-    const rpcs = eth.rpc.filter((url) => {
-      if (!url.startsWith("https://")) return false;
-      if (url.includes("${") || url.includes("wss://")) return false;
-      if (url.includes("api_key=") || url.includes("apikey=")) return false;
-      try {
-        const hostname = new URL(url).hostname;
-        return PRIVACY_SAFE_DOMAINS.has(hostname);
-      } catch {
-        return false;
-      }
-    });
-
-    // Shuffle so we spread load across RPCs
-    for (let i = rpcs.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [rpcs[i], rpcs[j]] = [rpcs[j], rpcs[i]];
-    }
-
-    await kv.put(RPC_CACHE_KEY, JSON.stringify(rpcs), { expirationTtl: RPC_CACHE_TTL });
-    return rpcs;
-  } catch {
-    // Minimal fallback if chainlist is down (privacy-safe RPCs only)
-    return [
-      "https://eth.drpc.org",
-      "https://ethereum-rpc.publicnode.com",
-      "https://1rpc.io/eth",
-    ];
+function getRpcUrls(env: Env): { rpcUrls: string[]; privateCount: number; publicCount: number } {
+  const privateRpcs = [env.RPC_URL, env.ALCHEMY_RPC_URL, env.INFURA_RPC_URL].filter(Boolean) as string[];
+  const publicRpcs = [...PUBLIC_RPC_URLS];
+  // Shuffle so we spread load across RPCs
+  for (let i = publicRpcs.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [publicRpcs[i], publicRpcs[j]] = [publicRpcs[j], publicRpcs[i]];
   }
+  const sampled = publicRpcs.slice(0, MAX_PUBLIC_RPCS);
+  return { rpcUrls: [...privateRpcs, ...sampled], privateCount: privateRpcs.length, publicCount: sampled.length };
 }
 
 // Contract addresses
@@ -473,11 +447,8 @@ function formatKongVault(address: string, data: KongVaultData | null, price: num
 }
 
 async function fetchVaultData(env: Env, logger: Logger) {
-  // Priority: muupe → alchemy → infura → chainlist public RPCs
-  const privateRpcs = [env.RPC_URL, env.ALCHEMY_RPC_URL, env.INFURA_RPC_URL].filter(Boolean) as string[];
-  const publicRpcs = await getPublicRpcUrls(env.VAULT_CACHE);
-  const rpcUrls = [...privateRpcs, ...publicRpcs];
-  logger.info("fetchVaultData", `Using ${rpcUrls.length} RPCs (${privateRpcs.length} private, ${publicRpcs.length} chainlist)`);
+  const { rpcUrls, privateCount, publicCount } = getRpcUrls(env);
+  logger.info("fetchVaultData", `Using ${rpcUrls.length} RPCs (${privateCount} private, ${publicCount} public)`);
 
   // Use allSettled so one failure doesn't kill the entire update
   const [kongResult, yspxcvxResult, yscvxResult, cvxCrvPriceResult, cvgCvxPriceResult, pxCvxPriceResult, cvxPriceResult] = await Promise.allSettled([
@@ -844,7 +815,7 @@ async function blockToSeconds(block: number, rpcUrls: string[], logger: Logger):
 export default {
   // Cron trigger handler
   async scheduled(
-    _controller: ScheduledController,
+    controller: ScheduledController,
     env: Env,
     ctx: ExecutionContext
   ): Promise<void> {
@@ -852,8 +823,8 @@ export default {
     // Historical sampling is independent of the current-value cache and Kong.
     // Use the configured archive provider only; don't hide archive failures
     // behind a different public endpoint.
-    if (env.RPC_URL) {
-      try {
+    if (controller.cron === HISTORY_CRON) {
+      if (env.RPC_URL) try {
         const { url, headers } = rpcHeaders(env.RPC_URL);
         await maintainHistory(env.HISTORY, async (method, params) => {
           const response = await fetch(url, { method: "POST", headers,
@@ -864,6 +835,8 @@ export default {
           return body.result;
         });
       } catch { logger.warn("history", "Archive sampling failed; stored history retained"); }
+      ctx.waitUntil(logger.flush(env.LOGS));
+      return;
     }
     try {
       const data = await fetchVaultData(env, logger);
@@ -872,12 +845,10 @@ export default {
       });
       logger.info("scheduled", "Vault data cached", { lastUpdated: data.lastUpdated });
 
-      // Retain the legacy yspxCVX sampler; tracked history runs independently above.
+      // Retain the legacy yspxCVX sampler; tracked history runs on HISTORY_CRON.
       // Must not block/short-circuit the main cache write if it fails.
       try {
-        const privateRpcs = [env.RPC_URL, env.ALCHEMY_RPC_URL, env.INFURA_RPC_URL].filter(Boolean) as string[];
-        const publicRpcs = await getPublicRpcUrls(env.VAULT_CACHE);
-        const rpcUrls = [...privateRpcs, ...publicRpcs];
+        const { rpcUrls } = getRpcUrls(env);
         await sampleHistory(env, logger, rpcUrls, (data as { cvxPrice?: number }).cvxPrice ?? 0, (data as { pxCvxPrice?: number }).pxCvxPrice ?? 0);
       } catch (e) {
         logger.error("scheduled", "History sampling failed (non-fatal)", { error: String(e) });
