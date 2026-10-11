@@ -25,3 +25,8 @@ database_id = "b2f2df39-1663-4507-8e58-5a21c4b14770"
 binding = "HISTORY"
 bucket_name = "yldfi-history"
 preview_bucket_name = "yldfi-history"
+
+[[secrets_store_secrets]]
+binding = "RPC_URL"
+store_id = "be7efaed4f394d5a96abab0ed1da9979"
+secret_name = "MUUPE_RPC_URL"

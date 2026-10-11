@@ -29,10 +29,28 @@ const MAX_PUBLIC_RPCS = 3;
 const HISTORY_CRON = "2,17,32,47 * * * *";
 
 /**
+ * Resolve the muupé archive RPC URL. RPC_URL comes from Secrets Store (a
+ * SecretsStoreSecret read via .get()), but tests bind it as a plain string,
+ * so both shapes are handled.
+ */
+async function resolveRpcUrl(env: Env): Promise<string | undefined> {
+  const rpc = env.RPC_URL as string | SecretsStoreSecret | undefined;
+  if (!rpc) return undefined;
+  if (typeof rpc === "string") return rpc;
+  try {
+    return await rpc.get();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Priority: muupe → alchemy → infura → a shuffled sample of public RPCs.
  */
-function getRpcUrls(env: Env): { rpcUrls: string[]; privateCount: number; publicCount: number } {
-  const privateRpcs = [env.RPC_URL, env.ALCHEMY_RPC_URL, env.INFURA_RPC_URL].filter(Boolean) as string[];
+async function getRpcUrls(env: Env): Promise<{ rpcUrls: string[]; privateCount: number; publicCount: number }> {
+  const privateRpcs = (
+    await Promise.all([resolveRpcUrl(env), Promise.resolve(env.ALCHEMY_RPC_URL), Promise.resolve(env.INFURA_RPC_URL)])
+  ).filter((url): url is string => !!url);
   const publicRpcs = [...PUBLIC_RPC_URLS];
   // Shuffle so we spread load across RPCs
   for (let i = publicRpcs.length - 1; i > 0; i--) {
@@ -75,7 +93,6 @@ function bigIntToNumber18(value: bigint): number {
 
 interface Env extends CacheWorkerEnv {
   REFRESH_SECRET?: string;
-  RPC_URL?: string;
   ALCHEMY_RPC_URL?: string;
   INFURA_RPC_URL?: string;
   ENSO_API_KEY?: string;
@@ -447,7 +464,7 @@ function formatKongVault(address: string, data: KongVaultData | null, price: num
 }
 
 async function fetchVaultData(env: Env, logger: Logger) {
-  const { rpcUrls, privateCount, publicCount } = getRpcUrls(env);
+  const { rpcUrls, privateCount, publicCount } = await getRpcUrls(env);
   logger.info("fetchVaultData", `Using ${rpcUrls.length} RPCs (${privateCount} private, ${publicCount} public)`);
 
   // Use allSettled so one failure doesn't kill the entire update
@@ -824,8 +841,9 @@ export default {
     // Use the configured archive provider only; don't hide archive failures
     // behind a different public endpoint.
     if (controller.cron === HISTORY_CRON) {
-      if (env.RPC_URL) try {
-        const { url, headers } = rpcHeaders(env.RPC_URL);
+      const archiveRpcUrl = await resolveRpcUrl(env);
+      if (archiveRpcUrl) try {
+        const { url, headers } = rpcHeaders(archiveRpcUrl);
         await maintainHistory(env.HISTORY, async (method, params) => {
           const response = await fetch(url, { method: "POST", headers,
             body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), signal: AbortSignal.timeout(15000) });
@@ -848,7 +866,7 @@ export default {
       // Retain the legacy yspxCVX sampler; tracked history runs on HISTORY_CRON.
       // Must not block/short-circuit the main cache write if it fails.
       try {
-        const { rpcUrls } = getRpcUrls(env);
+        const { rpcUrls } = await getRpcUrls(env);
         await sampleHistory(env, logger, rpcUrls, (data as { cvxPrice?: number }).cvxPrice ?? 0, (data as { pxCvxPrice?: number }).pxCvxPrice ?? 0);
       } catch (e) {
         logger.error("scheduled", "History sampling failed (non-fatal)", { error: String(e) });
@@ -967,8 +985,9 @@ export default {
         // Backfill needs archive-capable RPCs (historical eth_call). Use muupé
         // (RPC_URL) exclusively — it's the primary archive provider and the
         // public/other nodes reject past-block reads and waste subrequests.
-        if (!env.RPC_URL) throw new Error("No archive RPC configured");
-        const rpcUrls = [env.RPC_URL];
+        const archiveRpcUrl = await resolveRpcUrl(env);
+        if (!archiveRpcUrl) throw new Error("No archive RPC configured");
+        const rpcUrls = [archiveRpcUrl];
         await backfillHistory(env, logger, rpcUrls);
         return new Response(JSON.stringify({ ok: true }), {
           headers: { "Content-Type": "application/json" },
