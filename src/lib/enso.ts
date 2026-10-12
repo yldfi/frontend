@@ -9824,6 +9824,7 @@ export async function fetchAnyFromUCvxRoute(params: {
 
   const { PIREX, LLAMA_AIRFORCE } = await import("@/config/vaults");
   const outputSymbol = getTokenSymbol(params.outputToken);
+  const outputIsCvx = params.outputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
   const slippageBps = validateSlippage(params.slippage);
   const totalSlippageBps = getBufferedSlippageBps(slippageBps);
 
@@ -9896,8 +9897,17 @@ export async function fetchAnyFromUCvxRoute(params: {
         ],
       },
     },
-    // 5: Enso route CVX → output token
-    {
+  ];
+
+  // 5: CVX → output token. CVX itself is just sent on (Enso has no CVX → CVX route).
+  if (outputIsCvx) {
+    actions.push({
+      protocol: "erc20",
+      action: "transfer",
+      args: { token: TOKENS.CVX, amount: { useOutputOfCallAt: 4 }, receiver: params.fromAddress },
+    });
+  } else {
+    actions.push({
       protocol: "enso",
       action: "route",
       args: {
@@ -9906,10 +9916,9 @@ export async function fetchAnyFromUCvxRoute(params: {
         amountIn: { useOutputOfCallAt: 4 },
         slippage: params.slippage ?? "100",
       },
-    },
-  ];
-
-  appendETHUnwrapIfNeeded(actions, params.outputToken);
+    });
+    appendETHUnwrapIfNeeded(actions, params.outputToken);
+  }
 
   const bundleResult = await fetchBundle({
     fromAddress: params.fromAddress,
@@ -9918,6 +9927,22 @@ export async function fetchAnyFromUCvxRoute(params: {
     routingStrategy: "router",
     skipQuote: true,
   });
+
+  // skipQuote: report the final output token the intent guard binds to. CVX comes straight from
+  // the Curve exchange; ETH is the unwrapped WETH that the route quoted.
+  if (outputIsCvx) {
+    bundleResult.amountsOut = { ...bundleResult.amountsOut, [TOKENS.CVX.toLowerCase()]: expectedCvx.toString() };
+  } else if (isNativeETH(params.outputToken) && !bundleResult.amountsOut?.[ETH_ADDRESS.toLowerCase()]) {
+    // The WETH unwrap isn't quoted under skipQuote; estimate the CVX → WETH leg for display.
+    const ethQuote = await fetchDynamicInputEstimate({
+      fromAddress: params.fromAddress,
+      tokenIn: TOKENS.CVX,
+      tokenOut: WETH_ADDRESS,
+      amountIn: expectedCvx.toString(),
+      slippage: params.slippage ?? "100",
+    });
+    bundleResult.amountsOut = { ...bundleResult.amountsOut, [ETH_ADDRESS.toLowerCase()]: String(ethQuote.amountOut) };
+  }
 
   const pxCvxFmt = (Number(expectedPxCvx) / 1e18).toFixed(4);
   const cvxFmt = (Number(expectedCvx) / 1e18).toFixed(4);
@@ -10498,7 +10523,7 @@ export async function fetchAnyToErc4626ExternalVaultRoute(params: {
 
 /**
  * Any token → uCRV (Llama Airforce). uCRV uses a non-standard deposit signature
- * `deposit(uint256 _amount, address _to)`. Route input → cvxCRV, approve,
+ * `deposit(address _to, uint256 _amount)`. Route input → cvxCRV, approve,
  * deposit with user as receiver.
  */
 export async function fetchAnyToUCrvRoute(params: {
@@ -10549,8 +10574,9 @@ export async function fetchAnyToUCrvRoute(params: {
     args: {
       address: LLAMA_AIRFORCE.UCRV,
       method: "deposit",
-      abi: "function deposit(uint256 _amount, address _to) returns (uint256)",
-      args: [amountRef, params.fromAddress],
+      // uCRV is deposit(address _to, uint256 _amount); the reversed order hits a missing selector.
+      abi: "function deposit(address _to, uint256 _amount) returns (uint256)",
+      args: [params.fromAddress, amountRef],
     },
   });
 
@@ -11089,8 +11115,8 @@ export async function fetchSpecialTokenToExternalVaultRoute(params: {
         args: {
           address: outputConfig.address,
           method: "deposit",
-          abi: "function deposit(uint256 _amount, address _to) returns (uint256)",
-          args: [finalState.amountRef, params.fromAddress],
+          abi: "function deposit(address _to, uint256 _amount) returns (uint256)",
+          args: [params.fromAddress, finalState.amountRef],
         },
       },
     );
@@ -11595,8 +11621,8 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
         args: {
           address: params.targetVault,
           method: "deposit",
-          abi: "function deposit(uint256 _amount, address _to) returns (uint256)",
-          args: [{ useOutputOfCallAt: balanceIdx }, params.fromAddress],
+          abi: "function deposit(address _to, uint256 _amount) returns (uint256)",
+          args: [params.fromAddress, { useOutputOfCallAt: balanceIdx }],
         },
       },
     );
