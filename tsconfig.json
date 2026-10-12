@@ -31,5 +31,6 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
+  "files": ["workers/opennext-worker.d.ts"],
   "exclude": ["node_modules", "workers", "scripts", "test-*.ts"]
 }
