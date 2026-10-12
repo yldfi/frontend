@@ -62,6 +62,8 @@ import {
   fetchAnyToCvgCvxRoute,
   fetchAnyFromBeefyRoute,
   fetchAnyFromUCrvRoute,
+  fetchAnyFromCvgCvxRoute,
+  fetchAnyFromLpxCvxRoute,
   fetchUCrvZapInRoute,
   fetchBeefyZapInRoute,
   fetchAnyFromUCvxRoute,
@@ -1049,6 +1051,10 @@ describe("route step amounts", () => {
         if (typeof action.args.tokenIn === "string" && typeof action.args.amountIn === "string") {
           declared.add(String(action.args.tokenIn).toLowerCase());
         }
+        // A fixed-amount transfer of a token the bundle hasn't produced reads as a wallet input too.
+        if (action.protocol === "erc20" && action.action === "transfer" && typeof action.args.amount === "string") {
+          declared.add(String(action.args.token).toLowerCase());
+        }
       }
       return [...declared];
     }
@@ -1064,6 +1070,8 @@ describe("route step amounts", () => {
       ["mooCvxCVX -> pxCVX", BEEFY.MOO_CVX_CVX, () => fetchSpecialTokenToIlliquidRoute({ fromAddress: TEST_WALLET, inputToken: BEEFY.MOO_CVX_CVX, outputToken: TOKENS.PXCVX, amountIn: amount, slippage: "100" })],
       ["uCRV -> pxCVX", LLAMA_AIRFORCE.UCRV, () => fetchSpecialTokenToIlliquidRoute({ fromAddress: TEST_WALLET, inputToken: LLAMA_AIRFORCE.UCRV, outputToken: TOKENS.PXCVX, amountIn: amount, slippage: "100" })],
       ["uCVX -> USDC", LLAMA_AIRFORCE.UCVX, () => fetchAnyFromUCvxRoute({ fromAddress: TEST_WALLET, outputToken: USDC_ADDRESS, amountIn: amount, slippage: "100" })],
+      ["pxCVX -> lpxCVX", TOKENS.PXCVX, () => fetchSpecialTokenToIlliquidRoute({ fromAddress: TEST_WALLET, inputToken: TOKENS.PXCVX, outputToken: TOKENS.LPXCVX, amountIn: amount, slippage: "100" })],
+      ["lpxCVX -> pxCVX", TOKENS.LPXCVX, () => fetchSpecialTokenToIlliquidRoute({ fromAddress: TEST_WALLET, inputToken: TOKENS.LPXCVX, outputToken: TOKENS.PXCVX, amountIn: amount, slippage: "100" })],
     ];
 
     it.each(cases)("%s declares exactly the user's input token", async (_label, input, build) => {
@@ -1099,5 +1107,13 @@ describe("route step amounts", () => {
       expect(quotedOutputs).toContain(WETH);
       expect(quotedOutputs).not.toContain(ETH_ADDRESS.toLowerCase());
     });
+  });
+
+  it.each([
+    ["lpxCVX", () => fetchAnyFromLpxCvxRoute({ fromAddress: TEST_WALLET, outputToken: ETH_ADDRESS, amountIn: (100n * ONE_ETHER).toString(), slippage: "100" })],
+    ["cvgCVX", () => fetchAnyFromCvgCvxRoute({ fromAddress: TEST_WALLET, outputToken: ETH_ADDRESS, amountIn: (100n * ONE_ETHER).toString(), slippage: "100" })],
+  ])("reports a native-ETH output for %s -> ETH so the intent guard can bind it", async (_label, build) => {
+    const bundle = await build() as { amountsOut: Record<string, string> };
+    expect(BigInt(bundle.amountsOut[ETH_ADDRESS.toLowerCase()] ?? "0")).toBeGreaterThan(0n);
   });
 });
