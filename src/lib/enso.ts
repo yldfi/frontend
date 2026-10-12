@@ -793,7 +793,20 @@ async function buildCvxToCvgCvxDepositActions(params: {
     },
   });
 
-  return { actions, expectedCvgCvx: expectedSwapCvgCvx + mintAmount };
+  // Report the output of what the bundle actually spends (see appendCvxToPxCvxConversion).
+  let expectedCvgCvxOut = expectedSwapCvgCvx + mintAmount;
+  if (cvxIsDynamic) {
+    if (usesFixedDynamicSplit) {
+      const remainingCvx = params.expectedCvxAmount > swapAmount ? params.expectedCvxAmount - swapAmount : 0n;
+      expectedCvgCvxOut = expectedSwapCvgCvx + remainingCvx;
+    } else if (swapAmount > 0n) {
+      expectedCvgCvxOut = (await getCurveGetDy(TANGENT.CVX1_CVGCVX_POOL, 0, 1, params.expectedCvxAmount.toString())) ?? expectedSwapCvgCvx;
+    } else {
+      expectedCvgCvxOut = params.expectedCvxAmount;
+    }
+  }
+
+  return { actions, expectedCvgCvx: expectedCvgCvxOut };
 }
 
 type BundleAmountRef = string | { useOutputOfCallAt: number };
@@ -1150,10 +1163,25 @@ async function appendCvxToPxCvxConversion(
     }));
   }
 
+  // Report the output of what the bundle actually spends. The split is sized from a
+  // slippage-buffered CVX estimate, but runtime legs use the whole balance: shown output (and
+  // the intent guard's minimum, derived from it) would otherwise sit a full buffer low.
+  let expectedPxCvxOut = expectedSwapPxCvx + mintAmount;
+  if (cvxIsDynamic) {
+    if (usesFixedDynamicSplit) {
+      const remainingCvx = state.expectedAmount > swapAmount ? state.expectedAmount - swapAmount : 0n;
+      expectedPxCvxOut = expectedSwapPxCvx + remainingCvx;
+    } else if (swapAmount > 0n) {
+      expectedPxCvxOut = (await getPxCvxSwapRate(state.expectedAmount.toString())) || expectedSwapPxCvx;
+    } else {
+      expectedPxCvxOut = state.expectedAmount;
+    }
+  }
+
   return toBalanceState(
     actions,
     PIREX.PXCVX,
-    expectedSwapPxCvx + mintAmount,
+    expectedPxCvxOut,
   );
 }
 
@@ -11382,9 +11410,6 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
     throw new Error(`Failed to estimate ${sourceIsCvxCrv ? "cvxCRV" : "CVX"} output from ${params.sourceVault}`);
   }
 
-  // Apply user slippage buffer so min_dy / expected amounts are safe.
-  const intermediateForSplit = BigInt(applySlippageBuffer(estimatedIntermediate, slippageBps));
-
   const actions: EnsoBundleAction[] = [];
 
   // ── Step 2: Redeem yld vault to its underlying (land at ENSO_SHORTCUTS).
@@ -11465,13 +11490,14 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
   }
 
   // After step 3 the intermediate token (CVX or cvxCRV) sits at ENSO_SHORTCUTS.
-  // Its balance = intermediateForSplit (conservative estimate).
+  // Every later action reads its runtime balance, so expected amounts use the unbuffered
+  // estimate; a buffered one under-reported the output and loosened the intent guard's minimum.
 
   // ── Step 4: Convert intermediate → target underlying if different.
   // ──────────────────────────────────────────────────────────────────────
   const sameUnderlying = intermediateToken.toLowerCase() === targetUnderlyingLower;
   const targetIsPxCvx = targetUnderlyingLower === TOKENS.PXCVX.toLowerCase();
-  let totalExpectedTargetUnderlying = intermediateForSplit;
+  let totalExpectedTargetUnderlying = estimatedIntermediate;
   // Route steps the shared conversion engine records for the intermediate → pxCVX leg.
   const pxCvxConversionSteps: RouteStep[] = [];
 
@@ -11492,7 +11518,7 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
       fromAddress: params.fromAddress,
       tokenIn: intermediateToken,
       tokenOut: params.targetUnderlying,
-      amountIn: intermediateForSplit.toString(),
+      amountIn: estimatedIntermediate.toString(),
       slippage: params.slippage ?? "100",
     });
     totalExpectedTargetUnderlying = BigInt(dynamicQuote.amountOut);
@@ -11621,7 +11647,7 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
     ...bundleResult.amountsOut,
     [params.targetVault.toLowerCase()]: expectedShares,
     [params.targetUnderlying.toLowerCase()]: totalExpectedTargetUnderlying.toString(),
-    [intermediateToken.toLowerCase()]: intermediateForSplit.toString(),
+    [intermediateToken.toLowerCase()]: estimatedIntermediate.toString(),
     [params.sourceUnderlying.toLowerCase()]: expectedUnderlying,
   };
 

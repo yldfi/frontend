@@ -494,7 +494,7 @@ describe("route step amounts", () => {
       { token: "yvUSDC-1", amount: "10.0000" },
       { token: "USDC", amount: "10.0000" },
       { token: "CVX", amount: "5.0000" },
-      { token: "pxCVX", amount: "5.4450" },
+      { token: "pxCVX", amount: "5.5000" }, // runtime CVX x 1.1, not the slippage-buffered 4.95 CVX
     ]);
 
     const actions = lastBundleActions();
@@ -825,7 +825,7 @@ describe("route step amounts", () => {
       { token: "yvUSDC-1", amount: "10.0000" },
       { token: "USDC", amount: "10.0000" },
       { token: "CVX", amount: "5.0000" },
-      { token: "pxCVX", amount: "5.4450" },
+      { token: "pxCVX", amount: "5.5000" }, // runtime CVX x 1.1, not the slippage-buffered 4.95 CVX
       { token: "yspxCVX", amount: "5.2500" },
     ]);
   });
@@ -846,7 +846,7 @@ describe("route step amounts", () => {
       { token: "yvUSDC-1", amount: "10.0000" },
       { token: "USDC", amount: "10.0000" },
       { token: "CVX", amount: "5.0000" },
-      { token: "pxCVX", amount: "5.4450" },
+      { token: "pxCVX", amount: "5.5000" }, // runtime CVX x 1.1, not the slippage-buffered 4.95 CVX
       { token: "uCVX", amount: "5.2500" },
     ]);
   });
@@ -868,7 +868,7 @@ describe("route step amounts", () => {
       { token: "ycvxCRV", amount: "1.0000" },
       { token: "cvxCRV", amount: "4.0000" },
       { token: "CVX", amount: "2.0000" },
-      { token: "pxCVX", amount: "2.1780" },
+      { token: "pxCVX", amount: "2.2000" }, // runtime CVX x 1.1, not the slippage-buffered 1.98 CVX
     ]);
   });
 
