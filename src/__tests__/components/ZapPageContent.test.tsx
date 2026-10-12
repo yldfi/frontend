@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useConnectModal } from "@rainbow-me/rainbowkit";
@@ -78,7 +78,8 @@ vi.mock("@/components/MaxButton", () => ({
 }));
 
 vi.mock("@/components/ApprovalCard", () => ({
-  ApprovalCard: () => null,
+  ApprovalCard: ({ show, onApprove }: { show: boolean; onApprove: (exact: boolean) => void }) =>
+    show ? <button type="button" onClick={() => onApprove(true)}>Approve</button> : null,
 }));
 
 vi.mock("@/components/LoadingDots", () => ({
@@ -609,6 +610,90 @@ describe("ZapPageContent", () => {
     await waitFor(() => {
       expect(setShowSimulationModal).toHaveBeenCalledWith(false);
       expect(executeZap).toHaveBeenCalledWith({ skipSimulation: true });
+    });
+  });
+
+  describe("high price impact confirmation", () => {
+    const highImpactQuote = { ...quote, priceImpact: 99.99 };
+
+    function renderWithQuote(zapQuote: ZapQuote) {
+      mockUseUniversalZap.mockReturnValue({
+        quote: zapQuote,
+        isLoading: false,
+        error: null,
+        refetch: refetchQuote,
+      } as unknown as ReturnType<typeof useUniversalZap>);
+      render(<ZapPageContent />);
+      fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "0.1" } });
+    }
+
+    it("holds a >=5% impact zap until CONFIRM is typed", async () => {
+      renderWithQuote(highImpactQuote);
+      fireEvent.click(screen.getByRole("button", { name: "Zap" }));
+
+      const dialog = screen.getByRole("dialog");
+      expect(within(dialog).getByText("99.99%")).toBeTruthy();
+      expect(executeZap).not.toHaveBeenCalled();
+      // Quote refresh is paused so the impact can't change under the modal.
+      expect(mockUseUniversalZap).toHaveBeenLastCalledWith(expect.objectContaining({ paused: true }));
+
+      const confirm = within(dialog).getByRole("button", { name: "Zap" }) as HTMLButtonElement;
+      expect(confirm.disabled).toBe(true);
+      fireEvent.change(within(dialog).getByLabelText("Type CONFIRM to proceed"), { target: { value: "confirm" } });
+      expect(confirm.disabled).toBe(false);
+      fireEvent.click(confirm);
+
+      await waitFor(() => expect(executeZap).toHaveBeenCalledWith());
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("cancelling the confirmation never sends the zap", () => {
+      renderWithQuote(highImpactQuote);
+      fireEvent.click(screen.getByRole("button", { name: "Zap" }));
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(executeZap).not.toHaveBeenCalled();
+    });
+
+    it("gates approving too, since an approval auto-executes the zap once it mines", () => {
+      mockUseZapActions.mockReturnValue({
+        needsApproval: () => true,
+        approve,
+        executeZap,
+        reset,
+        status: "needsApproval",
+        error: null,
+        isLoading: false,
+        isSuccess: false,
+        isReverted: false,
+        zapHash: undefined,
+        pendingApproval: { token: ETH_ADDRESS, spender: "0x2222222222222222222222222222222222222222", amount: 10n ** 17n },
+        approvalProgress: null,
+        isApproving: false,
+        refetchAllowance,
+        isFlashbotsEnabled: false,
+        isFlashbotsSupported: false,
+        toggleFlashbots,
+        simulationResult: null,
+      } as unknown as ReturnType<typeof useZapActions>);
+      renderWithQuote(highImpactQuote);
+
+      fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+      expect(approve).not.toHaveBeenCalled();
+
+      const dialog = screen.getByRole("dialog");
+      fireEvent.change(within(dialog).getByLabelText("Type CONFIRM to proceed"), { target: { value: "CONFIRM" } });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Approve & zap" }));
+      expect(approve).toHaveBeenCalledWith(true);
+    });
+
+    it("sends a sub-5% impact zap without the confirmation", async () => {
+      renderWithQuote({ ...quote, priceImpact: 4.99 });
+      fireEvent.click(screen.getByRole("button", { name: "Zap" }));
+
+      expect(screen.queryByRole("dialog")).toBeNull();
+      await waitFor(() => expect(executeZap).toHaveBeenCalledWith());
     });
   });
 });
