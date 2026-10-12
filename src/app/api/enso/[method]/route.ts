@@ -110,6 +110,9 @@ export async function POST(
           fetchAnyToLpxCvxRoute,
           fetchAnyToPxCvxRoute,
           fetchExternalVaultZapInRoute,
+          fetchLpxCvxZapInRoute,
+          fetchPxCvxTokenZapInRoute,
+          fetchComposableZapInRoute,
           fetchLegacyMorphoWrapRoute,
           fetchLegacyMorphoZapInRoute,
           fetchPxCvxZapInRoute,
@@ -245,6 +248,22 @@ export async function POST(
               amountIn: body.amountIn,
               slippage: body.slippage,
             });
+            return respond(bundle);
+          }
+
+          case "illiquidToYldVault": {
+            const input = body.inputToken.toLowerCase();
+            const routeParams = {
+              fromAddress: body.fromAddress,
+              vaultAddress: body.vaultAddress,
+              amountIn: body.amountIn,
+              slippage: body.slippage,
+            };
+            const bundle = input === TOKENS.CVGCVX.toLowerCase()
+              ? await fetchComposableZapInRoute({ ...routeParams, inputToken: body.inputToken })
+              : input === TOKENS.LPXCVX.toLowerCase()
+                ? await fetchLpxCvxZapInRoute(routeParams)
+                : await fetchPxCvxTokenZapInRoute(routeParams);
             return respond(bundle);
           }
 

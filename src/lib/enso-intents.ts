@@ -67,6 +67,7 @@ export type EnsoIntentName =
   | "pxCvxZapIn"
   | "pxCvxZapOut"
   | "externalVaultZapInToYld"
+  | "illiquidToYldVault"
   | "anyToExternalVault"
   | "yldVaultToExternalVault"
   | "yldVaultToIlliquid"
@@ -136,6 +137,12 @@ export type SpecialYldVaultZapOutIntentRequest = BaseIntentRequest & {
 export type ExternalVaultZapInToYldIntentRequest = BaseIntentRequest & {
   intent: "externalVaultZapInToYld";
   externalVaultAddress: string;
+  vaultAddress: string;
+};
+
+export type IlliquidToYldVaultIntentRequest = BaseIntentRequest & {
+  intent: "illiquidToYldVault";
+  inputToken: string;
   vaultAddress: string;
 };
 
@@ -220,6 +227,7 @@ export type EnsoIntentRequest =
   | SpecialYldVaultZapInIntentRequest
   | SpecialYldVaultZapOutIntentRequest
   | ExternalVaultZapInToYldIntentRequest
+  | IlliquidToYldVaultIntentRequest
   | AnyToExternalVaultIntentRequest
   | YldVaultToExternalVaultIntentRequest
   | YldVaultToIlliquidIntentRequest
@@ -283,6 +291,7 @@ const INTENT_TX_TARGET_ALLOWLIST: Record<EnsoIntentName, readonly string[]> = {
   pxCvxZapIn: COMMON_INTENT_TX_TARGETS,
   pxCvxZapOut: COMMON_INTENT_TX_TARGETS,
   externalVaultZapInToYld: COMMON_INTENT_TX_TARGETS,
+  illiquidToYldVault: COMMON_INTENT_TX_TARGETS,
   anyToExternalVault: COMMON_INTENT_TX_TARGETS,
   yldVaultToExternalVault: COMMON_INTENT_TX_TARGETS,
   yldVaultToIlliquid: COMMON_INTENT_TX_TARGETS,
@@ -310,6 +319,7 @@ const INTENT_CALLDATA_SELECTOR_ALLOWLIST: Record<EnsoIntentName, readonly `0x${s
   pxCvxZapIn: COMMON_INTENT_CALLDATA_SELECTORS,
   pxCvxZapOut: COMMON_INTENT_CALLDATA_SELECTORS,
   externalVaultZapInToYld: COMMON_INTENT_CALLDATA_SELECTORS,
+  illiquidToYldVault: SERVER_BUNDLE_CALLDATA_SELECTORS,
   anyToExternalVault: COMMON_INTENT_CALLDATA_SELECTORS,
   yldVaultToExternalVault: SERVER_BUNDLE_CALLDATA_SELECTORS,
   yldVaultToIlliquid: SERVER_BUNDLE_CALLDATA_SELECTORS,
@@ -537,6 +547,24 @@ function assertExternalVaultZapInToYld(request: Record<string, unknown>): assert
   }
 }
 
+// pxCVX / lpxCVX / cvgCVX into a yld vault. These bundles are server-built because the
+// raw actions can't be submitted from the browser. A vault whose asset is the input itself is a
+// direct deposit (lpxCVX unwraps to pxCVX, so it's excluded from yspxCVX too).
+function assertIlliquidToYldVault(request: Record<string, unknown>): asserts request is IlliquidToYldVaultIntentRequest {
+  assertBaseIntentFields(request, { requireSlippage: true });
+  assertAddress(request.inputToken, "inputToken");
+  const input = normalizeAddress(request.inputToken);
+  const inputIsCvgCvx = input === normalizeAddress(TOKENS.CVGCVX);
+  if (input !== normalizeAddress(TOKENS.PXCVX) && input !== normalizeAddress(TOKENS.LPXCVX) && !inputIsCvgCvx) {
+    failValidation("inputToken must be pxCVX, lpxCVX or cvgCVX");
+  }
+  assertYldVault(request.vaultAddress, "vaultAddress");
+  const asset = normalizeAddress(getIntentVault(request.vaultAddress)!.assetAddress);
+  if (asset === (inputIsCvgCvx ? normalizeAddress(TOKENS.CVGCVX) : normalizeAddress(TOKENS.PXCVX))) {
+    failValidation("vaultAddress takes the input token directly; deposit instead");
+  }
+}
+
 function assertAnyToExternalVault(request: Record<string, unknown>): asserts request is AnyToExternalVaultIntentRequest {
   assertBaseIntentFields(request, { requireSlippage: true });
   assertLiquidTokenAddress(request.inputToken, "inputToken");
@@ -691,6 +719,10 @@ export function assertValidEnsoIntentRequest(value: unknown): asserts value is E
     case "externalVaultZapInToYld":
       assertOnlyIntentFields(value, ["externalVaultAddress", "vaultAddress"]);
       assertExternalVaultZapInToYld(value);
+      return;
+    case "illiquidToYldVault":
+      assertOnlyIntentFields(value, ["inputToken", "vaultAddress"]);
+      assertIlliquidToYldVault(value);
       return;
     case "anyToExternalVault":
       assertOnlyIntentFields(value, ["inputToken", "externalVaultAddress"]);
@@ -934,6 +966,7 @@ function getIntentInputToken(request: EnsoIntentRequest): string {
     case "specialTokenToIlliquid":
     case "illiquidToAny":
     case "anyToIlliquid":
+    case "illiquidToYldVault":
       return request.inputToken;
     case "legacyMorphoWrap":
     case "legacyMorphoZapIn":
@@ -953,6 +986,7 @@ function getIntentOutputToken(request: EnsoIntentRequest): string | undefined {
     case "cvgCvxZapIn":
     case "pxCvxZapIn":
     case "externalVaultZapInToYld":
+    case "illiquidToYldVault":
     case "legacyMorphoZapIn":
       return request.vaultAddress;
     case "yldVaultZapOut":

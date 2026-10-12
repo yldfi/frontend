@@ -762,6 +762,49 @@ describe("Enso intent validation", () => {
   });
 });
 
+describe("illiquidToYldVault intent", () => {
+  const base = { intent: "illiquidToYldVault" as const, fromAddress: USER, amountIn: ONE_ETHER, slippage: "100" };
+
+  it.each([
+    [TOKENS.PXCVX, VAULT_ADDRESSES.YSCVX],
+    [TOKENS.LPXCVX, VAULT_ADDRESSES.YSCVX],
+    [TOKENS.PXCVX, VAULT_ADDRESSES.YSCVXCRV],
+    [TOKENS.LPXCVX, VAULT_ADDRESSES.YSCVGCVX],
+    [TOKENS.CVGCVX, VAULT_ADDRESSES.YSCVX],
+    [TOKENS.CVGCVX, VAULT_ADDRESSES.YSCVXCRV],
+  ])("accepts %s into %s", (inputToken, vaultAddress) => {
+    expect(() => assertValidEnsoIntentRequest({ ...base, inputToken, vaultAddress })).not.toThrow();
+  });
+
+  it("rejects other inputs, unknown vaults, and vaults that take the input directly", () => {
+    expect(() => assertValidEnsoIntentRequest({ ...base, inputToken: TOKENS.CVX, vaultAddress: VAULT_ADDRESSES.YSCVX })).toThrow("pxCVX, lpxCVX or cvgCVX");
+    expect(() => assertValidEnsoIntentRequest({ ...base, inputToken: TOKENS.PXCVX, vaultAddress: OTHER })).toThrow("known YLD vault");
+    expect(() => assertValidEnsoIntentRequest({ ...base, inputToken: TOKENS.PXCVX, vaultAddress: VAULT_ADDRESSES.YSPXCVX })).toThrow("deposit instead");
+    expect(() => assertValidEnsoIntentRequest({ ...base, inputToken: TOKENS.LPXCVX, vaultAddress: VAULT_ADDRESSES.YSPXCVX })).toThrow("deposit instead");
+    expect(() => assertValidEnsoIntentRequest({ ...base, inputToken: TOKENS.CVGCVX, vaultAddress: VAULT_ADDRESSES.YSCVGCVX })).toThrow("deposit instead");
+    expect(() => assertValidEnsoIntentRequest({ ...base, inputToken: TOKENS.PXCVX, vaultAddress: VAULT_ADDRESSES.YSCVX, actions: [] })).toThrow();
+  });
+
+  it("binds the response to exactly the requested pxCVX amount and the vault shares", () => {
+    const request = { ...base, receiver: USER, inputToken: TOKENS.PXCVX, vaultAddress: VAULT_ADDRESSES.YSCVX };
+    const entry = parseAbi(["function routeSingle((uint8 tokenType, bytes data) tokenIn, bytes data) payable returns (bytes)", "function routeMulti((uint8 tokenType, bytes data)[] tokensIn, bytes data) payable returns (bytes)"]);
+    const tokenAmount = (token: string, amount = ONE_ETHER) => encodeAbiParameters(TOKEN_AMOUNT_PARAMETERS, [token as `0x${string}`, BigInt(amount)]);
+    const response = (data: `0x${string}`) => ({
+      tx: { to: ENSO_ROUTER_V2, data, value: "0", from: USER },
+      gas: "1",
+      amountsOut: { [VAULT_ADDRESSES.YSCVX.toLowerCase()]: "900000000000000000" },
+      route: [],
+    });
+    const single = encodeFunctionData({ abi: entry, functionName: "routeSingle", args: [{ tokenType: 1, data: tokenAmount(TOKENS.PXCVX) }, "0x1234"] });
+    expect(() => protectEnsoIntentResponse(request, response(single))).not.toThrow();
+    // The old pxCVX bundle shape made Enso pull lpxCVX too; that must never pass.
+    const pullsTwo = encodeFunctionData({ abi: entry, functionName: "routeMulti", args: [[{ tokenType: 1, data: tokenAmount(TOKENS.PXCVX) }, { tokenType: 1, data: tokenAmount(TOKENS.LPXCVX) }], "0x1234"] });
+    expect(() => protectEnsoIntentResponse(request, response(pullsTwo))).toThrow("exactly one bound input token");
+    const wrongAmount = encodeFunctionData({ abi: entry, functionName: "routeSingle", args: [{ tokenType: 1, data: tokenAmount(TOKENS.PXCVX, "2") }, "0x1234"] });
+    expect(() => protectEnsoIntentResponse(request, response(wrongAmount))).toThrow();
+  });
+});
+
 describe("Enso intent response protection", () => {
   const swapRequest = {
     intent: "plainTokenSwap" as const,
