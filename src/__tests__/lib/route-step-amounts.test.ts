@@ -562,6 +562,13 @@ describe("route step amounts", () => {
         action: "call",
         args: expect.objectContaining({ method: "exchange_multiple" }),
       }),
+      // Curve pays EnsoShortcuts; without this the Router sees 0 CVX and reverts AmountTooLow.
+      { protocol: "enso", action: "balance", args: { token: TOKENS.CVX } },
+      {
+        protocol: "erc20",
+        action: "transfer",
+        args: { token: TOKENS.CVX, amount: { useOutputOfCallAt: 3 }, receiver: TEST_WALLET },
+      },
     ]);
   });
 
@@ -782,6 +789,12 @@ describe("route step amounts", () => {
           slippage: "100",
           ignoreAggregators: ["0x", "kyberswap"],
         },
+      },
+      { protocol: "enso", action: "balance", args: { token: TOKENS.CVX } },
+      {
+        protocol: "erc20",
+        action: "transfer",
+        args: { token: TOKENS.CVX, amount: { useOutputOfCallAt: 2 }, receiver: TEST_WALLET },
       },
     ]);
     expect(result.amountsOut[TOKENS.CVX.toLowerCase()]).toBe("6000000000000000000");

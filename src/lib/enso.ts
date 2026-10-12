@@ -10069,6 +10069,17 @@ export async function fetchAnyFromErc4626ExternalVaultRoute(params: {
       },
       exactRouteSteps,
     );
+    // The exact conversion leaves CVX in EnsoShortcuts; deliver it explicitly.
+    const delivered = toBalanceState(actions, exactState.token, exactState.expectedAmount);
+    actions.push({
+      protocol: "erc20",
+      action: "transfer",
+      args: {
+        token: delivered.token,
+        amount: delivered.amountRef,
+        receiver: params.fromAddress,
+      },
+    });
     expectedOutput = exactState.expectedAmount;
     exactSwapProtocol = exactRouteSteps.at(-1)?.protocol;
   } else {
