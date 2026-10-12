@@ -12,7 +12,7 @@ import { useUniversalZap } from "@/hooks/useUniversalZap";
 import { useZapActions } from "@/hooks/useZapActions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { ETH_ADDRESS } from "@/lib/enso";
-import { TOKENS } from "@/config/vaults";
+import { TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 import type { SimulationResult, ZapQuote } from "@/types/enso";
 
 vi.mock("next/link", () => ({
@@ -377,7 +377,7 @@ describe("ZapPageContent", () => {
     });
   });
 
-  it("keeps the route visible while the zap is preparing and hides it after submission", () => {
+  it("shows the pending tx card while preparing and awaiting on-chain confirmation", () => {
     sessionStorage.setItem("yldfi-universal-zap-amount", "0.1");
     const preparingZap = {
       needsApproval: () => false,
@@ -403,8 +403,10 @@ describe("ZapPageContent", () => {
 
     const { container, rerender } = render(<ZapPageContent />);
 
-    expect(container.querySelector("aside")?.getAttribute("aria-hidden")).toBe("false");
-    expect(screen.getByRole("button", { name: /Confirm in wallet/ })).toBeTruthy();
+    expect(container.querySelector("aside")?.getAttribute("aria-hidden")).toBe("true");
+    expect(screen.getByText("Preparing Transaction")).toBeTruthy();
+    expect(screen.getByText("Confirm in your wallet. Keep this page open while the transaction submits.")).toBeTruthy();
+    expect(screen.queryByText("View on Etherscan")).toBeNull();
 
     mockUseZapActions.mockReturnValue({
       ...preparingZap,
@@ -415,7 +417,54 @@ describe("ZapPageContent", () => {
     rerender(<ZapPageContent />);
 
     expect(container.querySelector("aside")?.getAttribute("aria-hidden")).toBe("true");
+    expect(screen.getByText("Awaiting Confirmation")).toBeTruthy();
     expect(screen.getByText("View on Etherscan")).toBeTruthy();
+  });
+
+  it.each([
+    ["deposit", "Deposit confirming on-chain.", "Awaiting Confirmation"],
+    ["withdraw", "Withdraw confirming on-chain.", "Awaiting Confirmation"],
+  ] as const)("labels the pending card as a %s for a direct vault pair", (action, expectedCopy, expectedTitle) => {
+    sessionStorage.setItem("yldfi-universal-zap-amount", "1");
+    mockUseUniversalZap.mockReturnValue({
+      quote: {
+        ...quote,
+        inputAmount: "1",
+        directVault: {
+          vaultAddress: VAULT_ADDRESSES.YSCVXCRV,
+          action,
+          symbol: "yscvxCRV",
+        },
+      },
+      isLoading: false,
+      error: null,
+      refetch: refetchQuote,
+    } as unknown as ReturnType<typeof useUniversalZap>);
+    mockUseZapActions.mockReturnValue({
+      needsApproval: () => false,
+      approve,
+      executeZap,
+      reset,
+      status: "waitingTx",
+      error: null,
+      isLoading: false,
+      isSuccess: false,
+      isReverted: false,
+      zapHash: "0x1234",
+      pendingApproval: null,
+      approvalProgress: null,
+      isApproving: false,
+      refetchAllowance,
+      isFlashbotsEnabled: false,
+      isFlashbotsSupported: false,
+      toggleFlashbots,
+      simulationResult: null,
+    } as ReturnType<typeof useZapActions>);
+
+    render(<ZapPageContent />);
+
+    expect(screen.getByText(expectedTitle)).toBeTruthy();
+    expect(screen.getByText(expectedCopy)).toBeTruthy();
   });
 
   it("keeps route details visible when the input balance is insufficient", () => {
