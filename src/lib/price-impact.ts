@@ -5,6 +5,14 @@ function isSwapStep(step: RouteStep): boolean {
   return step.action?.toLowerCase() === "swap";
 }
 
+// A mint at par (CVX -> cvgCVX / pxCVX) changes market value like a swap does: cvgCVX trades
+// well below CVX, so a large zap that mints loses value even with no "Swap" step.
+// Wrap/Unwrap/Exit/Redeem/Deposit are 1:1 or at NAV and stay excluded.
+function isValueChangingStep(step: RouteStep): boolean {
+  // Compound labels such as "Swap + Mint" (cvgCVX hybrid) count too.
+  return /\b(swap|mint)\b/i.test(step.action ?? "");
+}
+
 function parseRawTokenAmount(value: string | undefined, decimals = 18): number | null {
   if (!value) return null;
   try {
@@ -63,7 +71,7 @@ export function calculateValueDeltaImpact(
 }
 
 export function routeHasSwap(routeInfo: RouteInfo | null | undefined): boolean {
-  return Boolean(routeInfo?.steps.some(isSwapStep));
+  return Boolean(routeInfo?.steps.some(isValueChangingStep));
 }
 
 export function routeHasEnsoSwap(routeInfo: RouteInfo | null | undefined): boolean {
