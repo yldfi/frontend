@@ -28,6 +28,9 @@ interface RouteDisplayProps {
   };
   // Optional completion message shown at the bottom of the route in accent color
   completionMessage?: string;
+  // Shown instead of the fallback route when the quote failed and there is no route to display
+  errorMessage?: string;
+  onRetry?: () => void;
 }
 
 // Token logo paths (local files in /public/tokens/)
@@ -508,6 +511,26 @@ function LoadingSkeleton() {
 }
 
 /**
+ * Shown when the quote failed, so the panel stays put instead of unmounting
+ */
+function RouteError({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  return (
+    <div className="text-sm text-[var(--muted-foreground)]">
+      <p>{message}</p>
+      {onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-2 text-xs font-medium text-[var(--foreground)] hover:text-[var(--accent)] transition-colors"
+        >
+          Retry
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
  * Fallback display when no route info is available
  */
 function DirectRoute({ inputSymbol, outputSymbol, inputAmount, outputAmount }: { inputSymbol?: string; outputSymbol?: string; inputAmount?: string; outputAmount?: string }) {
@@ -594,10 +617,14 @@ function LegacyRouteDisplay({ routeInfo }: { routeInfo: RouteInfo }) {
   );
 }
 
-export function RouteDisplay({ routeInfo, inputSymbol, outputSymbol, inputAmount, outputAmount, isLoading, closingLoan, completionMessage }: RouteDisplayProps) {
+export function RouteDisplay({ routeInfo, inputSymbol, outputSymbol, inputAmount, outputAmount, isLoading, closingLoan, completionMessage, errorMessage, onRetry }: RouteDisplayProps) {
   // Only show skeleton if loading AND no existing data to display
   if (isLoading && !routeInfo) {
     return <LoadingSkeleton />;
+  }
+
+  if (!routeInfo && errorMessage) {
+    return <RouteError message={errorMessage} onRetry={onRetry} />;
   }
 
   if (!routeInfo) {
