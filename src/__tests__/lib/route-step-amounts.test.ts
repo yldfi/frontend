@@ -978,7 +978,9 @@ describe("route step amounts", () => {
     expect(callActions(actions, PIREX.LPXCVX, "swap")).toHaveLength(1);
     expect(callActions(actions, PIREX.LPXCVX, "unwrap")).toHaveLength(0);
     expect(callActions(actions, PIREX.LPXCVX_CVX_POOL, "exchange")).toHaveLength(0);
-    expect(result.amountsOut[PIREX.PXCVX.toLowerCase()]).toBe("5050000000000000000");
+    // Fixed 1 CVX swap leg (1.1 pxCVX) + the runtime remainder of the 5 CVX minted 1:1. The mint
+    // takes the remaining balance, so the buffered 3.95 CVX mint estimate (5.05) under-reported.
+    expect(result.amountsOut[PIREX.PXCVX.toLowerCase()]).toBe("5100000000000000000");
 
     const pxCvxBalanceIdx = balanceIndex(actions, TOKENS.PXCVX);
     expect(pxCvxBalanceIdx).toBeGreaterThan(-1);

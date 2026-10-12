@@ -870,6 +870,27 @@ function intermediateApproveAction(
  * slippage-buffered estimate. Mint whatever CVX the swap leg left (read at runtime) instead of
  * the fixed estimate, so the buffer doesn't stay behind at the shared EnsoShortcuts contract.
  */
+/**
+ * Expected output of a CVX swap/mint split for the CVX the bundle actually spends. Splits are
+ * sized from a slippage-buffered estimate, but runtime legs spend the whole balance (a fixed swap
+ * leg plus the remaining balance for the mint). The intent guard derives the on-chain minimum
+ * from this, so reporting the buffered figure set it ~2x slippage below the real output.
+ */
+async function runtimeSplitOutput(p: {
+  runtimeCvx: bigint;
+  swapAmount: bigint;
+  mintAmount: bigint;
+  expectedSwapOut: bigint;
+  quoteSwap: (amount: string) => Promise<bigint | null>;
+}): Promise<bigint> {
+  const { runtimeCvx, swapAmount, mintAmount, expectedSwapOut } = p;
+  if (swapAmount > 0n && mintAmount > 0n) {
+    return expectedSwapOut + (runtimeCvx > swapAmount ? runtimeCvx - swapAmount : 0n);
+  }
+  if (swapAmount > 0n) return (await p.quoteSwap(runtimeCvx.toString())) || expectedSwapOut;
+  return runtimeCvx;
+}
+
 function remainingCvxForMint(actions: EnsoBundleAction[]): BundleAmountRef {
   actions.push({ protocol: "enso", action: "balance", args: { token: TOKENS.CVX } });
   return { useOutputOfCallAt: actions.length - 1 };
@@ -1325,10 +1346,22 @@ async function appendCvxToLpxCvxConversion(
     }));
   }
 
+  // Output of what the bundle actually spends (see appendCvxToPxCvxConversion).
+  let expectedOut = expectedSwapLpxCvx + mintAmount;
+  if (cvxIsDynamic) {
+    if (usesFixedDynamicSplit) {
+      expectedOut = expectedSwapLpxCvx + (state.expectedAmount > swapAmount ? state.expectedAmount - swapAmount : 0n);
+    } else if (swapAmount > 0n) {
+      expectedOut = (await getPxCvxSwapRate(state.expectedAmount.toString())) || expectedSwapLpxCvx;
+    } else {
+      expectedOut = state.expectedAmount;
+    }
+  }
+
   return toBalanceState(
     actions,
     PIREX.LPXCVX,
-    expectedSwapLpxCvx + mintAmount,
+    expectedOut,
   );
 }
 
@@ -1457,10 +1490,22 @@ async function appendCvxToCvgCvxConversion(
     }));
   }
 
+  // Output of what the bundle actually spends (see appendCvxToPxCvxConversion).
+  let expectedOut = expectedSwapCvgCvx + mintAmount;
+  if (cvxIsDynamic) {
+    if (usesFixedDynamicSplit) {
+      expectedOut = expectedSwapCvgCvx + (state.expectedAmount > swapAmount ? state.expectedAmount - swapAmount : 0n);
+    } else if (swapAmount > 0n) {
+      expectedOut = (await getCvgCvxSwapRate(state.expectedAmount.toString())) || expectedSwapCvgCvx;
+    } else {
+      expectedOut = state.expectedAmount;
+    }
+  }
+
   return toBalanceState(
     actions,
     TOKENS.CVGCVX,
-    expectedSwapCvgCvx + mintAmount,
+    expectedOut,
   );
 }
 
@@ -1710,8 +1755,8 @@ async function appendConversionToCvx(
 
   if (isPxCvxAddress(state.token)) {
     const { PIREX } = await import("@/config/vaults");
-    const conservativePxCvx = applySlippageBuffer(state.expectedAmount, ctx.slippageBps);
-    const expectedCvx = await getLpxCvxToCvxSwapRate(conservativePxCvx);
+    // The legs spend the runtime balance (state.amountRef), so quote the unbuffered amount.
+    const expectedCvx = await getLpxCvxToCvxSwapRate(state.expectedAmount.toString());
     if (!expectedCvx || expectedCvx === 0n) {
       throw new Error("Failed to estimate Curve lpxCVX→CVX swap output");
     }
@@ -1782,8 +1827,7 @@ async function appendConversionToCvx(
 
   if (isLpxCvxAddress(state.token)) {
     const { PIREX } = await import("@/config/vaults");
-    const conservativeLpxCvx = applySlippageBuffer(state.expectedAmount, ctx.slippageBps);
-    const expectedCvx = await getLpxCvxToCvxSwapRate(conservativeLpxCvx);
+    const expectedCvx = await getLpxCvxToCvxSwapRate(state.expectedAmount.toString());
     if (!expectedCvx || expectedCvx === 0n) {
       throw new Error("Failed to estimate Curve lpxCVX→CVX swap output");
     }
@@ -1833,8 +1877,7 @@ async function appendConversionToCvx(
 
   if (isCvgCvxAddress(state.token)) {
     const { TANGENT } = await import("@/config/vaults");
-    const conservativeCvgCvx = applySlippageBuffer(state.expectedAmount, ctx.slippageBps);
-    const expectedCvx1 = await getCvgCvxReverseSwapRate(conservativeCvgCvx);
+    const expectedCvx1 = await getCvgCvxReverseSwapRate(state.expectedAmount.toString());
     if (!expectedCvx1 || expectedCvx1 === 0n) {
       throw new Error("Failed to estimate Curve cvgCVX→CVX1 swap output");
     }
@@ -5027,6 +5070,9 @@ export async function fetchCvgCvxZapInRoute(params: {
 
   // Step 3: Calculate optimal split between swap and mint using conservative CVX amount
   const { swapAmount, mintAmount } = await getOptimalSwapAmount(cvxAmountForSplit);
+  // Swap-only and mint-only bundles spend the whole runtime CVX from the input route, so the
+  // expected output (and the intent guard's minimum derived from it) uses the unbuffered estimate.
+  const runtimeCvx = expectedCvxOutput;
 
   // Build token path - skip CVX if input is already CVX
   const tokenPath = inputIsCvx
@@ -5061,7 +5107,7 @@ export async function fetchCvgCvxZapInRoute(params: {
     // Calculate swap bonus and bonus amount using conservative CVX amount
     const swapOutput = await getCvgCvxSwapRate(cvxAmountForSplit);
     if (swapOutput) {
-      expectedCvgCvxOutput = swapOutput.toString();
+      expectedCvgCvxOutput = ((await getCvgCvxSwapRate(runtimeCvx)) || swapOutput).toString();
       swapBonus = (Number(swapOutput) / Number(cvxAmountForSplit) - 1) * 100;
       // Bonus amount = cvgCVX received - CVX input (what you gain vs 1:1 mint)
       bonusAmount = formatRouteDeltaAmount(swapOutput, cvxAmountForSplit, TOKENS.CVGCVX);
@@ -5077,7 +5123,7 @@ export async function fetchCvgCvxZapInRoute(params: {
     }
     bundle = await buildMintOnlyBundle(params, TANGENT, cvxAmountForSplit, slippageBps, inputIsCvx);
     swapBonus = 0;
-    expectedCvgCvxOutput = cvxAmountForSplit; // 1:1 mint
+    expectedCvgCvxOutput = runtimeCvx; // 1:1 mint of the runtime CVX
     // No bonus for mint-only
   } else {
     // Hybrid path: split input between swap and mint paths
@@ -5122,7 +5168,10 @@ export async function fetchCvgCvxZapInRoute(params: {
 
       // Calculate expected cvgCVX output for route info
       const swapOutput = await getCvgCvxSwapRate(swapAmount.toString());
-      expectedCvgCvxOutput = ((swapOutput ?? swapAmount) + mintAmount).toString();
+      // The fee action splits the runtime CVX by percentage, so both legs scale with it.
+      const bufferedTotal = BigInt(cvxAmountForSplit);
+      const splitOutput = (swapOutput ?? swapAmount) + mintAmount;
+      expectedCvgCvxOutput = (bufferedTotal > 0n ? (splitOutput * BigInt(runtimeCvx)) / bufferedTotal : splitOutput).toString();
 
       // Swap bonus is proportional to swap portion
       if (swapOutput && swapAmount > 0n) {
@@ -5157,7 +5206,7 @@ export async function fetchCvgCvxZapInRoute(params: {
         // Calculate swap bonus
         const swapOutput = await getCvgCvxSwapRate(cvxAmountForSplit);
         if (swapOutput) {
-          expectedCvgCvxOutput = swapOutput.toString();
+          expectedCvgCvxOutput = ((await getCvgCvxSwapRate(runtimeCvx)) || swapOutput).toString();
           swapBonus = (Number(swapOutput) / Number(cvxAmountForSplit) - 1) * 100;
           bonusAmount = formatRouteDeltaAmount(swapOutput, cvxAmountForSplit, TOKENS.CVGCVX);
         }
@@ -5177,7 +5226,7 @@ export async function fetchCvgCvxZapInRoute(params: {
         actualSwapAmount = 0n;
         actualMintAmount = BigInt(cvxAmountForSplit);
         swapBonus = 0;
-        expectedCvgCvxOutput = cvxAmountForSplit; // 1:1 mint
+        expectedCvgCvxOutput = runtimeCvx; // 1:1 mint of the runtime CVX
       }
     }
 
@@ -5189,11 +5238,10 @@ export async function fetchCvgCvxZapInRoute(params: {
         swapBonus = (Number(swapOutput) / Number(conservativeSwapAmount) - 1) * 100;
         // Bonus amount = cvgCVX received from swap - CVX swapped (gain on swap portion)
         bonusAmount = formatRouteDeltaAmount(swapOutput, conservativeSwapAmount, TOKENS.CVGCVX);
-        // Total cvgCVX = swap output + mint amount (1:1)
-        expectedCvgCvxOutput = (BigInt(swapOutput) + mintAmount).toString();
-      } else {
-        expectedCvgCvxOutput = (swapAmount + mintAmount).toString();
       }
+      // buildHybridBundle reports the runtime split's expected cvgCVX (shared helper).
+      expectedCvgCvxOutput = bundle.amountsOut[TOKENS.CVGCVX.toLowerCase()]
+        ?? (swapOutput ? BigInt(swapOutput) + mintAmount : swapAmount + mintAmount).toString();
     }
   }
 
@@ -6628,7 +6676,13 @@ export async function fetchPxCvxZapInRoute(params: {
     swapMinDy = calculateMinDy(swapOutput, totalSlippageBps);
   }
   const expectedMintPxCvx = mintAmount; // 1:1 ratio
-  const totalExpectedPxCvx = expectedSwapPxCvx + expectedMintPxCvx;
+  const totalExpectedPxCvx = await runtimeSplitOutput({
+    runtimeCvx: inputIsCvx ? BigInt(params.amountIn) : BigInt(estimatedCvxAmount),
+    swapAmount,
+    mintAmount: expectedMintPxCvx,
+    expectedSwapOut: expectedSwapPxCvx,
+    quoteSwap: getPxCvxSwapRate,
+  });
 
   // Build actions based on strategy
   const actions: EnsoBundleAction[] = [];
@@ -8485,7 +8539,13 @@ export async function fetchAnyToPxCvxRoute(params: {
     swapMinDy = calculateMinDy(swapOutput, totalSlippageBps);
   }
   const expectedMintPxCvx = mintAmount;
-  const totalExpectedPxCvx = expectedSwapPxCvx + expectedMintPxCvx;
+  const totalExpectedPxCvx = await runtimeSplitOutput({
+    runtimeCvx: inputIsCvx ? BigInt(params.amountIn) : BigInt(estimatedCvxAmount),
+    swapAmount,
+    mintAmount: expectedMintPxCvx,
+    expectedSwapOut: expectedSwapPxCvx,
+    quoteSwap: getPxCvxSwapRate,
+  });
 
   const actions: EnsoBundleAction[] = [];
   let actionIndex = 0;
@@ -8820,7 +8880,13 @@ export async function fetchAnyToCvgCvxRoute(params: {
     expectedSwapCvgCvx = swapOutput;
     swapMinDy = calculateMinDy(swapOutput, totalSlippageBps);
   }
-  const totalExpectedCvgCvx = expectedSwapCvgCvx + mintAmount; // mint = 1:1
+  const totalExpectedCvgCvx = await runtimeSplitOutput({
+    runtimeCvx: BigInt(expectedCvxOutput),
+    swapAmount,
+    mintAmount, // mint = 1:1
+    expectedSwapOut: expectedSwapCvgCvx,
+    quoteSwap: getCvgCvxSwapRate,
+  });
 
   const actions: EnsoBundleAction[] = [];
   let actionIndex = 0;
@@ -9068,7 +9134,13 @@ export async function fetchAnyToLpxCvxRoute(params: {
   }
   // Mint path: CVX → pxCVX (1:1) → wrap → lpxCVX (1:1)
   const expectedMintLpxCvx = mintAmount;
-  const totalExpectedLpxCvx = expectedSwapLpxCvx + expectedMintLpxCvx;
+  const totalExpectedLpxCvx = await runtimeSplitOutput({
+    runtimeCvx: inputIsCvx ? BigInt(params.amountIn) : BigInt(estimatedCvxAmount),
+    swapAmount,
+    mintAmount: expectedMintLpxCvx,
+    expectedSwapOut: expectedSwapLpxCvx,
+    quoteSwap: getPxCvxSwapRate,
+  });
 
   const actions: EnsoBundleAction[] = [];
   let actionIndex = 0;
