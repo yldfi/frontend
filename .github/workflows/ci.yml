@@ -215,7 +215,7 @@ jobs:
         env:
           NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: ${{ vars.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID }}
           NEXT_PUBLIC_GA_ID: ${{ vars.NEXT_PUBLIC_GA_ID }}
-          # Server-side secrets (ENSO_API_KEY, MORALIS_API_KEY, TOKEN_HOLDER_API_KEY)
+          # Server-side secrets (ENSO_API_KEY, TOKEN_HOLDER_API_KEY, ETHERSCAN_API_KEY, etc.)
           # are configured as Cloudflare Worker secrets, not at build time
 
       - name: Deploy to Cloudflare
