@@ -13,5 +13,5 @@
     "moduleResolution": "Bundler",
     "skipLibCheck": true
   },
-  "include": ["vault-cache.ts", "x-weekly-apy.ts"]
+  "include": ["vault-cache.ts", "x-weekly-apy.ts", "yldfi-edge.ts"]
 }
