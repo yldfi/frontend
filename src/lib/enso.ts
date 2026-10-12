@@ -730,8 +730,9 @@ async function buildCvxToCvgCvxDepositActions(params: {
   }
 
   if (mintAmount > 0n) {
+    const mintInput = usesFixedDynamicSplit ? remainingCvxForMint(actions) : mintCvxInput;
     actions.push(
-      intermediateApproveAction(TOKENS.CVX, TANGENT.CVGCVX_CONTRACT, mintCvxInput, usesFixedDynamicSplit),
+      intermediateApproveAction(TOKENS.CVX, TANGENT.CVGCVX_CONTRACT, mintInput, usesFixedDynamicSplit),
       {
         protocol: "enso",
         action: "call",
@@ -739,7 +740,7 @@ async function buildCvxToCvgCvxDepositActions(params: {
           address: TANGENT.CVGCVX_CONTRACT,
           method: "mint",
           abi: "function mint(address to, uint256 amount, bool isLock) returns (uint256)",
-          args: [ENSO_SHORTCUTS, mintCvxInput, true],
+          args: [ENSO_SHORTCUTS, mintInput, true],
         },
       },
     );
@@ -819,6 +820,16 @@ function intermediateApproveAction(
   return forceRawCall
     ? rawApproveCallAction(token, spender, amount)
     : erc20ApproveAction(token, spender, amount);
+}
+
+/**
+ * When a runtime CVX amount is split between a swap and a mint, the split is sized from a
+ * slippage-buffered estimate. Mint whatever CVX the swap leg left (read at runtime) instead of
+ * the fixed estimate, so the buffer doesn't stay behind at the shared EnsoShortcuts contract.
+ */
+function remainingCvxForMint(actions: EnsoBundleAction[]): BundleAmountRef {
+  actions.push({ protocol: "enso", action: "balance", args: { token: TOKENS.CVX } });
+  return { useOutputOfCallAt: actions.length - 1 };
 }
 
 type PirexLpxSwapConfig = {
@@ -1040,8 +1051,9 @@ async function appendCvxToPxCvxConversion(
   }
 
   if (mintAmount > 0n) {
+    const mintInput = usesFixedDynamicSplit ? remainingCvxForMint(actions) : mintCvxInput;
     actions.push(
-      intermediateApproveAction(TOKENS.CVX, PIREX.PIREX_CVX, mintCvxInput, usesFixedDynamicSplit),
+      intermediateApproveAction(TOKENS.CVX, PIREX.PIREX_CVX, mintInput, usesFixedDynamicSplit),
       {
         protocol: "enso",
         action: "call",
@@ -1050,9 +1062,9 @@ async function appendCvxToPxCvxConversion(
           method: "deposit",
           abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
           args: [
-            mintCvxInput,
+            mintInput,
             ENSO_SHORTCUTS,
-            "false",
+            false,
             ZERO_ADDRESS,
           ],
         },
@@ -1165,8 +1177,9 @@ async function appendCvxToLpxCvxConversion(
   }
 
   if (mintAmount > 0n) {
+    const mintInput = usesFixedDynamicSplit ? remainingCvxForMint(actions) : mintCvxInput;
     actions.push(
-      intermediateApproveAction(TOKENS.CVX, PIREX.PIREX_CVX, mintCvxInput, usesFixedDynamicSplit),
+      intermediateApproveAction(TOKENS.CVX, PIREX.PIREX_CVX, mintInput, usesFixedDynamicSplit),
       {
         protocol: "enso",
         action: "call",
@@ -1175,9 +1188,9 @@ async function appendCvxToLpxCvxConversion(
           method: "deposit",
           abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
           args: [
-            mintCvxInput,
+            mintInput,
             ENSO_SHORTCUTS,
-            "false",
+            false,
             ZERO_ADDRESS,
           ],
         },
@@ -1322,8 +1335,9 @@ async function appendCvxToCvgCvxConversion(
   }
 
   if (mintAmount > 0n) {
+    const mintInput = usesFixedDynamicSplit ? remainingCvxForMint(actions) : mintCvxInput;
     actions.push(
-      intermediateApproveAction(TOKENS.CVX, TANGENT.CVGCVX_CONTRACT, mintCvxInput, usesFixedDynamicSplit),
+      intermediateApproveAction(TOKENS.CVX, TANGENT.CVGCVX_CONTRACT, mintInput, usesFixedDynamicSplit),
       {
         protocol: "enso",
         action: "call",
@@ -1331,7 +1345,7 @@ async function appendCvxToCvgCvxConversion(
           address: TANGENT.CVGCVX_CONTRACT,
           method: "mint",
           abi: "function mint(address to, uint256 amount, bool isLock) returns (uint256)",
-          args: [ENSO_SHORTCUTS, mintCvxInput, true],
+          args: [ENSO_SHORTCUTS, mintInput, true],
         },
       },
     );
@@ -4030,7 +4044,9 @@ async function fetchCvgCvxVaultToVaultRoute(params: {
     actions,
     routingStrategy: "router",
     // Curve router calls can fail Enso simulation; skipQuote avoids simulation-based rejection
-    ...(targetIsCvxCrv ? { skipQuote: true } : {}),
+    // (amountsOut is filled in below). Every other target needs Enso's quote for amountsOut,
+    // so request it explicitly rather than inheriting fetchBundle's dev-only skip.
+    skipQuote: targetIsCvxCrv,
   });
 
   // When targetIsCvxCrv, we calculate our own expected values using previewDeposit
@@ -4209,7 +4225,7 @@ async function _fetchVaultToPxCvxVaultRoute(params: {
         address: PIREX.PIREX_CVX,
         method: "deposit",
         abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
-        args: [mintAmount.toString(), ENSO_SHORTCUTS, "false", "0x0000000000000000000000000000000000000000"],
+        args: [mintAmount.toString(), ENSO_SHORTCUTS, false, "0x0000000000000000000000000000000000000000"],
       },
     });
     actionIndex++;
@@ -4245,7 +4261,7 @@ async function _fetchVaultToPxCvxVaultRoute(params: {
         address: PIREX.PIREX_CVX,
         method: "deposit",
         abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
-        args: [{ useOutputOfCallAt: cvxSourceIdx }, ENSO_SHORTCUTS, "false", "0x0000000000000000000000000000000000000000"],
+        args: [{ useOutputOfCallAt: cvxSourceIdx }, ENSO_SHORTCUTS, false, "0x0000000000000000000000000000000000000000"],
       },
     });
     actionIndex++;
@@ -6730,10 +6746,14 @@ export async function fetchPxCvxZapInRoute(params: {
     );
     actionIndex += 2;
 
+    // A runtime CVX amount was split from a buffered estimate: mint whatever the swap left.
+    const mintInput: BundleAmountRef = fixedIntermediateSplit ? remainingCvxForMint(actions) : mintAmount.toString();
+    if (fixedIntermediateSplit) actionIndex++;
+
     actions.push(intermediateApproveAction(
       TOKENS.CVX,
       PIREX.PIREX_CVX,
-      mintAmount.toString(),
+      mintInput,
       fixedIntermediateSplit,
     ));
     actionIndex++;
@@ -6748,9 +6768,9 @@ export async function fetchPxCvxZapInRoute(params: {
         method: "deposit",
         abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
         args: [
-          mintAmount.toString(),
+          mintInput,
           ENSO_SHORTCUTS,
-          "false", // shouldCompound (boolean as string for Enso API)
+          false, // shouldCompound — must be a real boolean: Enso encodes the string "false" as true
           "0x0000000000000000000000000000000000000000", // developer
         ],
       },
@@ -6792,7 +6812,7 @@ export async function fetchPxCvxZapInRoute(params: {
         args: [
           inputIsCvx ? params.amountIn : { useOutputOfCallAt: actionIndex - 2 },
           ENSO_SHORTCUTS,
-          "false", // shouldCompound (boolean as string for Enso API)
+          false, // shouldCompound — must be a real boolean: Enso encodes the string "false" as true
           "0x0000000000000000000000000000000000000000",
         ],
       },
@@ -8576,10 +8596,14 @@ export async function fetchAnyToPxCvxRoute(params: {
     );
     actionIndex += 2;
 
+    // A runtime CVX amount was split from a buffered estimate: mint whatever the swap left.
+    const mintInput: BundleAmountRef = fixedIntermediateSplit ? remainingCvxForMint(actions) : mintAmount.toString();
+    if (fixedIntermediateSplit) actionIndex++;
+
     actions.push(intermediateApproveAction(
       TOKENS.CVX,
       PIREX.PIREX_CVX,
-      mintAmount.toString(),
+      mintInput,
       fixedIntermediateSplit,
     ));
     actionIndex++;
@@ -8592,9 +8616,9 @@ export async function fetchAnyToPxCvxRoute(params: {
         method: "deposit",
         abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
         args: [
-          mintAmount.toString(),
+          mintInput,
           ENSO_SHORTCUTS,
-          "false",
+          false,
           "0x0000000000000000000000000000000000000000",
         ],
       },
@@ -8628,7 +8652,7 @@ export async function fetchAnyToPxCvxRoute(params: {
         args: [
           inputIsCvx ? params.amountIn : { useOutputOfCallAt: actionIndex - 2 },
           ENSO_SHORTCUTS,
-          "false",
+          false,
           "0x0000000000000000000000000000000000000000",
         ],
       },
@@ -8941,8 +8965,10 @@ export async function fetchAnyToCvgCvxRoute(params: {
   }
 
   if (mintAmount > 0n) {
+    const mintInput = usesFixedDynamicSplit ? remainingCvxForMint(actions) : mintCvxInput;
+    if (usesFixedDynamicSplit) actionIndex++;
     // Mint path: CVX → cvgCVX 1:1 via Convex mint (sent to ENSO_SHORTCUTS for aggregation)
-    actions.push(intermediateApproveAction(TOKENS.CVX, TANGENT.CVGCVX_CONTRACT, mintCvxInput, usesFixedDynamicSplit));
+    actions.push(intermediateApproveAction(TOKENS.CVX, TANGENT.CVGCVX_CONTRACT, mintInput, usesFixedDynamicSplit));
     actionIndex++;
 
     actions.push({
@@ -8952,7 +8978,7 @@ export async function fetchAnyToCvgCvxRoute(params: {
         address: TANGENT.CVGCVX_CONTRACT,
         method: "mint",
         abi: "function mint(address to, uint256 amount, bool isLock) returns (uint256)",
-        args: [ENSO_SHORTCUTS, mintCvxInput, true],
+        args: [ENSO_SHORTCUTS, mintInput, true],
       },
     });
     actionIndex++;
@@ -9177,11 +9203,13 @@ export async function fetchAnyToLpxCvxRoute(params: {
   }
 
   if (mintAmount > 0n) {
+    const mintInput = usesFixedDynamicSplit ? remainingCvxForMint(actions) : mintCvxInput;
+    if (usesFixedDynamicSplit) actionIndex++;
     // Pirex mint + wrap path: CVX → pxCVX (1:1) → wrap → lpxCVX (1:1)
     actions.push(intermediateApproveAction(
       TOKENS.CVX,
       PIREX.PIREX_CVX,
-      mintCvxInput,
+      mintInput,
       usesFixedDynamicSplit,
     ));
     actionIndex++;
@@ -9194,9 +9222,9 @@ export async function fetchAnyToLpxCvxRoute(params: {
         method: "deposit",
         abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
         args: [
-          mintCvxInput,
+          mintInput,
           ENSO_SHORTCUTS,
-          "false",
+          false,
           "0x0000000000000000000000000000000000000000",
         ],
       },
@@ -11502,39 +11530,20 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
   let totalExpectedTargetUnderlying = intermediateForSplit;
 
   if (!sameUnderlying && targetIsPxCvx) {
-    // CVX → pxCVX via hybrid Curve swap + Pirex mint.
+    // CVX → pxCVX via the shared hybrid Curve swap + Pirex mint. The CVX here comes from
+    // void calls (CVX1.withdraw / Curve exchange), so read it at runtime: a fixed split sized
+    // from the buffered estimate left the buffer behind at EnsoShortcuts.
     if (intermediateToken.toLowerCase() !== TOKENS.CVX.toLowerCase()) {
       throw new Error("pxCVX target requires CVX intermediate");
     }
-    const { swapAmount, mintAmount } = await getOptimalPxCvxSwapAmount(intermediateForSplit.toString());
-    let expectedSwapPxCvx = 0n;
-    let swapMinDy = "0";
-    if (swapAmount > 0n) {
-      const swapOut = await getPxCvxSwapRate(swapAmount.toString());
-      if (!swapOut || swapOut === 0n) throw new Error("CVX→lpxCVX estimate failed");
-      expectedSwapPxCvx = swapOut;
-      swapMinDy = calculateMinDy(swapOut, totalSlippageBps);
-    }
-    totalExpectedTargetUnderlying = expectedSwapPxCvx + mintAmount;
-
-    if (swapAmount > 0n) {
-      pushCvxToPxCvxSwapActions(actions, PIREX, swapAmount.toString(), swapMinDy, true);
-    }
-    if (mintAmount > 0n) {
-      actions.push(
-        rawApproveCallAction(TOKENS.CVX, PIREX.PIREX_CVX, mintAmount.toString()),
-        {
-          protocol: "enso",
-          action: "call",
-          args: {
-            address: PIREX.PIREX_CVX,
-            method: "deposit",
-            abi: "function deposit(uint256 assets, address receiver, bool shouldCompound, address developer)",
-            args: [mintAmount.toString(), ENSO_SHORTCUTS, "false", "0x0000000000000000000000000000000000000000"],
-          },
-        },
-      );
-    }
+    const cvxState = toBalanceState(actions, TOKENS.CVX, estimatedIntermediate);
+    const pxCvxState = await appendCvxToPxCvxConversion(
+      actions,
+      cvxState,
+      { fromAddress: params.fromAddress, slippage: params.slippage, slippageBps, totalSlippageBps },
+      [],
+    );
+    totalExpectedTargetUnderlying = pxCvxState.expectedAmount;
   } else if (!sameUnderlying) {
     // Quote for display/preview only. Execution uses the runtime intermediate
     // balance through Enso's native dynamic route action.
