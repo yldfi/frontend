@@ -11404,8 +11404,9 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
   const sourceIsCvxCrv = sourceUnderlyingLower === TOKENS.CVXCRV.toLowerCase();
   const sourceIsCvgCvx = sourceUnderlyingLower === TOKENS.CVGCVX.toLowerCase();
   const sourceIsPxCvx = sourceUnderlyingLower === TOKENS.PXCVX.toLowerCase();
+  const sourceIsCvx = sourceUnderlyingLower === TOKENS.CVX.toLowerCase();
 
-  if (!sourceIsCvxCrv && !sourceIsCvgCvx && !sourceIsPxCvx) {
+  if (!sourceIsCvx && !sourceIsCvxCrv && !sourceIsCvgCvx && !sourceIsPxCvx) {
     throw new Error(`Unsupported yld vault underlying ${params.sourceUnderlying} for external-vault zap`);
   }
 
@@ -11415,8 +11416,9 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
   const expectedUnderlying = await previewRedeem(params.sourceVault, amountIn);
   let intermediateToken: string;
   let estimatedIntermediate: bigint;
-  if (sourceIsCvxCrv) {
-    intermediateToken = TOKENS.CVXCRV;
+  if (sourceIsCvx || sourceIsCvxCrv) {
+    // The redeem already yields a routable token at EnsoShortcuts; no unwrap step needed.
+    intermediateToken = sourceIsCvx ? TOKENS.CVX : TOKENS.CVXCRV;
     estimatedIntermediate = BigInt(expectedUnderlying);
   } else if (sourceIsCvgCvx) {
     intermediateToken = TOKENS.CVX;
@@ -11533,16 +11535,12 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
     // CVX → pxCVX via the shared hybrid Curve swap + Pirex mint. The CVX here comes from
     // void calls (CVX1.withdraw / Curve exchange), so read it at runtime: a fixed split sized
     // from the buffered estimate left the buffer behind at EnsoShortcuts.
-    if (intermediateToken.toLowerCase() !== TOKENS.CVX.toLowerCase()) {
-      throw new Error("pxCVX target requires CVX intermediate");
-    }
-    const cvxState = toBalanceState(actions, TOKENS.CVX, estimatedIntermediate);
-    const pxCvxState = await appendCvxToPxCvxConversion(
-      actions,
-      cvxState,
-      { fromAddress: params.fromAddress, slippage: params.slippage, slippageBps, totalSlippageBps },
-      [],
-    );
+    // A cvxCRV intermediate is routed to CVX first by the shared conversion engine.
+    const conversionCtx = { fromAddress: params.fromAddress, slippage: params.slippage, slippageBps, totalSlippageBps };
+    const intermediateState = toBalanceState(actions, intermediateToken, estimatedIntermediate);
+    const pxCvxState = intermediateToken.toLowerCase() === TOKENS.CVX.toLowerCase()
+      ? await appendCvxToPxCvxConversion(actions, intermediateState, conversionCtx, [])
+      : await convertStateToToken(actions, intermediateState, TOKENS.PXCVX, conversionCtx, []);
     totalExpectedTargetUnderlying = pxCvxState.expectedAmount;
   } else if (!sameUnderlying) {
     // Quote for display/preview only. Execution uses the runtime intermediate
@@ -11696,7 +11694,7 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
     { tokenSymbol: sourceSymbol, amount: fmt(amountIn), action: "Redeem", description: `${sourceSymbol} for ${sourceUnderlyingSymbol}`, protocol: "yld" },
   ];
 
-  if (!sourceIsCvxCrv) {
+  if (sourceIsCvgCvx || sourceIsPxCvx) {
     // cvgCVX or pxCVX → CVX swap step
     const protocol = sourceIsCvgCvx ? "LiquidBoost" : "Pirex";
     const desc = sourceIsCvgCvx ? `${sourceUnderlyingSymbol} → CVX1 → CVX` : `${sourceUnderlyingSymbol} → lpxCVX → CVX`;
