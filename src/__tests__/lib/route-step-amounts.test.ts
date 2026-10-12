@@ -1123,12 +1123,26 @@ describe("route step amounts", () => {
       ["lpxCVX -> ysCvgCVX", () => fetchLpxCvxZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, amountIn: (5n * ONE_ETHER).toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
       ["pxCVX -> ysCvgCVX", () => fetchPxCvxTokenZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, amountIn: (5n * ONE_ETHER).toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
       ["yspxCVX -> ysCvgCVX", () => fetchVaultToVaultRoute({ fromAddress: wallet, sourceVault: VAULT_ADDRESSES.YSPXCVX, targetVault: VAULT_ADDRESSES.YSCVGCVX, amountIn: (5n * ONE_ETHER).toString(), sourceUnderlyingToken: TOKENS.PXCVX, targetUnderlyingToken: TOKENS.CVGCVX, slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
+      ["CVX -> ysCvgCVX", () => fetchCvgCvxZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, inputToken: TOKENS.CVX, amountIn: (5n * ONE_ETHER).toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
       ["ycvxCRV -> ysCvgCVX", () => fetchVaultToVaultRoute({ fromAddress: wallet, sourceVault: VAULT_ADDRESSES.YCVXCRV, targetVault: VAULT_ADDRESSES.YSCVGCVX, amountIn: ONE_ETHER.toString(), sourceUnderlyingToken: TOKENS.CVXCRV, targetUnderlyingToken: TOKENS.CVGCVX, slippage: "100" }), null],
     ];
 
     it.each(builders)("%s keeps references, booleans and transfers valid (swap-only split)", async (_label, build) => {
       await build();
       expectBundleInvariants(lastBundleActions());
+    });
+
+    it("declares the CVX input exactly once on a CVX -> ysCvgCVX swap + mint split", async () => {
+      mockCvgCvxHybridSplit();
+      const amountIn = (5n * ONE_ETHER).toString();
+      await fetchCvgCvxZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, inputToken: TOKENS.CVX, amountIn, slippage: "100" });
+      const actions = lastBundleActions();
+      // Two fixed CVX approvals read as two wallet inputs, which Enso builds as routeMulti.
+      expect(fixedErc20Approvals(actions, TOKENS.CVX)).toEqual([
+        { protocol: "erc20", action: "approve", args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: amountIn } },
+      ]);
+      expect(callActions(actions, TANGENT.CVGCVX_CONTRACT, "mint")).toHaveLength(1);
+      expect(actions).not.toContainEqual(expect.objectContaining({ args: expect.objectContaining({ args: expect.arrayContaining([ENSO_ROUTER_V2]) }) }));
     });
 
     it.each(builders)("%s keeps invariants and mints the remaining runtime CVX under a swap + mint split", async (_label, build, mintTarget) => {

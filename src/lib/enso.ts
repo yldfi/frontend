@@ -5535,7 +5535,7 @@ async function buildMintOnlyBundle(
  *
  * For inputIsCvx=true:
  *   CVX → [split: CVX1→swap + direct mint] → cvgCVX → vault
- *   Uses literal amounts since we know exactly how much CVX we have.
+ *   One fixed approve declares the wallet input; the split runs on the runtime CVX balance.
  *
  * For inputIsCvx=false:
  *   Route swapInput → CVX → CVX1 → swap → cvgCVX → vault (deposit 1)
@@ -5550,129 +5550,38 @@ async function buildHybridBundle(
   slippageBps: number,
   inputIsCvx: boolean
 ): Promise<EnsoBundleResponse> {
-  const totalSlippageBps = getBufferedSlippageBps(slippageBps);
-  // Calculate min_dy for swap path (using exact swap amount)
-  const expectedSwapOutput = await getCurveGetDy(
-    TANGENT.CVX1_CVGCVX_POOL,
-    0, 1, swapAmount.toString()
-  );
-  const minSwapDy = expectedSwapOutput
-    ? calculateMinDy(expectedSwapOutput, totalSlippageBps)
-    : "0";
-
   if (inputIsCvx) {
-    // Input is already CVX - use literal amounts directly (no route to split)
-    // Total expected cvgCVX = swap output + mint amount (1:1)
-    const totalExpectedCvgCvx = (expectedSwapOutput ?? swapAmount) + mintAmount;
-
-    // NOTE: CVX input hybrid bundles require skipQuote: true because Enso's
-    // simulator only pulls tokens for the FIRST action that consumes each token type.
-    // Since we need CVX for both swap path (CVX → CVX1) and mint path (CVX → cvgCVX),
-    // the simulator fails with "ERC20: transfer amount exceeds balance".
-    // We've exhaustively tested alternatives (transferfrom, split, wrap-all-then-unwrap,
-    // balance action, delegate routing) - all fail. skipQuote is the only working solution.
-
+    // One fixed approve of the whole input declares the single wallet pull; the shared
+    // helper then splits the runtime CVX balance (raw approves, so Enso doesn't read
+    // either leg as a second input, which made the intent guard see routeMulti).
     const actions: EnsoBundleAction[] = [
-      // === SWAP PATH ===
-
-      // Action 0: Approve swapAmount CVX → CVX1
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: swapAmount.toString() },
-      },
-      // Action 1: Wrap swapAmount CVX → CVX1 (mint to ENSO_SHORTCUTS for Curve call)
-      // CVX1 must go to ENSO_SHORTCUTS because Curve.exchange does transferFrom(msg.sender, ...)
-      {
-        protocol: "enso",
-        action: "call",
-        args: {
-          address: TOKENS.CVX1,
-          method: "mint",
-          abi: "function mint(address to, uint256 amount)",
-          args: [ENSO_SHORTCUTS, swapAmount.toString()],
-        },
-      },
-      // Action 2: Approve CVX1 → Curve pool
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: { token: TOKENS.CVX1, spender: TANGENT.CVX1_CVGCVX_POOL, amount: swapAmount.toString() },
-      },
-      // Action 3: Swap CVX1 → cvgCVX via Curve
-      {
-        protocol: "enso",
-        action: "call",
-        args: {
-          address: TANGENT.CVX1_CVGCVX_POOL,
-          method: "exchange",
-          abi: "function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) returns (uint256)",
-          args: [0, 1, swapAmount.toString(), minSwapDy],
-        },
-      },
-
-      // === MINT PATH ===
-
-      // Action 4: Approve mintAmount CVX → cvgCVX contract
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: { token: TOKENS.CVX, spender: TANGENT.CVGCVX_CONTRACT, amount: mintAmount.toString() },
-      },
-      // Action 5: Mint cvgCVX from CVX (1:1, isLock=true, mint to router)
-      {
-        protocol: "enso",
-        action: "call",
-        args: {
-          address: TANGENT.CVGCVX_CONTRACT,
-          method: "mint",
-          abi: "function mint(address to, uint256 amount, bool isLock) returns (uint256)",
-          args: [ENSO_ROUTER_V2, mintAmount.toString(), true],
-        },
-      },
-
-      // === DEPOSIT ALL cvgCVX TO VAULT ===
-
-      // Action 6: Approve all cvgCVX → vault
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: { token: TOKENS.CVGCVX, spender: params.vaultAddress, amount: totalExpectedCvgCvx.toString() },
-      },
-      // Action 7: Deposit all cvgCVX → vault
-      {
-        protocol: "erc4626",
-        action: "deposit",
-        args: {
-          tokenIn: TOKENS.CVGCVX,
-          tokenOut: params.vaultAddress,
-          amountIn: totalExpectedCvgCvx.toString(),
-          primaryAddress: params.vaultAddress,
-        },
-      },
+      erc20ApproveAction(TOKENS.CVX, TOKENS.CVX1, params.amountIn),
+      { protocol: "enso", action: "balance", args: { token: TOKENS.CVX } },
     ];
+    const { actions: cvgCvxActions, expectedCvgCvx } = await buildCvxToCvgCvxDepositActions({
+      baseIdx: actions.length,
+      expectedCvxAmount: swapAmount + mintAmount,
+      cvxAmountRef: { useOutputOfCallAt: 1 },
+      targetVault: params.vaultAddress,
+      slippageBps,
+    });
+    actions.push(...cvgCvxActions);
     appendTerminalSlippageGuard(actions, params.slippage ?? "100");
 
-    // Use skipQuote to bypass Enso simulation (which fails for multi-consumption CVX bundles)
-    //
-    // NOTE: We intentionally do NOT self-simulate CVX hybrid bundles because:
-    // 1. The bundle uses multiple intermediate tokens (CVX → CVX1 → cvgCVX via Curve)
-    // 2. CVX1 uses non-standard storage slots (51 for balances, 52 for approvals)
-    // 3. State overrides for multiple tokens in a complex bundle execution context
-    //    don't work reliably with eth_call - the Curve exchange fails even with
-    //    correct slot overrides due to internal state tracking differences.
-    // 4. skipQuote=true has been verified to work correctly on-chain.
+    // Enso cannot simulate the CVX1/Tangent legs; amountsOut is filled in below.
     const bundleResult = await fetchBundle({
       fromAddress: params.fromAddress,
       actions,
       routingStrategy: "router",
       skipQuote: true,
     });
-
-    // Manually provide expected amountsOut since skipQuote returns null
     bundleResult.amountsOut = {
-      [params.vaultAddress.toLowerCase()]: totalExpectedCvgCvx.toString(),
-      [TOKENS.CVGCVX.toLowerCase()]: totalExpectedCvgCvx.toString(),
+      [params.vaultAddress.toLowerCase()]: await estimateExternalVaultShares({
+        vaultAddress: params.vaultAddress,
+        vaultInterface: "erc4626",
+        underlyingAmount: expectedCvgCvx,
+      }),
+      [TOKENS.CVGCVX.toLowerCase()]: expectedCvgCvx.toString(),
     };
 
     return bundleResult;
