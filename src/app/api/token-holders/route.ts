@@ -3,8 +3,8 @@ import { RPC_URL_LIST } from "@/config/rpc";
 
 export const dynamic = "force-dynamic";
 
-const MORALIS_API_KEY = process.env.MORALIS_API_KEY || "";
 const TOKEN_HOLDER_API_KEY = process.env.TOKEN_HOLDER_API_KEY || "";
+const BLOCKSCOUT_API_BASE = "https://eth.blockscout.com/api/v2";
 
 // Cache: token address -> { holders, timestamp }
 const holdersCache = new Map<string, { holders: string[]; timestamp: number }>();
@@ -23,14 +23,13 @@ function timingSafeEqual(a: string, b: string): boolean {
   return result === 0;
 }
 
-interface MoralisHolder {
-  owner_address: string;
-  balance: string;
-  is_contract: boolean;
+interface BlockscoutHolder {
+  address: { hash: string; is_contract: boolean };
+  value: string;
 }
 
-interface MoralisResponse {
-  result?: MoralisHolder[];
+interface BlockscoutResponse {
+  items?: BlockscoutHolder[];
 }
 
 /**
@@ -61,36 +60,24 @@ async function isEOA(address: string, rpcUrls: string[]): Promise<boolean> {
 }
 
 /**
- * Fetch token holders from Moralis API
+ * Fetch token holders from Blockscout API
  */
-async function fetchFromMoralis(
+async function fetchFromBlockscout(
   token: string,
   minBalance: bigint,
   maxHolders: number
 ): Promise<string[]> {
-  if (!MORALIS_API_KEY) {
-    return [];
-  }
-
-  const url = `https://deep-index.moralis.io/api/v2.2/erc20/${token}/owners?chain=eth&limit=50&order=DESC`;
+  const url = `${BLOCKSCOUT_API_BASE}/tokens/${token}/holders`;
 
   const response = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-      "X-API-Key": MORALIS_API_KEY,
-    },
+    headers: { Accept: "application/json" },
   });
 
   if (!response.ok) {
-    throw new Error(`Moralis API error: ${response.status}`);
+    throw new Error(`Blockscout API error: ${response.status}`);
   }
 
-  const data = (await response.json()) as MoralisResponse;
-  if (process.env.NODE_ENV !== "production") {
-    // Temporary debug: log raw Moralis response during local dev
-     
-    console.log("[token-holders] Moralis response:", JSON.stringify(data));
-  }
+  const data = (await response.json()) as BlockscoutResponse;
   const holders: string[] = [];
 
   // Use public RPCs with fallback for EOA checks
@@ -98,20 +85,22 @@ async function fetchFromMoralis(
     ? [process.env.DEBUG_RPC_URL, ...RPC_URL_LIST]
     : [...RPC_URL_LIST];
 
-  for (const holder of data.result || []) {
+  for (const item of data.items || []) {
     if (holders.length >= maxHolders) break;
 
-    const balance = BigInt(holder.balance);
-    if (balance < minBalance) continue;
+    const address = item.address?.hash;
+    if (!address) continue;
 
-    // Skip if Moralis says it's a contract
-    if (holder.is_contract) continue;
+    if (BigInt(item.value || "0") < minBalance) continue;
+
+    // Skip if Blockscout flags it as a contract
+    if (item.address.is_contract) continue;
 
     // Double-check it's an EOA
-    const isEoa = await isEOA(holder.owner_address, rpcUrls);
+    const isEoa = await isEOA(address, rpcUrls);
     if (!isEoa) continue;
 
-    holders.push(holder.owner_address.toLowerCase());
+    holders.push(address.toLowerCase());
   }
 
   return holders;
@@ -133,14 +122,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       { success: false, error: "Rate limit exceeded" },
       { status: 429 }
-    );
-  }
-
-  // Check Moralis config
-  if (!MORALIS_API_KEY) {
-    return NextResponse.json(
-      { success: false, error: "Moralis API not configured" },
-      { status: 500 }
     );
   }
 
@@ -185,9 +166,9 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // Fetch from Moralis
+  // Fetch from Blockscout
   try {
-    const holders = await fetchFromMoralis(token, minBalance, maxHolders);
+    const holders = await fetchFromBlockscout(token, minBalance, maxHolders);
 
     // Update cache
     holdersCache.set(cacheKey, { holders, timestamp: now });
@@ -212,6 +193,6 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json({
     status: "ok",
-    configured: Boolean(MORALIS_API_KEY && TOKEN_HOLDER_API_KEY),
+    configured: Boolean(TOKEN_HOLDER_API_KEY),
   });
 }

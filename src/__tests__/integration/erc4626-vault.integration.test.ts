@@ -5,7 +5,7 @@
  * WITHOUT going through Enso. This is what the deposit/withdraw pages use via useVaultActions.
  *
  * Uses debug_traceCall with state overrides to simulate transactions on mainnet fork.
- * Uses token-holders API (or Moralis fallback) to find actual token holders for realistic testing.
+ * Uses token-holders API (or Blockscout fallback) to find actual token holders for realistic testing.
  */
 import { describe, it, expect, beforeAll } from "vitest";
 import { parseEther, encodeFunctionData, keccak256, toHex, pad, concat } from "viem";
@@ -23,7 +23,6 @@ const SIMULATION_RPC_AUTH = process.env.DEBUG_RPC_AUTH || "";
 // Token holders API
 const TOKEN_HOLDER_API_URL = process.env.TOKEN_HOLDER_API_URL || "http://localhost:3000/api/token-holders";
 const TOKEN_HOLDER_API_KEY = process.env.TOKEN_HOLDER_API_KEY || "";
-const MORALIS_API_KEY = process.env.MORALIS_API_KEY || "";
 
 // Skip tests if no RPC URL configured
 const skipIfNoRpc = SIMULATION_RPC_URL ? it : it.skip;
@@ -86,42 +85,6 @@ const VAULT_CONFIGS = {
 // ============================================================================
 
 /**
- * Get ERC20 token balance for an address using eth_call
- */
-async function getTokenBalance(token: string, holder: string): Promise<bigint> {
-  if (!SIMULATION_RPC_URL) return 0n;
-
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (SIMULATION_RPC_AUTH) {
-    headers["Authorization"] = `Basic ${SIMULATION_RPC_AUTH}`;
-  }
-
-  // balanceOf(address) selector: 0x70a08231
-  const data = "0x70a08231" + holder.toLowerCase().slice(2).padStart(64, "0");
-
-  try {
-    const response = await crossFetch(SIMULATION_RPC_URL, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "eth_call",
-        params: [{ to: token, data }, "latest"],
-      }),
-    });
-
-    const result = (await response.json()) as { result?: string };
-    if (result.result && result.result !== "0x") {
-      return BigInt(result.result);
-    }
-    return 0n;
-  } catch {
-    return 0n;
-  }
-}
-
-/**
  * Check if an address is an EOA (not a contract)
  */
 async function isEOA(address: string): Promise<boolean> {
@@ -152,7 +115,7 @@ async function isEOA(address: string): Promise<boolean> {
 }
 
 /**
- * Fetch holders from token-holders API (or fallback to direct Moralis)
+ * Fetch holders from token-holders API (or fallback to direct Blockscout)
  */
 async function fetchHolders(
   token: string,
@@ -184,46 +147,42 @@ async function fetchHolders(
         return data.holders;
       }
     } catch (err) {
-      console.warn("Token holders API failed, falling back to Moralis:", err);
+      console.warn("Token holders API failed, falling back to Blockscout:", err);
     }
   }
 
-  // Fallback: Direct Moralis API
-  if (!MORALIS_API_KEY) return [];
-
+  // Fallback: Direct Blockscout API
   try {
-    const url = `https://deep-index.moralis.io/api/v2.2/erc20/${token}/owners?chain=eth&limit=20&order=DESC`;
+    const url = `https://eth.blockscout.com/api/v2/tokens/${token}/holders`;
 
     const response = await crossFetch(url, {
-      headers: {
-        Accept: "application/json",
-        "X-API-Key": MORALIS_API_KEY,
-      },
+      headers: { Accept: "application/json" },
     });
 
     const data = (await response.json()) as {
-      result?: Array<{ owner_address: string }>;
+      items?: Array<{ address: { hash: string; is_contract: boolean }; value: string }>;
     };
     const holders: string[] = [];
 
-    if (Array.isArray(data.result)) {
-      for (const holder of data.result) {
+    if (Array.isArray(data.items)) {
+      for (const item of data.items) {
         if (holders.length >= maxHolders) break;
 
-        const address = holder.owner_address;
+        const address = item.address?.hash;
+        if (!address) continue;
 
         // Skip contracts - we need EOAs
+        if (item.address.is_contract) continue;
         if (!(await isEOA(address))) continue;
 
-        const balance = await getTokenBalance(token, address);
-        if (balance >= minAmount) {
+        if (BigInt(item.value || "0") >= minAmount) {
           holders.push(address);
         }
       }
     }
     return holders;
   } catch (err) {
-    console.warn("Moralis API lookup failed:", err);
+    console.warn("Blockscout API lookup failed:", err);
     return [];
   }
 }
