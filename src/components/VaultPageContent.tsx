@@ -15,43 +15,10 @@ import { ApprovalCard } from "@/components/ApprovalCard";
 import { LoadingDots } from "@/components/LoadingDots";
 import { TxAssetDetailsPill } from "@/components/TxAssetDetailsPill";
 
-// Parse Enso API errors into user-friendly messages
-function parseQuoteError(error: Error | null): string {
-  if (!error) return "Failed to get quote";
-  const msg = error.message || "";
-  const normalizedMsg = msg.toLowerCase();
-
-  // Route deliberately disabled (message names the pair and the workaround)
-  if (normalizedMsg.includes("temporarily unavailable")) {
-    return msg;
-  }
-  // Amount too large/out of range
-  if (normalizedMsg.includes("amountin") && normalizedMsg.includes("acceptable range")) {
-    return "Amount too large to quote - try a smaller amount";
-  }
-  // Insufficient liquidity
-  if (normalizedMsg.includes("insufficient liquidity") || normalizedMsg.includes("no route found") || normalizedMsg.includes("swap not found")) {
-    return "No route available - insufficient liquidity";
-  }
-  // Rate limit
-  if (normalizedMsg.includes("rate limit") || normalizedMsg.includes("429")) {
-    return "Too many requests - please wait a moment";
-  }
-  // Network/timeout errors
-  if (normalizedMsg.includes("timeout") || normalizedMsg.includes("network") || normalizedMsg.includes("fetch")) {
-    return "Network error - please try again";
-  }
-  // Generic API error - show shortened version
-  if (msg.startsWith("API Error:")) {
-    return "Quote unavailable - try a different amount";
-  }
-
-  return "Failed to get quote";
-}
-
 import { ContractExplorer, useContractExplorer, type ExplorerContract } from "@/components/ContractExplorer";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
+import { parseQuoteError } from "@/lib/quote-errors";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { fillMissingSimulationUsd } from "@/lib/simulation-pricing";
 import { useSettings } from "@/hooks/useSettings";

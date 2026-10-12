@@ -29,6 +29,7 @@ import { useTokenBalances } from "@/hooks/useTokenBalances";
 
 import { ETH_ADDRESS, applyKnownTokenMetadata, getCustomTokenMetadata } from "@/lib/enso";
 import { cn } from "@/lib/utils";
+import { parseQuoteError } from "@/lib/quote-errors";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { fillMissingSimulationUsd } from "@/lib/simulation-pricing";
 import { getMaxEthAmount } from "@/lib/eth-gas";
@@ -577,7 +578,7 @@ export function ZapPageContent() {
   const noRoute = !quoteSettling && !!quoteError && !!amount && Number(amount) > 0;
   // Keep the route panel mounted when a quote fails so it shows an error instead of vanishing.
   const hasRouteContent = !!amount && Number(amount) > 0 && (!!quote || quoteSettling || noRoute);
-  const routeErrorMessage = noRoute ? "No route available right now." : undefined;
+  const routeErrorMessage = noRoute ? parseQuoteError(quoteError) : undefined;
   const retryQuote = () => void refetchQuote();
   const isPendingTx =
     (isZapTxPendingVisible(status) && !isSimulatingPreview && !showSimulationModal) || isDebugPending;
