@@ -1,0 +1,52 @@
+name: RainbowKit wagmi 3 Watch
+
+# Weekly check for a RainbowKit release that supports wagmi 3 (tracked in #116).
+# Comments once on the tracking issue when the latest release's wagmi peer range allows 3.x.
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  id-token: none
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check RainbowKit wagmi peer range
+        run: |
+          state=$(gh issue view "$ISSUE" --json state -q .state --repo "$GH_REPO")
+          if [ "$state" != "OPEN" ]; then
+            echo "Issue #$ISSUE is $state; nothing to do."
+            exit 0
+          fi
+
+          version=$(npm view @rainbow-me/rainbowkit version)
+          peer=$(npm view "@rainbow-me/rainbowkit@$version" peerDependencies.wagmi)
+          published=$(npm view @rainbow-me/rainbowkit time --json | jq -r --arg v "$version" '.[$v]')
+          echo "Latest @rainbow-me/rainbowkit $version (published $published) peers wagmi: $peer"
+
+          # Match a 3.x major in any '||' branch, e.g. "^3.0.0", "^2.9.0 || ^3.0.0", ">=3".
+          if ! echo "$peer" | tr '|' '\n' | grep -Eq '^[[:space:]]*([\^~]|>=?)?[[:space:]]*3([.[:space:]]|$)'; then
+            echo "No wagmi 3 support yet."
+            exit 0
+          fi
+
+          marker="<!-- rainbowkit-wagmi3:$version -->"
+          if gh issue view "$ISSUE" --json comments -q '.comments[].body' --repo "$GH_REPO" | grep -qF "$marker"; then
+            echo "Already notified for $version."
+            exit 0
+          fi
+
+          gh issue comment "$ISSUE" --repo "$GH_REPO" --body "$marker
+          @rainbow-me/rainbowkit **$version** (published $published) supports wagmi 3: peer range \`$peer\`.
+
+          This issue is unblocked. pnpm's 7-day \`minimumReleaseAge\` applies, so it can be installed once the release is at least 7 days old."
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: "116"
