@@ -1199,6 +1199,48 @@ describe("route step amounts", () => {
   });
 
   describe("yld vault -> external vault sources", () => {
+    it("labels the cvxCRV -> pxCVX legs with the conversion engine's steps (yscvxCRV -> uCVX)", async () => {
+      const result = await fetchYldVaultToExternalVaultRoute({
+        fromAddress: TEST_WALLET,
+        sourceVault: VAULT_ADDRESSES.YSCVXCRV,
+        sourceUnderlying: TOKENS.CVXCRV,
+        targetVault: LLAMA_AIRFORCE.UCVX,
+        targetUnderlying: TOKENS.PXCVX,
+        targetInterface: "erc4626",
+        targetSymbol: "uCVX",
+        targetProtocol: "Llama Airforce",
+        amountIn: ONE_ETHER.toString(),
+        slippage: "100",
+      });
+      const steps = result.routeInfo?.steps ?? [];
+      // Previously a single hardcoded "CVX for pxCVX" step carrying the buffered cvxCRV amount.
+      expect(steps.find((step) => step.description === "CVX for pxCVX (hybrid)")).toBeUndefined();
+      expect(steps.some((step) => step.tokenSymbol === "cvxCRV" && step.action === "Swap")).toBe(true);
+      expect(steps.at(-2)).toMatchObject({ action: "Deposit", tokenSymbol: "pxCVX" });
+    });
+
+    it("formats 6-decimal target amounts correctly (ysCVX -> yvUSDC-1)", async () => {
+      mockGetRouteData.mockResolvedValue({
+        amountOut: "253000000",
+        tx: { to: "0xroute", data: "0x1", value: "0" },
+        route: [],
+      });
+      const result = await fetchYldVaultToExternalVaultRoute({
+        fromAddress: TEST_WALLET,
+        sourceVault: VAULT_ADDRESSES.YSCVX,
+        sourceUnderlying: TOKENS.CVX,
+        targetVault: YVUSDC1_ADDRESS,
+        targetUnderlying: USDC_ADDRESS,
+        targetInterface: "erc4626",
+        targetSymbol: "yvUSDC-1",
+        targetProtocol: "Yearn",
+        amountIn: ONE_ETHER.toString(),
+        slippage: "100",
+      });
+      // 18-decimal formatting showed 253 USDC as 0.0000.
+      expect(result.routeInfo?.steps.find((step) => step.action === "Deposit")).toMatchObject({ tokenSymbol: "USDC", amount: "253.0000" });
+    });
+
     it("delivers CVX to the user on yspxCVX -> CVX and reports the CVX amount", async () => {
       const result = await fetchPxCvxZapOutRoute({
         fromAddress: TEST_WALLET,
