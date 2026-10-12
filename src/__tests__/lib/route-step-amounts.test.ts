@@ -80,6 +80,7 @@ import {
   fetchDynamicInputEstimate,
   fetchComposableZapInRoute,
   fetchLpxCvxZapInRoute,
+  fetchPxCvxZapOutRoute,
   fetchErc4626ExternalVaultZapInRoute,
   fetchUCvxZapInRoute,
   fetchLegacyMorphoWrapRoute,
@@ -298,23 +299,6 @@ describe("route step amounts", () => {
       }
       return makeRpcResponse("0x0");
     }) as unknown as typeof fetch;
-  });
-
-  it.each([
-    ["ysCVX", VAULT_ADDRESSES.YSCVX, TOKENS.CVX],
-    ["yscvxCRV", VAULT_ADDRESSES.YSCVXCRV, TOKENS.CVXCRV],
-  ])("refuses %s -> yspxCVX instead of a share-to-share Enso route", async (_label, sourceVault, sourceUnderlying) => {
-    // The direct route had no liquidity: 140 ysCVX filled for 0.0166 yspxCVX on a mainnet fork.
-    await expect(fetchVaultToVaultRoute({
-      fromAddress: TEST_WALLET,
-      sourceVault,
-      targetVault: VAULT_ADDRESSES.YSPXCVX,
-      amountIn: ONE_ETHER.toString(),
-      sourceUnderlyingToken: sourceUnderlying,
-      targetUnderlyingToken: TOKENS.PXCVX,
-      slippage: "100",
-    })).rejects.toThrow("temporarily unavailable");
-    expect(mockGetBundleData).not.toHaveBeenCalled();
   });
 
   it("shows both underlying amounts for a standard vault-to-vault route", async () => {
@@ -1249,6 +1233,7 @@ describe("route step amounts", () => {
       ["mooCvxCVX -> ysCvgCVX", () => fetchBeefyZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, beefyVaultAddress: BEEFY.MOO_CVX_CVX, beefyVaultUnderlying: TOKENS.CVX, beefyVaultSymbol: "mooCvxCVX", amountIn: ONE_ETHER.toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
       ["lpxCVX -> ysCvgCVX", () => fetchLpxCvxZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, amountIn: (5n * ONE_ETHER).toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
       ["pxCVX -> ysCvgCVX", () => fetchPxCvxTokenZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, amountIn: (5n * ONE_ETHER).toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
+      ["yspxCVX -> ysCvgCVX", () => fetchVaultToVaultRoute({ fromAddress: wallet, sourceVault: VAULT_ADDRESSES.YSPXCVX, targetVault: VAULT_ADDRESSES.YSCVGCVX, amountIn: (5n * ONE_ETHER).toString(), sourceUnderlyingToken: TOKENS.PXCVX, targetUnderlyingToken: TOKENS.CVGCVX, slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
       ["CVX -> ysCvgCVX", () => fetchCvgCvxZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, inputToken: TOKENS.CVX, amountIn: (5n * ONE_ETHER).toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
       ["ycvxCRV -> ysCvgCVX", () => fetchVaultToVaultRoute({ fromAddress: wallet, sourceVault: VAULT_ADDRESSES.YCVXCRV, targetVault: VAULT_ADDRESSES.YSCVGCVX, amountIn: ONE_ETHER.toString(), sourceUnderlyingToken: TOKENS.CVXCRV, targetUnderlyingToken: TOKENS.CVGCVX, slippage: "100" }), null],
     ];
@@ -1305,6 +1290,153 @@ describe("route step amounts", () => {
     }
     const config = mockGetBundleData.mock.calls[mockGetBundleData.mock.calls.length - 1][0] as { skipQuote?: boolean };
     expect(config.skipQuote).toBe(false);
+  });
+
+  describe("yld vault -> external vault sources", () => {
+    it("labels the cvxCRV -> pxCVX legs with the conversion engine's steps (yscvxCRV -> uCVX)", async () => {
+      const result = await fetchYldVaultToExternalVaultRoute({
+        fromAddress: TEST_WALLET,
+        sourceVault: VAULT_ADDRESSES.YSCVXCRV,
+        sourceUnderlying: TOKENS.CVXCRV,
+        targetVault: LLAMA_AIRFORCE.UCVX,
+        targetUnderlying: TOKENS.PXCVX,
+        targetInterface: "erc4626",
+        targetSymbol: "uCVX",
+        targetProtocol: "Llama Airforce",
+        amountIn: ONE_ETHER.toString(),
+        slippage: "100",
+      });
+      const steps = result.routeInfo?.steps ?? [];
+      // Previously a single hardcoded "CVX for pxCVX" step carrying the buffered cvxCRV amount.
+      expect(steps.find((step) => step.description === "CVX for pxCVX (hybrid)")).toBeUndefined();
+      expect(steps.some((step) => step.tokenSymbol === "cvxCRV" && step.action === "Swap")).toBe(true);
+      expect(steps.at(-2)).toMatchObject({ action: "Deposit", tokenSymbol: "pxCVX" });
+    });
+
+    it("formats 6-decimal target amounts correctly (ysCVX -> yvUSDC-1)", async () => {
+      mockGetRouteData.mockResolvedValue({
+        amountOut: "253000000",
+        tx: { to: "0xroute", data: "0x1", value: "0" },
+        route: [],
+      });
+      const result = await fetchYldVaultToExternalVaultRoute({
+        fromAddress: TEST_WALLET,
+        sourceVault: VAULT_ADDRESSES.YSCVX,
+        sourceUnderlying: TOKENS.CVX,
+        targetVault: YVUSDC1_ADDRESS,
+        targetUnderlying: USDC_ADDRESS,
+        targetInterface: "erc4626",
+        targetSymbol: "yvUSDC-1",
+        targetProtocol: "Yearn",
+        amountIn: ONE_ETHER.toString(),
+        slippage: "100",
+      });
+      // 18-decimal formatting showed 253 USDC as 0.0000.
+      expect(result.routeInfo?.steps.find((step) => step.action === "Deposit")).toMatchObject({ tokenSymbol: "USDC", amount: "253.0000" });
+    });
+
+    it("delivers CVX to the user on yspxCVX -> CVX and reports the CVX amount", async () => {
+      const result = await fetchPxCvxZapOutRoute({
+        fromAddress: TEST_WALLET,
+        vaultAddress: VAULT_ADDRESSES.YSPXCVX,
+        outputToken: TOKENS.CVX,
+        amountIn: ONE_ETHER.toString(),
+        slippage: "100",
+      });
+      const actions = lastBundleActions();
+      expect(actions[4]).toMatchObject({ action: "call", args: { method: "exchange" } });
+      // The raw exchange pays EnsoShortcuts, so the bundle must end by sending that CVX on.
+      expect(actions.at(-1)).toEqual({
+        protocol: "erc20",
+        action: "transfer",
+        args: { token: TOKENS.CVX, amount: { useOutputOfCallAt: 4 }, receiver: TEST_WALLET },
+      });
+      expect(BigInt(result.amountsOut[TOKENS.CVX.toLowerCase()] ?? "0")).toBeGreaterThan(0n);
+    });
+
+    it("deposits redeemed pxCVX straight into a pxCVX-backed target (yspxCVX -> uCVX)", async () => {
+      await fetchYldVaultToExternalVaultRoute({
+        fromAddress: TEST_WALLET,
+        sourceVault: VAULT_ADDRESSES.YSPXCVX,
+        sourceUnderlying: TOKENS.PXCVX,
+        targetVault: LLAMA_AIRFORCE.UCVX,
+        targetUnderlying: TOKENS.PXCVX,
+        targetInterface: "erc4626",
+        targetSymbol: "uCVX",
+        targetProtocol: "Llama Airforce",
+        amountIn: ONE_ETHER.toString(),
+        slippage: "100",
+      });
+      const actions = lastBundleActions();
+      expect(actions.map((action) => action.action)).toEqual(["redeem", "balance", "deposit"]);
+      expect(actions[1].args).toEqual({ token: TOKENS.PXCVX });
+    });
+
+    it("quotes yspxCVX -> a CVX-backed external vault through the lpxCVX CryptoSwap pool", async () => {
+      await fetchYldVaultToExternalVaultRoute({
+        fromAddress: TEST_WALLET,
+        sourceVault: VAULT_ADDRESSES.YSPXCVX,
+        sourceUnderlying: TOKENS.PXCVX,
+        targetVault: CONCENTRATOR.ACVX,
+        targetUnderlying: TOKENS.CVX,
+        targetInterface: "erc4626",
+        targetSymbol: "aCVX",
+        targetProtocol: "Concentrator",
+        amountIn: ONE_ETHER.toString(),
+        slippage: "100",
+      });
+      // getCurveGetDy uses int128 get_dy, which the uint256-index lpxCVX pool rejects on-chain.
+      expect(vi.mocked(getCurveGetDy).mock.calls.map(([pool]) => String(pool).toLowerCase())).not.toContain(PIREX.LPXCVX_CVX_POOL.toLowerCase());
+      expect(callActions(lastBundleActions(), PIREX.LPXCVX_CVX_POOL, "exchange")).toHaveLength(1);
+      expect(lastBundleActions().at(-1)).toMatchObject({ action: "deposit", args: { tokenIn: TOKENS.CVX, tokenOut: CONCENTRATOR.ACVX } });
+    });
+
+    it.each([
+      ["ysCVX", VAULT_ADDRESSES.YSCVX, TOKENS.CVX],
+      ["yscvxCRV", VAULT_ADDRESSES.YSCVXCRV, TOKENS.CVXCRV],
+    ])("converts %s -> yspxCVX through pxCVX instead of a share-to-share route", async (_label, sourceVault, sourceUnderlying) => {
+      await fetchVaultToVaultRoute({
+        fromAddress: TEST_WALLET,
+        sourceVault,
+        targetVault: VAULT_ADDRESSES.YSPXCVX,
+        amountIn: ONE_ETHER.toString(),
+        sourceUnderlyingToken: sourceUnderlying,
+        targetUnderlyingToken: TOKENS.PXCVX,
+        slippage: "100",
+      });
+      const actions = lastBundleActions();
+      // A direct Enso route between the share tokens filled through dust on a mainnet fork (~100% loss).
+      expect(actions).not.toContainEqual(expect.objectContaining({
+        action: "route",
+        args: expect.objectContaining({ tokenIn: sourceVault, tokenOut: VAULT_ADDRESSES.YSPXCVX }),
+      }));
+      expect(actions[0]).toMatchObject({ protocol: "erc4626", action: "redeem", args: { tokenIn: sourceVault } });
+      expect(actions.at(-1)).toMatchObject({
+        protocol: "erc4626",
+        action: "deposit",
+        args: { tokenIn: TOKENS.PXCVX, tokenOut: VAULT_ADDRESSES.YSPXCVX },
+      });
+    });
+
+    const cases: Array<[string, string, string, string, string, "erc4626"]> = [
+      ["ysCVX -> aCVX", VAULT_ADDRESSES.YSCVX, TOKENS.CVX, CONCENTRATOR.ACVX, TOKENS.CVX, "erc4626"],
+      ["ysCVX -> aCRV", VAULT_ADDRESSES.YSCVX, TOKENS.CVX, CONCENTRATOR.ACRV, TOKENS.CVXCRV, "erc4626"],
+      ["ysCVX -> uCVX", VAULT_ADDRESSES.YSCVX, TOKENS.CVX, LLAMA_AIRFORCE.UCVX, TOKENS.PXCVX, "erc4626"],
+      ["yscvxCRV -> uCVX", VAULT_ADDRESSES.YSCVXCRV, TOKENS.CVXCRV, LLAMA_AIRFORCE.UCVX, TOKENS.PXCVX, "erc4626"],
+    ];
+
+    it.each(cases)("%s builds from the redeemed underlying and deposits the runtime balance", async (_label, source, sourceUnderlying, target, targetUnderlying, targetInterface) => {
+      await fetchYldVaultToExternalVaultRoute({
+        fromAddress: TEST_WALLET, sourceVault: source, sourceUnderlying, targetVault: target, targetUnderlying,
+        targetInterface, targetSymbol: "target", targetProtocol: "test", amountIn: ONE_ETHER.toString(), slippage: "100",
+      });
+      const actions = lastBundleActions();
+      expect(actions[0]).toMatchObject({ protocol: "erc4626", action: "redeem", args: { tokenIn: source, amountIn: ONE_ETHER.toString() } });
+      const deposit = actions.find((action) => action.protocol === "erc4626" && action.action === "deposit");
+      expect(deposit?.args.tokenOut).toBe(target);
+      const amountRef = deposit?.args.amountIn as { useOutputOfCallAt: number };
+      expect(actions[amountRef.useOutputOfCallAt]).toMatchObject({ action: "balance", args: { token: targetUnderlying } });
+    });
   });
 
   it.each([
