@@ -9,7 +9,7 @@
  * - Below peg: Swap everything (get bonus from pool imbalance)
  * - Above peg: Swap up to peg point, mint the rest (hybrid strategy)
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { findPegPoint, stableswap } from "@/lib/curve";
 
 // ============================================
@@ -199,23 +199,21 @@ describe("stableswap.getDy", () => {
 // Integration Tests - getOptimalSwapAmount
 // ============================================
 
+// Mock the findMaxSwapBeforePeg function (it normally makes RPC calls to get
+// pool state). vi.mock is hoisted, so it must live at module top level.
+const { mockFindMaxSwapBeforePeg } = vi.hoisted(() => ({
+  mockFindMaxSwapBeforePeg: vi.fn(),
+}));
+vi.mock("@/lib/enso", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/enso")>();
+  return {
+    ...actual,
+    findMaxSwapBeforePeg: mockFindMaxSwapBeforePeg,
+  };
+});
+
 describe("getOptimalSwapAmount", () => {
   // These tests mock the RPC calls to test the decision logic
-
-  let mockFindMaxSwapBeforePeg: ReturnType<typeof vi.fn>;
-
-  beforeEach(async () => {
-    // Mock the findMaxSwapBeforePeg function
-    // It normally makes RPC calls to get pool state
-    vi.mock("@/lib/enso", async (importOriginal) => {
-      const actual = await importOriginal<typeof import("@/lib/enso")>();
-      mockFindMaxSwapBeforePeg = vi.fn();
-      return {
-        ...actual,
-        findMaxSwapBeforePeg: mockFindMaxSwapBeforePeg,
-      };
-    });
-  });
 
   afterEach(() => {
     vi.restoreAllMocks();
