@@ -170,7 +170,7 @@ jobs:
       - name: Build application
         run: pnpm build
         env:
-          NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID }}
+          NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: ${{ vars.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID }}
 
       - name: Run E2E tests
         run: pnpm test:e2e
@@ -206,25 +206,16 @@ jobs:
       - name: Build for Cloudflare
         run: pnpm build:cloudflare
         env:
-          NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID }}
-          NEXT_PUBLIC_GA_ID: ${{ secrets.NEXT_PUBLIC_GA_ID }}
-          ENSO_API_KEY: ${{ secrets.ENSO_API_KEY }}
-          # Server-side secrets (MORALIS_API_KEY, TOKEN_HOLDER_API_KEY) are
-          # configured in Cloudflare dashboard, not at build time
-
-      - name: Mask Cloudflare account name
-        run: |
-          if [ -n "$CLOUDFLARE_ACCOUNT_NAME" ]; then
-            echo "::add-mask::$CLOUDFLARE_ACCOUNT_NAME"
-          fi
-        env:
-          CLOUDFLARE_ACCOUNT_NAME: ${{ secrets.CLOUDFLARE_ACCOUNT_NAME }}
+          NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: ${{ vars.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID }}
+          NEXT_PUBLIC_GA_ID: ${{ vars.NEXT_PUBLIC_GA_ID }}
+          # Server-side secrets (ENSO_API_KEY, MORALIS_API_KEY, TOKEN_HOLDER_API_KEY)
+          # are configured as Cloudflare Worker secrets, not at build time
 
       - name: Deploy to Cloudflare
         run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
 
   deploy-cache-worker:
     name: Deploy cache worker to Cloudflare
@@ -248,4 +239,4 @@ jobs:
         working-directory: .
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
