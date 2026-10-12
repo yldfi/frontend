@@ -10152,12 +10152,13 @@ export async function fetchAnyFromUCrvRoute(params: {
     LLAMA_AIRFORCE.UCRV_UNDERLYING.toLowerCase() === params.outputToken.toLowerCase();
 
   const actions: EnsoBundleAction[] = [
-    // uCRV.withdraw(_to=ENSO_SHORTCUTS, _shares) — cvxCRV delivered to shortcuts
+    // uCRV.withdraw(_to, _shares). cvxCRV output goes straight to the user; otherwise it lands at
+    // ENSO_SHORTCUTS for the route below. (Sending it to shortcuts with no route left it stranded.)
     rawCallConsumingInput(params.amountIn, LLAMA_AIRFORCE.UCRV, {
       address: LLAMA_AIRFORCE.UCRV,
       method: "withdraw",
       abi: "function withdraw(address _to, uint256 _shares) returns (uint256)",
-      args: [ENSO_SHORTCUTS, params.amountIn],
+      args: [sameAsOutput ? params.fromAddress : ENSO_SHORTCUTS, params.amountIn],
     }),
   ];
 
@@ -10168,7 +10169,8 @@ export async function fetchAnyFromUCrvRoute(params: {
     const dynamicQuote = await fetchDynamicInputEstimate({
       fromAddress: params.fromAddress,
       tokenIn: LLAMA_AIRFORCE.UCRV_UNDERLYING,
-      tokenOut: params.outputToken,
+      // Execution routes to WETH and unwraps, so quote that leg for ETH outputs.
+      tokenOut: isNativeETH(params.outputToken) ? WETH_ADDRESS : params.outputToken,
       amountIn: expectedCvxCrv,
       slippage: params.slippage ?? "100",
     });
@@ -10201,10 +10203,11 @@ export async function fetchAnyFromUCrvRoute(params: {
   });
 
   // skipQuote returns no amountsOut — populate manually
-  if (!sameAsOutput && expectedOutput !== "0") {
+  const displayedOutput = sameAsOutput ? expectedCvxCrv : expectedOutput;
+  if (displayedOutput !== "0") {
     bundleResult.amountsOut = {
       ...bundleResult.amountsOut,
-      [params.outputToken.toLowerCase()]: expectedOutput,
+      [params.outputToken.toLowerCase()]: displayedOutput,
     };
   }
 
@@ -10275,10 +10278,12 @@ export async function fetchAnyFromBeefyRoute(params: {
 
   let expectedOutput = "0";
   if (!sameAsOutput) {
+    // Execution routes to WETH and unwraps (appendETHUnwrapIfNeeded), so quote that leg: a native-ETH
+    // quote can pick a different, worse route and understated ETH exits by ~40%.
     const dynamicQuote = await fetchDynamicInputEstimate({
       fromAddress: params.fromAddress,
       tokenIn: params.beefyVaultUnderlying,
-      tokenOut: params.outputToken,
+      tokenOut: isNativeETH(params.outputToken) ? WETH_ADDRESS : params.outputToken,
       amountIn: expectedUnderlying,
       slippage: params.slippage ?? "100",
     });
@@ -10301,6 +10306,17 @@ export async function fetchAnyFromBeefyRoute(params: {
     });
   }
 
+  if (sameAsOutput) {
+    // Output is the vault's own underlying: send the withdrawn balance on. Without this it stayed
+    // at the shared EnsoShortcuts contract (the intent guard rejected the missing output).
+    actions.push({ protocol: "enso", action: "balance", args: { token: params.beefyVaultUnderlying } });
+    actions.push({
+      protocol: "erc20",
+      action: "transfer",
+      args: { token: params.beefyVaultUnderlying, amount: { useOutputOfCallAt: actions.length - 1 }, receiver: params.fromAddress },
+    });
+  }
+
   appendETHUnwrapIfNeeded(actions, params.outputToken);
 
   const bundleResult = await fetchBundle({
@@ -10312,10 +10328,11 @@ export async function fetchAnyFromBeefyRoute(params: {
   });
 
   // skipQuote leaves amountsOut empty — populate from the standalone route.
-  if (!sameAsOutput && expectedOutput !== "0") {
+  const displayedOutput = sameAsOutput ? expectedUnderlying : expectedOutput;
+  if (displayedOutput !== "0") {
     bundleResult.amountsOut = {
       ...bundleResult.amountsOut,
-      [params.outputToken.toLowerCase()]: expectedOutput,
+      [params.outputToken.toLowerCase()]: displayedOutput,
     };
   }
 

@@ -1071,4 +1071,33 @@ describe("route step amounts", () => {
       expect(declaredInputs(lastBundleActions())).toEqual([input.toLowerCase()]);
     });
   });
+
+  describe("external vault exits to the vault's own underlying and to ETH", () => {
+    const WETH = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+    const amount = (100n * ONE_ETHER).toString();
+
+    it.each([
+      ["mooCvxCRV -> cvxCRV", TOKENS.CVXCRV, () => fetchAnyFromBeefyRoute({ fromAddress: TEST_WALLET, beefyVault: BEEFY.MOO_CVX_CRV, beefyVaultUnderlying: TOKENS.CVXCRV, beefyVaultSymbol: "mooCvxCRV", outputToken: TOKENS.CVXCRV, amountIn: amount, slippage: "100" })],
+      ["uCRV -> cvxCRV", TOKENS.CVXCRV, () => fetchAnyFromUCrvRoute({ fromAddress: TEST_WALLET, outputToken: TOKENS.CVXCRV, amountIn: amount, slippage: "100" })],
+    ])("%s delivers the underlying to the user and reports it", async (_label, underlying, build) => {
+      const bundle = await build() as { amountsOut: Record<string, string> };
+      const actions = lastBundleActions();
+      expect(BigInt(bundle.amountsOut[underlying.toLowerCase()])).toBeGreaterThan(0n);
+      const last = actions[actions.length - 1];
+      const deliveredByTransfer = last.protocol === "erc20" && last.action === "transfer" &&
+        String(last.args.token).toLowerCase() === underlying.toLowerCase() && last.args.receiver === TEST_WALLET;
+      const deliveredByWithdraw = last.action === "call" && (last.args.args as unknown[])[0] === TEST_WALLET;
+      expect(deliveredByTransfer || deliveredByWithdraw).toBe(true);
+    });
+
+    it.each([
+      ["mooCvxCRV -> ETH", () => fetchAnyFromBeefyRoute({ fromAddress: TEST_WALLET, beefyVault: BEEFY.MOO_CVX_CRV, beefyVaultUnderlying: TOKENS.CVXCRV, beefyVaultSymbol: "mooCvxCRV", outputToken: ETH_ADDRESS, amountIn: amount, slippage: "100" })],
+      ["uCRV -> ETH", () => fetchAnyFromUCrvRoute({ fromAddress: TEST_WALLET, outputToken: ETH_ADDRESS, amountIn: amount, slippage: "100" })],
+    ])("%s estimates the WETH leg it actually executes", async (_label, build) => {
+      await build();
+      const quotedOutputs = mockGetRouteData.mock.calls.map(([request]) => String((request as { tokenOut: string[] }).tokenOut[0]).toLowerCase());
+      expect(quotedOutputs).toContain(WETH);
+      expect(quotedOutputs).not.toContain(ETH_ADDRESS.toLowerCase());
+    });
+  });
 });
