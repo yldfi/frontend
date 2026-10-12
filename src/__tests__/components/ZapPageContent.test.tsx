@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useConnectModal } from "@rainbow-me/rainbowkit";
@@ -12,6 +12,7 @@ import { useUniversalZap } from "@/hooks/useUniversalZap";
 import { useZapActions } from "@/hooks/useZapActions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { ETH_ADDRESS } from "@/lib/enso";
+import { toast } from "sonner";
 import { TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 import type { SimulationResult, ZapQuote } from "@/types/enso";
 
@@ -78,7 +79,8 @@ vi.mock("@/components/MaxButton", () => ({
 }));
 
 vi.mock("@/components/ApprovalCard", () => ({
-  ApprovalCard: () => null,
+  ApprovalCard: ({ show, onApprove }: { show: boolean; onApprove: (exact: boolean) => void }) =>
+    show ? <button type="button" onClick={() => onApprove(true)}>Approve</button> : null,
 }));
 
 vi.mock("@/components/LoadingDots", () => ({
@@ -86,8 +88,8 @@ vi.mock("@/components/LoadingDots", () => ({
 }));
 
 vi.mock("@/components/RouteDisplay", () => ({
-  RouteDisplay: ({ routeInfo, isLoading }: { routeInfo?: unknown; isLoading?: boolean }) => (
-    <div data-testid="route-display" data-has-route={routeInfo ? "true" : "false"} data-loading={isLoading ? "true" : "false"} />
+  RouteDisplay: ({ routeInfo, isLoading, errorMessage }: { routeInfo?: unknown; isLoading?: boolean; errorMessage?: string }) => (
+    <div data-testid="route-display" data-has-route={routeInfo ? "true" : "false"} data-loading={isLoading ? "true" : "false"} data-error={errorMessage ?? ""} />
   ),
 }));
 
@@ -467,6 +469,71 @@ describe("ZapPageContent", () => {
     expect(screen.getByText(expectedCopy)).toBeTruthy();
   });
 
+  it("keeps the deposit label on the success card after the amount resets", async () => {
+    const depositQuote = {
+      ...quote,
+      directVault: { vaultAddress: VAULT_ADDRESSES.YSCVXCRV, action: "deposit", symbol: "yscvxCRV" },
+    } as ZapQuote;
+    mockUseUniversalZap.mockReturnValue({
+      quote: depositQuote,
+      isLoading: false,
+      error: null,
+      refetch: refetchQuote,
+    } as unknown as ReturnType<typeof useUniversalZap>);
+    const { rerender } = render(<ZapPageContent />);
+    const idleZap = mockUseZapActions.mock.results[0].value as ReturnType<typeof useZapActions>;
+    fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "0.1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Zap" }));
+    await waitFor(() => expect(executeZap).toHaveBeenCalled());
+
+    mockUseZapActions.mockReturnValue({
+      ...idleZap,
+      status: "success",
+      isSuccess: true,
+      zapHash: "0xabc",
+    });
+    rerender(<ZapPageContent />);
+
+    await waitFor(() => expect(screen.getByText("Deposit Successful")).toBeTruthy());
+    expect(screen.queryByText("Zap Successful")).toBeNull();
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Deposit successful!", expect.anything());
+  });
+
+  it("keeps the route panel mounted with an error when the quote fails", () => {
+    sessionStorage.setItem("yldfi-universal-zap-amount", "0.1");
+    mockUseUniversalZap.mockReturnValue({
+      quote: undefined,
+      isLoading: false,
+      error: new Error("Enso unavailable"),
+      refetch: refetchQuote,
+    } as unknown as ReturnType<typeof useUniversalZap>);
+
+    const { container } = render(<ZapPageContent />);
+
+    expect(container.querySelector("aside")?.getAttribute("aria-hidden")).toBe("false");
+    const routeDisplays = screen.getAllByTestId("route-display");
+    expect(routeDisplays.every((el) => el.getAttribute("data-error") === "Failed to get quote")).toBe(true);
+  });
+
+  it.each([
+    ["ysCVX → yspxCVX is temporarily unavailable. Withdraw to CVX and zap that into yspxCVX instead.", "ysCVX → yspxCVX is temporarily unavailable. Withdraw to CVX and zap that into yspxCVX instead."],
+    ["No swap route could be quoted for this transaction. Increase the amount, increase slippage, or use a different token.", "No swap route could be quoted for this transaction. Increase the amount, increase slippage, or use a different token."],
+    ["Enso intent did not quote the requested final output token", "Route failed safety checks - try a different amount or token"],
+    ["Rate limit exceeded", "Too many requests - please wait a moment"],
+  ])("shows a specific route error for %s", (message, expected) => {
+    sessionStorage.setItem("yldfi-universal-zap-amount", "0.1");
+    mockUseUniversalZap.mockReturnValue({
+      quote: undefined,
+      isLoading: false,
+      error: new Error(message),
+      refetch: refetchQuote,
+    } as unknown as ReturnType<typeof useUniversalZap>);
+
+    render(<ZapPageContent />);
+
+    expect(screen.getAllByTestId("route-display").map((el) => el.getAttribute("data-error"))).toContain(expected);
+  });
+
   it("keeps route details visible when the input balance is insufficient", () => {
     sessionStorage.setItem("yldfi-universal-zap-amount", "0.1");
     mockUseBalance.mockReturnValue({
@@ -609,6 +676,90 @@ describe("ZapPageContent", () => {
     await waitFor(() => {
       expect(setShowSimulationModal).toHaveBeenCalledWith(false);
       expect(executeZap).toHaveBeenCalledWith({ skipSimulation: true });
+    });
+  });
+
+  describe("high price impact confirmation", () => {
+    const highImpactQuote = { ...quote, priceImpact: 99.99 };
+
+    function renderWithQuote(zapQuote: ZapQuote) {
+      mockUseUniversalZap.mockReturnValue({
+        quote: zapQuote,
+        isLoading: false,
+        error: null,
+        refetch: refetchQuote,
+      } as unknown as ReturnType<typeof useUniversalZap>);
+      render(<ZapPageContent />);
+      fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "0.1" } });
+    }
+
+    it("holds a >=5% impact zap until CONFIRM is typed", async () => {
+      renderWithQuote(highImpactQuote);
+      fireEvent.click(screen.getByRole("button", { name: "Zap" }));
+
+      const dialog = screen.getByRole("dialog");
+      expect(within(dialog).getByText("99.99%")).toBeTruthy();
+      expect(executeZap).not.toHaveBeenCalled();
+      // Quote refresh is paused so the impact can't change under the modal.
+      expect(mockUseUniversalZap).toHaveBeenLastCalledWith(expect.objectContaining({ paused: true }));
+
+      const confirm = within(dialog).getByRole("button", { name: "Zap" }) as HTMLButtonElement;
+      expect(confirm.disabled).toBe(true);
+      fireEvent.change(within(dialog).getByLabelText("Type CONFIRM to proceed"), { target: { value: "confirm" } });
+      expect(confirm.disabled).toBe(false);
+      fireEvent.click(confirm);
+
+      await waitFor(() => expect(executeZap).toHaveBeenCalledWith());
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("cancelling the confirmation never sends the zap", () => {
+      renderWithQuote(highImpactQuote);
+      fireEvent.click(screen.getByRole("button", { name: "Zap" }));
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(executeZap).not.toHaveBeenCalled();
+    });
+
+    it("gates approving too, since an approval auto-executes the zap once it mines", () => {
+      mockUseZapActions.mockReturnValue({
+        needsApproval: () => true,
+        approve,
+        executeZap,
+        reset,
+        status: "needsApproval",
+        error: null,
+        isLoading: false,
+        isSuccess: false,
+        isReverted: false,
+        zapHash: undefined,
+        pendingApproval: { token: ETH_ADDRESS, spender: "0x2222222222222222222222222222222222222222", amount: 10n ** 17n },
+        approvalProgress: null,
+        isApproving: false,
+        refetchAllowance,
+        isFlashbotsEnabled: false,
+        isFlashbotsSupported: false,
+        toggleFlashbots,
+        simulationResult: null,
+      } as unknown as ReturnType<typeof useZapActions>);
+      renderWithQuote(highImpactQuote);
+
+      fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+      expect(approve).not.toHaveBeenCalled();
+
+      const dialog = screen.getByRole("dialog");
+      fireEvent.change(within(dialog).getByLabelText("Type CONFIRM to proceed"), { target: { value: "CONFIRM" } });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Approve & zap" }));
+      expect(approve).toHaveBeenCalledWith(true);
+    });
+
+    it("sends a sub-5% impact zap without the confirmation", async () => {
+      renderWithQuote({ ...quote, priceImpact: 4.99 });
+      fireEvent.click(screen.getByRole("button", { name: "Zap" }));
+
+      expect(screen.queryByRole("dialog")).toBeNull();
+      await waitFor(() => expect(executeZap).toHaveBeenCalledWith());
     });
   });
 });
