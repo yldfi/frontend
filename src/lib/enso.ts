@@ -323,6 +323,28 @@ const isNativeETH = (token: string) =>
  * append a wrapped-native/redeem action to unwrap WETH → ETH.
  * This avoids the weiroll slippage check failure for native ETH output.
  */
+/**
+ * skipQuote bundles that end CVX → WETH → unwrap report no native-ETH output, so the intent guard
+ * rejects them. Estimate the WETH leg the bundle actually executes for display / the minimum.
+ */
+async function ethOutputEstimate(params: {
+  outputToken: string;
+  amountsOut: Record<string, string> | undefined;
+  fromAddress: string;
+  cvxAmount: bigint;
+  slippage?: string;
+}): Promise<Record<string, string>> {
+  if (!isNativeETH(params.outputToken) || params.amountsOut?.[ETH_ADDRESS.toLowerCase()]) return {};
+  const quote = await fetchDynamicInputEstimate({
+    fromAddress: params.fromAddress,
+    tokenIn: TOKENS.CVX,
+    tokenOut: WETH_ADDRESS,
+    amountIn: params.cvxAmount.toString(),
+    slippage: params.slippage ?? "100",
+  });
+  return { [ETH_ADDRESS.toLowerCase()]: String(quote.amountOut) };
+}
+
 function appendETHUnwrapIfNeeded(actions: EnsoBundleAction[], outputToken: string): EnsoBundleAction[] {
   if (!isNativeETH(outputToken)) return actions;
 
@@ -1861,17 +1883,14 @@ async function convertStateToToken(
       // Unwrap lpxCVX → pxCVX (1:1). A fixed amount is the wallet input, so declare it on the raw
       // call; relabelling the amount as pxCVX made Enso pull pxCVX from the wallet instead.
       const { PIREX } = await import("@/config/vaults");
+      // unwrap() returns nothing, so read the produced pxCVX with a balance action.
       actions.push(rawCallConsumingInput(state.amountRef, TOKENS.LPXCVX, {
         address: PIREX.LPXCVX,
         method: "unwrap",
-        abi: "function unwrap(uint256 amount) returns (uint256)",
+        abi: "function unwrap(uint256 amount)",
         args: [state.amountRef],
       }));
-      return {
-        token: TOKENS.PXCVX,
-        amountRef: { useOutputOfCallAt: actions.length - 1 },
-        expectedAmount: state.expectedAmount,
-      };
+      return toBalanceState(actions, TOKENS.PXCVX, state.expectedAmount);
     }
     const cvxState =
       state.token.toLowerCase() === TOKENS.CVX.toLowerCase()
@@ -1913,11 +1932,9 @@ async function convertStateToToken(
         protocol: "Pirex",
       }));
 
-      return {
-        token: TOKENS.LPXCVX,
-        amountRef: state.amountRef,
-        expectedAmount: state.expectedAmount,
-      };
+      // wrap() returns nothing. Carrying the fixed pxCVX amount on as lpxCVX made Enso treat lpxCVX
+      // as a second wallet input; read the wrapped balance instead.
+      return toBalanceState(actions, TOKENS.LPXCVX, state.expectedAmount);
     }
     const cvxState =
       state.token.toLowerCase() === TOKENS.CVX.toLowerCase()
@@ -8071,20 +8088,22 @@ export async function fetchLpxCvxZapInRoute(params: {
   if (targetIsPxCvx) {
     // lpxCVX → pxCVX (unwrap 1:1) → deposit to yspxCVX
     // Action 0: Unwrap lpxCVX → pxCVX
+    // unwrap() returns nothing; read the produced pxCVX instead.
     actions.push(rawCallConsumingInput(params.amountIn, TOKENS.LPXCVX, {
       address: PIREX.LPXCVX,
       method: "unwrap",
-      abi: "function unwrap(uint256 amount) returns (uint256)",
+      abi: "function unwrap(uint256 amount)",
       args: [params.amountIn],
     }));
-    // Action 1: Deposit pxCVX → yspxCVX
+    actions.push({ protocol: "enso", action: "balance", args: { token: PIREX_PXCVX } });
+    // Action 2: Deposit pxCVX → yspxCVX
     actions.push({
       protocol: "erc4626",
       action: "deposit",
       args: {
         tokenIn: PIREX_PXCVX,
         tokenOut: params.vaultAddress,
-        amountIn: { useOutputOfCallAt: 0 },
+        amountIn: { useOutputOfCallAt: 1 },
         primaryAddress: params.vaultAddress,
       },
     });
@@ -9477,6 +9496,7 @@ export async function fetchAnyFromLpxCvxRoute(params: {
     amountsOut: {
       ...bundleResult.amountsOut,
       ...(outputIsCvx ? { [TOKENS.CVX.toLowerCase()]: expectedCvx.toString() } : {}),
+      ...(await ethOutputEstimate({ outputToken: params.outputToken, amountsOut: bundleResult.amountsOut, fromAddress: params.fromAddress, cvxAmount: expectedCvx, slippage: params.slippage })),
     },
     routeInfo: {
       steps,
@@ -9637,6 +9657,7 @@ export async function fetchAnyFromPxCvxRoute(params: {
     amountsOut: {
       ...bundleResult.amountsOut,
       ...(outputIsCvx ? { [TOKENS.CVX.toLowerCase()]: expectedCvx.toString() } : {}),
+      ...(await ethOutputEstimate({ outputToken: params.outputToken, amountsOut: bundleResult.amountsOut, fromAddress: params.fromAddress, cvxAmount: expectedCvx, slippage: params.slippage })),
     },
     routeInfo: {
       steps,
@@ -9794,6 +9815,7 @@ export async function fetchAnyFromCvgCvxRoute(params: {
     amountsOut: {
       ...bundleResult.amountsOut,
       ...(outputIsCvx ? { [TOKENS.CVX.toLowerCase()]: expectedCvx1.toString() } : {}),
+      ...(await ethOutputEstimate({ outputToken: params.outputToken, amountsOut: bundleResult.amountsOut, fromAddress: params.fromAddress, cvxAmount: expectedCvx1, slippage: params.slippage })),
     },
     routeInfo: {
       steps,
@@ -9939,16 +9961,11 @@ export async function fetchAnyFromUCvxRoute(params: {
   // the Curve exchange; ETH is the unwrapped WETH that the route quoted.
   if (outputIsCvx) {
     bundleResult.amountsOut = { ...bundleResult.amountsOut, [TOKENS.CVX.toLowerCase()]: expectedCvx.toString() };
-  } else if (isNativeETH(params.outputToken) && !bundleResult.amountsOut?.[ETH_ADDRESS.toLowerCase()]) {
-    // The WETH unwrap isn't quoted under skipQuote; estimate the CVX → WETH leg for display.
-    const ethQuote = await fetchDynamicInputEstimate({
-      fromAddress: params.fromAddress,
-      tokenIn: TOKENS.CVX,
-      tokenOut: WETH_ADDRESS,
-      amountIn: expectedCvx.toString(),
-      slippage: params.slippage ?? "100",
-    });
-    bundleResult.amountsOut = { ...bundleResult.amountsOut, [ETH_ADDRESS.toLowerCase()]: String(ethQuote.amountOut) };
+  } else {
+    bundleResult.amountsOut = {
+      ...bundleResult.amountsOut,
+      ...(await ethOutputEstimate({ outputToken: params.outputToken, amountsOut: bundleResult.amountsOut, fromAddress: params.fromAddress, cvxAmount: expectedCvx, slippage: params.slippage })),
+    };
   }
 
   const pxCvxFmt = (Number(expectedPxCvx) / 1e18).toFixed(4);

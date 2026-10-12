@@ -7,6 +7,8 @@ import { BEEFY, LLAMA_AIRFORCE, PIREX, TANGENT, TOKENS } from "@/config/vaults";
 import fixture from "@/__tests__/fixtures/contract-selectors.json";
 
 const CURVE_ROUTER = "0x99a58482BD75cbab83b27EC03CA68fF489b5788f";
+const returnsOf = (address: string): Record<string, number> | undefined =>
+  (fixture as unknown as { returns: Record<string, Record<string, number>> }).returns[address.toLowerCase()];
 const selectorsOf = (address: string) => new Set<string>((fixture.contracts as Record<string, string[]>)[address.toLowerCase()] ?? []);
 
 // Static call targets in enso.ts, resolved to their mainnet addresses.
@@ -28,12 +30,13 @@ const DYNAMIC_FAMILIES: Record<string, string[]> = {
   beefy: [BEEFY.MOO_CVX_CRV, BEEFY.MOO_CVX_CVX],
 };
 
-function rawCalls(): Array<{ target: string; signature: string; line: number }> {
+function rawCalls(): Array<{ target: string; signature: string; abi: string; line: number }> {
   const source = readFileSync(join(process.cwd(), "src/lib/enso.ts"), "utf-8");
-  const calls: Array<{ target: string; signature: string; line: number }> = [];
-  const pattern = /action: "call",\s*args: \{\s*address: ([^,\n]+),\s*method: "\w+",\s*(?:\/\/[^\n]*\n\s*)*abi: "function ([^"]+?)\)/g;
+  const calls: Array<{ target: string; signature: string; abi: string; line: number }> = [];
+  // Any { address, method, abi } literal: inline call actions and those built via helpers.
+  const pattern = /address: ([^,\n]+),\s*method: "\w+",\s*(?:\/\/[^\n]*\n\s*)*abi: "function (([^"]+?)\)[^"]*)"/g;
   for (const match of source.matchAll(pattern)) {
-    calls.push({ target: match[1].trim(), signature: `${match[2]})`, line: source.slice(0, match.index).split("\n").length });
+    calls.push({ target: match[1].trim(), signature: `${match[3]})`, abi: match[2], line: source.slice(0, match.index).split("\n").length });
   }
   return calls;
 }
@@ -59,6 +62,23 @@ describe("raw Enso call signatures", () => {
       // Dynamic external-vault targets: the signature must exist on the vaults of its family.
       const family = Object.entries(DYNAMIC_FAMILIES).find(([, vaults]) => vaults.every((vault) => selectorsOf(vault).has(selector)));
       expect(family, `${call.signature} on dynamic target ${call.target} matches no external vault family`).toBeDefined();
+    },
+  );
+
+  // Declaring a return value the contract doesn't produce makes any later useOutputOfCallAt read
+  // fail in Enso's VM ("Only one return value permitted") — e.g. lpxCVX.unwrap returns nothing.
+  it.each(calls.map((call) => [`${call.target} ${call.signature} (enso.ts:${call.line})`, call] as const))(
+    "%s declares the return values the contract really has",
+    (_label, call) => {
+      const staticTarget = STATIC_TARGETS[call.target] ?? (call.target.startsWith("params.beefyVault") ? BEEFY.MOO_CVX_CRV : undefined);
+      const onChain = staticTarget ? returnsOf(staticTarget) : undefined;
+      if (!onChain) return; // no verified ABI recorded (dynamic or approve calls)
+      const name = call.signature.slice(0, call.signature.indexOf("("));
+      const params = call.signature.slice(call.signature.indexOf("(") + 1, call.signature.indexOf(")"));
+      const key = `${name}(${params.split(",").map((p) => p.trim().split(" ")[0]).filter(Boolean).join(",")})`;
+      if (!(key in onChain)) return;
+      const declaresReturn = / returns \(/.test(call.abi);
+      expect(declaresReturn, `${call.signature}: on-chain returns ${onChain[key]} value(s)`).toBe(onChain[key] > 0);
     },
   );
 });
