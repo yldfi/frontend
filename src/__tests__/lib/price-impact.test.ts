@@ -35,6 +35,36 @@ describe("price impact route semantics", () => {
     expect(calculateRoutePriceImpact(100, 98, routeInfo)).toBe(2);
   });
 
+  it("uses USD delta for routes whose value-changing leg is a mint at par", () => {
+    // aCVX -> ysCvgCVX at size: exit at NAV, then mint cvgCVX 1:1 though it trades ~25% below CVX.
+    // With no "Swap" step this used to report no impact, so the high-impact CONFIRM never fired.
+    const routeInfo: RouteInfo = {
+      steps: [
+        { tokenSymbol: "aCVX", action: "Exit", protocol: "Concentrator" },
+        { tokenSymbol: "CVX", action: "Swap + Mint", protocol: "Curve+Convex" },
+        { tokenSymbol: "cvgCVX", action: "Deposit", protocol: "yld" },
+        { tokenSymbol: "ysCvgCVX", action: "Receive", protocol: "yld" },
+      ],
+    };
+
+    expect(routeHasSwap(routeInfo)).toBe(true);
+    expect(calculateRoutePriceImpact(40991.97, 31678.75, routeInfo)).toBeCloseTo(22.72, 2);
+    expect(routeHasSwap({ steps: [{ tokenSymbol: "CVX", action: "Mint", protocol: "Pirex" }] })).toBe(true);
+  });
+
+  it("still treats 1:1 wraps and NAV exits as no-impact", () => {
+    const routeInfo: RouteInfo = {
+      steps: [
+        { tokenSymbol: "pxCVX", action: "Wrap", protocol: "Pirex" },
+        { tokenSymbol: "uCVX", action: "Exit", protocol: "Llama Airforce" },
+        { tokenSymbol: "lpxCVX", action: "Unwrap", protocol: "Pirex" },
+      ],
+    };
+
+    expect(routeHasSwap(routeInfo)).toBe(false);
+    expect(calculateRoutePriceImpact(100, 99, routeInfo)).toBeNull();
+  });
+
   it("falls back to Enso bps for swap routes when USD values are missing", () => {
     const routeInfo: RouteInfo = {
       steps: [{ tokenSymbol: "USDC", action: "Swap", protocol: "Enso" }],

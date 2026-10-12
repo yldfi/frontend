@@ -15,44 +15,13 @@ import { ApprovalCard } from "@/components/ApprovalCard";
 import { LoadingDots } from "@/components/LoadingDots";
 import { TxAssetDetailsPill } from "@/components/TxAssetDetailsPill";
 
-// Parse Enso API errors into user-friendly messages
-function parseQuoteError(error: Error | null): string {
-  if (!error) return "Failed to get quote";
-  const msg = error.message || "";
-  const normalizedMsg = msg.toLowerCase();
-
-  // Route deliberately disabled (message names the pair and the workaround)
-  if (normalizedMsg.includes("temporarily unavailable")) {
-    return msg;
-  }
-  // Amount too large/out of range
-  if (normalizedMsg.includes("amountin") && normalizedMsg.includes("acceptable range")) {
-    return "Amount too large to quote - try a smaller amount";
-  }
-  // Insufficient liquidity
-  if (normalizedMsg.includes("insufficient liquidity") || normalizedMsg.includes("no route found") || normalizedMsg.includes("swap not found")) {
-    return "No route available - insufficient liquidity";
-  }
-  // Rate limit
-  if (normalizedMsg.includes("rate limit") || normalizedMsg.includes("429")) {
-    return "Too many requests - please wait a moment";
-  }
-  // Network/timeout errors
-  if (normalizedMsg.includes("timeout") || normalizedMsg.includes("network") || normalizedMsg.includes("fetch")) {
-    return "Network error - please try again";
-  }
-  // Generic API error - show shortened version
-  if (msg.startsWith("API Error:")) {
-    return "Quote unavailable - try a different amount";
-  }
-
-  return "Failed to get quote";
-}
-
 import { ContractExplorer, useContractExplorer, type ExplorerContract } from "@/components/ContractExplorer";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
+import { PriceImpactConfirmModal, needsPriceImpactConfirm } from "@/components/PriceImpactConfirmModal";
+import { parseQuoteError } from "@/lib/quote-errors";
 import { sanitizeAmount } from "@/lib/sanitize";
+import { fillMissingSimulationUsd } from "@/lib/simulation-pricing";
 import { useSettings } from "@/hooks/useSettings";
 import {
   getYldMerklCampaignIds,
@@ -81,6 +50,7 @@ import { useZapQuote } from "@/hooks/useZapQuote";
 import { useZapActions } from "@/hooks/useZapActions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useClearOnNavigation } from "@/hooks/useClearOnNavigation";
+import { useAutoContinueAfterApproval } from "@/hooks/useAutoContinueAfterApproval";
 import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS, applyKnownTokenMetadata } from "@/lib/enso";
@@ -526,9 +496,9 @@ export function VaultPageContent({ id }: { id: string }) {
     showSimulationPreview, refreshSimulationPreview,
     showSimulationModal, setShowSimulationModal,
   } = useSettings();
-  const [showPriceImpactModal, setShowPriceImpactModal] = useState(false);
+  // An action held back until the user types CONFIRM for a high-price-impact zap quote.
+  const [pendingImpactAction, setPendingImpactAction] = useState<{ label: string; run: () => void } | null>(null);
   const [zapInProgress, setZapInProgress] = useState(false);
-  const [priceImpactConfirmText, setPriceImpactConfirmText] = useState("");
   // Route display toggle with localStorage persistence (vault uses different key: yldfi-show-route)
   const [showRoute, setShowRoute] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -549,8 +519,6 @@ export function VaultPageContent({ id }: { id: string }) {
   };
   const [isSimulatingPreview, setIsSimulatingPreview] = useState(false);
   const [ethPrice, setEthPrice] = useState<number | null>(null);
-  // Track if we should skip simulation (already ran from preview mode)
-  const [skipSimulationOnConfirm, setSkipSimulationOnConfirm] = useState(false);
   const { data: currentBlock } = useBlockNumber({ watch: true });
   const simulationBlock = useRef<bigint>(0n);
 
@@ -643,9 +611,6 @@ export function VaultPageContent({ id }: { id: string }) {
     approvalToken: string;  // Token symbol being approved
     spenderName: string;    // Name of spender (e.g., "Enso", "ycvxCRV")
   } | null>(null);
-
-  // Price impact threshold for confirmation (5%)
-  const PRICE_IMPACT_CONFIRM_THRESHOLD = 5;
 
 
 
@@ -808,8 +773,15 @@ export function VaultPageContent({ id }: { id: string }) {
     underlyingToken: vault?.assetAddress ?? "",
     slippage: zapSlippage,
     underlyingTokenPrice: underlyingPrice, // For illiquid tokens like cvgCVX
-    paused: showSimulationModal || showPriceImpactModal || explorerOpen || zapInProgress || (exitOnlyVault && zapDirection === "in"),
+    paused: showSimulationModal || pendingImpactAction !== null || explorerOpen || zapInProgress || (exitOnlyVault && zapDirection === "in"),
   });
+
+  // Every zap entry point (button, simulation preview fall-through, approve -> auto-execute)
+  // runs through this, so a high-impact zap cannot start without the typed confirmation.
+  const guardHighImpact = (label: string, run: () => void) => {
+    if (needsPriceImpactConfirm(zapQuote?.priceImpact)) setPendingImpactAction({ label, run });
+    else run();
+  };
 
   // Zap actions (approve + execute)
   const {
@@ -1252,32 +1224,21 @@ export function VaultPageContent({ id }: { id: string }) {
   }, [clearVaultCompletionResetTimer, isSuccess, isReverted, depositHash, withdrawHash, refetchTokenBalance, refetchVaultBalance, resetVaultCompletionState, setAmount, setZapAmount]);
 
   // Auto-execute deposit after vault approval succeeds (for multi-step transactions)
-  const prevTxStatusRef = useRef<string | null>(null);
-  useEffect(() => {
-    // Check if we just completed approval (status transitioned from waitingApproval to idle)
-    // and we're in a deposit multi-step flow
-    if (
-      pendingMultiStep?.type === "deposit" &&
-      pendingMultiStep.step === 1 &&
-      prevTxStatusRef.current === "waitingApproval" &&
-      txStatus === "idle"
-    ) {
+  useAutoContinueAfterApproval(
+    txStatus,
+    pendingMultiStep?.type === "deposit" && pendingMultiStep.step === 1,
+    () => {
       // Approval is complete. Restore the form so its simulation modal can render.
-      const timer = setTimeout(() => {
-        setPendingMultiStep(null);
-        if (amount) {
-          if (showSimulationPreview) {
-            void runVaultSimulationPreview();
-          } else {
-            void deposit(amount);
-          }
+      setPendingMultiStep(null);
+      if (amount) {
+        if (showSimulationPreview) {
+          void runVaultSimulationPreview();
+        } else {
+          void deposit(amount);
         }
-      }, 0);
-      prevTxStatusRef.current = txStatus;
-      return () => clearTimeout(timer);
-    }
-    prevTxStatusRef.current = txStatus;
-  }, [txStatus, pendingMultiStep, amount, deposit, showSimulationPreview, runVaultSimulationPreview]);
+      }
+    },
+  );
 
   // Clear multi-step state on error or user cancellation (vault actions)
   useEffect(() => {
@@ -2612,13 +2573,13 @@ export function VaultPageContent({ id }: { id: string }) {
                         approvalProgress={zapApprovalProgress}
                         decimals={zapDirection === "in" ? (zapInputToken?.decimals ?? 18) : 18}
                         isApproving={zapIsApproving}
-                        onApprove={(exact) => zapApprove(exact)}
+                        onApprove={(exact) => guardHighImpact("Approve & zap", () => zapApprove(exact))}
                       />
 
                       {/* Zap Action Button */}
                       {isConnected ? (
                         <button
-                          onClick={async () => {
+                          onClick={() => guardHighImpact(`Zap ${zapDirection === "in" ? "In" : "Out"}`, async () => {
                             if (showSimulationPreview && effectiveSimulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
                               // Re-open cached simulation modal if same block
                               setShowSimulationModal(true);
@@ -2633,16 +2594,12 @@ export function VaultPageContent({ id }: { id: string }) {
                               setZapPendingDetails();
                               if (vault && zapAmount) trackZapInitiated(vault.id, zapDirection, zapDirection === "in" ? (zapInputToken?.symbol ?? "") : vault.symbol, zapDirection === "in" ? vault.symbol : (zapOutputToken?.symbol ?? ""), zapAmount);
                               executeZap();
-                            } else if ((zapQuote?.priceImpact ?? 0) >= PRICE_IMPACT_CONFIRM_THRESHOLD) {
-                              // High price impact - show confirmation modal
-                              setPriceImpactConfirmText("");
-                              setShowPriceImpactModal(true);
                             } else {
                               setZapPendingDetails();
                               if (vault && zapAmount) trackZapInitiated(vault.id, zapDirection, zapDirection === "in" ? (zapInputToken?.symbol ?? "") : vault.symbol, zapDirection === "in" ? vault.symbol : (zapOutputToken?.symbol ?? ""), zapAmount);
                               executeZap();
                             }
-                          }}
+                          })}
                           disabled={showZapApprovalCard || !zapQuote || zapIsLoading || zapQuoteLoading || isSimulatingPreview || showSimulationModal || hasZapInsufficientBalance || (exitOnlyVault && zapDirection === "in")}
                           className={cn(
                             "w-full py-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-base",
@@ -2758,78 +2715,17 @@ export function VaultPageContent({ id }: { id: string }) {
       />
 
       {/* Price Impact Confirmation Modal */}
-      {showPriceImpactModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={() => setShowPriceImpactModal(false)}
-          />
-          <div className="relative bg-[var(--background)] border border-[var(--border)] rounded-xl w-full max-w-sm p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-medium text-[var(--destructive)]">High Price Impact Warning</h3>
-              <button
-                onClick={() => setShowPriceImpactModal(false)}
-                className="p-1 hover:bg-[var(--muted)] rounded transition-colors"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <div className="bg-[var(--destructive)]/10 border border-[var(--destructive)]/20 rounded-lg p-4">
-              <p className="text-sm text-[var(--foreground)]">
-                This transaction has a <span className="font-bold text-[var(--destructive)]">{zapQuote?.priceImpact?.toFixed(2)}%</span> price impact.
-                You may receive significantly less value than expected.
-              </p>
-            </div>
-
-            <p className="text-sm text-[var(--muted-foreground)]">
-              Type <span className="font-mono font-bold text-[var(--foreground)]">CONFIRM</span> below to acknowledge the risk and proceed.
-            </p>
-
-            <input
-              type="text"
-              value={priceImpactConfirmText}
-              onChange={(e) => setPriceImpactConfirmText(e.target.value.toUpperCase())}
-              placeholder="Type CONFIRM"
-              className="w-full bg-[var(--muted)] rounded-lg p-3 mono text-base focus:outline-none focus:ring-2 focus:ring-[var(--destructive)] placeholder:text-[var(--muted-foreground)]/50"
-              autoFocus
-            />
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowPriceImpactModal(false)}
-                className="flex-1 py-3 rounded-lg font-medium transition-all bg-[var(--muted)] text-[var(--foreground)] hover:bg-[var(--muted)]/80"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  setShowPriceImpactModal(false);
-                  setPriceImpactConfirmText("");
-                  setZapPendingDetails();
-                  if (vault && zapAmount) trackZapInitiated(vault.id, zapDirection, zapDirection === "in" ? (zapInputToken?.symbol ?? "") : vault.symbol, zapDirection === "in" ? vault.symbol : (zapOutputToken?.symbol ?? ""), zapAmount);
-                  if (skipSimulationOnConfirm) {
-                    setSkipSimulationOnConfirm(false);
-                    executeZap({ skipSimulation: true });
-                  } else {
-                    executeZap();
-                  }
-                }}
-                disabled={priceImpactConfirmText !== "CONFIRM"}
-                className={cn(
-                  "flex-1 py-3 rounded-lg font-medium transition-all",
-                  priceImpactConfirmText === "CONFIRM"
-                    ? "bg-[var(--destructive)] text-white hover:opacity-90 cursor-pointer"
-                    : "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
-                )}
-              >
-                Zap {zapDirection === "in" ? "In" : "Out"}
-              </button>
-            </div>
-          </div>
-        </div>
+      {pendingImpactAction && (
+        <PriceImpactConfirmModal
+          priceImpact={zapQuote?.priceImpact}
+          confirmLabel={pendingImpactAction.label}
+          onCancel={() => setPendingImpactAction(null)}
+          onConfirm={() => {
+            const { run } = pendingImpactAction;
+            setPendingImpactAction(null);
+            run();
+          }}
+        />
       )}
 
       {/* Simulation Modal (Zap only — deposit/withdraw has its own modal inline) */}
@@ -2839,22 +2735,25 @@ export function VaultPageContent({ id }: { id: string }) {
           onClose={() => setShowSimulationModal(false)}
           onConfirm={() => {
             setShowSimulationModal(false);
-            // Check price impact before executing
-            if ((zapQuote?.priceImpact ?? 0) >= PRICE_IMPACT_CONFIRM_THRESHOLD) {
-              setPriceImpactConfirmText("");
-              setSkipSimulationOnConfirm(true);
-              setShowPriceImpactModal(true);
-            } else {
-              setZapPendingDetails();
-              executeZap({ skipSimulation: true });
-            }
+            // High price impact was already confirmed before the simulation ran.
+            setZapPendingDetails();
+            executeZap({ skipSimulation: true });
           }}
           simulationResult={{
             success: effectiveSimulationResult.success,
             gasUsed: effectiveSimulationResult.gasUsed ?? null,
             errorMessage: effectiveSimulationResult.errorMessage ?? null,
             tenderlyUrl: effectiveSimulationResult.tenderlyUrl ?? null,
-            assetChanges: effectiveSimulationResult.assetChanges as SimulationAssetChange[],
+            assetChanges: zapQuote
+              ? fillMissingSimulationUsd(effectiveSimulationResult.assetChanges as SimulationAssetChange[], {
+                  input: { address: zapQuote.inputToken.address, amount: Number(zapQuote.inputAmount), usd: zapQuote.inputUsdValue },
+                  output: {
+                    address: (zapDirection === "in" ? vault?.address : zapOutputToken?.address) ?? "",
+                    amount: Number(zapQuote.outputAmountFormatted),
+                    usd: zapQuote.outputUsdValue,
+                  },
+                })
+              : effectiveSimulationResult.assetChanges as SimulationAssetChange[],
           }}
           gasPrice={gasPrice}
           ethPrice={ethPrice}
@@ -2920,12 +2819,11 @@ export function VaultPageContent({ id }: { id: string }) {
                 setDebugSimulationResult(null);
                 setShowSimulationModal(false);
                 setShowSlippageModal(false);
-                setShowPriceImpactModal(false);
-                setPriceImpactConfirmText("");
+                setPendingImpactAction(null);
               }}
               className={cn(
                 "w-full px-2 py-1 text-xs rounded transition-colors",
-                debugTxState === "none" && !pendingMultiStep && !showSimulationModal && !showSlippageModal && !showPriceImpactModal
+                debugTxState === "none" && !pendingMultiStep && !showSimulationModal && !showSlippageModal && pendingImpactAction === null
                   ? "bg-[var(--foreground)] text-[var(--background)]"
                   : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
               )}
@@ -3192,10 +3090,10 @@ export function VaultPageContent({ id }: { id: string }) {
                 Simulate
               </button>
               <button
-                onClick={() => setShowPriceImpactModal(!showPriceImpactModal)}
+                onClick={() => setPendingImpactAction((current) => (current ? null : { label: "Zap (debug)", run: () => {} }))}
                 className={cn(
                   "flex-1 px-2 py-1 text-xs rounded transition-colors",
-                  showPriceImpactModal
+                  pendingImpactAction
                     ? "bg-red-500 text-white"
                     : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                 )}
