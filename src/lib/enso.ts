@@ -11380,17 +11380,18 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
   const sameUnderlying = intermediateToken.toLowerCase() === targetUnderlyingLower;
   const targetIsPxCvx = targetUnderlyingLower === TOKENS.PXCVX.toLowerCase();
   let totalExpectedTargetUnderlying = intermediateForSplit;
+  // Route steps the shared conversion engine records for the intermediate → pxCVX leg.
+  const pxCvxConversionSteps: RouteStep[] = [];
 
   if (!sameUnderlying && targetIsPxCvx) {
-    // CVX → pxCVX via the shared hybrid Curve swap + Pirex mint. The CVX here comes from
-    // void calls (CVX1.withdraw / Curve exchange), so read it at runtime: a fixed split sized
-    // from the buffered estimate left the buffer behind at EnsoShortcuts.
+    // CVX → pxCVX via the shared hybrid Curve swap + Pirex mint, on the runtime balance (a
+    // fixed split sized from the buffered estimate would leave the buffer at EnsoShortcuts).
     // A cvxCRV intermediate is routed to CVX first by the shared conversion engine.
     const conversionCtx = { fromAddress: params.fromAddress, slippage: params.slippage, slippageBps, totalSlippageBps };
     const intermediateState = toBalanceState(actions, intermediateToken, estimatedIntermediate);
     const pxCvxState = intermediateToken.toLowerCase() === TOKENS.CVX.toLowerCase()
-      ? await appendCvxToPxCvxConversion(actions, intermediateState, conversionCtx, [])
-      : await convertStateToToken(actions, intermediateState, TOKENS.PXCVX, conversionCtx, []);
+      ? await appendCvxToPxCvxConversion(actions, intermediateState, conversionCtx, pxCvxConversionSteps)
+      : await convertStateToToken(actions, intermediateState, TOKENS.PXCVX, conversionCtx, pxCvxConversionSteps);
     totalExpectedTargetUnderlying = pxCvxState.expectedAmount;
   } else if (!sameUnderlying) {
     // Quote for display/preview only. Execution uses the runtime intermediate
@@ -11538,30 +11539,29 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
   const sourceUnderlyingSymbol = getTokenSymbol(params.sourceUnderlying);
   const intermediateSymbol = getTokenSymbol(intermediateToken);
   const targetUnderlyingSymbol = getTokenSymbol(params.targetUnderlying);
-  const fmt = (x: bigint | string) => (Number(x) / 1e18).toFixed(4);
-
   const steps: RouteStep[] = [
-    { tokenSymbol: sourceSymbol, amount: fmt(amountIn), action: "Redeem", description: `${sourceSymbol} for ${sourceUnderlyingSymbol}`, protocol: "yld" },
+    { tokenSymbol: sourceSymbol, amount: formatRouteAmount(amountIn, params.sourceVault), action: "Redeem", description: `${sourceSymbol} for ${sourceUnderlyingSymbol}`, protocol: "yld" },
   ];
 
   if (sourceIsCvgCvx || sourceIsPxCvx) {
     // cvgCVX or pxCVX → CVX swap step
     const protocol = sourceIsCvgCvx ? "LiquidBoost" : "Pirex";
     const desc = sourceIsCvgCvx ? `${sourceUnderlyingSymbol} → CVX1 → CVX` : `${sourceUnderlyingSymbol} → lpxCVX → CVX`;
-    steps.push({ tokenSymbol: sourceUnderlyingSymbol, amount: fmt(expectedUnderlying), action: "Swap", description: desc, protocol });
+    steps.push({ tokenSymbol: sourceUnderlyingSymbol, amount: formatRouteAmount(expectedUnderlying, params.sourceUnderlying), action: "Swap", description: desc, protocol });
   }
 
   if (!sameUnderlying) {
     if (targetIsPxCvx) {
-      steps.push({ tokenSymbol: "CVX", amount: fmt(intermediateForSplit), action: "Swap", description: "CVX for pxCVX (hybrid)", protocol: "Curve/Pirex" });
+      // The engine's own steps name the real legs (e.g. cvxCRV → CVX, then CVX → pxCVX).
+      steps.push(...pxCvxConversionSteps);
     } else {
-      steps.push({ tokenSymbol: intermediateSymbol, amount: fmt(intermediateForSplit), action: "Swap", description: `${intermediateSymbol} for ${targetUnderlyingSymbol}`, protocol: "Enso" });
+      steps.push({ tokenSymbol: intermediateSymbol, amount: formatRouteAmount(estimatedIntermediate, intermediateToken), action: "Swap", description: `${intermediateSymbol} for ${targetUnderlyingSymbol}`, protocol: "Enso" });
     }
   }
 
   steps.push(
-    { tokenSymbol: targetUnderlyingSymbol, amount: fmt(totalExpectedTargetUnderlying), action: "Deposit", description: `${targetUnderlyingSymbol} into ${params.targetSymbol}`, protocol: params.targetProtocol },
-    { tokenSymbol: params.targetSymbol, amount: fmt(expectedShares), action: "Receive", description: "vault shares", protocol: params.targetProtocol },
+    { tokenSymbol: targetUnderlyingSymbol, amount: formatRouteAmount(totalExpectedTargetUnderlying, params.targetUnderlying), action: "Deposit", description: `${targetUnderlyingSymbol} into ${params.targetSymbol}`, protocol: params.targetProtocol },
+    { tokenSymbol: params.targetSymbol, amount: formatRouteAmount(expectedShares, params.targetVault), action: "Receive", description: "vault shares", protocol: params.targetProtocol },
   );
 
   // Silence unused-var warning; LLAMA_AIRFORCE may be useful for future refinements.
