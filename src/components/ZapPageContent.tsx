@@ -30,12 +30,14 @@ import { useTokenBalances } from "@/hooks/useTokenBalances";
 import { ETH_ADDRESS, applyKnownTokenMetadata, getCustomTokenMetadata } from "@/lib/enso";
 import { cn } from "@/lib/utils";
 import { sanitizeAmount } from "@/lib/sanitize";
+import { fillMissingSimulationUsd } from "@/lib/simulation-pricing";
 import { getMaxEthAmount } from "@/lib/eth-gas";
 import { VAULTS, isVaultEntryDisabled } from "@/config/vaults";
 import {
   getPendingTxCopy,
   getRevertedTxCopy,
   getSuccessTxCopy,
+  getTxActionLabel,
   isZapTxPendingVisible,
   TX_REVERTED_VISIBLE_MS,
   TX_SUCCESS_VISIBLE_MS,
@@ -253,7 +255,7 @@ export function ZapPageContent() {
   const debouncedAmount = useDebouncedValue(amount, 500);
   const sameToken =
     inputToken.address.toLowerCase() === outputToken.address.toLowerCase();
-  const { quote: rawQuote, isLoading: quoteLoading, error: quoteError } = useUniversalZap({
+  const { quote: rawQuote, isLoading: quoteLoading, error: quoteError, refetch: refetchQuote } = useUniversalZap({
     inputToken,
     outputToken,
     inputAmount: debouncedAmount,
@@ -359,6 +361,8 @@ export function ZapPageContent() {
     hash: string;
   } | null>(null);
   const completionResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Action kind captured at submit: the live quote is cleared once the amount resets on success.
+  const [submittedActionKind, setSubmittedActionKind] = useState<TxActionKind | null>(null);
 
   // DEBUG (dev only) — TX State Preview panel. Mirrors VaultPageContent/LendingInterface.
   type DebugTxState = "none" | "deposit-pending" | "deposit-success" | "deposit-reverted" | "withdraw-pending" | "withdraw-success" | "withdraw-reverted" | "swap-pending" | "swap-success" | "swap-reverted";
@@ -443,6 +447,7 @@ export function ZapPageContent() {
     setShowTxSuccess(null);
     setShowTxReverted(null);
     setPendingTxDetails(null);
+    setSubmittedActionKind(null);
     resetActions();
   }, [clearCompletionResetTimer, resetActions]);
 
@@ -464,7 +469,8 @@ export function ZapPageContent() {
     if (txDetails) {
       setPendingTxDetails(txDetails);
     }
-  }, [buildPendingTxDetails]);
+    setSubmittedActionKind(quote?.directVault?.action ?? "zap");
+  }, [buildPendingTxDetails, quote]);
 
   // Reset stale approval state on input change
   useEffect(() => {
@@ -539,7 +545,7 @@ export function ZapPageContent() {
         setShowTxSuccess({ show: true, hash: zapHash });
         setShowTxReverted(null);
       }, 0);
-      toast.success("Zap successful!", {
+      toast.success(`${getTxActionLabel(submittedActionKind ?? "zap")} successful!`, {
         action: {
           label: "View",
           onClick: () => window.open(`https://etherscan.io/tx/${zapHash}`, "_blank"),
@@ -551,7 +557,7 @@ export function ZapPageContent() {
         setShowTxReverted({ show: true, hash: zapHash });
         setShowTxSuccess(null);
       }, 0);
-      toast.error("Zap failed — transaction reverted", {
+      toast.error(`${getTxActionLabel(submittedActionKind ?? "zap")} failed — transaction reverted`, {
         action: {
           label: "View",
           onClick: () => window.open(`https://etherscan.io/tx/${zapHash}`, "_blank"),
@@ -565,22 +571,27 @@ export function ZapPageContent() {
       resetCompletionState,
       isSuccess ? TX_SUCCESS_VISIBLE_MS : TX_REVERTED_VISIBLE_MS,
     );
-  }, [clearCompletionResetTimer, isSuccess, isReverted, zapHash, refetchInputBalance, resetCompletionState, setAmount]);
+  }, [clearCompletionResetTimer, isSuccess, isReverted, zapHash, refetchInputBalance, resetCompletionState, setAmount, submittedActionKind]);
 
   // Error display
   const noRoute = !quoteSettling && !!quoteError && !!amount && Number(amount) > 0;
+  // Keep the route panel mounted when a quote fails so it shows an error instead of vanishing.
+  const hasRouteContent = !!amount && Number(amount) > 0 && (!!quote || quoteSettling || noRoute);
+  const routeErrorMessage = noRoute ? "No route available right now." : undefined;
+  const retryQuote = () => void refetchQuote();
   const isPendingTx =
     (isZapTxPendingVisible(status) && !isSimulatingPreview && !showSimulationModal) || isDebugPending;
   const isZapSuccessVisible = !!showTxSuccess?.show || isDebugSuccess;
   const isZapRevertedVisible = !!showTxReverted?.show || isDebugReverted;
   const isTxStateVisible = isPendingTx || isZapSuccessVisible || isZapRevertedVisible;
   // Direct vault pairs (ERC20⇄vault share) are a deposit/redeem at NAV, not a swap.
-  // Override for the debug preview; otherwise drive off the quote's directVault action.
+  // Override for the debug preview; during tx states use the action captured at submit,
+  // otherwise drive off the quote's directVault action.
   const actionKind: TxActionKind = isDebugDeposit
     ? "deposit"
     : isDebugWithdraw
       ? "withdraw"
-      : quote?.directVault?.action ?? "zap";
+      : (isTxStateVisible && submittedActionKind) || quote?.directVault?.action || "zap";
   const effectiveHash = isDebugActive ? debugHash : zapHash;
   const effectivePendingDetails = isDebugActive ? debugTxDetails : pendingTxDetails;
   const pendingCopy = getPendingTxCopy(Boolean(effectiveHash), actionKind);
@@ -943,7 +954,7 @@ export function ZapPageContent() {
                   className="lg:hidden grid transition-[grid-template-rows] duration-300 ease-in-out"
                   style={{
                     gridTemplateRows:
-                      showRoute && amount && Number(amount) > 0 && (quote || quoteSettling)
+                      showRoute && hasRouteContent
                         ? "1fr"
                         : "0fr",
                   }}
@@ -962,6 +973,8 @@ export function ZapPageContent() {
                             : undefined
                         }
                         isLoading={quoteSettling}
+                        errorMessage={routeErrorMessage}
+                        onRetry={retryQuote}
                       />
                     </div>
                   </div>
@@ -975,11 +988,11 @@ export function ZapPageContent() {
             className={cn(
               "hidden lg:block absolute top-0 left-full ml-6 w-[360px]",
               "transition-[opacity,transform] duration-500 ease-out",
-              showRoute && !isTxStateVisible && amount && Number(amount) > 0 && (quote || quoteSettling)
+              showRoute && !isTxStateVisible && hasRouteContent
                 ? "opacity-100 translate-x-0"
                 : "opacity-0 -translate-x-4 pointer-events-none",
             )}
-            aria-hidden={!(showRoute && !isTxStateVisible && amount && Number(amount) > 0 && (quote || quoteSettling))}
+            aria-hidden={!(showRoute && !isTxStateVisible && hasRouteContent)}
           >
             <div className="border border-[var(--border)] rounded-xl p-5">
               <div className="text-xs text-[var(--muted-foreground)] uppercase tracking-wider mb-3">
@@ -996,6 +1009,8 @@ export function ZapPageContent() {
                     : undefined
                 }
                 isLoading={quoteSettling}
+                errorMessage={routeErrorMessage}
+                onRetry={retryQuote}
               />
             </div>
           </aside>
@@ -1030,7 +1045,10 @@ export function ZapPageContent() {
             gasUsed: simulationResult.gasUsed ?? null,
             errorMessage: simulationResult.errorMessage ?? null,
             tenderlyUrl: simulationResult.tenderlyUrl ?? null,
-            assetChanges: simulationResult.assetChanges,
+            assetChanges: fillMissingSimulationUsd(simulationResult.assetChanges, {
+              input: { address: inputToken.address, amount: Number(quote.inputAmount), usd: quote.inputUsdValue },
+              output: { address: outputToken.address, amount: Number(quote.outputAmountFormatted), usd: quote.outputUsdValue },
+            }),
             simulationUnavailable: simulationResult.simulationUnavailable,
             simulationUnavailableReason: simulationResult.simulationUnavailableReason,
           }}

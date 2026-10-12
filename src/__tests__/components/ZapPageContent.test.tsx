@@ -12,6 +12,7 @@ import { useUniversalZap } from "@/hooks/useUniversalZap";
 import { useZapActions } from "@/hooks/useZapActions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { ETH_ADDRESS } from "@/lib/enso";
+import { toast } from "sonner";
 import { TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 import type { SimulationResult, ZapQuote } from "@/types/enso";
 
@@ -86,8 +87,8 @@ vi.mock("@/components/LoadingDots", () => ({
 }));
 
 vi.mock("@/components/RouteDisplay", () => ({
-  RouteDisplay: ({ routeInfo, isLoading }: { routeInfo?: unknown; isLoading?: boolean }) => (
-    <div data-testid="route-display" data-has-route={routeInfo ? "true" : "false"} data-loading={isLoading ? "true" : "false"} />
+  RouteDisplay: ({ routeInfo, isLoading, errorMessage }: { routeInfo?: unknown; isLoading?: boolean; errorMessage?: string }) => (
+    <div data-testid="route-display" data-has-route={routeInfo ? "true" : "false"} data-loading={isLoading ? "true" : "false"} data-error={errorMessage ?? ""} />
   ),
 }));
 
@@ -465,6 +466,52 @@ describe("ZapPageContent", () => {
 
     expect(screen.getByText(expectedTitle)).toBeTruthy();
     expect(screen.getByText(expectedCopy)).toBeTruthy();
+  });
+
+  it("keeps the deposit label on the success card after the amount resets", async () => {
+    const depositQuote = {
+      ...quote,
+      directVault: { vaultAddress: VAULT_ADDRESSES.YSCVXCRV, action: "deposit", symbol: "yscvxCRV" },
+    } as ZapQuote;
+    mockUseUniversalZap.mockReturnValue({
+      quote: depositQuote,
+      isLoading: false,
+      error: null,
+      refetch: refetchQuote,
+    } as unknown as ReturnType<typeof useUniversalZap>);
+    const { rerender } = render(<ZapPageContent />);
+    const idleZap = mockUseZapActions.mock.results[0].value as ReturnType<typeof useZapActions>;
+    fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "0.1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Zap" }));
+    await waitFor(() => expect(executeZap).toHaveBeenCalled());
+
+    mockUseZapActions.mockReturnValue({
+      ...idleZap,
+      status: "success",
+      isSuccess: true,
+      zapHash: "0xabc",
+    });
+    rerender(<ZapPageContent />);
+
+    await waitFor(() => expect(screen.getByText("Deposit Successful")).toBeTruthy());
+    expect(screen.queryByText("Zap Successful")).toBeNull();
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Deposit successful!", expect.anything());
+  });
+
+  it("keeps the route panel mounted with an error when the quote fails", () => {
+    sessionStorage.setItem("yldfi-universal-zap-amount", "0.1");
+    mockUseUniversalZap.mockReturnValue({
+      quote: undefined,
+      isLoading: false,
+      error: new Error("Enso unavailable"),
+      refetch: refetchQuote,
+    } as unknown as ReturnType<typeof useUniversalZap>);
+
+    const { container } = render(<ZapPageContent />);
+
+    expect(container.querySelector("aside")?.getAttribute("aria-hidden")).toBe("false");
+    const routeDisplays = screen.getAllByTestId("route-display");
+    expect(routeDisplays.every((el) => el.getAttribute("data-error") === "No route available right now.")).toBe(true);
   });
 
   it("keeps route details visible when the input balance is insufficient", () => {
