@@ -511,7 +511,26 @@ describe("ZapPageContent", () => {
 
     expect(container.querySelector("aside")?.getAttribute("aria-hidden")).toBe("false");
     const routeDisplays = screen.getAllByTestId("route-display");
-    expect(routeDisplays.every((el) => el.getAttribute("data-error") === "No route available right now.")).toBe(true);
+    expect(routeDisplays.every((el) => el.getAttribute("data-error") === "Failed to get quote")).toBe(true);
+  });
+
+  it.each([
+    ["ysCVX → yspxCVX is temporarily unavailable. Withdraw to CVX and zap that into yspxCVX instead.", "ysCVX → yspxCVX is temporarily unavailable. Withdraw to CVX and zap that into yspxCVX instead."],
+    ["No swap route could be quoted for this transaction. Increase the amount, increase slippage, or use a different token.", "No swap route could be quoted for this transaction. Increase the amount, increase slippage, or use a different token."],
+    ["Enso intent did not quote the requested final output token", "Route failed safety checks - try a different amount or token"],
+    ["Rate limit exceeded", "Too many requests - please wait a moment"],
+  ])("shows a specific route error for %s", (message, expected) => {
+    sessionStorage.setItem("yldfi-universal-zap-amount", "0.1");
+    mockUseUniversalZap.mockReturnValue({
+      quote: undefined,
+      isLoading: false,
+      error: new Error(message),
+      refetch: refetchQuote,
+    } as unknown as ReturnType<typeof useUniversalZap>);
+
+    render(<ZapPageContent />);
+
+    expect(screen.getAllByTestId("route-display").map((el) => el.getAttribute("data-error"))).toContain(expected);
   });
 
   it("keeps route details visible when the input balance is insufficient", () => {
