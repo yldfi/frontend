@@ -63,6 +63,8 @@ import {
   fetchAnyToExternalVaultRoute,
   fetchCvgCvxZapInRoute,
   fetchPxCvxZapInRoute,
+  fetchAnyFromPxCvxRoute,
+  fetchPxCvxTokenZapInRoute,
   fetchAnyFromBeefyRoute,
   fetchAnyFromUCrvRoute,
   fetchAnyFromErc4626ExternalVaultRoute,
@@ -73,7 +75,6 @@ import {
   fetchDynamicInputEstimate,
   fetchComposableZapInRoute,
   fetchLpxCvxZapInRoute,
-  fetchPxCvxTokenZapInRoute,
   fetchBeefyZapInRoute,
   fetchErc4626ExternalVaultZapInRoute,
   fetchUCvxZapInRoute,
@@ -294,6 +295,23 @@ describe("route step amounts", () => {
       }
       return makeRpcResponse("0x0");
     }) as unknown as typeof fetch;
+  });
+
+  it.each([
+    ["ysCVX", VAULT_ADDRESSES.YSCVX, TOKENS.CVX],
+    ["yscvxCRV", VAULT_ADDRESSES.YSCVXCRV, TOKENS.CVXCRV],
+  ])("refuses %s -> yspxCVX instead of a share-to-share Enso route", async (_label, sourceVault, sourceUnderlying) => {
+    // The direct route had no liquidity: 140 ysCVX filled for 0.0166 yspxCVX on a mainnet fork.
+    await expect(fetchVaultToVaultRoute({
+      fromAddress: TEST_WALLET,
+      sourceVault,
+      targetVault: VAULT_ADDRESSES.YSPXCVX,
+      amountIn: ONE_ETHER.toString(),
+      sourceUnderlyingToken: sourceUnderlying,
+      targetUnderlyingToken: TOKENS.PXCVX,
+      slippage: "100",
+    })).rejects.toThrow("temporarily unavailable");
+    expect(mockGetBundleData).not.toHaveBeenCalled();
   });
 
   it("shows both underlying amounts for a standard vault-to-vault route", async () => {
@@ -1177,5 +1195,36 @@ describe("route step amounts", () => {
     }
     const config = mockGetBundleData.mock.calls[mockGetBundleData.mock.calls.length - 1][0] as { skipQuote?: boolean };
     expect(config.skipQuote).toBe(false);
+  });
+
+  it.each([
+    ["CVX", () => TOKENS.CVX],
+    ["an aggregator-routed token", () => USDC_ADDRESS],
+  ])("approves the wrapped lpxCVX with a raw call when selling pxCVX for %s", async (_label, outputToken) => {
+    await fetchAnyFromPxCvxRoute({
+      fromAddress: TEST_WALLET,
+      outputToken: outputToken(),
+      amountIn: (96n * ONE_ETHER).toString(),
+      slippage: "100",
+    });
+
+    const actions = lastBundleActions();
+    // A fixed erc20 approval of lpxCVX made Enso pull lpxCVX from the wallet as a second input.
+    expect(fixedErc20Approvals(actions, PIREX.LPXCVX)).toEqual([]);
+    expect(rawApproveCalls(actions, PIREX.LPXCVX).map(rawApproveSpender)).toEqual([PIREX.LPXCVX_CVX_POOL]);
+    expect(fixedErc20Approvals(actions, PIREX.PXCVX)).toHaveLength(1);
+  });
+
+  it("approves the wrapped lpxCVX with a raw call for pxCVX -> yld vault zaps", async () => {
+    await fetchPxCvxTokenZapInRoute({
+      fromAddress: TEST_WALLET,
+      vaultAddress: VAULT_ADDRESSES.YSCVX,
+      amountIn: (96n * ONE_ETHER).toString(),
+      slippage: "100",
+    });
+
+    const actions = lastBundleActions();
+    expect(fixedErc20Approvals(actions, PIREX.LPXCVX)).toEqual([]);
+    expect(rawApproveCalls(actions, PIREX.LPXCVX).map(rawApproveSpender)).toEqual([PIREX.LPXCVX_CVX_POOL]);
   });
 });

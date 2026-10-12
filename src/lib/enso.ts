@@ -1669,15 +1669,8 @@ async function appendConversionToCvx(
           args: [state.amountRef],
         },
       },
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: {
-          token: PIREX.LPXCVX,
-          spender: PIREX.LPXCVX_CVX_POOL,
-          amount: state.amountRef,
-        },
-      },
+      // lpxCVX comes from the void wrap(); a fixed erc20 approval would make Enso pull it from the wallet
+      intermediateApproveAction(PIREX.LPXCVX, PIREX.LPXCVX_CVX_POOL, state.amountRef, !isDynamicAmountRef(state.amountRef)),
       {
         protocol: "enso",
         action: "call",
@@ -3341,23 +3334,12 @@ export async function fetchVaultToVaultRoute(params: {
   }
 
   if (targetIsPxCvx) {
-    // Let Enso protect the complete source-share → target-share position route.
-    // This avoids relying on an ERC-4626 deposit return that yspxCVX does not
-    // expose to a separate bundle-level minimum-output action.
-    return fetchBundle({
-      fromAddress: params.fromAddress,
-      receiver: params.fromAddress,
-      actions: [{
-        protocol: "enso",
-        action: "route",
-        args: {
-          tokenIn: params.sourceVault,
-          tokenOut: params.targetVault,
-          amountIn,
-          slippage,
-        },
-      }],
-    });
+    // A single Enso route between the two share tokens has no real liquidity: on a
+    // mainnet fork 140 ysCVX ($285) filled for 0.0166 yspxCVX ($0.03). Block it until
+    // the redeem -> pxCVX -> deposit route ships.
+    throw new Error(
+      `${sourceVaultSymbol} → ${targetVaultSymbol} is temporarily unavailable. Withdraw to ${sourceUnderlyingSymbol} and zap that into ${targetVaultSymbol} instead.`,
+    );
   }
 
   // Different underlyings (non-cvgCVX): redeem → swap → deposit
@@ -7954,6 +7936,19 @@ export async function fetchLpxCvxZapInRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  // Raw bundle actions can't be submitted from the browser; build server-side via the intent.
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "illiquidToYldVault",
+      fromAddress: params.fromAddress,
+      inputToken: TOKENS.LPXCVX,
+      vaultAddress: params.vaultAddress,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { PIREX, getVaultByAddress } = await import("@/config/vaults");
   const slippageBps = validateSlippage(params.slippage);
 
@@ -8191,6 +8186,19 @@ export async function fetchPxCvxTokenZapInRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  // Raw bundle actions can't be submitted from the browser; build server-side via the intent.
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "illiquidToYldVault",
+      fromAddress: params.fromAddress,
+      inputToken: TOKENS.PXCVX,
+      vaultAddress: params.vaultAddress,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { PIREX, getVaultByAddress } = await import("@/config/vaults");
   const slippageBps = validateSlippage(params.slippage);
 
@@ -8238,15 +8246,8 @@ export async function fetchPxCvxTokenZapInRoute(params: {
       },
     },
     // Action 2: Approve lpxCVX to Curve pool
-    {
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: PIREX.LPXCVX,
-        spender: PIREX.LPXCVX_CVX_POOL,
-        amount: params.amountIn, // Same amount (1:1 wrap)
-      },
-    },
+    // Raw call: a fixed erc20 approval of the wrapped lpxCVX would make Enso pull it from the wallet
+    rawApproveCallAction(PIREX.LPXCVX, PIREX.LPXCVX_CVX_POOL, params.amountIn),
     // Action 3: Exchange lpxCVX → CVX on Curve pool
     {
       protocol: "enso",
@@ -9450,12 +9451,9 @@ export async function fetchAnyFromPxCvxRoute(params: {
         args: [params.amountIn],
       },
     },
-    // Approve lpxCVX → Curve pool
-    {
-      protocol: "erc20",
-      action: "approve",
-      args: { token: PIREX.LPXCVX, spender: PIREX.LPXCVX_CVX_POOL, amount: params.amountIn },
-    },
+    // Approve lpxCVX → Curve pool. Raw call: a fixed erc20 approval of the wrapped lpxCVX
+    // would make Enso pull it from the wallet as a second input.
+    rawApproveCallAction(PIREX.LPXCVX, PIREX.LPXCVX_CVX_POOL, params.amountIn),
     // Curve exchange lpxCVX → CVX
     {
       protocol: "enso",
@@ -10740,6 +10738,19 @@ export async function fetchComposableZapInRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  // Raw bundle actions can't be submitted from the browser; build server-side via the intent.
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "illiquidToYldVault",
+      fromAddress: params.fromAddress,
+      inputToken: params.inputToken,
+      vaultAddress: params.vaultAddress,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { getVaultByAddress } = await import("@/config/vaults");
   const targetVault = getVaultByAddress(params.vaultAddress);
   if (!targetVault) {
