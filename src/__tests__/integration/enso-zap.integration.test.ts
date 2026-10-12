@@ -492,12 +492,9 @@ async function buildStateOverrides(
   return result;
 }
 
-// Token holders API endpoint (caches Moralis results)
+// Token holders API endpoint (caches Blockscout results)
 const TOKEN_HOLDER_API_URL = process.env.TOKEN_HOLDER_API_URL || "http://localhost:3000/api/token-holders";
 const TOKEN_HOLDER_API_KEY = process.env.TOKEN_HOLDER_API_KEY || "";
-
-// Fallback: Direct Moralis API (only used if API endpoint not available)
-const MORALIS_API_KEY = process.env.MORALIS_API_KEY || "";
 
 /**
  * Get ERC20 token balance for an address using eth_call
@@ -618,7 +615,7 @@ const CACHE_DURATION_MS = 60 * 60 * 1000;
 
 /**
  * Find an EOA wallet that holds at least the specified amount of a token
- * Uses caching to avoid repeated Moralis API calls
+ * Uses caching to avoid repeated Blockscout API calls
  */
 async function findWalletWithBalance(token: string, minAmount: bigint): Promise<string | null> {
   const tokenKey = token.toLowerCase();
@@ -636,8 +633,8 @@ async function findWalletWithBalance(token: string, minAmount: bigint): Promise<
     console.log(`Cached holder ${cached.address} no longer has sufficient balance, refreshing...`);
   }
 
-  // Fetch fresh data from Moralis API
-  const holder = await fetchHolderFromMoralis(token, minAmount);
+  // Fetch fresh data from Blockscout API
+  const holder = await fetchHolderFromBlockscout(token, minAmount);
 
   if (holder) {
     // Update cache with the new holder
@@ -656,10 +653,10 @@ async function findWalletWithBalance(token: string, minAmount: bigint): Promise<
 }
 
 /**
- * Fetch multiple valid EOA holders from token-holders API (or fallback to direct Moralis)
+ * Fetch multiple valid EOA holders from token-holders API (or fallback to direct Blockscout)
  * Returns an array of holders to try (useful when routes might go through blacklisted contracts)
  */
-async function fetchHoldersFromMoralis(token: string, minAmount: bigint, maxHolders: number = 5): Promise<string[]> {
+async function fetchHoldersFromBlockscout(token: string, minAmount: bigint, maxHolders: number = 5): Promise<string[]> {
   // Try API endpoint first (has caching and handles EOA verification)
   if (TOKEN_HOLDER_API_KEY) {
     try {
@@ -684,34 +681,31 @@ async function fetchHoldersFromMoralis(token: string, minAmount: bigint, maxHold
         return data.holders;
       }
     } catch (err) {
-      console.warn("Token holders API failed, falling back to direct Moralis:", err);
+      console.warn("Token holders API failed, falling back to direct Blockscout:", err);
     }
   }
 
-  // Fallback: Direct Moralis API call
-  if (!MORALIS_API_KEY) return [];
-
+  // Fallback: Direct Blockscout API call
   try {
-    const url = `https://deep-index.moralis.io/api/v2.2/erc20/${token}/owners?chain=eth&limit=50&order=DESC`;
+    const url = `https://eth.blockscout.com/api/v2/tokens/${token}/holders`;
 
     const response = await crossFetch(url, {
-      headers: {
-        Accept: "application/json",
-        "X-API-Key": MORALIS_API_KEY,
-      },
+      headers: { Accept: "application/json" },
     });
 
-    const data = await response.json() as { result?: Array<{ owner_address: string }> };
+    const data = await response.json() as { items?: Array<{ address: { hash: string; is_contract: boolean }; value: string }> };
     const holders: string[] = [];
 
-    if (Array.isArray(data.result)) {
+    if (Array.isArray(data.items)) {
       // Check each holder - must be an EOA with sufficient balance
-      for (const holder of data.result) {
+      for (const item of data.items) {
         if (holders.length >= maxHolders) break;
 
-        const address = holder.owner_address;
+        const address = item.address?.hash;
+        if (!address) continue;
 
         // Skip contracts - we need EOAs for Enso API fromAddress
+        if (item.address.is_contract) continue;
         if (!(await isEOA(address))) {
           continue;
         }
@@ -723,24 +717,23 @@ async function fetchHoldersFromMoralis(token: string, minAmount: bigint, maxHold
           }
         }
 
-        const balance = await getTokenBalance(token, address);
-        if (balance >= minAmount) {
+        if (BigInt(item.value || "0") >= minAmount) {
           holders.push(address);
         }
       }
     }
     return holders;
   } catch (err) {
-    console.warn("Moralis API lookup failed:", err);
+    console.warn("Blockscout API lookup failed:", err);
     return [];
   }
 }
 
 /**
- * Fetch a valid EOA holder from Moralis API
+ * Fetch a valid EOA holder from Blockscout API
  */
-async function fetchHolderFromMoralis(token: string, minAmount: bigint): Promise<string | null> {
-  const holders = await fetchHoldersFromMoralis(token, minAmount, 1);
+async function fetchHolderFromBlockscout(token: string, minAmount: bigint): Promise<string | null> {
+  const holders = await fetchHoldersFromBlockscout(token, minAmount, 1);
   return holders.length > 0 ? holders[0] : null;
 }
 
@@ -1454,7 +1447,7 @@ describe("Enso Zap Integration Tests", () => {
         // Find multiple EOA holders - different holders may result in different routing paths
         // Some routes may go through blacklisted DEX contracts
         const minAmount = BigInt(ONE_THOUSAND_USDC);
-        const holders = await fetchHoldersFromMoralis(USDC_ADDRESS, minAmount, 5);
+        const holders = await fetchHoldersFromBlockscout(USDC_ADDRESS, minAmount, 5);
 
         if (holders.length === 0) {
           console.warn("No EOA holders found with sufficient USDC balance - skipping (Token Holder API may be unavailable)");

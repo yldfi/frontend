@@ -124,7 +124,6 @@ jobs:
           ENSO_API_KEY: ${{ secrets.ENSO_API_KEY }}
           TOKEN_HOLDER_API_KEY: ${{ secrets.TOKEN_HOLDER_API_KEY }}
           TOKEN_HOLDER_API_URL: ${{ secrets.TOKEN_HOLDER_API_URL }}
-          MORALIS_API_KEY: ${{ secrets.MORALIS_API_KEY }}
           DEBUG_RPC_URL: ${{ secrets.DEBUG_RPC_URL }}
           DEBUG_RPC_AUTH: ${{ secrets.DEBUG_RPC_AUTH }}
 
