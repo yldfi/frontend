@@ -1151,6 +1151,33 @@ describe("route step amounts", () => {
   });
 
   describe("yld vault -> external vault sources", () => {
+    it.each([
+      ["ysCVX", VAULT_ADDRESSES.YSCVX, TOKENS.CVX],
+      ["yscvxCRV", VAULT_ADDRESSES.YSCVXCRV, TOKENS.CVXCRV],
+    ])("converts %s -> yspxCVX through pxCVX instead of a share-to-share route", async (_label, sourceVault, sourceUnderlying) => {
+      await fetchVaultToVaultRoute({
+        fromAddress: TEST_WALLET,
+        sourceVault,
+        targetVault: VAULT_ADDRESSES.YSPXCVX,
+        amountIn: ONE_ETHER.toString(),
+        sourceUnderlyingToken: sourceUnderlying,
+        targetUnderlyingToken: TOKENS.PXCVX,
+        slippage: "100",
+      });
+      const actions = lastBundleActions();
+      // A direct Enso route between the share tokens filled through dust on a mainnet fork (~100% loss).
+      expect(actions).not.toContainEqual(expect.objectContaining({
+        action: "route",
+        args: expect.objectContaining({ tokenIn: sourceVault, tokenOut: VAULT_ADDRESSES.YSPXCVX }),
+      }));
+      expect(actions[0]).toMatchObject({ protocol: "erc4626", action: "redeem", args: { tokenIn: sourceVault } });
+      expect(actions.at(-1)).toMatchObject({
+        protocol: "erc4626",
+        action: "deposit",
+        args: { tokenIn: TOKENS.PXCVX, tokenOut: VAULT_ADDRESSES.YSPXCVX },
+      });
+    });
+
     const cases: Array<[string, string, string, string, string, "erc4626"]> = [
       ["ysCVX -> aCVX", VAULT_ADDRESSES.YSCVX, TOKENS.CVX, CONCENTRATOR.ACVX, TOKENS.CVX, "erc4626"],
       ["ysCVX -> aCRV", VAULT_ADDRESSES.YSCVX, TOKENS.CVX, CONCENTRATOR.ACRV, TOKENS.CVXCRV, "erc4626"],

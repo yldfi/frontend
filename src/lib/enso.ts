@@ -3351,22 +3351,19 @@ export async function fetchVaultToVaultRoute(params: {
   }
 
   if (targetIsPxCvx) {
-    // Let Enso protect the complete source-share → target-share position route.
-    // This avoids relying on an ERC-4626 deposit return that yspxCVX does not
-    // expose to a separate bundle-level minimum-output action.
-    return fetchBundle({
+    // A single Enso route between the two share tokens has no real liquidity and fills
+    // through dust (~100% loss on fork). Redeem, convert to pxCVX and deposit instead.
+    return fetchYldVaultToExternalVaultRoute({
       fromAddress: params.fromAddress,
-      receiver: params.fromAddress,
-      actions: [{
-        protocol: "enso",
-        action: "route",
-        args: {
-          tokenIn: params.sourceVault,
-          tokenOut: params.targetVault,
-          amountIn,
-          slippage,
-        },
-      }],
+      sourceVault: params.sourceVault,
+      sourceUnderlying,
+      targetVault: params.targetVault,
+      targetUnderlying,
+      targetInterface: "erc4626",
+      targetSymbol: targetVaultSymbol,
+      targetProtocol: "yld",
+      amountIn,
+      slippage,
     });
   }
 
