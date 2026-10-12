@@ -810,6 +810,24 @@ function rawApproveCallAction(token: string, spender: string, amount: BundleAmou
   };
 }
 
+/**
+ * A raw call that is the first thing to consume the wallet's input (unwrap, a non-ERC4626 vault
+ * withdraw). Router-mode Enso only pulls tokens it can attribute to an action, and a bare call
+ * declares none, so a fixed amount is declared via the call's tokenIn/amountIn (documented call
+ * params). Runtime amounts were produced earlier in the bundle and need no declaration.
+ */
+function rawCallConsumingInput(
+  amount: BundleAmountRef,
+  inputToken: string,
+  call: { address: string; method: string; abi: string; args: unknown[] },
+): EnsoBundleAction {
+  return {
+    protocol: "enso",
+    action: "call",
+    args: isDynamicAmountRef(amount) ? call : { ...call, tokenIn: inputToken, amountIn: amount },
+  };
+}
+
 function intermediateApproveAction(
   token: string,
   spender: string,
@@ -1840,9 +1858,18 @@ async function convertStateToToken(
 
   if (isPxCvxAddress(targetToken)) {
     if (isLpxCvxAddress(state.token)) {
+      // Unwrap lpxCVX → pxCVX (1:1). A fixed amount is the wallet input, so declare it on the raw
+      // call; relabelling the amount as pxCVX made Enso pull pxCVX from the wallet instead.
+      const { PIREX } = await import("@/config/vaults");
+      actions.push(rawCallConsumingInput(state.amountRef, TOKENS.LPXCVX, {
+        address: PIREX.LPXCVX,
+        method: "unwrap",
+        abi: "function unwrap(uint256 amount) returns (uint256)",
+        args: [state.amountRef],
+      }));
       return {
         token: TOKENS.PXCVX,
-        amountRef: state.amountRef,
+        amountRef: { useOutputOfCallAt: actions.length - 1 },
         expectedAmount: state.expectedAmount,
       };
     }
@@ -1955,16 +1982,12 @@ async function buildInitialConversionState(params: {
       description: `${config.symbol} for ${config.underlyingSymbol}`,
       protocol: config.protocol,
     }));
-    actions.push({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: config.address,
-        method: "withdraw",
-        abi: "function withdraw(address _to, uint256 _shares) returns (uint256)",
-        args: [ENSO_SHORTCUTS, params.amountIn],
-      },
-    });
+    actions.push(rawCallConsumingInput(params.amountIn, config.address, {
+      address: config.address,
+      method: "withdraw",
+      abi: "function withdraw(address _to, uint256 _shares) returns (uint256)",
+      args: [ENSO_SHORTCUTS, params.amountIn],
+    }));
 
     return {
       actions,
@@ -1988,16 +2011,12 @@ async function buildInitialConversionState(params: {
       protocol: config.protocol,
     }));
     actions.push(
-      {
-        protocol: "enso",
-        action: "call",
-        args: {
-          address: config.address,
-          method: "withdraw",
-          abi: "function withdraw(uint256 _shares)",
-          args: [params.amountIn],
-        },
-      },
+      rawCallConsumingInput(params.amountIn, config.address, {
+        address: config.address,
+        method: "withdraw",
+        abi: "function withdraw(uint256 _shares)",
+        args: [params.amountIn],
+      }),
       {
         protocol: "enso",
         action: "balance",
@@ -6989,19 +7008,15 @@ export async function fetchUCrvZapInRoute(params: {
 
   const actions: EnsoBundleAction[] = [
     // Action 0: Withdraw uCRV → cvxCRV using custom call (non-ERC4626)
-    {
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: LLAMA_AIRFORCE.UCRV,
-        method: "withdraw",
-        abi: "function withdraw(address _to, uint256 _shares) returns (uint256)",
-        args: [
-          ENSO_SHORTCUTS, // cvxCRV goes to Enso Shortcuts for downstream actions
-          params.amountIn,
-        ],
-      },
-    },
+    rawCallConsumingInput(params.amountIn, LLAMA_AIRFORCE.UCRV, {
+      address: LLAMA_AIRFORCE.UCRV,
+      method: "withdraw",
+      abi: "function withdraw(address _to, uint256 _shares) returns (uint256)",
+      args: [
+        ENSO_SHORTCUTS, // cvxCRV goes to Enso Shortcuts for downstream actions
+        params.amountIn,
+      ],
+    }),
   ];
 
   const targetIsCvgCvx = targetUnderlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase();
@@ -7741,16 +7756,12 @@ export async function fetchBeefyZapInRoute(params: {
 
   const actions: EnsoBundleAction[] = [
     // Action 0: Withdraw Beefy vault → underlying using custom call
-    {
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: params.beefyVaultAddress,
-        method: "withdraw",
-        abi: "function withdraw(uint256 _shares)",
-        args: [params.amountIn],
-      },
-    },
+    rawCallConsumingInput(params.amountIn, params.beefyVaultAddress, {
+      address: params.beefyVaultAddress,
+      method: "withdraw",
+      abi: "function withdraw(uint256 _shares)",
+      args: [params.amountIn],
+    }),
     // Action 1: Get balance of underlying (withdraw doesn't return amount)
     {
       protocol: "enso",
@@ -8060,16 +8071,12 @@ export async function fetchLpxCvxZapInRoute(params: {
   if (targetIsPxCvx) {
     // lpxCVX → pxCVX (unwrap 1:1) → deposit to yspxCVX
     // Action 0: Unwrap lpxCVX → pxCVX
-    actions.push({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: PIREX.LPXCVX,
-        method: "unwrap",
-        abi: "function unwrap(uint256 amount) returns (uint256)",
-        args: [params.amountIn],
-      },
-    });
+    actions.push(rawCallConsumingInput(params.amountIn, TOKENS.LPXCVX, {
+      address: PIREX.LPXCVX,
+      method: "unwrap",
+      abi: "function unwrap(uint256 amount) returns (uint256)",
+      args: [params.amountIn],
+    }));
     // Action 1: Deposit pxCVX → yspxCVX
     actions.push({
       protocol: "erc4626",
@@ -10146,16 +10153,12 @@ export async function fetchAnyFromUCrvRoute(params: {
 
   const actions: EnsoBundleAction[] = [
     // uCRV.withdraw(_to=ENSO_SHORTCUTS, _shares) — cvxCRV delivered to shortcuts
-    {
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: LLAMA_AIRFORCE.UCRV,
-        method: "withdraw",
-        abi: "function withdraw(address _to, uint256 _shares) returns (uint256)",
-        args: [ENSO_SHORTCUTS, params.amountIn],
-      },
-    },
+    rawCallConsumingInput(params.amountIn, LLAMA_AIRFORCE.UCRV, {
+      address: LLAMA_AIRFORCE.UCRV,
+      method: "withdraw",
+      abi: "function withdraw(address _to, uint256 _shares) returns (uint256)",
+      args: [ENSO_SHORTCUTS, params.amountIn],
+    }),
   ];
 
   // Quote for display data, then route the actual cvxCRV balance produced by
@@ -10262,16 +10265,12 @@ export async function fetchAnyFromBeefyRoute(params: {
     // Beefy withdraw(shares) — burns shares and sends underlying to msg.sender
     // (ENSO_SHORTCUTS). A following balance action captures the void call's
     // runtime output.
-    {
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: params.beefyVault,
-        method: "withdraw",
-        abi: "function withdraw(uint256 _shares)",
-        args: [params.amountIn],
-      },
-    },
+    rawCallConsumingInput(params.amountIn, params.beefyVault, {
+      address: params.beefyVault,
+      method: "withdraw",
+      abi: "function withdraw(uint256 _shares)",
+      args: [params.amountIn],
+    }),
   ];
 
   let expectedOutput = "0";

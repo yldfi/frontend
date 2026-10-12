@@ -62,6 +62,8 @@ import {
   fetchAnyToCvgCvxRoute,
   fetchAnyFromBeefyRoute,
   fetchAnyFromUCrvRoute,
+  fetchUCrvZapInRoute,
+  fetchBeefyZapInRoute,
   fetchAnyFromUCvxRoute,
   fetchAnyFromErc4626ExternalVaultRoute,
   fetchAnyToPxCvxRoute,
@@ -87,7 +89,7 @@ import {
   MORPHO_TOKEN_ADDRESS,
 } from "@/lib/enso";
 import { cryptoswap, estimateCryptoSwapOffchain, findPegPoint, getCurveGetDy, getCurveGetDyFactory, getStableSwapParams } from "@/lib/curve";
-import { LLAMA_AIRFORCE, PIREX, TANGENT, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
+import { BEEFY, LLAMA_AIRFORCE, PIREX, TANGENT, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 import { USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
 import type { EnsoBundleAction } from "@/types/enso";
 
@@ -1031,5 +1033,42 @@ describe("route step amounts", () => {
     const bundle = await fetchAnyFromUCvxRoute({ fromAddress: TEST_WALLET, outputToken: ETH_ADDRESS, amountIn: ONE_ETHER.toString(), slippage: "100" });
     expect(BigInt(bundle.amountsOut[ETH_ADDRESS.toLowerCase()])).toBeGreaterThan(0n);
     expect(lastBundleActions()[lastBundleActions().length - 1]).toMatchObject({ protocol: "wrapped-native", action: "redeem" });
+  });
+
+  describe("wallet input declaration", () => {
+    // Router-mode Enso pulls a token from the wallet when an action uses a fixed amount of it:
+    // a fixed erc20 approve, or tokenIn with a fixed amountIn (incl. raw calls). Each bundle must
+    // declare exactly the user's input — none (empty routeMulti), a different token, or an extra
+    // intermediate all produce transactions that pull the wrong funds or revert.
+    function declaredInputs(actions: TestBundleAction[]): string[] {
+      const declared = new Set<string>();
+      for (const action of actions) {
+        if (action.protocol === "erc20" && action.action === "approve" && typeof action.args.amount === "string") {
+          declared.add(String(action.args.token).toLowerCase());
+        }
+        if (typeof action.args.tokenIn === "string" && typeof action.args.amountIn === "string") {
+          declared.add(String(action.args.tokenIn).toLowerCase());
+        }
+      }
+      return [...declared];
+    }
+
+    const amount = (100n * ONE_ETHER).toString();
+    const cases: Array<[string, string, () => Promise<unknown>]> = [
+      ["mooCvxCVX -> USDC", BEEFY.MOO_CVX_CVX, () => fetchAnyFromBeefyRoute({ fromAddress: TEST_WALLET, beefyVault: BEEFY.MOO_CVX_CVX, beefyVaultUnderlying: TOKENS.CVX, beefyVaultSymbol: "mooCvxCVX", outputToken: USDC_ADDRESS, amountIn: amount, slippage: "100" })],
+      ["mooCvxCRV -> ysCVX", BEEFY.MOO_CVX_CRV, () => fetchBeefyZapInRoute({ fromAddress: TEST_WALLET, vaultAddress: VAULT_ADDRESSES.YSCVX, beefyVaultAddress: BEEFY.MOO_CVX_CRV, beefyVaultUnderlying: TOKENS.CVXCRV, beefyVaultSymbol: "mooCvxCRV", amountIn: amount, slippage: "100" })],
+      ["uCRV -> USDC", LLAMA_AIRFORCE.UCRV, () => fetchAnyFromUCrvRoute({ fromAddress: TEST_WALLET, outputToken: USDC_ADDRESS, amountIn: amount, slippage: "100" })],
+      ["uCRV -> ysCVX", LLAMA_AIRFORCE.UCRV, () => fetchUCrvZapInRoute({ fromAddress: TEST_WALLET, vaultAddress: VAULT_ADDRESSES.YSCVX, amountIn: amount, slippage: "100" })],
+      ["lpxCVX -> uCVX", TOKENS.LPXCVX, () => fetchSpecialTokenToExternalVaultRoute({ fromAddress: TEST_WALLET, inputToken: TOKENS.LPXCVX, outputVault: LLAMA_AIRFORCE.UCVX, amountIn: amount, slippage: "100" })],
+      ["mooCvxCVX -> uCVX", BEEFY.MOO_CVX_CVX, () => fetchSpecialTokenToExternalVaultRoute({ fromAddress: TEST_WALLET, inputToken: BEEFY.MOO_CVX_CVX, outputVault: LLAMA_AIRFORCE.UCVX, amountIn: amount, slippage: "100" })],
+      ["mooCvxCVX -> pxCVX", BEEFY.MOO_CVX_CVX, () => fetchSpecialTokenToIlliquidRoute({ fromAddress: TEST_WALLET, inputToken: BEEFY.MOO_CVX_CVX, outputToken: TOKENS.PXCVX, amountIn: amount, slippage: "100" })],
+      ["uCRV -> pxCVX", LLAMA_AIRFORCE.UCRV, () => fetchSpecialTokenToIlliquidRoute({ fromAddress: TEST_WALLET, inputToken: LLAMA_AIRFORCE.UCRV, outputToken: TOKENS.PXCVX, amountIn: amount, slippage: "100" })],
+      ["uCVX -> USDC", LLAMA_AIRFORCE.UCVX, () => fetchAnyFromUCvxRoute({ fromAddress: TEST_WALLET, outputToken: USDC_ADDRESS, amountIn: amount, slippage: "100" })],
+    ];
+
+    it.each(cases)("%s declares exactly the user's input token", async (_label, input, build) => {
+      await build();
+      expect(declaredInputs(lastBundleActions())).toEqual([input.toLowerCase()]);
+    });
   });
 });
