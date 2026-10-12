@@ -1,4 +1,3 @@
-// @ts-expect-error: resolved by wrangler bundling
 import openNextWorker from "../.open-next/worker.js";
 
 interface YldfiEdgeEnv {
