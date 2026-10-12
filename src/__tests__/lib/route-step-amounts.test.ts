@@ -62,6 +62,7 @@ import {
   fetchAnyToCvgCvxRoute,
   fetchAnyFromBeefyRoute,
   fetchAnyFromUCrvRoute,
+  fetchAnyFromUCvxRoute,
   fetchAnyFromErc4626ExternalVaultRoute,
   fetchAnyToPxCvxRoute,
   fetchAnyToLpxCvxRoute,
@@ -1016,5 +1017,19 @@ describe("route step amounts", () => {
     expect(finalTransfer.action).toBe("transfer");
     expect(finalTransfer.args.token).toBe(PIREX.LPXCVX);
     expect(finalTransfer.args.amount).toEqual({ useOutputOfCallAt: lpxCvxBalanceIdx });
+  });
+
+  it("sends CVX straight to the user for uCVX -> CVX instead of routing CVX into itself", async () => {
+    const bundle = await fetchAnyFromUCvxRoute({ fromAddress: TEST_WALLET, outputToken: TOKENS.CVX, amountIn: ONE_ETHER.toString(), slippage: "100" });
+    const actions = lastBundleActions();
+    expect(actions.some((action) => action.action === "route" && String(action.args.tokenOut).toLowerCase() === TOKENS.CVX.toLowerCase())).toBe(false);
+    expect(actions[actions.length - 1]).toMatchObject({ protocol: "erc20", action: "transfer", args: { token: TOKENS.CVX, receiver: TEST_WALLET } });
+    expect(BigInt(bundle.amountsOut[TOKENS.CVX.toLowerCase()])).toBeGreaterThan(0n);
+  });
+
+  it("quotes native ETH for uCVX -> ETH so the intent guard can bind the final output", async () => {
+    const bundle = await fetchAnyFromUCvxRoute({ fromAddress: TEST_WALLET, outputToken: ETH_ADDRESS, amountIn: ONE_ETHER.toString(), slippage: "100" });
+    expect(BigInt(bundle.amountsOut[ETH_ADDRESS.toLowerCase()])).toBeGreaterThan(0n);
+    expect(lastBundleActions()[lastBundleActions().length - 1]).toMatchObject({ protocol: "wrapped-native", action: "redeem" });
   });
 });
