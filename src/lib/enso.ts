@@ -8032,6 +8032,19 @@ export async function fetchLpxCvxZapInRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  // Raw bundle actions can't be submitted from the browser; build server-side via the intent.
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "illiquidToYldVault",
+      fromAddress: params.fromAddress,
+      inputToken: TOKENS.LPXCVX,
+      vaultAddress: params.vaultAddress,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { PIREX, getVaultByAddress } = await import("@/config/vaults");
   const slippageBps = validateSlippage(params.slippage);
 
@@ -8270,6 +8283,19 @@ export async function fetchPxCvxTokenZapInRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  // Raw bundle actions can't be submitted from the browser; build server-side via the intent.
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "illiquidToYldVault",
+      fromAddress: params.fromAddress,
+      inputToken: TOKENS.PXCVX,
+      vaultAddress: params.vaultAddress,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { PIREX, getVaultByAddress } = await import("@/config/vaults");
   const slippageBps = validateSlippage(params.slippage);
 
@@ -10802,6 +10828,19 @@ export async function fetchComposableZapInRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  // Raw bundle actions can't be submitted from the browser; build server-side via the intent.
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "illiquidToYldVault",
+      fromAddress: params.fromAddress,
+      inputToken: params.inputToken,
+      vaultAddress: params.vaultAddress,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { getVaultByAddress } = await import("@/config/vaults");
   const targetVault = getVaultByAddress(params.vaultAddress);
   if (!targetVault) {
