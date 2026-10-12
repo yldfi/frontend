@@ -18,6 +18,7 @@ import { LoadingDots } from "@/components/LoadingDots";
 import { RouteDisplay } from "@/components/RouteDisplay";
 import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
+import { PriceImpactConfirmModal, needsPriceImpactConfirm } from "@/components/PriceImpactConfirmModal";
 import { TxAssetDetailsPill } from "@/components/TxAssetDetailsPill";
 
 import { useUniversalZap } from "@/hooks/useUniversalZap";
@@ -252,6 +253,9 @@ export function ZapPageContent() {
     refetchZapTokenBalancesOnchain();
   }, [currentBlock, isConnected, isInputEth, refetchEthBalance, refetchZapTokenBalancesOnchain, userAddress]);
 
+  // An action held back until the user types CONFIRM for a high-price-impact quote.
+  const [pendingImpactAction, setPendingImpactAction] = useState<{ label: string; run: () => void } | null>(null);
+
   // Quote (debounced for rate-limit friendliness)
   const debouncedAmount = useDebouncedValue(amount, 500);
   const sameToken =
@@ -261,7 +265,7 @@ export function ZapPageContent() {
     outputToken,
     inputAmount: debouncedAmount,
     slippage,
-    paused: sameToken || showSimulationModal,
+    paused: sameToken || showSimulationModal || pendingImpactAction !== null,
   });
   const quoteIsCurrent = !!(
     rawQuote &&
@@ -515,6 +519,12 @@ export function ZapPageContent() {
       setIsSimulatingPreview(false);
     }
   }, [quote, executeZap, setShowSimulationModal]);
+
+  // Approving also auto-executes the zap once the approval mines, so both entry points are gated.
+  const guardHighImpact = (label: string, run: () => void) => {
+    if (needsPriceImpactConfirm(quote?.priceImpact)) setPendingImpactAction({ label, run });
+    else run();
+  };
 
   const handleExecuteZap = useCallback(async () => {
     clearCompletionResetTimer();
@@ -841,13 +851,13 @@ export function ZapPageContent() {
                   approvalProgress={approvalProgress}
                   decimals={inputToken.decimals ?? 18}
                   isApproving={isApproving}
-                  onApprove={(exact) => approve(exact)}
+                  onApprove={(exact) => guardHighImpact("Approve & zap", () => approve(exact))}
                 />
 
                 {/* Execute button */}
                 {isConnected ? (
                   <button
-                    onClick={handleExecuteZap}
+                    onClick={() => guardHighImpact("Zap", () => void handleExecuteZap())}
                     disabled={
                       showApprovalCard ||
                       !quote ||
@@ -1033,6 +1043,19 @@ export function ZapPageContent() {
         onSlippageChange={updateSlippage}
         title="Zap Settings"
       />
+
+      {pendingImpactAction && (
+        <PriceImpactConfirmModal
+          priceImpact={quote?.priceImpact}
+          confirmLabel={pendingImpactAction.label}
+          onCancel={() => setPendingImpactAction(null)}
+          onConfirm={() => {
+            const { run } = pendingImpactAction;
+            setPendingImpactAction(null);
+            run();
+          }}
+        />
+      )}
 
       {showSimulationModal && quote && simulationResult && (
         <SimulationModal
