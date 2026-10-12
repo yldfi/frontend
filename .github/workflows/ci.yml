@@ -84,8 +84,16 @@ jobs:
       - name: Replay archive history runtime
         run: node workers/testing/replay-vault-history.mjs
 
-      - name: Run unit tests
-        run: pnpm test:unit
+      - name: Run unit tests with coverage
+        run: pnpm test:unit --coverage
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14
 
   test-integration:
     name: Integration Tests
