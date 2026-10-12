@@ -21,6 +21,10 @@ function parseQuoteError(error: Error | null): string {
   const msg = error.message || "";
   const normalizedMsg = msg.toLowerCase();
 
+  // Route deliberately disabled (message names the pair and the workaround)
+  if (normalizedMsg.includes("temporarily unavailable")) {
+    return msg;
+  }
   // Amount too large/out of range
   if (normalizedMsg.includes("amountin") && normalizedMsg.includes("acceptable range")) {
     return "Amount too large to quote - try a smaller amount";
