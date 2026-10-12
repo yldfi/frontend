@@ -549,7 +549,7 @@ function assertExternalVaultZapInToYld(request: Record<string, unknown>): assert
 
 // pxCVX / lpxCVX / cvgCVX into a yld vault. These bundles are server-built because the
 // raw actions can't be submitted from the browser. A vault whose asset is the input itself is a
-// direct deposit (lpxCVX unwraps to pxCVX, so it's excluded from yspxCVX too).
+// direct deposit. lpxCVX -> yspxCVX is allowed: it unwraps to pxCVX and deposits.
 function assertIlliquidToYldVault(request: Record<string, unknown>): asserts request is IlliquidToYldVaultIntentRequest {
   assertBaseIntentFields(request, { requireSlippage: true });
   assertAddress(request.inputToken, "inputToken");
@@ -560,7 +560,7 @@ function assertIlliquidToYldVault(request: Record<string, unknown>): asserts req
   }
   assertYldVault(request.vaultAddress, "vaultAddress");
   const asset = normalizeAddress(getIntentVault(request.vaultAddress)!.assetAddress);
-  if (asset === (inputIsCvgCvx ? normalizeAddress(TOKENS.CVGCVX) : normalizeAddress(TOKENS.PXCVX))) {
+  if (asset === input) {
     failValidation("vaultAddress takes the input token directly; deposit instead");
   }
 }
