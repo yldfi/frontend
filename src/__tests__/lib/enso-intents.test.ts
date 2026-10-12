@@ -772,6 +772,8 @@ describe("illiquidToYldVault intent", () => {
     [TOKENS.LPXCVX, VAULT_ADDRESSES.YSCVGCVX],
     [TOKENS.CVGCVX, VAULT_ADDRESSES.YSCVX],
     [TOKENS.CVGCVX, VAULT_ADDRESSES.YSCVXCRV],
+    // lpxCVX is not yspxCVX's asset: it unwraps to pxCVX and deposits.
+    [TOKENS.LPXCVX, VAULT_ADDRESSES.YSPXCVX],
   ])("accepts %s into %s", (inputToken, vaultAddress) => {
     expect(() => assertValidEnsoIntentRequest({ ...base, inputToken, vaultAddress })).not.toThrow();
   });
@@ -780,7 +782,6 @@ describe("illiquidToYldVault intent", () => {
     expect(() => assertValidEnsoIntentRequest({ ...base, inputToken: TOKENS.CVX, vaultAddress: VAULT_ADDRESSES.YSCVX })).toThrow("pxCVX, lpxCVX or cvgCVX");
     expect(() => assertValidEnsoIntentRequest({ ...base, inputToken: TOKENS.PXCVX, vaultAddress: OTHER })).toThrow("known YLD vault");
     expect(() => assertValidEnsoIntentRequest({ ...base, inputToken: TOKENS.PXCVX, vaultAddress: VAULT_ADDRESSES.YSPXCVX })).toThrow("deposit instead");
-    expect(() => assertValidEnsoIntentRequest({ ...base, inputToken: TOKENS.LPXCVX, vaultAddress: VAULT_ADDRESSES.YSPXCVX })).toThrow("deposit instead");
     expect(() => assertValidEnsoIntentRequest({ ...base, inputToken: TOKENS.CVGCVX, vaultAddress: VAULT_ADDRESSES.YSCVGCVX })).toThrow("deposit instead");
     expect(() => assertValidEnsoIntentRequest({ ...base, inputToken: TOKENS.PXCVX, vaultAddress: VAULT_ADDRESSES.YSCVX, actions: [] })).toThrow();
   });
