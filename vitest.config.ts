@@ -51,6 +51,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "../.open-next/worker.js": path.resolve(__dirname, "./src/__tests__/workers/opennext-edge-worker-stub.ts"),
+      "../../../.open-next/worker.js": path.resolve(__dirname, "./src/__tests__/workers/opennext-edge-worker-stub.ts"),
     },
   },
 });

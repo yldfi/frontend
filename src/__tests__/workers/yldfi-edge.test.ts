@@ -1,10 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-
-vi.mock("../../../.open-next/worker.js", () => ({
-  default: { fetch: vi.fn() },
-}));
+import type { MockInstance } from "vitest";
 
 import edgeWorker from "../../../workers/yldfi-edge";
+import openNext from "../../../.open-next/worker.js";
 
 class FakeStatement {
   args: unknown[] = [];
@@ -45,10 +43,11 @@ function captureWaitUntil() {
   return { ctx, pending: () => Promise.all(pending) };
 }
 
-const openNextFetch = vi.mocked((await import("../../../.open-next/worker.js")).default.fetch);
+let openNextFetch: MockInstance<typeof openNext.fetch>;
 
 beforeEach(() => {
-  openNextFetch.mockReset();
+  vi.restoreAllMocks();
+  openNextFetch = vi.spyOn(openNext, "fetch");
 });
 
 describe("yldfi-edge wrapper", () => {
