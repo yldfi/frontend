@@ -60,6 +60,9 @@ vi.mock("@/lib/curve", () => ({
 
 import {
   fetchAnyToCvgCvxRoute,
+  fetchAnyToExternalVaultRoute,
+  fetchCvgCvxZapInRoute,
+  fetchPxCvxZapInRoute,
   fetchAnyFromBeefyRoute,
   fetchAnyFromUCrvRoute,
   fetchAnyFromErc4626ExternalVaultRoute,
@@ -85,7 +88,7 @@ import {
   MORPHO_GENERAL_ADAPTER1_ADDRESS,
   MORPHO_TOKEN_ADDRESS,
 } from "@/lib/enso";
-import { cryptoswap, estimateCryptoSwapOffchain, findPegPoint, getCurveGetDy, getCurveGetDyFactory, getStableSwapParams } from "@/lib/curve";
+import { cryptoswap, estimateCryptoSwapOffchain, findPegPoint, getCurveGetDy, getCurveGetDyFactory, getStableSwapParams, previewRedeem, batchRedeemAndEstimateSwap } from "@/lib/curve";
 import { LLAMA_AIRFORCE, PIREX, TANGENT, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 import { USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
 import type { EnsoBundleAction } from "@/types/enso";
@@ -899,7 +902,18 @@ describe("route step amounts", () => {
       PIREX.LPXCVX,
       PIREX.PIREX_CVX,
     ]));
-    expect(cvxApprovals.map(rawApproveAmount).every((amount) => typeof amount === "string" && BigInt(amount) > 0n)).toBe(true);
+    // Swap leg is sized up front; the mint leg takes whatever CVX the swap left (runtime
+    // balance) so the slippage buffer can't stay behind at EnsoShortcuts.
+    const swapApproval = cvxApprovals.find((action) => rawApproveSpender(action) === PIREX.LPXCVX)!;
+    const mintApproval = cvxApprovals.find((action) => rawApproveSpender(action) === PIREX.PIREX_CVX)!;
+    expect(typeof rawApproveAmount(swapApproval)).toBe("string");
+    expect(BigInt(rawApproveAmount(swapApproval) as string)).toBeGreaterThan(0n);
+    const mintAmountRef = rawApproveAmount(mintApproval);
+    expect(isOutputRef(mintAmountRef)).toBe(true);
+    const remainingCvxRead = actions[(mintAmountRef as { useOutputOfCallAt: number }).useOutputOfCallAt];
+    expect(remainingCvxRead).toMatchObject({ protocol: "enso", action: "balance", args: { token: TOKENS.CVX } });
+    expect(actions.indexOf(remainingCvxRead)).toBeGreaterThan(actions.indexOf(swapApproval));
+    expect(callActions(actions, PIREX.PIREX_CVX, "deposit")[0].args.args).toEqual([mintAmountRef, ENSO_SHORTCUTS, false, expect.any(String)]);
     expect(callActions(actions, PIREX.LPXCVX, "swap")).toHaveLength(1);
     expect(callActions(actions, PIREX.LPXCVX, "unwrap")).toHaveLength(0);
     expect(callActions(actions, PIREX.LPXCVX_CVX_POOL, "exchange")).toHaveLength(0);
@@ -1016,5 +1030,123 @@ describe("route step amounts", () => {
     expect(finalTransfer.action).toBe("transfer");
     expect(finalTransfer.args.token).toBe(PIREX.LPXCVX);
     expect(finalTransfer.args.amount).toEqual({ useOutputOfCallAt: lpxCvxBalanceIdx });
+  });
+
+  describe("bundle invariants across split builders", () => {
+    type Ref = { useOutputOfCallAt: number };
+    const NON_PRODUCING = new Set(["approve", "transfer", "transferfrom", "slippage", "minamountout"]);
+
+    function collectRefs(value: unknown, out: Ref[] = []): Ref[] {
+      if (Array.isArray(value)) value.forEach((item) => collectRefs(item, out));
+      else if (isOutputRef(value)) out.push(value);
+      else if (value && typeof value === "object") Object.values(value).forEach((item) => collectRefs(item, out));
+      return out;
+    }
+
+    function collectStrings(value: unknown, out: string[] = []): string[] {
+      if (typeof value === "string") out.push(value);
+      else if (Array.isArray(value)) value.forEach((item) => collectStrings(item, out));
+      else if (value && typeof value === "object") Object.values(value).forEach((item) => collectStrings(item, out));
+      return out;
+    }
+
+    function producesOutput(action: TestBundleAction): boolean {
+      if (NON_PRODUCING.has(action.action)) return false;
+      // A raw call only yields an output when its ABI declares a return value.
+      if (action.protocol === "enso" && action.action === "call") return /\breturns\s*\(/.test(String(action.args.abi));
+      return true;
+    }
+
+    function expectBundleInvariants(actions: TestBundleAction[]): void {
+      actions.forEach((action, index) => {
+        for (const ref of collectRefs(action.args)) {
+          // Refs must point backwards at an action that actually yields a value (catches manual index drift).
+          expect(ref.useOutputOfCallAt, `actions[${index}] references a later action`).toBeLessThan(index);
+          expect(producesOutput(actions[ref.useOutputOfCallAt]),
+            `actions[${index}] references actions[${ref.useOutputOfCallAt}] (${actions[ref.useOutputOfCallAt].action}), which has no output`).toBe(true);
+        }
+        // Enso encodes the string "false" as true for bool params; booleans must be real booleans.
+        expect(collectStrings(action.args).filter((value) => value === "true" || value === "false"),
+          `actions[${index}] passes a boolean as a string`).toEqual([]);
+        if (action.action === "call" && String(action.args.address).toLowerCase() === PIREX.PIREX_CVX.toLowerCase()) {
+          // shouldCompound=true would deposit into uCVX owned by EnsoShortcuts instead of minting pxCVX.
+          expect((action.args.args as unknown[])[2], `actions[${index}] PirexCvx.deposit must not compound`).toBe(false);
+        }
+      });
+
+      const last = actions[actions.length - 1];
+      if (last.protocol === "erc20" && last.action === "transfer" && isOutputRef(last.args.amount)) {
+        expect(actions[last.args.amount.useOutputOfCallAt]).toMatchObject({ action: "balance", args: { token: last.args.token } });
+      }
+    }
+
+    // When CVX is produced mid-bundle and split between a swap and a mint, the mint must take the
+    // runtime CVX left after the swap; a fixed amount sized from a buffered estimate strands the rest.
+    function expectMintTakesRemainingCvx(actions: TestBundleAction[], mintTarget: string): void {
+      const mint = actions.findIndex((action) =>
+        action.action === "call" &&
+        String(action.args.address).toLowerCase() === mintTarget.toLowerCase() &&
+        (action.args.method === "deposit" || action.args.method === "mint"));
+      expect(mint, "expected a mint leg").toBeGreaterThan(-1);
+      const amountArg = (actions[mint].args.args as unknown[]).find(isOutputRef);
+      expect(amountArg, "mint amount must be a runtime reference").toBeDefined();
+      const source = actions[(amountArg as Ref).useOutputOfCallAt];
+      expect(source).toMatchObject({ protocol: "enso", action: "balance", args: { token: TOKENS.CVX } });
+    }
+
+    const wallet = TEST_WALLET;
+    const builders: Array<[string, () => Promise<unknown>, string | null]> = [
+      ["USDC -> pxCVX", () => fetchAnyToPxCvxRoute({ fromAddress: wallet, inputToken: USDC_ADDRESS, amountIn: "10000000", slippage: "100" }), PIREX.PIREX_CVX],
+      ["USDC -> lpxCVX", () => fetchAnyToLpxCvxRoute({ fromAddress: wallet, inputToken: USDC_ADDRESS, amountIn: "10000000", slippage: "100" }), PIREX.PIREX_CVX],
+      ["USDC -> cvgCVX", () => fetchAnyToCvgCvxRoute({ fromAddress: wallet, inputToken: USDC_ADDRESS, amountIn: "10000000", slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
+      ["USDC -> uCVX", () => fetchAnyToExternalVaultRoute({ fromAddress: wallet, inputToken: USDC_ADDRESS, externalVaultAddress: LLAMA_AIRFORCE.UCVX, amountIn: "10000000", slippage: "100" }), PIREX.PIREX_CVX],
+      // Percentage (fee-action) split of the actual CVX, so no remainder check; invariants only.
+      ["USDC -> ysCvgCVX", () => fetchCvgCvxZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, inputToken: USDC_ADDRESS, amountIn: "10000000", slippage: "100" }), null],
+      ["USDC -> yspxCVX", () => fetchPxCvxZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSPXCVX, inputToken: USDC_ADDRESS, amountIn: "10000000", slippage: "100" }), PIREX.PIREX_CVX],
+      ["ycvxCRV -> pxCVX", () => fetchYldVaultToIlliquidRoute({ fromAddress: wallet, sourceVault: VAULT_ADDRESSES.YCVXCRV, sourceUnderlying: TOKENS.CVXCRV, outputToken: TOKENS.PXCVX, amountIn: ONE_ETHER.toString(), slippage: "100" }), PIREX.PIREX_CVX],
+      ["ycvxCRV -> cvgCVX", () => fetchYldVaultToIlliquidRoute({ fromAddress: wallet, sourceVault: VAULT_ADDRESSES.YCVXCRV, sourceUnderlying: TOKENS.CVXCRV, outputToken: TOKENS.CVGCVX, amountIn: ONE_ETHER.toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
+      ["ysCvgCVX -> uCVX", () => fetchYldVaultToExternalVaultRoute({ fromAddress: wallet, sourceVault: VAULT_ADDRESSES.YSCVGCVX, sourceUnderlying: TOKENS.CVGCVX, targetVault: LLAMA_AIRFORCE.UCVX, targetUnderlying: TOKENS.PXCVX, targetInterface: "erc4626", targetSymbol: "uCVX", targetProtocol: "Llama Airforce", amountIn: ONE_ETHER.toString(), slippage: "100" }), PIREX.PIREX_CVX],
+      ["ycvxCRV -> ysCvgCVX", () => fetchVaultToVaultRoute({ fromAddress: wallet, sourceVault: VAULT_ADDRESSES.YCVXCRV, targetVault: VAULT_ADDRESSES.YSCVGCVX, amountIn: ONE_ETHER.toString(), sourceUnderlyingToken: TOKENS.CVXCRV, targetUnderlyingToken: TOKENS.CVGCVX, slippage: "100" }), null],
+    ];
+
+    it.each(builders)("%s keeps references, booleans and transfers valid (swap-only split)", async (_label, build) => {
+      await build();
+      expectBundleInvariants(lastBundleActions());
+    });
+
+    it.each(builders)("%s keeps invariants and mints the remaining runtime CVX under a swap + mint split", async (_label, build, mintTarget) => {
+      if (mintTarget === TANGENT.CVGCVX_CONTRACT) mockCvgCvxHybridSplit();
+      else mockPxCvxHybridSplit();
+      // Redeem enough underlying that the CVX estimate clears the mocked 1 CVX peg point.
+      vi.mocked(previewRedeem).mockResolvedValue((5n * ONE_ETHER).toString());
+      await build();
+      const actions = lastBundleActions();
+      expectBundleInvariants(actions);
+      if (mintTarget) expectMintTakesRemainingCvx(actions, mintTarget);
+    });
+  });
+
+  it("quotes cvgCVX vault -> CVX vault bundles even in development, since the intent guard needs amountsOut", async () => {
+    vi.mocked(batchRedeemAndEstimateSwap).mockResolvedValue({
+      redeemAmount: ONE_ETHER,
+      swapOutput: ONE_ETHER,
+      rawSwapOutput: ONE_ETHER,
+    } as Awaited<ReturnType<typeof batchRedeemAndEstimateSwap>>);
+    vi.stubEnv("NODE_ENV", "development");
+    try {
+      await fetchVaultToVaultRoute({
+        fromAddress: TEST_WALLET,
+        sourceVault: VAULT_ADDRESSES.YSCVGCVX,
+        targetVault: VAULT_ADDRESSES.YSCVX,
+        amountIn: ONE_ETHER.toString(),
+        sourceUnderlyingToken: TOKENS.CVGCVX,
+        targetUnderlyingToken: TOKENS.CVX,
+        slippage: "100",
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    const config = mockGetBundleData.mock.calls[mockGetBundleData.mock.calls.length - 1][0] as { skipQuote?: boolean };
+    expect(config.skipQuote).toBe(false);
   });
 });
