@@ -73,6 +73,11 @@ import {
   fetchDynamicInputEstimate,
   fetchComposableZapInRoute,
   fetchLpxCvxZapInRoute,
+  fetchPxCvxTokenZapInRoute,
+  fetchBeefyZapInRoute,
+  fetchErc4626ExternalVaultZapInRoute,
+  fetchUCvxZapInRoute,
+  fetchUCrvZapInRoute,
   fetchLegacyMorphoWrapRoute,
   fetchLegacyMorphoZapInRoute,
   fetchSpecialTokenToExternalVaultRoute,
@@ -89,7 +94,7 @@ import {
   MORPHO_TOKEN_ADDRESS,
 } from "@/lib/enso";
 import { cryptoswap, estimateCryptoSwapOffchain, findPegPoint, getCurveGetDy, getCurveGetDyFactory, getStableSwapParams, previewRedeem, batchRedeemAndEstimateSwap } from "@/lib/curve";
-import { CONCENTRATOR, LLAMA_AIRFORCE, PIREX, TANGENT, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
+import { BEEFY, CONCENTRATOR, LLAMA_AIRFORCE, PIREX, TANGENT, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 import { USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
 import type { EnsoBundleAction } from "@/types/enso";
 
@@ -1052,8 +1057,11 @@ describe("route step amounts", () => {
 
     function producesOutput(action: TestBundleAction): boolean {
       if (NON_PRODUCING.has(action.action)) return false;
-      // A raw call only yields an output when its ABI declares a return value.
-      if (action.protocol === "enso" && action.action === "call") return /\breturns\s*\(/.test(String(action.args.abi));
+      // A raw call only yields an output when its ABI declares a return value. approve/transfer
+      // return a bool, which as an amount is 1 wei.
+      if (action.protocol === "enso" && action.action === "call") {
+        return /\breturns\s*\(/.test(String(action.args.abi)) && !["approve", "transfer", "transferFrom"].includes(String(action.args.method));
+      }
       return true;
     }
 
@@ -1106,6 +1114,13 @@ describe("route step amounts", () => {
       ["ycvxCRV -> pxCVX", () => fetchYldVaultToIlliquidRoute({ fromAddress: wallet, sourceVault: VAULT_ADDRESSES.YCVXCRV, sourceUnderlying: TOKENS.CVXCRV, outputToken: TOKENS.PXCVX, amountIn: ONE_ETHER.toString(), slippage: "100" }), PIREX.PIREX_CVX],
       ["ycvxCRV -> cvgCVX", () => fetchYldVaultToIlliquidRoute({ fromAddress: wallet, sourceVault: VAULT_ADDRESSES.YCVXCRV, sourceUnderlying: TOKENS.CVXCRV, outputToken: TOKENS.CVGCVX, amountIn: ONE_ETHER.toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
       ["ysCvgCVX -> uCVX", () => fetchYldVaultToExternalVaultRoute({ fromAddress: wallet, sourceVault: VAULT_ADDRESSES.YSCVGCVX, sourceUnderlying: TOKENS.CVGCVX, targetVault: LLAMA_AIRFORCE.UCVX, targetUnderlying: TOKENS.PXCVX, targetInterface: "erc4626", targetSymbol: "uCVX", targetProtocol: "Llama Airforce", amountIn: ONE_ETHER.toString(), slippage: "100" }), PIREX.PIREX_CVX],
+      // cvgCVX hybrid helper callers: the helper's refs must be offset to the caller's bundle.
+      ["uCRV -> ysCvgCVX", () => fetchUCrvZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, amountIn: ONE_ETHER.toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
+      ["uCVX -> ysCvgCVX", () => fetchUCvxZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, amountIn: ONE_ETHER.toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
+      ["aCVX -> ysCvgCVX", () => fetchErc4626ExternalVaultZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, externalVaultAddress: CONCENTRATOR.ACVX, externalVaultUnderlying: TOKENS.CVX, externalVaultSymbol: "aCVX", externalVaultProtocol: "Concentrator", amountIn: ONE_ETHER.toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
+      ["mooCvxCVX -> ysCvgCVX", () => fetchBeefyZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, beefyVaultAddress: BEEFY.MOO_CVX_CVX, beefyVaultUnderlying: TOKENS.CVX, beefyVaultSymbol: "mooCvxCVX", amountIn: ONE_ETHER.toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
+      ["lpxCVX -> ysCvgCVX", () => fetchLpxCvxZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, amountIn: (5n * ONE_ETHER).toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
+      ["pxCVX -> ysCvgCVX", () => fetchPxCvxTokenZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, amountIn: (5n * ONE_ETHER).toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
       ["ycvxCRV -> ysCvgCVX", () => fetchVaultToVaultRoute({ fromAddress: wallet, sourceVault: VAULT_ADDRESSES.YCVXCRV, targetVault: VAULT_ADDRESSES.YSCVGCVX, amountIn: ONE_ETHER.toString(), sourceUnderlyingToken: TOKENS.CVXCRV, targetUnderlyingToken: TOKENS.CVGCVX, slippage: "100" }), null],
     ];
 
