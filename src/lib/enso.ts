@@ -668,6 +668,8 @@ function getBufferedSlippageBps(slippageBps: number): number {
  * across both the swap and mint portions.
  */
 async function buildCvxToCvgCvxDepositActions(params: {
+  /** Absolute index the returned actions will start at in the caller's bundle. */
+  baseIdx: number;
   expectedCvxAmount: bigint;
   cvxAmountRef?: BundleAmountRef;
   targetVault: string;
@@ -730,7 +732,11 @@ async function buildCvxToCvgCvxDepositActions(params: {
   }
 
   if (mintAmount > 0n) {
-    const mintInput = usesFixedDynamicSplit ? remainingCvxForMint(actions) : mintCvxInput;
+    // remainingCvxForMint indexes this local array; offset it to the caller's bundle.
+    const localCvxBalance = usesFixedDynamicSplit ? remainingCvxForMint(actions) : null;
+    const mintInput: BundleAmountRef = localCvxBalance && isDynamicAmountRef(localCvxBalance)
+      ? { useOutputOfCallAt: params.baseIdx + localCvxBalance.useOutputOfCallAt }
+      : mintCvxInput;
     actions.push(
       intermediateApproveAction(TOKENS.CVX, TANGENT.CVGCVX_CONTRACT, mintInput, usesFixedDynamicSplit),
       {
@@ -746,42 +752,26 @@ async function buildCvxToCvgCvxDepositActions(params: {
     );
   }
 
-  // Balance + deposit — use relative index (caller appends to its own array,
-  // so useOutputOfCallAt points to the balance action's absolute position)
+  // Balance + deposit. The caller appends these actions as the tail of its bundle
+  // at params.baseIdx, so refs created here are offset to their absolute position.
   const balanceIndexWithin = actions.length;
   actions.push({
     protocol: "enso",
     action: "balance",
     args: { token: TOKENS.CVGCVX },
   });
-  // IMPORTANT: caller must append these returned actions as the TAIL of its
-  // bundle so the absolute index of the balance read equals startIdx +
-  // balanceIndexWithin. We encode this as a sentinel relative ref that the
-  // caller re-bases below.
   actions.push({
     protocol: "erc4626",
     action: "deposit",
     args: {
       tokenIn: TOKENS.CVGCVX,
       tokenOut: params.targetVault,
-      amountIn: { useOutputOfCallAt: balanceIndexWithin }, // re-base in caller
+      amountIn: { useOutputOfCallAt: params.baseIdx + balanceIndexWithin },
       primaryAddress: params.targetVault,
     },
   });
 
   return { actions, expectedCvgCvx: expectedSwapCvgCvx + mintAmount };
-}
-
-/**
- * Re-base the useOutputOfCallAt ref inside cvgCVX-hybrid actions so their
- * balance-read reference matches the absolute position in the caller's bundle.
- */
-function rebaseCvgCvxHybridRef(actions: EnsoBundleAction[], baseIdx: number): void {
-  const depositAction = actions[actions.length - 1];
-  const args = depositAction.args as { amountIn?: { useOutputOfCallAt: number } };
-  if (args.amountIn && typeof args.amountIn === "object" && "useOutputOfCallAt" in args.amountIn) {
-    args.amountIn = { useOutputOfCallAt: baseIdx + args.amountIn.useOutputOfCallAt };
-  }
 }
 
 type BundleAmountRef = string | { useOutputOfCallAt: number };
@@ -7063,14 +7053,13 @@ export async function fetchUCrvZapInRoute(params: {
     const cvxEstimate = BigInt(rq.amountOut);
     expectedIntermediateCvx = cvxEstimate;
     const { actions: cvgCvxActions, expectedCvgCvx } = await buildCvxToCvgCvxDepositActions({
+      baseIdx: actions.length,
       expectedCvxAmount: cvxEstimate,
       cvxAmountRef: { useOutputOfCallAt: cvxRouteIdx },
       targetVault: params.vaultAddress,
       slippageBps,
     });
-    const baseIdx = actions.length;
     actions.push(...cvgCvxActions);
-    rebaseCvgCvxHybridRef(actions, baseIdx);
     expectedCvgCvxTotal = expectedCvgCvx;
   } else {
     expectedTargetUnderlyingOutput = await estimateRequiredRouteOutput(
@@ -7326,14 +7315,13 @@ export async function fetchUCvxZapInRoute(params: {
       // CVX to cvgCVX directly. Uses literal amounts with skipQuote=true.
       const { actions: cvgCvxActions, expectedCvgCvx: cvgCvxTotal } =
         await buildCvxToCvgCvxDepositActions({
+          baseIdx: actions.length,
           expectedCvxAmount: expectedCvxOutput,
           cvxAmountRef: { useOutputOfCallAt: 4 },
           targetVault: params.vaultAddress,
           slippageBps,
         });
-      const baseIdx = actions.length;
       actions.push(...cvgCvxActions);
-      rebaseCvgCvxHybridRef(actions, baseIdx);
       // Stash expected output for amountsOut population below
       expectedCvgCvxTotal = cvgCvxTotal;
     } else {
@@ -7596,14 +7584,13 @@ export async function fetchErc4626ExternalVaultZapInRoute(params: {
     }
     expectedIntermediateCvx = cvxEstimate;
     const { actions: cvgCvxActions, expectedCvgCvx } = await buildCvxToCvgCvxDepositActions({
+      baseIdx: actions.length,
       expectedCvxAmount: cvxEstimate,
       cvxAmountRef: cvxInputAmountRef,
       targetVault: params.vaultAddress,
       slippageBps,
     });
-    const baseIdx = actions.length;
     actions.push(...cvgCvxActions);
-    rebaseCvgCvxHybridRef(actions, baseIdx);
     expectedCvgCvxTotal = expectedCvgCvx;
   } else {
     expectedTargetUnderlyingOutput = await estimateRequiredRouteOutput(
@@ -7828,14 +7815,13 @@ export async function fetchBeefyZapInRoute(params: {
     }
     expectedIntermediateCvx = cvxEstimate;
     const { actions: cvgCvxActions, expectedCvgCvx } = await buildCvxToCvgCvxDepositActions({
+      baseIdx: actions.length,
       expectedCvxAmount: cvxEstimate,
       cvxAmountRef,
       targetVault: params.vaultAddress,
       slippageBps,
     });
-    const baseIdx = actions.length;
     actions.push(...cvgCvxActions);
-    rebaseCvgCvxHybridRef(actions, baseIdx);
     expectedCvgCvxTotal = expectedCvgCvx;
   } else {
     expectedTargetUnderlyingOutput = await estimateRequiredRouteOutput(
@@ -8176,15 +8162,14 @@ export async function fetchLpxCvxZapInRoute(params: {
     });
   } else if (targetIsCvgCvx) {
     const { actions: cvgCvxDepositActions, expectedCvgCvx } = await buildCvxToCvgCvxDepositActions({
+      baseIdx: actions.length,
       expectedCvxAmount: expectedCvxOutput,
       cvxAmountRef: { useOutputOfCallAt: 1 },
       targetVault: params.vaultAddress,
       slippageBps,
     });
     expectedCvgCvxTotal = expectedCvgCvx;
-    const baseIdx = actions.length;
     actions.push(...cvgCvxDepositActions);
-    rebaseCvgCvxHybridRef(actions, baseIdx);
   } else {
     expectedTargetUnderlyingOutput = await estimateRequiredRouteOutput(
       params.fromAddress,
@@ -8389,14 +8374,13 @@ export async function fetchPxCvxTokenZapInRoute(params: {
   } else if (targetIsCvgCvx) {
     // CVX → cvgCVX hybrid (Curve + Convex). No liquid Enso route.
     const { actions: cvgCvxActions, expectedCvgCvx } = await buildCvxToCvgCvxDepositActions({
+      baseIdx: actions.length,
       expectedCvxAmount: expectedCvxOutput,
       cvxAmountRef: { useOutputOfCallAt: 3 },
       targetVault: params.vaultAddress,
       slippageBps,
     });
-    const baseIdx = actions.length;
     actions.push(...cvgCvxActions);
-    rebaseCvgCvxHybridRef(actions, baseIdx);
     expectedCvgCvxTotal = expectedCvgCvx;
   } else {
     actions.push({
