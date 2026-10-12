@@ -89,7 +89,7 @@ import {
   MORPHO_TOKEN_ADDRESS,
 } from "@/lib/enso";
 import { cryptoswap, estimateCryptoSwapOffchain, findPegPoint, getCurveGetDy, getCurveGetDyFactory, getStableSwapParams, previewRedeem, batchRedeemAndEstimateSwap } from "@/lib/curve";
-import { LLAMA_AIRFORCE, PIREX, TANGENT, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
+import { CONCENTRATOR, LLAMA_AIRFORCE, PIREX, TANGENT, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 import { USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
 import type { EnsoBundleAction } from "@/types/enso";
 
@@ -1148,5 +1148,27 @@ describe("route step amounts", () => {
     }
     const config = mockGetBundleData.mock.calls[mockGetBundleData.mock.calls.length - 1][0] as { skipQuote?: boolean };
     expect(config.skipQuote).toBe(false);
+  });
+
+  describe("yld vault -> external vault sources", () => {
+    const cases: Array<[string, string, string, string, string, "erc4626"]> = [
+      ["ysCVX -> aCVX", VAULT_ADDRESSES.YSCVX, TOKENS.CVX, CONCENTRATOR.ACVX, TOKENS.CVX, "erc4626"],
+      ["ysCVX -> aCRV", VAULT_ADDRESSES.YSCVX, TOKENS.CVX, CONCENTRATOR.ACRV, TOKENS.CVXCRV, "erc4626"],
+      ["ysCVX -> uCVX", VAULT_ADDRESSES.YSCVX, TOKENS.CVX, LLAMA_AIRFORCE.UCVX, TOKENS.PXCVX, "erc4626"],
+      ["yscvxCRV -> uCVX", VAULT_ADDRESSES.YSCVXCRV, TOKENS.CVXCRV, LLAMA_AIRFORCE.UCVX, TOKENS.PXCVX, "erc4626"],
+    ];
+
+    it.each(cases)("%s builds from the redeemed underlying and deposits the runtime balance", async (_label, source, sourceUnderlying, target, targetUnderlying, targetInterface) => {
+      await fetchYldVaultToExternalVaultRoute({
+        fromAddress: TEST_WALLET, sourceVault: source, sourceUnderlying, targetVault: target, targetUnderlying,
+        targetInterface, targetSymbol: "target", targetProtocol: "test", amountIn: ONE_ETHER.toString(), slippage: "100",
+      });
+      const actions = lastBundleActions();
+      expect(actions[0]).toMatchObject({ protocol: "erc4626", action: "redeem", args: { tokenIn: source, amountIn: ONE_ETHER.toString() } });
+      const deposit = actions.find((action) => action.protocol === "erc4626" && action.action === "deposit");
+      expect(deposit?.args.tokenOut).toBe(target);
+      const amountRef = deposit?.args.amountIn as { useOutputOfCallAt: number };
+      expect(actions[amountRef.useOutputOfCallAt]).toMatchObject({ action: "balance", args: { token: targetUnderlying } });
+    });
   });
 });
