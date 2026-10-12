@@ -323,6 +323,28 @@ const isNativeETH = (token: string) =>
  * append a wrapped-native/redeem action to unwrap WETH → ETH.
  * This avoids the weiroll slippage check failure for native ETH output.
  */
+/**
+ * skipQuote bundles that end CVX → WETH → unwrap report no native-ETH output, so the intent guard
+ * rejects them. Estimate the WETH leg the bundle actually executes for display / the minimum.
+ */
+async function ethOutputEstimate(params: {
+  outputToken: string;
+  amountsOut: Record<string, string> | undefined;
+  fromAddress: string;
+  cvxAmount: bigint;
+  slippage?: string;
+}): Promise<Record<string, string>> {
+  if (!isNativeETH(params.outputToken) || params.amountsOut?.[ETH_ADDRESS.toLowerCase()]) return {};
+  const quote = await fetchDynamicInputEstimate({
+    fromAddress: params.fromAddress,
+    tokenIn: TOKENS.CVX,
+    tokenOut: WETH_ADDRESS,
+    amountIn: params.cvxAmount.toString(),
+    slippage: params.slippage ?? "100",
+  });
+  return { [ETH_ADDRESS.toLowerCase()]: String(quote.amountOut) };
+}
+
 function appendETHUnwrapIfNeeded(actions: EnsoBundleAction[], outputToken: string): EnsoBundleAction[] {
   if (!isNativeETH(outputToken)) return actions;
 
@@ -798,6 +820,24 @@ function rawApproveCallAction(token: string, spender: string, amount: BundleAmou
       abi: "function approve(address spender, uint256 amount) returns (bool)",
       args: [spender, amount],
     },
+  };
+}
+
+/**
+ * A raw call that is the first thing to consume the wallet's input (unwrap, a non-ERC4626 vault
+ * withdraw). Router-mode Enso only pulls tokens it can attribute to an action, and a bare call
+ * declares none, so a fixed amount is declared via the call's tokenIn/amountIn (documented call
+ * params). Runtime amounts were produced earlier in the bundle and need no declaration.
+ */
+function rawCallConsumingInput(
+  amount: BundleAmountRef,
+  inputToken: string,
+  call: { address: string; method: string; abi: string; args: unknown[] },
+): EnsoBundleAction {
+  return {
+    protocol: "enso",
+    action: "call",
+    args: isDynamicAmountRef(amount) ? call : { ...call, tokenIn: inputToken, amountIn: amount },
   };
 }
 
@@ -1669,15 +1709,8 @@ async function appendConversionToCvx(
           args: [state.amountRef],
         },
       },
-      {
-        protocol: "erc20",
-        action: "approve",
-        args: {
-          token: PIREX.LPXCVX,
-          spender: PIREX.LPXCVX_CVX_POOL,
-          amount: state.amountRef,
-        },
-      },
+      // lpxCVX comes from the void wrap(); a fixed erc20 approval would make Enso pull it from the wallet
+      intermediateApproveAction(PIREX.LPXCVX, PIREX.LPXCVX_CVX_POOL, state.amountRef, !isDynamicAmountRef(state.amountRef)),
       {
         protocol: "enso",
         action: "call",
@@ -1844,11 +1877,17 @@ async function convertStateToToken(
 
   if (isPxCvxAddress(targetToken)) {
     if (isLpxCvxAddress(state.token)) {
-      return {
-        token: TOKENS.PXCVX,
-        amountRef: state.amountRef,
-        expectedAmount: state.expectedAmount,
-      };
+      // Unwrap lpxCVX → pxCVX (1:1). A fixed amount is the wallet input, so declare it on the raw
+      // call; relabelling the amount as pxCVX made Enso pull pxCVX from the wallet instead.
+      const { PIREX } = await import("@/config/vaults");
+      // unwrap() returns nothing, so read the produced pxCVX with a balance action.
+      actions.push(rawCallConsumingInput(state.amountRef, TOKENS.LPXCVX, {
+        address: PIREX.LPXCVX,
+        method: "unwrap",
+        abi: "function unwrap(uint256 amount)",
+        args: [state.amountRef],
+      }));
+      return toBalanceState(actions, TOKENS.PXCVX, state.expectedAmount);
     }
     const cvxState =
       state.token.toLowerCase() === TOKENS.CVX.toLowerCase()
@@ -1890,11 +1929,9 @@ async function convertStateToToken(
         protocol: "Pirex",
       }));
 
-      return {
-        token: TOKENS.LPXCVX,
-        amountRef: state.amountRef,
-        expectedAmount: state.expectedAmount,
-      };
+      // wrap() returns nothing. Carrying the fixed pxCVX amount on as lpxCVX made Enso treat lpxCVX
+      // as a second wallet input; read the wrapped balance instead.
+      return toBalanceState(actions, TOKENS.LPXCVX, state.expectedAmount);
     }
     const cvxState =
       state.token.toLowerCase() === TOKENS.CVX.toLowerCase()
@@ -1959,16 +1996,12 @@ async function buildInitialConversionState(params: {
       description: `${config.symbol} for ${config.underlyingSymbol}`,
       protocol: config.protocol,
     }));
-    actions.push({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: config.address,
-        method: "withdraw",
-        abi: "function withdraw(address _to, uint256 _shares) returns (uint256)",
-        args: [ENSO_SHORTCUTS, params.amountIn],
-      },
-    });
+    actions.push(rawCallConsumingInput(params.amountIn, config.address, {
+      address: config.address,
+      method: "withdraw",
+      abi: "function withdraw(address _to, uint256 _shares) returns (uint256)",
+      args: [ENSO_SHORTCUTS, params.amountIn],
+    }));
 
     return {
       actions,
@@ -1992,16 +2025,12 @@ async function buildInitialConversionState(params: {
       protocol: config.protocol,
     }));
     actions.push(
-      {
-        protocol: "enso",
-        action: "call",
-        args: {
-          address: config.address,
-          method: "withdraw",
-          abi: "function withdraw(uint256 _shares)",
-          args: [params.amountIn],
-        },
-      },
+      rawCallConsumingInput(params.amountIn, config.address, {
+        address: config.address,
+        method: "withdraw",
+        abi: "function withdraw(uint256 _shares)",
+        args: [params.amountIn],
+      }),
       {
         protocol: "enso",
         action: "balance",
@@ -6868,19 +6897,15 @@ export async function fetchUCrvZapInRoute(params: {
 
   const actions: EnsoBundleAction[] = [
     // Action 0: Withdraw uCRV → cvxCRV using custom call (non-ERC4626)
-    {
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: LLAMA_AIRFORCE.UCRV,
-        method: "withdraw",
-        abi: "function withdraw(address _to, uint256 _shares) returns (uint256)",
-        args: [
-          ENSO_SHORTCUTS, // cvxCRV goes to Enso Shortcuts for downstream actions
-          params.amountIn,
-        ],
-      },
-    },
+    rawCallConsumingInput(params.amountIn, LLAMA_AIRFORCE.UCRV, {
+      address: LLAMA_AIRFORCE.UCRV,
+      method: "withdraw",
+      abi: "function withdraw(address _to, uint256 _shares) returns (uint256)",
+      args: [
+        ENSO_SHORTCUTS, // cvxCRV goes to Enso Shortcuts for downstream actions
+        params.amountIn,
+      ],
+    }),
   ];
 
   const targetIsCvgCvx = targetUnderlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase();
@@ -7617,16 +7642,12 @@ export async function fetchBeefyZapInRoute(params: {
 
   const actions: EnsoBundleAction[] = [
     // Action 0: Withdraw Beefy vault → underlying using custom call
-    {
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: params.beefyVaultAddress,
-        method: "withdraw",
-        abi: "function withdraw(uint256 _shares)",
-        args: [params.amountIn],
-      },
-    },
+    rawCallConsumingInput(params.amountIn, params.beefyVaultAddress, {
+      address: params.beefyVaultAddress,
+      method: "withdraw",
+      abi: "function withdraw(uint256 _shares)",
+      args: [params.amountIn],
+    }),
     // Action 1: Get balance of underlying (withdraw doesn't return amount)
     {
       protocol: "enso",
@@ -7914,6 +7935,19 @@ export async function fetchLpxCvxZapInRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  // Raw bundle actions can't be submitted from the browser; build server-side via the intent.
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "illiquidToYldVault",
+      fromAddress: params.fromAddress,
+      inputToken: TOKENS.LPXCVX,
+      vaultAddress: params.vaultAddress,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { PIREX, getVaultByAddress } = await import("@/config/vaults");
   const slippageBps = validateSlippage(params.slippage);
 
@@ -7935,24 +7969,22 @@ export async function fetchLpxCvxZapInRoute(params: {
   if (targetIsPxCvx) {
     // lpxCVX → pxCVX (unwrap 1:1) → deposit to yspxCVX
     // Action 0: Unwrap lpxCVX → pxCVX
-    actions.push({
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: PIREX.LPXCVX,
-        method: "unwrap",
-        abi: "function unwrap(uint256 amount) returns (uint256)",
-        args: [params.amountIn],
-      },
-    });
-    // Action 1: Deposit pxCVX → yspxCVX
+    // unwrap() returns nothing; read the produced pxCVX instead.
+    actions.push(rawCallConsumingInput(params.amountIn, TOKENS.LPXCVX, {
+      address: PIREX.LPXCVX,
+      method: "unwrap",
+      abi: "function unwrap(uint256 amount)",
+      args: [params.amountIn],
+    }));
+    actions.push({ protocol: "enso", action: "balance", args: { token: PIREX_PXCVX } });
+    // Action 2: Deposit pxCVX → yspxCVX
     actions.push({
       protocol: "erc4626",
       action: "deposit",
       args: {
         tokenIn: PIREX_PXCVX,
         tokenOut: params.vaultAddress,
-        amountIn: { useOutputOfCallAt: 0 },
+        amountIn: { useOutputOfCallAt: 1 },
         primaryAddress: params.vaultAddress,
       },
     });
@@ -8151,6 +8183,19 @@ export async function fetchPxCvxTokenZapInRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  // Raw bundle actions can't be submitted from the browser; build server-side via the intent.
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "illiquidToYldVault",
+      fromAddress: params.fromAddress,
+      inputToken: TOKENS.PXCVX,
+      vaultAddress: params.vaultAddress,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { PIREX, getVaultByAddress } = await import("@/config/vaults");
   const slippageBps = validateSlippage(params.slippage);
 
@@ -8198,15 +8243,8 @@ export async function fetchPxCvxTokenZapInRoute(params: {
       },
     },
     // Action 2: Approve lpxCVX to Curve pool
-    {
-      protocol: "erc20",
-      action: "approve",
-      args: {
-        token: PIREX.LPXCVX,
-        spender: PIREX.LPXCVX_CVX_POOL,
-        amount: params.amountIn, // Same amount (1:1 wrap)
-      },
-    },
+    // Raw call: a fixed erc20 approval of the wrapped lpxCVX would make Enso pull it from the wallet
+    rawApproveCallAction(PIREX.LPXCVX, PIREX.LPXCVX_CVX_POOL, params.amountIn),
     // Action 3: Exchange lpxCVX → CVX on Curve pool
     {
       protocol: "enso",
@@ -9351,6 +9389,7 @@ export async function fetchAnyFromLpxCvxRoute(params: {
     amountsOut: {
       ...bundleResult.amountsOut,
       ...(outputIsCvx ? { [TOKENS.CVX.toLowerCase()]: expectedCvx.toString() } : {}),
+      ...(await ethOutputEstimate({ outputToken: params.outputToken, amountsOut: bundleResult.amountsOut, fromAddress: params.fromAddress, cvxAmount: expectedCvx, slippage: params.slippage })),
     },
     routeInfo: {
       steps,
@@ -9410,12 +9449,9 @@ export async function fetchAnyFromPxCvxRoute(params: {
         args: [params.amountIn],
       },
     },
-    // Approve lpxCVX → Curve pool
-    {
-      protocol: "erc20",
-      action: "approve",
-      args: { token: PIREX.LPXCVX, spender: PIREX.LPXCVX_CVX_POOL, amount: params.amountIn },
-    },
+    // Approve lpxCVX → Curve pool. Raw call: a fixed erc20 approval of the wrapped lpxCVX
+    // would make Enso pull it from the wallet as a second input.
+    rawApproveCallAction(PIREX.LPXCVX, PIREX.LPXCVX_CVX_POOL, params.amountIn),
     // Curve exchange lpxCVX → CVX
     {
       protocol: "enso",
@@ -9511,6 +9547,7 @@ export async function fetchAnyFromPxCvxRoute(params: {
     amountsOut: {
       ...bundleResult.amountsOut,
       ...(outputIsCvx ? { [TOKENS.CVX.toLowerCase()]: expectedCvx.toString() } : {}),
+      ...(await ethOutputEstimate({ outputToken: params.outputToken, amountsOut: bundleResult.amountsOut, fromAddress: params.fromAddress, cvxAmount: expectedCvx, slippage: params.slippage })),
     },
     routeInfo: {
       steps,
@@ -9668,6 +9705,7 @@ export async function fetchAnyFromCvgCvxRoute(params: {
     amountsOut: {
       ...bundleResult.amountsOut,
       ...(outputIsCvx ? { [TOKENS.CVX.toLowerCase()]: expectedCvx1.toString() } : {}),
+      ...(await ethOutputEstimate({ outputToken: params.outputToken, amountsOut: bundleResult.amountsOut, fromAddress: params.fromAddress, cvxAmount: expectedCvx1, slippage: params.slippage })),
     },
     routeInfo: {
       steps,
@@ -9705,6 +9743,7 @@ export async function fetchAnyFromUCvxRoute(params: {
 
   const { PIREX, LLAMA_AIRFORCE } = await import("@/config/vaults");
   const outputSymbol = getTokenSymbol(params.outputToken);
+  const outputIsCvx = params.outputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
   const slippageBps = validateSlippage(params.slippage);
   const totalSlippageBps = getBufferedSlippageBps(slippageBps);
 
@@ -9777,8 +9816,17 @@ export async function fetchAnyFromUCvxRoute(params: {
         ],
       },
     },
-    // 5: Enso route CVX → output token
-    {
+  ];
+
+  // 5: CVX → output token. CVX itself is just sent on (Enso has no CVX → CVX route).
+  if (outputIsCvx) {
+    actions.push({
+      protocol: "erc20",
+      action: "transfer",
+      args: { token: TOKENS.CVX, amount: { useOutputOfCallAt: 4 }, receiver: params.fromAddress },
+    });
+  } else {
+    actions.push({
       protocol: "enso",
       action: "route",
       args: {
@@ -9787,10 +9835,9 @@ export async function fetchAnyFromUCvxRoute(params: {
         amountIn: { useOutputOfCallAt: 4 },
         slippage: params.slippage ?? "100",
       },
-    },
-  ];
-
-  appendETHUnwrapIfNeeded(actions, params.outputToken);
+    });
+    appendETHUnwrapIfNeeded(actions, params.outputToken);
+  }
 
   const bundleResult = await fetchBundle({
     fromAddress: params.fromAddress,
@@ -9799,6 +9846,17 @@ export async function fetchAnyFromUCvxRoute(params: {
     routingStrategy: "router",
     skipQuote: true,
   });
+
+  // skipQuote: report the final output token the intent guard binds to. CVX comes straight from
+  // the Curve exchange; ETH is the unwrapped WETH that the route quoted.
+  if (outputIsCvx) {
+    bundleResult.amountsOut = { ...bundleResult.amountsOut, [TOKENS.CVX.toLowerCase()]: expectedCvx.toString() };
+  } else {
+    bundleResult.amountsOut = {
+      ...bundleResult.amountsOut,
+      ...(await ethOutputEstimate({ outputToken: params.outputToken, amountsOut: bundleResult.amountsOut, fromAddress: params.fromAddress, cvxAmount: expectedCvx, slippage: params.slippage })),
+    };
+  }
 
   const pxCvxFmt = (Number(expectedPxCvx) / 1e18).toFixed(4);
   const cvxFmt = (Number(expectedCvx) / 1e18).toFixed(4);
@@ -9901,6 +9959,17 @@ export async function fetchAnyFromErc4626ExternalVaultRoute(params: {
       },
       exactRouteSteps,
     );
+    // The exact conversion leaves CVX in EnsoShortcuts; deliver it explicitly.
+    const delivered = toBalanceState(actions, exactState.token, exactState.expectedAmount);
+    actions.push({
+      protocol: "erc20",
+      action: "transfer",
+      args: {
+        token: delivered.token,
+        amount: delivered.amountRef,
+        receiver: params.fromAddress,
+      },
+    });
     expectedOutput = exactState.expectedAmount;
     exactSwapProtocol = exactRouteSteps.at(-1)?.protocol;
   } else {
@@ -10001,17 +10070,14 @@ export async function fetchAnyFromUCrvRoute(params: {
     LLAMA_AIRFORCE.UCRV_UNDERLYING.toLowerCase() === params.outputToken.toLowerCase();
 
   const actions: EnsoBundleAction[] = [
-    // uCRV.withdraw(_to=ENSO_SHORTCUTS, _shares) — cvxCRV delivered to shortcuts
-    {
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: LLAMA_AIRFORCE.UCRV,
-        method: "withdraw",
-        abi: "function withdraw(address _to, uint256 _shares) returns (uint256)",
-        args: [ENSO_SHORTCUTS, params.amountIn],
-      },
-    },
+    // uCRV.withdraw(_to, _shares). cvxCRV output goes straight to the user; otherwise it lands at
+    // ENSO_SHORTCUTS for the route below. (Sending it to shortcuts with no route left it stranded.)
+    rawCallConsumingInput(params.amountIn, LLAMA_AIRFORCE.UCRV, {
+      address: LLAMA_AIRFORCE.UCRV,
+      method: "withdraw",
+      abi: "function withdraw(address _to, uint256 _shares) returns (uint256)",
+      args: [sameAsOutput ? params.fromAddress : ENSO_SHORTCUTS, params.amountIn],
+    }),
   ];
 
   // Quote for display data, then route the actual cvxCRV balance produced by
@@ -10021,7 +10087,8 @@ export async function fetchAnyFromUCrvRoute(params: {
     const dynamicQuote = await fetchDynamicInputEstimate({
       fromAddress: params.fromAddress,
       tokenIn: LLAMA_AIRFORCE.UCRV_UNDERLYING,
-      tokenOut: params.outputToken,
+      // Execution routes to WETH and unwraps, so quote that leg for ETH outputs.
+      tokenOut: isNativeETH(params.outputToken) ? WETH_ADDRESS : params.outputToken,
       amountIn: expectedCvxCrv,
       slippage: params.slippage ?? "100",
     });
@@ -10054,10 +10121,11 @@ export async function fetchAnyFromUCrvRoute(params: {
   });
 
   // skipQuote returns no amountsOut — populate manually
-  if (!sameAsOutput && expectedOutput !== "0") {
+  const displayedOutput = sameAsOutput ? expectedCvxCrv : expectedOutput;
+  if (displayedOutput !== "0") {
     bundleResult.amountsOut = {
       ...bundleResult.amountsOut,
-      [params.outputToken.toLowerCase()]: expectedOutput,
+      [params.outputToken.toLowerCase()]: displayedOutput,
     };
   }
 
@@ -10118,24 +10186,22 @@ export async function fetchAnyFromBeefyRoute(params: {
     // Beefy withdraw(shares) — burns shares and sends underlying to msg.sender
     // (ENSO_SHORTCUTS). A following balance action captures the void call's
     // runtime output.
-    {
-      protocol: "enso",
-      action: "call",
-      args: {
-        address: params.beefyVault,
-        method: "withdraw",
-        abi: "function withdraw(uint256 _shares)",
-        args: [params.amountIn],
-      },
-    },
+    rawCallConsumingInput(params.amountIn, params.beefyVault, {
+      address: params.beefyVault,
+      method: "withdraw",
+      abi: "function withdraw(uint256 _shares)",
+      args: [params.amountIn],
+    }),
   ];
 
   let expectedOutput = "0";
   if (!sameAsOutput) {
+    // Execution routes to WETH and unwraps (appendETHUnwrapIfNeeded), so quote that leg: a native-ETH
+    // quote can pick a different, worse route and understated ETH exits by ~40%.
     const dynamicQuote = await fetchDynamicInputEstimate({
       fromAddress: params.fromAddress,
       tokenIn: params.beefyVaultUnderlying,
-      tokenOut: params.outputToken,
+      tokenOut: isNativeETH(params.outputToken) ? WETH_ADDRESS : params.outputToken,
       amountIn: expectedUnderlying,
       slippage: params.slippage ?? "100",
     });
@@ -10158,6 +10224,17 @@ export async function fetchAnyFromBeefyRoute(params: {
     });
   }
 
+  if (sameAsOutput) {
+    // Output is the vault's own underlying: send the withdrawn balance on. Without this it stayed
+    // at the shared EnsoShortcuts contract (the intent guard rejected the missing output).
+    actions.push({ protocol: "enso", action: "balance", args: { token: params.beefyVaultUnderlying } });
+    actions.push({
+      protocol: "erc20",
+      action: "transfer",
+      args: { token: params.beefyVaultUnderlying, amount: { useOutputOfCallAt: actions.length - 1 }, receiver: params.fromAddress },
+    });
+  }
+
   appendETHUnwrapIfNeeded(actions, params.outputToken);
 
   const bundleResult = await fetchBundle({
@@ -10169,10 +10246,11 @@ export async function fetchAnyFromBeefyRoute(params: {
   });
 
   // skipQuote leaves amountsOut empty — populate from the standalone route.
-  if (!sameAsOutput && expectedOutput !== "0") {
+  const displayedOutput = sameAsOutput ? expectedUnderlying : expectedOutput;
+  if (displayedOutput !== "0") {
     bundleResult.amountsOut = {
       ...bundleResult.amountsOut,
-      [params.outputToken.toLowerCase()]: expectedOutput,
+      [params.outputToken.toLowerCase()]: displayedOutput,
     };
   }
 
@@ -10379,7 +10457,7 @@ export async function fetchAnyToErc4626ExternalVaultRoute(params: {
 
 /**
  * Any token → uCRV (Llama Airforce). uCRV uses a non-standard deposit signature
- * `deposit(uint256 _amount, address _to)`. Route input → cvxCRV, approve,
+ * `deposit(address _to, uint256 _amount)`. Route input → cvxCRV, approve,
  * deposit with user as receiver.
  */
 export async function fetchAnyToUCrvRoute(params: {
@@ -10430,8 +10508,9 @@ export async function fetchAnyToUCrvRoute(params: {
     args: {
       address: LLAMA_AIRFORCE.UCRV,
       method: "deposit",
-      abi: "function deposit(uint256 _amount, address _to) returns (uint256)",
-      args: [amountRef, params.fromAddress],
+      // uCRV is deposit(address _to, uint256 _amount); the reversed order hits a missing selector.
+      abi: "function deposit(address _to, uint256 _amount) returns (uint256)",
+      args: [params.fromAddress, amountRef],
     },
   });
 
@@ -10700,6 +10779,19 @@ export async function fetchComposableZapInRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
+  // Raw bundle actions can't be submitted from the browser; build server-side via the intent.
+  if (typeof window !== "undefined") {
+    return fetchEnsoIntent<CustomBundleResponse>({
+      intent: "illiquidToYldVault",
+      fromAddress: params.fromAddress,
+      inputToken: params.inputToken,
+      vaultAddress: params.vaultAddress,
+      amountIn: params.amountIn,
+      slippage: params.slippage ?? "100",
+      receiver: params.fromAddress,
+    });
+  }
+
   const { getVaultByAddress } = await import("@/config/vaults");
   const targetVault = getVaultByAddress(params.vaultAddress);
   if (!targetVault) {
@@ -10970,8 +11062,8 @@ export async function fetchSpecialTokenToExternalVaultRoute(params: {
         args: {
           address: outputConfig.address,
           method: "deposit",
-          abi: "function deposit(uint256 _amount, address _to) returns (uint256)",
-          args: [finalState.amountRef, params.fromAddress],
+          abi: "function deposit(address _to, uint256 _amount) returns (uint256)",
+          args: [params.fromAddress, finalState.amountRef],
         },
       },
     );
@@ -11453,8 +11545,8 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
         args: {
           address: params.targetVault,
           method: "deposit",
-          abi: "function deposit(uint256 _amount, address _to) returns (uint256)",
-          args: [{ useOutputOfCallAt: balanceIdx }, params.fromAddress],
+          abi: "function deposit(address _to, uint256 _amount) returns (uint256)",
+          args: [params.fromAddress, { useOutputOfCallAt: balanceIdx }],
         },
       },
     );
