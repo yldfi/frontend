@@ -73,6 +73,7 @@ import {
   fetchDynamicInputEstimate,
   fetchComposableZapInRoute,
   fetchLpxCvxZapInRoute,
+  fetchPxCvxZapOutRoute,
   fetchPxCvxTokenZapInRoute,
   fetchBeefyZapInRoute,
   fetchErc4626ExternalVaultZapInRoute,
@@ -1121,6 +1122,7 @@ describe("route step amounts", () => {
       ["mooCvxCVX -> ysCvgCVX", () => fetchBeefyZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, beefyVaultAddress: BEEFY.MOO_CVX_CVX, beefyVaultUnderlying: TOKENS.CVX, beefyVaultSymbol: "mooCvxCVX", amountIn: ONE_ETHER.toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
       ["lpxCVX -> ysCvgCVX", () => fetchLpxCvxZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, amountIn: (5n * ONE_ETHER).toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
       ["pxCVX -> ysCvgCVX", () => fetchPxCvxTokenZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, amountIn: (5n * ONE_ETHER).toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
+      ["yspxCVX -> ysCvgCVX", () => fetchVaultToVaultRoute({ fromAddress: wallet, sourceVault: VAULT_ADDRESSES.YSPXCVX, targetVault: VAULT_ADDRESSES.YSCVGCVX, amountIn: (5n * ONE_ETHER).toString(), sourceUnderlyingToken: TOKENS.PXCVX, targetUnderlyingToken: TOKENS.CVGCVX, slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
       ["ycvxCRV -> ysCvgCVX", () => fetchVaultToVaultRoute({ fromAddress: wallet, sourceVault: VAULT_ADDRESSES.YCVXCRV, targetVault: VAULT_ADDRESSES.YSCVGCVX, amountIn: ONE_ETHER.toString(), sourceUnderlyingToken: TOKENS.CVXCRV, targetUnderlyingToken: TOKENS.CVGCVX, slippage: "100" }), null],
     ];
 
@@ -1166,6 +1168,62 @@ describe("route step amounts", () => {
   });
 
   describe("yld vault -> external vault sources", () => {
+    it("delivers CVX to the user on yspxCVX -> CVX and reports the CVX amount", async () => {
+      const result = await fetchPxCvxZapOutRoute({
+        fromAddress: TEST_WALLET,
+        vaultAddress: VAULT_ADDRESSES.YSPXCVX,
+        outputToken: TOKENS.CVX,
+        amountIn: ONE_ETHER.toString(),
+        slippage: "100",
+      });
+      const actions = lastBundleActions();
+      expect(actions[4]).toMatchObject({ action: "call", args: { method: "exchange" } });
+      // The raw exchange pays EnsoShortcuts, so the bundle must end by sending that CVX on.
+      expect(actions.at(-1)).toEqual({
+        protocol: "erc20",
+        action: "transfer",
+        args: { token: TOKENS.CVX, amount: { useOutputOfCallAt: 4 }, receiver: TEST_WALLET },
+      });
+      expect(BigInt(result.amountsOut[TOKENS.CVX.toLowerCase()] ?? "0")).toBeGreaterThan(0n);
+    });
+
+    it("deposits redeemed pxCVX straight into a pxCVX-backed target (yspxCVX -> uCVX)", async () => {
+      await fetchYldVaultToExternalVaultRoute({
+        fromAddress: TEST_WALLET,
+        sourceVault: VAULT_ADDRESSES.YSPXCVX,
+        sourceUnderlying: TOKENS.PXCVX,
+        targetVault: LLAMA_AIRFORCE.UCVX,
+        targetUnderlying: TOKENS.PXCVX,
+        targetInterface: "erc4626",
+        targetSymbol: "uCVX",
+        targetProtocol: "Llama Airforce",
+        amountIn: ONE_ETHER.toString(),
+        slippage: "100",
+      });
+      const actions = lastBundleActions();
+      expect(actions.map((action) => action.action)).toEqual(["redeem", "balance", "deposit"]);
+      expect(actions[1].args).toEqual({ token: TOKENS.PXCVX });
+    });
+
+    it("quotes yspxCVX -> a CVX-backed external vault through the lpxCVX CryptoSwap pool", async () => {
+      await fetchYldVaultToExternalVaultRoute({
+        fromAddress: TEST_WALLET,
+        sourceVault: VAULT_ADDRESSES.YSPXCVX,
+        sourceUnderlying: TOKENS.PXCVX,
+        targetVault: CONCENTRATOR.ACVX,
+        targetUnderlying: TOKENS.CVX,
+        targetInterface: "erc4626",
+        targetSymbol: "aCVX",
+        targetProtocol: "Concentrator",
+        amountIn: ONE_ETHER.toString(),
+        slippage: "100",
+      });
+      // getCurveGetDy uses int128 get_dy, which the uint256-index lpxCVX pool rejects on-chain.
+      expect(vi.mocked(getCurveGetDy).mock.calls.map(([pool]) => String(pool).toLowerCase())).not.toContain(PIREX.LPXCVX_CVX_POOL.toLowerCase());
+      expect(callActions(lastBundleActions(), PIREX.LPXCVX_CVX_POOL, "exchange")).toHaveLength(1);
+      expect(lastBundleActions().at(-1)).toMatchObject({ action: "deposit", args: { tokenIn: TOKENS.CVX, tokenOut: CONCENTRATOR.ACVX } });
+    });
+
     it.each([
       ["ysCVX", VAULT_ADDRESSES.YSCVX, TOKENS.CVX],
       ["yscvxCRV", VAULT_ADDRESSES.YSCVXCRV, TOKENS.CVXCRV],
