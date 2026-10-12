@@ -39,6 +39,8 @@ import {
   isZapTxPendingVisible,
   TX_REVERTED_VISIBLE_MS,
   TX_SUCCESS_VISIBLE_MS,
+  type TxActionKind,
+  type TxAssetDetails,
 } from "@/lib/transaction-ui";
 
 import type { EnsoToken } from "@/types/enso";
@@ -358,6 +360,77 @@ export function ZapPageContent() {
   } | null>(null);
   const completionResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // DEBUG (dev only) — TX State Preview panel. Mirrors VaultPageContent/LendingInterface.
+  type DebugTxState = "none" | "deposit-pending" | "deposit-success" | "deposit-reverted" | "withdraw-pending" | "withdraw-success" | "withdraw-reverted" | "swap-pending" | "swap-success" | "swap-reverted";
+  const [debugTxState, setDebugTxState] = useState<DebugTxState>("none");
+  const [debugPanelPos, setDebugPanelPos] = useState<{ x: number; y: number } | null>(() => {
+    if (typeof window === "undefined") return null;
+    try { return localStorage.getItem("yldfi-zap-debug-panel-pos") ? JSON.parse(localStorage.getItem("yldfi-zap-debug-panel-pos")!) : null; } catch { return null; }
+  });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragOffset = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [debugMinimized, setDebugMinimized] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try { return localStorage.getItem("yldfi-zap-tx-preview-minimized") === "true"; } catch { return false; }
+  });
+  const toggleDebugMinimized = useCallback(() => {
+    setDebugMinimized(prev => {
+      const next = !prev;
+      try { localStorage.setItem("yldfi-zap-tx-preview-minimized", String(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  // Drag handlers for debug panel
+  const handleDebugDragStart = useCallback((e: React.MouseEvent) => {
+    const panel = (e.target as HTMLElement).closest("[data-debug-panel]") as HTMLElement;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    dragOffset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    setIsDragging(true);
+  }, []);
+
+  const handleDebugDrag = useCallback((e: MouseEvent) => {
+    if (!isDragging) return;
+    setDebugPanelPos({ x: e.clientX - dragOffset.current.x, y: e.clientY - dragOffset.current.y });
+  }, [isDragging]);
+
+  const handleDebugDragEnd = useCallback(() => {
+    if (!isDragging) return;
+    setIsDragging(false);
+    if (debugPanelPos) {
+      try { localStorage.setItem("yldfi-zap-debug-panel-pos", JSON.stringify(debugPanelPos)); } catch {}
+    }
+  }, [isDragging, debugPanelPos]);
+
+  useEffect(() => {
+    if (!isDragging) return;
+    window.addEventListener("mousemove", handleDebugDrag);
+    window.addEventListener("mouseup", handleDebugDragEnd);
+    return () => {
+      window.removeEventListener("mousemove", handleDebugDrag);
+      window.removeEventListener("mouseup", handleDebugDragEnd);
+    };
+  }, [isDragging, handleDebugDrag, handleDebugDragEnd]);
+
+  const isDebugActive = debugTxState !== "none";
+  const isDebugPending = debugTxState.endsWith("-pending");
+  const isDebugSuccess = debugTxState.endsWith("-success");
+  const isDebugReverted = debugTxState.endsWith("-reverted");
+  const isDebugDeposit = debugTxState.startsWith("deposit-");
+  const isDebugWithdraw = debugTxState.startsWith("withdraw-");
+  const isDebugSwap = debugTxState.startsWith("swap-");
+  const debugHash = isDebugActive ? `0x${"a".repeat(62)}` : undefined;
+
+  // Fixed asset details for the debug preview states
+  const debugTxDetails: TxAssetDetails | null = isDebugDeposit
+    ? { fromAmount: "1,000.0000", fromSymbol: "crvUSD", fromLogo: "/tokens/crvusd.png", toAmount: "0.5250", toSymbol: "ysCVX", toLogo: "/tokens/yscvx.png" }
+    : isDebugWithdraw
+      ? { fromAmount: "0.5250", fromSymbol: "ysCVX", fromLogo: "/tokens/yscvx.png", toAmount: "1,000.0000", toSymbol: "crvUSD", toLogo: "/tokens/crvusd.png" }
+      : isDebugSwap
+        ? { fromAmount: "1,000.0000", fromSymbol: "crvUSD", fromLogo: "/tokens/crvusd.png", toAmount: "157.2043", toSymbol: "CVX", toLogo: "/tokens/cvx.png" }
+        : null;
+
   const clearCompletionResetTimer = useCallback(() => {
     if (completionResetTimerRef.current) {
       clearTimeout(completionResetTimerRef.current);
@@ -497,13 +570,22 @@ export function ZapPageContent() {
   // Error display
   const noRoute = !quoteSettling && !!quoteError && !!amount && Number(amount) > 0;
   const isPendingTx =
-    isZapTxPendingVisible(status) && Boolean(zapHash) && !isSimulatingPreview && !showSimulationModal;
-  const isZapSuccessVisible = !!showTxSuccess?.show;
-  const isZapRevertedVisible = !!showTxReverted?.show;
+    (isZapTxPendingVisible(status) && !isSimulatingPreview && !showSimulationModal) || isDebugPending;
+  const isZapSuccessVisible = !!showTxSuccess?.show || isDebugSuccess;
+  const isZapRevertedVisible = !!showTxReverted?.show || isDebugReverted;
   const isTxStateVisible = isPendingTx || isZapSuccessVisible || isZapRevertedVisible;
-  const pendingCopy = getPendingTxCopy(Boolean(zapHash), "zap");
-  const successCopy = getSuccessTxCopy("zap");
-  const revertedCopy = getRevertedTxCopy("zap");
+  // Direct vault pairs (ERC20⇄vault share) are a deposit/redeem at NAV, not a swap.
+  // Override for the debug preview; otherwise drive off the quote's directVault action.
+  const actionKind: TxActionKind = isDebugDeposit
+    ? "deposit"
+    : isDebugWithdraw
+      ? "withdraw"
+      : quote?.directVault?.action ?? "zap";
+  const effectiveHash = isDebugActive ? debugHash : zapHash;
+  const effectivePendingDetails = isDebugActive ? debugTxDetails : pendingTxDetails;
+  const pendingCopy = getPendingTxCopy(Boolean(effectiveHash), actionKind);
+  const successCopy = getSuccessTxCopy(actionKind);
+  const revertedCopy = getRevertedTxCopy(actionKind);
 
   return (
     <div className="min-h-screen bg-[var(--background)] flex flex-col">
@@ -660,15 +742,15 @@ export function ZapPageContent() {
                       <LoadingDots />
                     </div>
                     <h3 className="text-lg font-medium mb-2">{pendingCopy.title}</h3>
-                    {pendingTxDetails && (
-                      <TxAssetDetailsPill details={pendingTxDetails} actionLabel="Zap" />
+                    {effectivePendingDetails && (
+                      <TxAssetDetailsPill details={effectivePendingDetails} actionLabel={actionKind === "zap" ? "Zap" : actionKind === "deposit" ? "Deposit" : "Withdraw"} />
                     )}
                     <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
                       {pendingCopy.message}
                     </p>
-                    {zapHash && (
+                    {effectiveHash && (
                       <a
-                        href={`https://etherscan.io/tx/${zapHash}`}
+                        href={`https://etherscan.io/tx/${effectiveHash}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
@@ -690,7 +772,7 @@ export function ZapPageContent() {
                       {successCopy.message}
                     </p>
                     <a
-                      href={`https://etherscan.io/tx/${showTxSuccess?.hash}`}
+                      href={`https://etherscan.io/tx/${showTxSuccess?.hash ?? debugHash}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
@@ -719,7 +801,7 @@ export function ZapPageContent() {
                       {revertedCopy.message}
                     </p>
                     <a
-                      href={`https://etherscan.io/tx/${showTxReverted?.hash}`}
+                      href={`https://etherscan.io/tx/${showTxReverted?.hash ?? debugHash}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
@@ -954,8 +1036,86 @@ export function ZapPageContent() {
           }}
           gasPrice={gasPrice}
           routePriceImpact={quote?.priceImpact ?? null}
-          confirmText="Confirm Zap"
+          confirmText={actionKind === "zap" ? "Confirm Zap" : actionKind === "deposit" ? "Confirm Deposit" : "Confirm Withdraw"}
         />
+      )}
+
+      {/* DEBUG: Transaction State Preview Panel - Only shows in development */}
+      {process.env.NODE_ENV === "development" && (
+        <div
+          data-debug-panel
+          className={cn(
+            "fixed z-50 bg-[var(--card)] border border-[var(--border)] rounded-lg p-3 shadow-lg max-w-xs",
+            isDragging && "cursor-grabbing"
+          )}
+          style={debugPanelPos ? {
+            left: debugPanelPos.x,
+            top: debugPanelPos.y,
+            bottom: "auto",
+            right: "auto",
+          } : {
+            bottom: 16,
+            right: 16,
+          }}
+        >
+          <div
+            className="text-xs text-[var(--muted-foreground)] mb-2 font-medium cursor-grab select-none flex items-center justify-between"
+            onMouseDown={handleDebugDragStart}
+          >
+            <span>⋮⋮ TX State Preview</span>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); toggleDebugMinimized(); }}
+              onMouseDown={(e) => e.stopPropagation()}
+              className="ml-2 px-1.5 py-0.5 rounded hover:bg-[var(--muted)] transition-colors text-[10px]"
+            >
+              {debugMinimized ? "+" : "−"}
+            </button>
+          </div>
+          {!debugMinimized && <div className="space-y-2">
+            {/* Reset */}
+            <button
+              onClick={() => {
+                setDebugTxState("none");
+                setShowSimulationModal(false);
+                setShowSlippageModal(false);
+                setShowTxSuccess(null);
+                setShowTxReverted(null);
+                setPendingTxDetails(null);
+              }}
+              className={cn(
+                "w-full px-2 py-1 text-xs rounded transition-colors",
+                debugTxState === "none" && !showSimulationModal && !showSlippageModal
+                  ? "bg-[var(--foreground)] text-[var(--background)]"
+                  : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+            >
+              Reset All
+            </button>
+            {([["Deposit", "deposit"], ["Withdraw", "withdraw"], ["Swap", "swap"]] as const).map(([label, prefix]) => (
+              <div key={prefix} className="flex gap-1">
+                <span className="text-[10px] text-[var(--muted-foreground)] w-14 flex items-center">{label}</span>
+                {([["Pending", "pending", "bg-[var(--accent)] text-[var(--background)]"], ["Success", "success", "bg-green-500 text-white"], ["Reverted", "reverted", "bg-red-500 text-white"]] as const).map(([stateLabel, state, activeClass]) => {
+                  const value = `${prefix}-${state}` as DebugTxState;
+                  return (
+                    <button
+                      key={state}
+                      onClick={() => { setPendingTxDetails(null); setShowTxSuccess(null); setShowTxReverted(null); setDebugTxState(value); }}
+                      className={cn(
+                        "flex-1 px-2 py-1 text-xs rounded transition-colors",
+                        debugTxState === value
+                          ? activeClass
+                          : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                      )}
+                    >
+                      {stateLabel}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>}
+        </div>
       )}
     </div>
   );
