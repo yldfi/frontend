@@ -9,6 +9,25 @@ import { getVaultFormBalanceAddresses } from "@/lib/vault-form-balances";
 // We test vault configuration, calculations, and formatting without rendering components
 
 describe("VaultPageContent logic", () => {
+  describe("high price impact confirmation", () => {
+    const source = readFileSync(join(process.cwd(), "src/components/VaultPageContent.tsx"), "utf-8");
+
+    it("routes the zap button and the approve -> auto-execute path through the typed-CONFIRM gate", () => {
+      expect(source).toMatch(/onClick=\{\(\) => guardHighImpact\(`Zap \$\{zapDirection === "in" \? "In" : "Out"\}`, async \(\) => \{/);
+      expect(source).toContain('onApprove={(exact) => guardHighImpact("Approve & zap", () => zapApprove(exact))}');
+      expect(source).toContain("needsPriceImpactConfirm(zapQuote?.priceImpact)");
+    });
+
+    it("sends zaps only from the gated button or the post-simulation confirm", () => {
+      // The simulation preview used to fall through to executeZap() with no impact check.
+      const sends = source.match(/executeZap\((?!\{ previewOnly: true \})/g) ?? [];
+      const gatedButton = source.match(/guardHighImpact\(`Zap[\s\S]*?\n {26}\}\)\}/)?.[0] ?? "";
+      expect(gatedButton.match(/executeZap\(\)/g)).toHaveLength(2);
+      expect(source).toMatch(/High price impact was already confirmed before the simulation ran\.\n\s+setZapPendingDetails\(\);\n\s+executeZap\(\{ skipSimulation: true \}\)/);
+      expect(sends).toHaveLength(3);
+    });
+  });
+
   describe("form balance contract selection", () => {
     it("uses each vault underlying token for deposit balances and vault shares for withdraw balances", () => {
       for (const vault of Object.values(VAULTS)) {

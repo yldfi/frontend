@@ -104,3 +104,34 @@ export async function enrichSimulationPrices<T extends PricedSimulationAsset>(
     return { ...change, dollarValue: dollarValue?.toString() };
   }));
 }
+
+interface QuoteUsdLeg {
+  address: string;
+  amount: number;
+  usd: number | null | undefined;
+}
+
+/**
+ * Fills send/receive rows the simulation could not price from the quote's own USD
+ * estimate, scaled to the simulated amount. Rows that already have a valid value are
+ * never overwritten, so this cannot mask a simulation mispricing.
+ */
+export function fillMissingSimulationUsd<T extends { type: string; address: string; rawAmount: string; decimals: number; dollarValue?: string }>(
+  changes: T[],
+  legs: { input: QuoteUsdLeg; output: QuoteUsdLeg },
+): T[] {
+  const legFor = (change: T) => {
+    const leg = change.type === "send" ? legs.input : change.type === "receive" ? legs.output : null;
+    return leg && leg.address.toLowerCase() === change.address.toLowerCase() ? leg : null;
+  };
+
+  return changes.map((change) => {
+    if (validSimulationUsd(change.dollarValue) !== undefined) return change;
+    const leg = legFor(change);
+    const legUsd = validSimulationUsd(leg?.usd);
+    if (!leg || legUsd === undefined || !(leg.amount > 0)) return change;
+    const amount = Number(change.rawAmount) / 10 ** change.decimals;
+    const dollarValue = validSimulationUsd(legUsd * (amount / leg.amount));
+    return dollarValue === undefined ? change : { ...change, dollarValue: dollarValue.toString() };
+  });
+}
