@@ -494,7 +494,7 @@ describe("route step amounts", () => {
       { token: "yvUSDC-1", amount: "10.0000" },
       { token: "USDC", amount: "10.0000" },
       { token: "CVX", amount: "5.0000" },
-      { token: "pxCVX", amount: "5.4450" },
+      { token: "pxCVX", amount: "5.5000" }, // runtime CVX x 1.1, not the slippage-buffered 4.95 CVX
     ]);
 
     const actions = lastBundleActions();
@@ -825,7 +825,7 @@ describe("route step amounts", () => {
       { token: "yvUSDC-1", amount: "10.0000" },
       { token: "USDC", amount: "10.0000" },
       { token: "CVX", amount: "5.0000" },
-      { token: "pxCVX", amount: "5.4450" },
+      { token: "pxCVX", amount: "5.5000" }, // runtime CVX x 1.1, not the slippage-buffered 4.95 CVX
       { token: "yspxCVX", amount: "5.2500" },
     ]);
   });
@@ -846,7 +846,7 @@ describe("route step amounts", () => {
       { token: "yvUSDC-1", amount: "10.0000" },
       { token: "USDC", amount: "10.0000" },
       { token: "CVX", amount: "5.0000" },
-      { token: "pxCVX", amount: "5.4450" },
+      { token: "pxCVX", amount: "5.5000" }, // runtime CVX x 1.1, not the slippage-buffered 4.95 CVX
       { token: "uCVX", amount: "5.2500" },
     ]);
   });
@@ -868,7 +868,7 @@ describe("route step amounts", () => {
       { token: "ycvxCRV", amount: "1.0000" },
       { token: "cvxCRV", amount: "4.0000" },
       { token: "CVX", amount: "2.0000" },
-      { token: "pxCVX", amount: "2.1780" },
+      { token: "pxCVX", amount: "2.2000" }, // runtime CVX x 1.1, not the slippage-buffered 1.98 CVX
     ]);
   });
 
@@ -978,7 +978,9 @@ describe("route step amounts", () => {
     expect(callActions(actions, PIREX.LPXCVX, "swap")).toHaveLength(1);
     expect(callActions(actions, PIREX.LPXCVX, "unwrap")).toHaveLength(0);
     expect(callActions(actions, PIREX.LPXCVX_CVX_POOL, "exchange")).toHaveLength(0);
-    expect(result.amountsOut[PIREX.PXCVX.toLowerCase()]).toBe("5050000000000000000");
+    // Fixed 1 CVX swap leg (1.1 pxCVX) + the runtime remainder of the 5 CVX minted 1:1. The mint
+    // takes the remaining balance, so the buffered 3.95 CVX mint estimate (5.05) under-reported.
+    expect(result.amountsOut[PIREX.PXCVX.toLowerCase()]).toBe("5100000000000000000");
 
     const pxCvxBalanceIdx = balanceIndex(actions, TOKENS.PXCVX);
     expect(pxCvxBalanceIdx).toBeGreaterThan(-1);
