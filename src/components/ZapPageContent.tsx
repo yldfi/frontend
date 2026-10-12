@@ -889,6 +889,8 @@ export function ZapPageContent() {
                       "Enter amount"
                     ) : hasInsufficientBalance ? (
                       "Insufficient balance"
+                    ) : noRoute && quoteError?.message.toLowerCase().includes("temporarily unavailable") ? (
+                      "Route temporarily unavailable"
                     ) : noRoute || !quote ? (
                       "No route found"
                     ) : (
