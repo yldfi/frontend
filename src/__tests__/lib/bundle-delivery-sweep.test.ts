@@ -185,7 +185,7 @@ const KNOWN_ISSUES: Array<{ intent: string; violation: RegExp; note: string }> =
   {
     intent: "curveLendingRepayWithSwap",
     violation: /references #\d+ \(call withdraw\) which returns nothing/,
-    note: "uCRV/Beefy repay tokens: route refs a void withdraw (uCRV also withdraws to the user). Enso rejects the build, so it fails closed.",
+    note: "uCRV/Beefy repay tokens: route refs a void withdraw (uCRV also withdraws to the user). Enso rejects the build, so it fails closed. Won't fix: the lending market is deprecated (no open loans, new loans disabled).",
   },
 ];
 
