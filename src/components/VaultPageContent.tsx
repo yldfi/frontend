@@ -15,45 +15,13 @@ import { ApprovalCard } from "@/components/ApprovalCard";
 import { LoadingDots } from "@/components/LoadingDots";
 import { TxAssetDetailsPill } from "@/components/TxAssetDetailsPill";
 
-// Parse Enso API errors into user-friendly messages
-function parseQuoteError(error: Error | null): string {
-  if (!error) return "Failed to get quote";
-  const msg = error.message || "";
-  const normalizedMsg = msg.toLowerCase();
-
-  // Route deliberately disabled (message names the pair and the workaround)
-  if (normalizedMsg.includes("temporarily unavailable")) {
-    return msg;
-  }
-  // Amount too large/out of range
-  if (normalizedMsg.includes("amountin") && normalizedMsg.includes("acceptable range")) {
-    return "Amount too large to quote - try a smaller amount";
-  }
-  // Insufficient liquidity
-  if (normalizedMsg.includes("insufficient liquidity") || normalizedMsg.includes("no route found") || normalizedMsg.includes("swap not found")) {
-    return "No route available - insufficient liquidity";
-  }
-  // Rate limit
-  if (normalizedMsg.includes("rate limit") || normalizedMsg.includes("429")) {
-    return "Too many requests - please wait a moment";
-  }
-  // Network/timeout errors
-  if (normalizedMsg.includes("timeout") || normalizedMsg.includes("network") || normalizedMsg.includes("fetch")) {
-    return "Network error - please try again";
-  }
-  // Generic API error - show shortened version
-  if (msg.startsWith("API Error:")) {
-    return "Quote unavailable - try a different amount";
-  }
-
-  return "Failed to get quote";
-}
-
 import { ContractExplorer, useContractExplorer, type ExplorerContract } from "@/components/ContractExplorer";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { PriceImpactConfirmModal, needsPriceImpactConfirm } from "@/components/PriceImpactConfirmModal";
+import { parseQuoteError } from "@/lib/quote-errors";
 import { sanitizeAmount } from "@/lib/sanitize";
+import { fillMissingSimulationUsd } from "@/lib/simulation-pricing";
 import { useSettings } from "@/hooks/useSettings";
 import {
   getYldMerklCampaignIds,
@@ -82,6 +50,7 @@ import { useZapQuote } from "@/hooks/useZapQuote";
 import { useZapActions } from "@/hooks/useZapActions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useClearOnNavigation } from "@/hooks/useClearOnNavigation";
+import { useAutoContinueAfterApproval } from "@/hooks/useAutoContinueAfterApproval";
 import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS, applyKnownTokenMetadata } from "@/lib/enso";
@@ -1255,32 +1224,21 @@ export function VaultPageContent({ id }: { id: string }) {
   }, [clearVaultCompletionResetTimer, isSuccess, isReverted, depositHash, withdrawHash, refetchTokenBalance, refetchVaultBalance, resetVaultCompletionState, setAmount, setZapAmount]);
 
   // Auto-execute deposit after vault approval succeeds (for multi-step transactions)
-  const prevTxStatusRef = useRef<string | null>(null);
-  useEffect(() => {
-    // Check if we just completed approval (status transitioned from waitingApproval to idle)
-    // and we're in a deposit multi-step flow
-    if (
-      pendingMultiStep?.type === "deposit" &&
-      pendingMultiStep.step === 1 &&
-      prevTxStatusRef.current === "waitingApproval" &&
-      txStatus === "idle"
-    ) {
+  useAutoContinueAfterApproval(
+    txStatus,
+    pendingMultiStep?.type === "deposit" && pendingMultiStep.step === 1,
+    () => {
       // Approval is complete. Restore the form so its simulation modal can render.
-      const timer = setTimeout(() => {
-        setPendingMultiStep(null);
-        if (amount) {
-          if (showSimulationPreview) {
-            void runVaultSimulationPreview();
-          } else {
-            void deposit(amount);
-          }
+      setPendingMultiStep(null);
+      if (amount) {
+        if (showSimulationPreview) {
+          void runVaultSimulationPreview();
+        } else {
+          void deposit(amount);
         }
-      }, 0);
-      prevTxStatusRef.current = txStatus;
-      return () => clearTimeout(timer);
-    }
-    prevTxStatusRef.current = txStatus;
-  }, [txStatus, pendingMultiStep, amount, deposit, showSimulationPreview, runVaultSimulationPreview]);
+      }
+    },
+  );
 
   // Clear multi-step state on error or user cancellation (vault actions)
   useEffect(() => {
@@ -2786,7 +2744,16 @@ export function VaultPageContent({ id }: { id: string }) {
             gasUsed: effectiveSimulationResult.gasUsed ?? null,
             errorMessage: effectiveSimulationResult.errorMessage ?? null,
             tenderlyUrl: effectiveSimulationResult.tenderlyUrl ?? null,
-            assetChanges: effectiveSimulationResult.assetChanges as SimulationAssetChange[],
+            assetChanges: zapQuote
+              ? fillMissingSimulationUsd(effectiveSimulationResult.assetChanges as SimulationAssetChange[], {
+                  input: { address: zapQuote.inputToken.address, amount: Number(zapQuote.inputAmount), usd: zapQuote.inputUsdValue },
+                  output: {
+                    address: (zapDirection === "in" ? vault?.address : zapOutputToken?.address) ?? "",
+                    amount: Number(zapQuote.outputAmountFormatted),
+                    usd: zapQuote.outputUsdValue,
+                  },
+                })
+              : effectiveSimulationResult.assetChanges as SimulationAssetChange[],
           }}
           gasPrice={gasPrice}
           ethPrice={ethPrice}

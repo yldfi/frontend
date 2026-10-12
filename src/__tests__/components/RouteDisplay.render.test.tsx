@@ -1,5 +1,5 @@
-import { render } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import { RouteDisplay } from "@/components/RouteDisplay";
 
@@ -92,5 +92,21 @@ describe("RouteDisplay rendering", () => {
     expect(container.textContent).toContain("81956.7515CVX");
     expect(container.textContent).not.toContain("100000.0000CVXSwap");
     expect(container.textContent).toContain("100001.2134pxCVX");
+  });
+
+  it("shows the error with a retry instead of the fallback route when there is no route", () => {
+    const onRetry = vi.fn();
+    render(<RouteDisplay inputSymbol="CVX" outputSymbol="ysCVX" errorMessage="No route available right now." onRetry={onRetry} />);
+
+    expect(screen.getByText("No route available right now.")).toBeTruthy();
+    expect(screen.queryByText("Direct swap")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("prefers the loading skeleton over the error while a quote is in flight", () => {
+    render(<RouteDisplay inputSymbol="CVX" outputSymbol="ysCVX" isLoading errorMessage="No route available right now." />);
+
+    expect(screen.queryByText("No route available right now.")).toBeNull();
   });
 });
