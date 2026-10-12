@@ -290,6 +290,23 @@ describe("route step amounts", () => {
     }) as unknown as typeof fetch;
   });
 
+  it.each([
+    ["ysCVX", VAULT_ADDRESSES.YSCVX, TOKENS.CVX],
+    ["yscvxCRV", VAULT_ADDRESSES.YSCVXCRV, TOKENS.CVXCRV],
+  ])("refuses %s -> yspxCVX instead of a share-to-share Enso route", async (_label, sourceVault, sourceUnderlying) => {
+    // The direct route had no liquidity: 140 ysCVX filled for 0.0166 yspxCVX on a mainnet fork.
+    await expect(fetchVaultToVaultRoute({
+      fromAddress: TEST_WALLET,
+      sourceVault,
+      targetVault: VAULT_ADDRESSES.YSPXCVX,
+      amountIn: ONE_ETHER.toString(),
+      sourceUnderlyingToken: sourceUnderlying,
+      targetUnderlyingToken: TOKENS.PXCVX,
+      slippage: "100",
+    })).rejects.toThrow("temporarily unavailable");
+    expect(mockGetBundleData).not.toHaveBeenCalled();
+  });
+
   it("shows both underlying amounts for a standard vault-to-vault route", async () => {
     mockGetRouteData.mockResolvedValueOnce({
       amountOut: "900000000000000000",
