@@ -63,6 +63,8 @@ import {
   fetchAnyToExternalVaultRoute,
   fetchCvgCvxZapInRoute,
   fetchPxCvxZapInRoute,
+  fetchAnyFromPxCvxRoute,
+  fetchPxCvxTokenZapInRoute,
   fetchAnyFromBeefyRoute,
   fetchAnyFromUCrvRoute,
   fetchAnyFromCvgCvxRoute,
@@ -79,7 +81,6 @@ import {
   fetchComposableZapInRoute,
   fetchLpxCvxZapInRoute,
   fetchPxCvxZapOutRoute,
-  fetchPxCvxTokenZapInRoute,
   fetchErc4626ExternalVaultZapInRoute,
   fetchUCvxZapInRoute,
   fetchLegacyMorphoWrapRoute,
@@ -1393,5 +1394,36 @@ describe("route step amounts", () => {
   ])("reports a native-ETH output for %s -> ETH so the intent guard can bind it", async (_label, build) => {
     const bundle = await build() as { amountsOut: Record<string, string> };
     expect(BigInt(bundle.amountsOut[ETH_ADDRESS.toLowerCase()] ?? "0")).toBeGreaterThan(0n);
+  });
+
+  it.each([
+    ["CVX", () => TOKENS.CVX],
+    ["an aggregator-routed token", () => USDC_ADDRESS],
+  ])("approves the wrapped lpxCVX with a raw call when selling pxCVX for %s", async (_label, outputToken) => {
+    await fetchAnyFromPxCvxRoute({
+      fromAddress: TEST_WALLET,
+      outputToken: outputToken(),
+      amountIn: (96n * ONE_ETHER).toString(),
+      slippage: "100",
+    });
+
+    const actions = lastBundleActions();
+    // A fixed erc20 approval of lpxCVX made Enso pull lpxCVX from the wallet as a second input.
+    expect(fixedErc20Approvals(actions, PIREX.LPXCVX)).toEqual([]);
+    expect(rawApproveCalls(actions, PIREX.LPXCVX).map(rawApproveSpender)).toEqual([PIREX.LPXCVX_CVX_POOL]);
+    expect(fixedErc20Approvals(actions, PIREX.PXCVX)).toHaveLength(1);
+  });
+
+  it("approves the wrapped lpxCVX with a raw call for pxCVX -> yld vault zaps", async () => {
+    await fetchPxCvxTokenZapInRoute({
+      fromAddress: TEST_WALLET,
+      vaultAddress: VAULT_ADDRESSES.YSCVX,
+      amountIn: (96n * ONE_ETHER).toString(),
+      slippage: "100",
+    });
+
+    const actions = lastBundleActions();
+    expect(fixedErc20Approvals(actions, PIREX.LPXCVX)).toEqual([]);
+    expect(rawApproveCalls(actions, PIREX.LPXCVX).map(rawApproveSpender)).toEqual([PIREX.LPXCVX_CVX_POOL]);
   });
 });
