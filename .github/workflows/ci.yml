@@ -43,6 +43,24 @@ jobs:
       - name: Run ESLint
         run: pnpm lint
 
+  audit:
+    name: Dependency Audit
+    # Not a deploy prerequisite: a newly published advisory should flag the
+    # PR (and the nightly run), not block an unrelated production deploy.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Audit the full dependency tree
+        # Ignored advisories (no fixed release yet) live in pnpm-workspace.yaml.
+        run: pnpm audit --audit-level=high
+
   type-check:
     name: Type Check
     runs-on: ubuntu-latest
