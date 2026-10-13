@@ -135,16 +135,6 @@ jobs:
           DEBUG_RPC_URL: ${{ secrets.DEBUG_RPC_URL }}
           DEBUG_RPC_AUTH: ${{ secrets.DEBUG_RPC_AUTH }}
 
-      - name: Upload coverage reports
-        uses: codecov/codecov-action@v7
-        if: always()
-        with:
-          files: ./coverage/lcov.info
-          fail_ci_if_error: false
-          verbose: true
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
       - name: Upload integration test results
         uses: actions/upload-artifact@v7
         if: always()
