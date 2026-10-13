@@ -103,7 +103,7 @@ describe("Enso API route boundary", () => {
 
       expect(response.status).toBe(200);
       expect(mockGetMultiplePriceData.mock.calls.map(([p]) => p.addresses.length)).toEqual([50, 50, 20]);
-      expect((await response.json()).map((p: { address: string }) => p.address)).toEqual(input);
+      expect(((await response.json()) as Array<{ address: string }>).map((p) => p.address)).toEqual(input);
     });
 
     it.each([
