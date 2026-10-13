@@ -1,6 +1,7 @@
 import { writeFileSync } from "fs";
 import { test } from "./fixtures/api-mocks";
 import { RECORDING_UPSTREAM, UPSTREAM_FILE, UPSTREAM_ROUTE, type RecordedResponse } from "./fixtures/api-mocks";
+import { injectTestWallet } from "./fixtures/wallet";
 
 /**
  * Records the live Kong/Merkl responses the specs' pages request, into upstream-responses.json.
@@ -29,6 +30,8 @@ test.describe("record upstream API responses", () => {
         // response body unavailable (navigation away); it is captured on the next page visit
       }
     });
+    // Specs that connect the E2E test wallet also fetch its Merkl rewards
+    await injectTestWallet(page);
     for (const path of PAGES) {
       await page.goto(path);
       await page.waitForLoadState("networkidle", { timeout: 60_000 }).catch(() => {});
