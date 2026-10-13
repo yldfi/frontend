@@ -5,6 +5,7 @@
  * to reduce network latency.
  */
 
+import { redactRpcUrl } from "@/lib/rpc-redact";
 import { getAllRpcUrls } from "@/config/rpc";
 import { CURVE_CVX_ETH_POOL } from "@/config/addresses";
 
@@ -170,7 +171,7 @@ export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]
 
           // If individual retries still have nulls, try next RPC URL
           if (singleResults.some((value) => value === null)) {
-            lastError = new Error(`RPC ${rpcUrl}: ${singleResults.filter(v => v === null).length}/${calls.length} calls returned null`);
+            lastError = new Error(`RPC ${redactRpcUrl(rpcUrl)}: ${singleResults.filter(v => v === null).length}/${calls.length} calls returned null`);
             continue;
           }
 
