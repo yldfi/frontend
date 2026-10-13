@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
-import { RPC_URL_LIST } from "@/config/rpc";
+import { RPC_TIMEOUT_MS, RPC_URL_LIST } from "@/config/rpc";
 
 /**
  * Explorer API - Server-side Etherscan proxy with Cloudflare KV caching
@@ -383,6 +383,7 @@ async function getImplementationAddress(
         try {
           const response = await fetch(rpcUrl, {
             method: "POST",
+            signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               jsonrpc: "2.0",

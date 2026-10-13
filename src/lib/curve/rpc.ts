@@ -6,7 +6,7 @@
  */
 
 import { redactRpcUrl } from "@/lib/rpc-redact";
-import { getAllRpcUrls } from "@/config/rpc";
+import { getAllRpcUrls, isRpcTimeout, RPC_TIMEOUT_MS } from "@/config/rpc";
 import { CURVE_CVX_ETH_POOL } from "@/config/addresses";
 
 // Use DEBUG_RPC_URL if available (more reliable, higher rate limits)
@@ -115,6 +115,7 @@ export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]
 
         const response = await fetch(rpcUrl, {
           method: "POST",
+          signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
           headers,
           body: JSON.stringify(batch),
         });
@@ -150,6 +151,7 @@ export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]
             try {
               const single = await fetch(rpcUrl, {
                 method: "POST",
+                signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
                 headers,
                 body: JSON.stringify({
                   jsonrpc: "2.0",
@@ -181,6 +183,8 @@ export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]
         return parsed;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
+        // A timed-out node is not retried; move on to the next RPC URL.
+        if (isRpcTimeout(error)) break;
         if (attempt < retriesPerUrl - 1) {
           const delay = baseDelayMs * Math.pow(2, attempt);
           await new Promise((resolve) => setTimeout(resolve, delay));
@@ -216,6 +220,8 @@ async function withRetry<T>(
       return await fn();
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+      // Don't retry a timeout against the same URL; callers fall through to the next one.
+      if (isRpcTimeout(error)) throw lastError;
       if (attempt < maxRetries - 1 && baseDelayMs > 0) {
         const delay = baseDelayMs * Math.pow(2, attempt);
         await new Promise((resolve) => setTimeout(resolve, delay));
@@ -255,6 +261,7 @@ export async function getCurveGetDy(
 
         const response = await fetch(rpcUrl, {
           method: "POST",
+          signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
           headers,
           body: JSON.stringify({
             jsonrpc: "2.0",
@@ -316,6 +323,7 @@ export async function getCurveGetDyFactory(
 
         const response = await fetch(rpcUrl, {
           method: "POST",
+          signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
           headers,
           body: JSON.stringify({
             jsonrpc: "2.0",

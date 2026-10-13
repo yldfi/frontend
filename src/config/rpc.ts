@@ -95,3 +95,16 @@ export function getAllRpcUrls(): string[] {
   );
   return [...RPC_URL_LIST, ...extra];
 }
+
+/**
+ * Per-attempt timeout for server-side RPC calls. The first URL can be a private node
+ * (DEBUG_RPC_URL); without a timeout a hung node stalls quotes and pages instead of
+ * falling back to the public list.
+ */
+export const RPC_TIMEOUT_MS = 4_000;
+
+/** True when a fetch was aborted by its timeout signal. */
+export function isRpcTimeout(error: unknown): boolean {
+  const name = (error as { name?: string } | null)?.name;
+  return name === "TimeoutError" || name === "AbortError";
+}
