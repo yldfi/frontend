@@ -5,7 +5,7 @@
 import { EnsoClient } from "@ensofinance/sdk";
 import { encodeFunctionData, parseAbi } from "viem";
 import type { Hex } from "viem";
-import type { EnsoToken, EnsoTokensResponse, EnsoRouteResponse, EnsoBundleAction, EnsoBundleResponse, RouteInfo, RouteStep, CustomBundleResponse, LegacyMorphoPermitCall, LegacyMorphoPermitRequest } from "@/types/enso";
+import type { EnsoToken, EnsoTokensResponse, EnsoQuoteResponse, EnsoRouteResponse, EnsoBundleAction, EnsoBundleResponse, RouteInfo, RouteStep, CustomBundleResponse, LegacyMorphoPermitCall, LegacyMorphoPermitRequest } from "@/types/enso";
 import {
   ENSO_ROUTER_V1 as ENSO_ROUTER_V1_ADDRESS,
   ENSO_ROUTER_V2 as ENSO_ROUTER_V2_ADDRESS,
@@ -1676,12 +1676,11 @@ async function appendBestExactUsdcToCvxConversion(
       const { availableSafeAggregators, ignoreAggregators } =
         await getDynamicInputAggregatorPolicy();
       if (availableSafeAggregators.length === 0) return null;
-      const route = await fetchRoute({
+      const route = await fetchQuote({
         fromAddress: ctx.fromAddress,
         tokenIn: USDC_ADDRESS,
         tokenOut: TOKENS.CVX,
         amountIn: expectedUsdc.toString(),
-        slippage: ctx.slippage,
         ignoreAggregators,
       });
       const usedSafeAggregator = route.route.find((hop) =>
@@ -2651,6 +2650,69 @@ export async function fetchRoute(params: EnsoRouteRequest): Promise<EnsoRouteRes
   };
 }
 
+export interface EnsoQuoteRequest {
+  fromAddress: string;
+  tokenIn: string;
+  tokenOut: string;
+  amountIn: string;
+  ignoreAggregators?: string[];
+}
+
+/**
+ * Output estimate from Enso's quoter (/shortcuts/quote). Use this wherever only the amount
+ * (and route hops) are needed: it builds no calldata, costs about half a /route call in Enso
+ * credits (~16 vs ~29-42 measured on 2026-10-13) and has its own rate limit. Falls back to
+ * /route if the quoter fails, so an outage there degrades cost, not quotes.
+ * Client-side: proxied through /api/enso/quote. Server-side: calls the SDK directly.
+ */
+export async function fetchQuote(params: EnsoQuoteRequest): Promise<EnsoQuoteResponse> {
+  try {
+    if (typeof window !== "undefined") {
+      const res = await fetch("/api/enso/quote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fromAddress: params.fromAddress,
+          tokenIn: [params.tokenIn],
+          tokenOut: [params.tokenOut],
+          amountIn: [params.amountIn],
+          ignoreAggregators: params.ignoreAggregators,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+        throw new Error(err.error || `Enso quote proxy error: ${res.status}`);
+      }
+      return await res.json() as EnsoQuoteResponse;
+    }
+
+    const quoteData = await enqueueEnsoCall(() => ensoClient.getQuoteData({
+      chainId: CHAIN_ID,
+      fromAddress: params.fromAddress as `0x${string}`,
+      routingStrategy: "router",
+      tokenIn: [params.tokenIn as `0x${string}`],
+      tokenOut: [params.tokenOut as `0x${string}`],
+      amountIn: [params.amountIn],
+      ignoreAggregators: params.ignoreAggregators,
+    }));
+    if (quoteData?.amountOut == null) throw new Error("Enso quote returned no amountOut");
+    return {
+      amountOut: String(quoteData.amountOut),
+      priceImpact: quoteData.priceImpact != null ? Number(quoteData.priceImpact) : null,
+      route: (quoteData.route ?? []).map((hop) => ({
+        action: hop.action,
+        protocol: hop.protocol,
+        tokenIn: hop.tokenIn as string[],
+        tokenOut: hop.tokenOut as string[],
+      })),
+    };
+  } catch (error) {
+    console.warn("[Enso Quote] quoter failed, falling back to /route:", error instanceof Error ? error.message : error);
+    const route = await fetchRoute(params);
+    return { amountOut: route.amountOut, priceImpact: route.priceImpact, route: route.route };
+  }
+}
+
 /**
  * Estimate the output of a runtime-produced balance. This standalone quote is
  * deliberately unrestricted because its amount-specific calldata is never
@@ -2659,8 +2721,13 @@ export async function fetchRoute(params: EnsoRouteRequest): Promise<EnsoRouteRes
  */
 export async function fetchDynamicInputEstimate(
   params: Omit<EnsoRouteRequest, "ignoreAggregators">,
-): Promise<EnsoRouteResponse> {
-  return fetchRoute(params);
+): Promise<EnsoQuoteResponse> {
+  return fetchQuote({
+    fromAddress: params.fromAddress,
+    tokenIn: params.tokenIn,
+    tokenOut: params.tokenOut,
+    amountIn: params.amountIn,
+  });
 }
 
 /**
@@ -2679,19 +2746,20 @@ async function estimateRouteOutput(
   tokenIn: string,
   tokenOut: string,
   amountIn: string,
-  slippage?: string
+  // Kept for call-site compatibility: a quote's amountOut is the expected output, not
+  // slippage-adjusted, so the quoter takes no slippage.
+  _slippage?: string
 ): Promise<string> {
   // If tokens are same, return input
   if (tokenIn.toLowerCase() === tokenOut.toLowerCase()) {
     return amountIn;
   }
 
-  const result = await fetchRoute({
+  const result = await fetchQuote({
     fromAddress,
     tokenIn,
     tokenOut,
     amountIn,
-    slippage,
   });
 
   if (!result.amountOut) {
@@ -5008,12 +5076,11 @@ export async function fetchCvgCvxZapInRoute(params: {
     expectedCvxOutput = params.amountIn;
   } else if (inputIsEth) {
     if (useRouteForEth) {
-      const routeQuote = await fetchRoute({
+      const routeQuote = await fetchQuote({
         fromAddress: params.fromAddress,
         tokenIn: params.inputToken,
         tokenOut: TOKENS.CVX,
         amountIn: params.amountIn,
-        slippage: params.slippage,
       });
       expectedCvxOutput = routeQuote.amountOut;
     } else {
@@ -5024,12 +5091,11 @@ export async function fetchCvgCvxZapInRoute(params: {
   } else if (!skipRouteQuote) {
     // For other tokens, we still need a route call
     // TODO: Could extend caching for common pairs
-    const routeQuote = await fetchRoute({
+    const routeQuote = await fetchQuote({
       fromAddress: params.fromAddress,
       tokenIn: params.inputToken,
       tokenOut: TOKENS.CVX,
       amountIn: params.amountIn,
-      slippage: params.slippage,
     });
     expectedCvxOutput = routeQuote.amountOut;
 
@@ -7019,12 +7085,11 @@ export async function fetchUCrvZapInRoute(params: {
       },
     });
     const cvxRouteIdx = actions.length - 1;
-    const rq = await fetchRoute({
+    const rq = await fetchQuote({
       fromAddress: params.fromAddress,
       tokenIn: LLAMA_AIRFORCE.UCRV_UNDERLYING,
       tokenOut: TOKENS.CVX,
       amountIn: expectedCvxCrvOutput,
-      slippage: params.slippage ?? "100",
     });
     const cvxEstimate = BigInt(rq.amountOut);
     expectedIntermediateCvx = cvxEstimate;
@@ -7549,12 +7614,11 @@ export async function fetchErc4626ExternalVaultZapInRoute(params: {
         },
       });
       cvxInputAmountRef = { useOutputOfCallAt: 1 };
-      const routeQuote = await fetchRoute({
+      const routeQuote = await fetchQuote({
         fromAddress: params.fromAddress,
         tokenIn: params.externalVaultUnderlying,
         tokenOut: TOKENS.CVX,
         amountIn: expectedUnderlyingOutput,
-        slippage: params.slippage ?? "100",
       });
       cvxEstimate = BigInt(routeQuote.amountOut);
     }
@@ -7773,12 +7837,11 @@ export async function fetchBeefyZapInRoute(params: {
         },
       });
       cvxAmountRef = { useOutputOfCallAt: actions.length - 1 };
-      const rq = await fetchRoute({
+      const rq = await fetchQuote({
         fromAddress: params.fromAddress,
         tokenIn: params.beefyVaultUnderlying,
         tokenOut: TOKENS.CVX,
         amountIn: expectedUnderlyingOutput,
-        slippage: params.slippage ?? "100",
       });
       cvxEstimate = BigInt(rq.amountOut);
     } else {
@@ -10628,12 +10691,11 @@ export async function fetchAnyToUCrvRoute(params: {
   let cvxCrvAmount = params.amountIn;
   if (!inputIsCvxCrv) {
     try {
-      const routeQuote = await fetchRoute({
+      const routeQuote = await fetchQuote({
         fromAddress: params.fromAddress,
         tokenIn: params.inputToken,
         tokenOut: LLAMA_AIRFORCE.UCRV_UNDERLYING,
         amountIn: params.amountIn,
-        slippage: params.slippage,
       });
       cvxCrvAmount = routeQuote.amountOut;
     } catch {
@@ -10797,12 +10859,11 @@ export async function fetchAnyToBeefyRoute(params: {
   let underlyingAmount = params.amountIn;
   if (!inputIsUnderlying) {
     try {
-      const routeQuote = await fetchRoute({
+      const routeQuote = await fetchQuote({
         fromAddress: params.fromAddress,
         tokenIn: params.inputToken,
         tokenOut: params.beefyVaultUnderlying,
         amountIn: params.amountIn,
-        slippage: params.slippage,
       });
       underlyingAmount = routeQuote.amountOut;
     } catch {
