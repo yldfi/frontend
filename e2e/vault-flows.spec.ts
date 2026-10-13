@@ -1,5 +1,7 @@
 import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures/api-mocks";
+import { mockZapIntent } from "./fixtures/intent-mocks";
+import { connectTestWallet, injectTestWallet } from "./fixtures/wallet";
 import {
   mockZapInBundleResponse,
   mockZapOutBundleResponse,
@@ -9,9 +11,6 @@ import {
  * E2E tests for vault flows: zap in/out, deposit/withdraw, vault-to-vault
  * Uses API mocking for reliable, fast tests
  */
-
-// Test user address (Vitalik's address for simulation) - reserved for future wallet mock tests
-const _TEST_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
 
 // /api/vaults, /api/history and the /api/enso token/price proxies are mocked for every test by the
 // api-mocks fixture. Zap quotes go through the /api/enso/intent proxy.
@@ -118,73 +117,53 @@ test.describe("Zap In Flow", () => {
       test.skip();
     }
   });
+});
 
-  // Quotes only run with a connected wallet (useUniversalZap returns null without one), so this
-  // cannot exercise quoting until E2E has a wallet-connector mock.
-  test.fixme("should debounce input and show quote", async ({ page }) => {
+// Quotes only run with a connected wallet (useUniversalZap returns null without one), so these use
+// the injected E2E test wallet. /api/enso/intent answers with a protected quote built from the request.
+test.describe("Zap In quotes (test wallet)", () => {
+  let intentCalls: { readonly count: number };
+
+  test.beforeEach(async ({ page }) => {
+    await injectTestWallet(page);
+    intentCalls = await mockZapIntent(page, mockZapInBundleResponse);
+    await page.goto("/vaults/yscvgcvx");
+    await connectTestWallet(page);
     await page.getByRole("button", { name: "Zap" }).click();
+    await expect(page.getByRole("button", { name: "Zap In" })).toBeVisible({ timeout: 10000 });
+  });
 
-    // Count API calls
-    let bundleCallCount = 0;
-    await page.route("**/api/enso/intent", (route) => {
-      bundleCallCount++;
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(mockZapInBundleResponse),
-      });
-    });
+  const amountInput = (page: Page) =>
+    page.locator('input[type="number"], input[inputmode="decimal"]').first();
 
-    // Type amount quickly (simulating user typing "123")
-    const amountInput = page.locator('input[type="number"], input[inputmode="decimal"]').first();
-    await amountInput.fill("1");
-    await page.waitForTimeout(100);
-    await amountInput.fill("12");
-    await page.waitForTimeout(100);
-    await amountInput.fill("123");
+  test("should debounce input and request one quote", async ({ page }) => {
+    await amountInput(page).pressSequentially("123", { delay: 50 });
 
-    // Wait for debounce + API call
+    // The mock quotes a fixed output, so its arrival means the debounced request has resolved
+    await expect(page.getByText("1489.8461").first()).toBeVisible({ timeout: 10000 });
     await page.waitForTimeout(1000);
 
-    // Should only have made 1-2 API calls, not 3 (one per keystroke)
-    expect(bundleCallCount).toBeLessThanOrEqual(2);
+    // One request for the settled amount, not one per keystroke
+    expect(intentCalls.count).toBe(1);
   });
 
-  // Quotes only run with a connected wallet (useUniversalZap returns null without one), so this
-  // cannot exercise quoting until E2E has a wallet-connector mock.
-  test.fixme("should display quote details after entering amount", async ({ page }) => {
-    await page.getByRole("button", { name: "Zap" }).click();
+  test("should display quote details after entering amount", async ({ page }) => {
+    await amountInput(page).fill("1");
 
-    // Enter amount
-    const amountInput = page.locator('input[type="number"], input[inputmode="decimal"]').first();
-    await amountInput.fill("1");
-
-    // Wait for quote to load
-    await page.waitForTimeout(1500);
-
-    // Should show "You receive" with amount
-    const youReceiveSection = page.locator("text=You receive");
-    await expect(youReceiveSection).toBeVisible();
+    await expect(page.getByText("1 ETH = 1489.8461 yscvgCVX")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("1489.8461").first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "Zap In", exact: true }).last()).toBeEnabled();
   });
 
-  // Quotes only run with a connected wallet (useUniversalZap returns null without one), so this
-  // cannot exercise quoting until E2E has a wallet-connector mock.
-  test.fixme("should show route display when toggle clicked", async ({ page }) => {
-    await page.getByRole("button", { name: "Zap" }).click();
+  test("should show route display when toggle clicked", async ({ page }) => {
+    await amountInput(page).fill("1");
+    await expect(page.getByText("1 ETH = 1489.8461 yscvgCVX")).toBeVisible({ timeout: 10000 });
 
-    // Enter amount
-    const amountInput = page.locator('input[type="number"], input[inputmode="decimal"]').first();
-    await amountInput.fill("1");
+    const toggle = page.getByTitle(/(Show|Hide) route/);
+    if ((await toggle.getAttribute("title")) === "Show route") await toggle.click();
 
-    // Wait for quote
-    await page.waitForTimeout(1500);
-
-    // Route section should be visible (it's displayed by default in the current UI)
-    const routeSection = page.locator("text=Route").first();
-    if (await routeSection.isVisible()) {
-      // Verify route section exists - the path tokens are shown in the UI
-      await expect(routeSection).toBeVisible();
-    }
+    await expect(page.getByTitle("Hide route")).toBeVisible();
+    await expect(page.getByText("Deposit into yscvgCVX")).toBeVisible();
   });
 });
 
