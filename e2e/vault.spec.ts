@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/api-mocks";
 
 // ycvxCRV vault ID (route uses ID, not address)
 const VAULT_ID = "ycvxcrv";

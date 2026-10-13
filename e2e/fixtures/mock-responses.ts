@@ -71,71 +71,100 @@ export const mockZapOutBundleResponse = {
   ],
 };
 
-// Mock token prices response
-export const mockPricesResponse = {
-  "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": 3250.5,
-  "0x4e3fbd56cd56c3e72c1403e103b45db9da5b9d2b": 2.15, // CVX
-  "0x2191df768ad71140f9f3e96c1e4407a4aa31d082": 2.05, // cvgCVX
-  "0x8ed5ab1ba2b2e434361858cbd3ca9f374e8b0359": 2.12, // yscvgCVX
-  "0x62b9c7356a2dc64a1969e19c23e4f579f9810aa7": 0.85, // cvxCRV
+// Token prices keyed by lowercase address. /api/enso/prices answers with the requested subset in
+// the Enso SDK's getMultiplePriceData shape (see enso-proxy mocks in api-mocks.ts).
+export const mockTokenPrices: Record<string, { symbol: string; decimals: number; price: number }> = {
+  "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": { symbol: "ETH", decimals: 18, price: 2450 },
+  "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": { symbol: "WETH", decimals: 18, price: 2450 },
+  "0x4e3fbd56cd56c3e72c1403e103b45db9da5b9d2b": { symbol: "CVX", decimals: 18, price: 2.015 },
+  "0x2191df768ad71140f9f3e96c1e4407a4aa31d082": { symbol: "cvgCVX", decimals: 18, price: 1.5 },
+  "0x62b9c7356a2dc64a1969e19c23e4f579f9810aa7": { symbol: "cvxCRV", decimals: 18, price: 0.1417 },
+  "0xbce0cf87f513102f22232436cca2ca49e815c3ac": { symbol: "pxCVX", decimals: 18, price: 1.8775 },
+  "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": { symbol: "USDC", decimals: 6, price: 1 },
 };
 
-// Mock vaults API response
-export const mockVaultsResponse = [
-  {
-    id: "ycvxcrv",
-    name: "cvxCRV Compounder",
-    symbol: "ycvxCRV",
-    address: "0xCa960E6DF1150100586c51382f619efCCcF72706",
-    assetAddress: "0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7",
-    assetSymbol: "cvxCRV",
-    assetDecimals: 18,
-    decimals: 18,
-    apy: 12.5,
-    tvl: 1250000,
-    pricePerShare: 1.0523,
-    category: "curve",
+// /api/vaults: the cache worker's payload (snapshot of production, 2026-10-13).
+export const mockVaultsResponse = {
+  "ycvxcrv": {
+    "address": "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86",
+    "totalAssets": "1637894916770316051176",
+    "pricePerShare": "1995506641007196168",
+    "tvl": 1637.894917,
+    "pps": 1.995507,
+    "tvlUsd": 232.539501,
+    "apy": 0
   },
-  {
-    id: "yscvgcvx",
-    name: "Staked cvgCVX Compounder",
-    symbol: "yscvgCVX",
-    address: "0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359",
-    assetAddress: "0x2191DF768ad71140F9F3E96c1e4407A4aA31d082",
-    assetSymbol: "cvgCVX",
-    assetDecimals: 18,
-    decimals: 18,
-    apy: 32.06,
-    tvl: 89600,
-    pricePerShare: 1.0362,
-    category: "convex",
+  "yscvxcrv": {
+    "address": "0xCa960E6DF1150100586c51382f619efCCcF72706",
+    "totalAssets": "145631955315203042776603",
+    "pricePerShare": "1130608313488681672",
+    "tvl": 145631.955315,
+    "pps": 1.130608,
+    "tvlUsd": 20676.04105,
+    "apy": 9.220867
   },
-];
+  "ycvgcvx": {
+    "address": "0x0849b046292293f78dF3002F8461f8A7e2eC2b82",
+    "totalAssets": "47202843283564594936937",
+    "pricePerShare": "1175961228149476052",
+    "tvl": 47202.843284,
+    "pps": 1.175961,
+    "tvlUsd": 69467.8107,
+    "apy": null
+  },
+  "yscvgcvx": {
+    "address": "0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359",
+    "totalAssets": "47463792047238039411412",
+    "pricePerShare": "1184658919985428900",
+    "tvl": 47463.792047,
+    "pps": 1.184659,
+    "tvlUsd": 69851.845657,
+    "apy": 15.52011
+  },
+  "yscvx": {
+    "address": "0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e",
+    "totalAssets": "4717893846936776322024",
+    "pricePerShare": "1000774944278806504",
+    "tvl": 4717.893847,
+    "pps": 1.000775,
+    "tvlUsd": 9507.850029,
+    "apy": 5.401902
+  },
+  "yspxcvx": {
+    "address": "0xB246DB2A73EEE3ee026153660c74657C123f8E42",
+    "totalAssets": "17832251851533502448",
+    "pricePerShare": "1000000000000000000",
+    "tvl": 17.832252,
+    "pps": 1,
+    "tvlUsd": 33.480152,
+    "apy": null
+  },
+  "cvxCrvPrice": 0.141746,
+  "cvgCvxPrice": 1.500342,
+  "cvxPrice": 2.015274,
+  "pxCvxPrice": 1.877506,
+  "lastUpdated": "2026-10-13T00:00:00.000Z"
+};
 
-// Mock Enso tokens response
-export const mockTokensResponse = [
-  {
-    address: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-    symbol: "ETH",
-    name: "Ethereum",
-    decimals: 18,
-    logoUri: "/tokens/eth.png",
+// /api/enso/tokens: the Enso SDK getTokenData shape ({ data, meta }).
+export const mockTokensResponse = {
+  data: [
+    { address: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", chainId: 1, symbol: "ETH", name: "Ethereum", decimals: 18, logosUri: ["/tokens/eth.png"], type: "base" },
+    { address: "0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B", chainId: 1, symbol: "CVX", name: "Convex Finance", decimals: 18, logosUri: ["/tokens/cvx.png"], type: "base" },
+    { address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", chainId: 1, symbol: "USDC", name: "USDC", decimals: 6, logosUri: ["/tokens/usdc.png"], type: "base" },
+  ],
+  meta: { total: 3, lastPage: 1, currentPage: 1, perPage: 1000, prev: null, next: null },
+};
+
+// /api/history: { data: { timeseries } }, the same shape as Kong's history endpoints.
+export const mockHistoryResponse = {
+  data: {
+    timeseries: Array.from({ length: 8 }, (_, i) => ({
+      time: String(1759276800 + i * 86400), // daily from 2025-10-01
+      value: 1 + i * 0.001,
+    })),
   },
-  {
-    address: "0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B",
-    symbol: "CVX",
-    name: "Convex Finance",
-    decimals: 18,
-    logoUri: "/tokens/cvx.png",
-  },
-  {
-    address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-    symbol: "USDC",
-    name: "USDC",
-    decimals: 6,
-    logoUri: "/tokens/usdc.png",
-  },
-];
+};
 
 // Mock route response for standard Enso route
 export const mockRouteResponse = {
