@@ -3,6 +3,7 @@
 // Using official Enso SDK: https://github.com/EnsoBuild/sdk-ts
 
 import { redactRpcUrl } from "@/lib/rpc-redact";
+import { fetchPricesInBatches } from "@/lib/enso-price-batches";
 import { EnsoClient } from "@ensofinance/sdk";
 import { encodeFunctionData, parseAbi } from "viem";
 import type { Hex } from "viem";
@@ -2434,10 +2435,10 @@ export async function fetchTokenPrices(addresses: string[]): Promise<EnsoTokenPr
     });
   }
 
-  const priceData = await enqueueEnsoCall(() => ensoClient.getMultiplePriceData({
+  const priceData = await fetchPricesInBatches(addresses, (batch) => enqueueEnsoCall(() => ensoClient.getMultiplePriceData({
     chainId: CHAIN_ID,
-    addresses: addresses as `0x${string}`[],
-  }));
+    addresses: batch as `0x${string}`[],
+  })));
 
   return priceData.map((p) => {
     const override = getTokenDisplayOverride(p.address);
@@ -2458,10 +2459,10 @@ export async function fetchTokenPrices(addresses: string[]): Promise<EnsoTokenPr
  */
 export async function fetchTokenPricesDirect(addresses: string[]): Promise<EnsoTokenPrice[]> {
   if (addresses.length === 0) return [];
-  const priceData = await ensoClient.getMultiplePriceData({
+  const priceData = await fetchPricesInBatches(addresses, (batch) => ensoClient.getMultiplePriceData({
     chainId: CHAIN_ID,
-    addresses: addresses as `0x${string}`[],
-  });
+    addresses: batch as `0x${string}`[],
+  }));
   return priceData.map((p) => {
     const override = getTokenDisplayOverride(p.address);
     return {
