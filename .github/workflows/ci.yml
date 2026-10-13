@@ -43,10 +43,41 @@ jobs:
       - name: Run ESLint
         run: pnpm lint
 
+  audit-changes:
+    name: Audit Changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      deps: ${{ steps.diff.outputs.deps }}
+    steps:
+      - name: Detect dependency changes
+        id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          # If the file list can't be read (e.g. a very large diff), audit anyway.
+          if ! files=$(gh pr diff "$PR" --repo "$REPO" --name-only); then
+            echo "deps=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          pattern='^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.npmrc|\.github/workflows/ci\.yml)$'
+          if printf '%s\n' "$files" | grep -qE "$pattern"; then deps=true; else deps=false; fi
+          echo "Dependency files changed: $deps"
+          echo "deps=$deps" >> "$GITHUB_OUTPUT"
+
   audit:
     name: Dependency Audit
-    # Not a deploy prerequisite: a newly published advisory should flag the
-    # PR (and the nightly run), not block an unrelated production deploy.
+    # Required check, but only blocking on PRs that change dependencies: on
+    # other PRs it is skipped (a skipped required check counts as passing).
+    # Not a deploy prerequisite: a newly published advisory should flag main
+    # and the nightly run, not block an unrelated production deploy.
+    needs: audit-changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.audit-changes.result != 'success' || needs.audit-changes.outputs.deps == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
