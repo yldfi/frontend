@@ -2,6 +2,7 @@
 // Docs: https://docs.enso.build
 // Using official Enso SDK: https://github.com/EnsoBuild/sdk-ts
 
+import { redactRpcUrl } from "@/lib/rpc-redact";
 import { EnsoClient } from "@ensofinance/sdk";
 import { encodeFunctionData, parseAbi } from "viem";
 import type { Hex } from "viem";
@@ -2804,7 +2805,7 @@ async function rpcWithFallback<T = unknown>(body: unknown): Promise<T> {
         body: JSON.stringify(body),
       });
       if (!response || !response.ok) {
-        lastError = new Error(`RPC ${rpcUrl} returned ${response?.status}`);
+        lastError = new Error(`RPC ${redactRpcUrl(rpcUrl)} returned ${response?.status}`);
         continue;
       }
       return (await response.json()) as T;
