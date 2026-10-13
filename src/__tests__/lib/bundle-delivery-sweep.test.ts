@@ -16,6 +16,9 @@ vi.mock("@ensofinance/sdk", () => ({
   EnsoClient: class MockEnsoClient {
     getAggregators = mockGetAggregators;
     getRouteData = mockGetRouteData;
+    // Estimates use Enso's quoter; serve them from the same route fixtures so existing
+    // assertions on mockGetRouteData still see each call (quotes return the route's amountOut).
+    getQuoteData = (params: unknown) => mockGetRouteData(params);
     getBundleData = mockGetBundleData;
   },
 }));

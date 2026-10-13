@@ -48,6 +48,14 @@ export interface EnsoRouteResponse {
   route: EnsoRouteStep[];
 }
 
+// Quote response from Enso /v1/shortcuts/quote: the output estimate without calldata.
+export interface EnsoQuoteResponse {
+  amountOut: string;
+  // Basis points, or null/undefined when Enso cannot price one side.
+  priceImpact?: number | null;
+  route: Array<Pick<EnsoRouteStep, "action" | "protocol" | "tokenIn" | "tokenOut">>;
+}
+
 export interface EnsoRouteStep {
   action: string;
   protocol: string;

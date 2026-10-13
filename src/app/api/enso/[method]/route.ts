@@ -6,7 +6,7 @@ import {
   protectEnsoIntentResponse,
   type EnsoIntentResponse,
 } from "@/lib/enso-intents";
-import { assertSlippage } from "@/lib/enso-intent-validation";
+import { assertAddress, assertPositiveAmount, assertSlippage, assertTokenAddress, failValidation } from "@/lib/enso-intent-validation";
 import { getExternalVaultConfig, LLAMA_AIRFORCE, TOKENS } from "@/config/vaults";
 
 export const dynamic = "force-dynamic";
@@ -535,6 +535,44 @@ export async function POST(
             tokenOut: hop.tokenOut as string[],
             amountIn: [],
             amountOut: [],
+          })),
+        }, { headers: cors });
+      }
+
+      case "quote": {
+        // Output estimate only: Enso's quoter returns no calldata, costs about half a route
+        // and has its own rate limit.
+        const [tokenIn] = Array.isArray(body.tokenIn) ? body.tokenIn : [];
+        const [tokenOut] = Array.isArray(body.tokenOut) ? body.tokenOut : [];
+        const [amountIn] = Array.isArray(body.amountIn) ? body.amountIn : [];
+        if (![body.tokenIn, body.tokenOut, body.amountIn].every((v) => Array.isArray(v) && v.length === 1)) {
+          failValidation("tokenIn, tokenOut and amountIn must each be a single-element array");
+        }
+        assertAddress(body.fromAddress, "fromAddress");
+        assertTokenAddress(tokenIn, "tokenIn");
+        assertTokenAddress(tokenOut, "tokenOut");
+        assertPositiveAmount(amountIn);
+        const ignoreAggregators = body.ignoreAggregators;
+        if (ignoreAggregators !== undefined && !(Array.isArray(ignoreAggregators) && ignoreAggregators.every((a) => typeof a === "string"))) {
+          failValidation("ignoreAggregators must be an array of strings");
+        }
+        const quoteData = await ensoClient.getQuoteData({
+          chainId: CHAIN_ID,
+          fromAddress: body.fromAddress,
+          routingStrategy: "router",
+          tokenIn: [tokenIn],
+          tokenOut: [tokenOut],
+          amountIn: [amountIn],
+          ignoreAggregators: ignoreAggregators as string[] | undefined,
+        });
+        return NextResponse.json({
+          amountOut: String(quoteData.amountOut),
+          priceImpact: quoteData.priceImpact != null ? Number(quoteData.priceImpact) : undefined,
+          route: quoteData.route.map((hop) => ({
+            action: hop.action,
+            protocol: hop.protocol,
+            tokenIn: hop.tokenIn as string[],
+            tokenOut: hop.tokenOut as string[],
           })),
         }, { headers: cors });
       }
