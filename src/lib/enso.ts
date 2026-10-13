@@ -14,7 +14,7 @@ import {
   ENSO_SHORTCUTS as ENSO_SHORTCUTS_ADDRESS,
 } from "@/lib/enso-addresses";
 import { LLAMA_AIRFORCE as STATIC_LLAMA_AIRFORCE, TOKENS, VAULTS, VAULT_ADDRESSES, CURVE_SAVINGS, isYldfiVault as checkIsYldfiVault } from "@/config/vaults";
-import { getAllRpcUrls } from "@/config/rpc";
+import { RPC_TIMEOUT_MS, getAllRpcUrls } from "@/config/rpc";
 import {
   fetchEnsoIntent,
   getYldVaultToVaultIntentName,
@@ -2799,6 +2799,7 @@ async function rpcWithFallback<T = unknown>(body: unknown): Promise<T> {
     try {
       const response = await fetch(rpcUrl, {
         method: "POST",
+        signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
         headers: {
           "Content-Type": "application/json",
           ...(rpcAuth ? { Authorization: rpcAuth.startsWith("Basic ") ? rpcAuth : `Basic ${rpcAuth}` } : {}),

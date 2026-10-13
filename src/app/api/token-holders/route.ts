@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { RPC_URL_LIST } from "@/config/rpc";
+import { RPC_TIMEOUT_MS, RPC_URL_LIST } from "@/config/rpc";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +40,7 @@ async function isEOA(address: string, rpcUrls: string[]): Promise<boolean> {
     try {
       const response = await fetch(rpcUrl, {
         method: "POST",
+        signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           jsonrpc: "2.0",
