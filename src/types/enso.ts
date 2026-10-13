@@ -25,8 +25,9 @@ export interface EnsoTokensResponse {
   data: EnsoToken[];
   meta: {
     total: number;
-    lastPage: number;
-    currentPage: number;
+    // Nullable since @ensofinance/sdk 2.6.0 (PaginationMeta), e.g. for an empty result.
+    lastPage: number | null;
+    currentPage: number | null;
     perPage: number;
   };
 }
