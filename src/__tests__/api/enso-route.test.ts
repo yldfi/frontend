@@ -1,14 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockGetBundleData, mockGetQuoteData } = vi.hoisted(() => ({
+const { mockGetBundleData, mockGetQuoteData, mockGetMultiplePriceData } = vi.hoisted(() => ({
   mockGetBundleData: vi.fn(),
   mockGetQuoteData: vi.fn(),
+  mockGetMultiplePriceData: vi.fn(),
 }));
 
 vi.mock("@ensofinance/sdk", () => ({
   EnsoClient: class MockEnsoClient {
     getBundleData = mockGetBundleData;
     getQuoteData = mockGetQuoteData;
+    getMultiplePriceData = mockGetMultiplePriceData;
   },
 }));
 
@@ -84,6 +86,34 @@ describe("Enso API route boundary", () => {
       const response = await quote(body);
       expect(response.status).toBe(400);
       expect(mockGetQuoteData).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("prices", () => {
+    const addr = (i: number) => "0x" + i.toString(16).padStart(40, "0");
+    const prices = (addresses: unknown) =>
+      POST(request({ addresses }) as never, { params: Promise.resolve({ method: "prices" }) });
+
+    it("batches large address lists so the Enso GET stays under the URL limit (was HTTP 431)", async () => {
+      mockGetMultiplePriceData.mockImplementation(async ({ addresses }: { addresses: string[] }) =>
+        addresses.map((address) => ({ chainId: 1, address, price: 1, decimals: 18 })));
+      const input = Array.from({ length: 120 }, (_, i) => addr(i + 1));
+
+      const response = await prices(input);
+
+      expect(response.status).toBe(200);
+      expect(mockGetMultiplePriceData.mock.calls.map(([p]) => p.addresses.length)).toEqual([50, 50, 20]);
+      expect(((await response.json()) as Array<{ address: string }>).map((p) => p.address)).toEqual(input);
+    });
+
+    it.each([
+      ["a non-array", "0xabc"],
+      ["a bad address", ["0xnotanaddress"]],
+      ["more than 500 addresses", Array.from({ length: 501 }, (_, i) => addr(i + 1))],
+    ])("rejects %s before calling Enso", async (_label, addresses) => {
+      const response = await prices(addresses);
+      expect(response.status).toBe(400);
+      expect(mockGetMultiplePriceData).not.toHaveBeenCalled();
     });
   });
 });

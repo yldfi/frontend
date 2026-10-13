@@ -6,7 +6,8 @@ import {
   protectEnsoIntentResponse,
   type EnsoIntentResponse,
 } from "@/lib/enso-intents";
-import { assertAddress, assertPositiveAmount, assertSlippage, assertTokenAddress, failValidation } from "@/lib/enso-intent-validation";
+import { assertAddress, assertPositiveAmount, assertSlippage, assertTokenAddress, failValidation, isHexAddress } from "@/lib/enso-intent-validation";
+import { ENSO_PRICE_MAX_ADDRESSES, fetchPricesInBatches } from "@/lib/enso-price-batches";
 import { getExternalVaultConfig, LLAMA_AIRFORCE, TOKENS } from "@/config/vaults";
 
 export const dynamic = "force-dynamic";
@@ -595,10 +596,17 @@ export async function POST(
       }
 
       case "prices": {
-        const priceData = await ensoClient.getMultiplePriceData({
-          chainId: CHAIN_ID,
-          addresses: body.addresses as `0x${string}`[],
-        });
+        const addresses = body.addresses;
+        if (!Array.isArray(addresses) || !addresses.every(isHexAddress)) {
+          failValidation("addresses must be an array of token addresses");
+        }
+        if (addresses.length > ENSO_PRICE_MAX_ADDRESSES) {
+          failValidation(`at most ${ENSO_PRICE_MAX_ADDRESSES} addresses per request`);
+        }
+        // Batched: one Enso GET with hundreds of addresses fails with HTTP 431.
+        const priceData = await fetchPricesInBatches(addresses, (batch) =>
+          ensoClient.getMultiplePriceData({ chainId: CHAIN_ID, addresses: batch as `0x${string}`[] }),
+        );
         return NextResponse.json(priceData, { headers: cors });
       }
 
