@@ -7,5 +7,5 @@ export default defineCloudflareConfig({
   incrementalCache: staticAssetsIncrementalCache,
   // Serve cached routes without loading the Next server bundle, which cuts cold-start
   // CPU for /, /zap, /terms and the other prerendered pages.
-  enableCacheInterception: true,
+  enableCacheInterception: false,
 });
