@@ -8,6 +8,12 @@ import {
 } from "@/lib/enso-intents";
 import { assertAddress, assertPositiveAmount, assertSlippage, assertTokenAddress, failValidation, isHexAddress } from "@/lib/enso-intent-validation";
 import { ENSO_PRICE_MAX_ADDRESSES, fetchPricesInBatches } from "@/lib/enso-price-batches";
+import {
+  dedupeEnsoPrices,
+  ensoPricesCacheKey,
+  readCachedEnsoPrices,
+  writeCachedEnsoPrices,
+} from "@/lib/enso-prices-cache";
 import { getExternalVaultConfig, LLAMA_AIRFORCE, TOKENS } from "@/config/vaults";
 
 export const dynamic = "force-dynamic";
@@ -603,11 +609,27 @@ export async function POST(
         if (addresses.length > ENSO_PRICE_MAX_ADDRESSES) {
           failValidation(`at most ${ENSO_PRICE_MAX_ADDRESSES} addresses per request`);
         }
+        // Bursts of identical requests would each fan out into several sequential Enso
+        // calls; serve repeats from a short-lived cache instead.
+        const cacheKey = ensoPricesCacheKey(addresses);
+        const cached = await readCachedEnsoPrices(cacheKey);
+        if (cached !== null) {
+          return NextResponse.json(cached, {
+            headers: { ...cors, "X-Enso-Price-Cache": "hit" },
+          });
+        }
         // Batched: one Enso GET with hundreds of addresses fails with HTTP 431.
-        const priceData = await fetchPricesInBatches(addresses, (batch) =>
-          ensoClient.getMultiplePriceData({ chainId: CHAIN_ID, addresses: batch as `0x${string}`[] }),
-        );
-        return NextResponse.json(priceData, { headers: cors });
+        // dedupeEnsoPrices collapses concurrent identical requests onto one fan-out.
+        const priceData = await dedupeEnsoPrices(cacheKey, async () => {
+          const data = await fetchPricesInBatches(addresses, (batch) =>
+            ensoClient.getMultiplePriceData({ chainId: CHAIN_ID, addresses: batch as `0x${string}`[] }),
+          );
+          await writeCachedEnsoPrices(cacheKey, data);
+          return data;
+        });
+        return NextResponse.json(priceData, {
+          headers: { ...cors, "X-Enso-Price-Cache": "miss" },
+        });
       }
 
       case "balances": {

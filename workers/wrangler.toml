@@ -3,9 +3,10 @@ main = "vault-cache.ts"
 compatibility_date = "2026-09-02"
 compatibility_flags = ["no_nodejs_compat", "no_nodejs_compat_v2"]
 
-[limits]
-# Backfill makes many onchain RPC calls in one invocation; allow more subrequests.
-subrequest_limit = 1000
+# NOTE: Workers on the Free plan are limited to 50 external subrequests per invocation
+# (and 1,000 to Cloudflare services); this cannot be raised on Free. The `[limits]`
+# block used to set `subrequest_limit`, which is not a valid key and was silently
+# ignored. Keep any backfill work chunked to stay under 50 external calls per invocation.
 
 [triggers]
 # Every 5 minutes: vault cache. Every 15 minutes: archive history (must match
