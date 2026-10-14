@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applyVaultSharePrices, shouldAutoIncludeWalletToken } from "@/hooks/useTokenBalances";
+import { applyVaultSharePrices, collectPriceAddresses, shouldAutoIncludeWalletToken } from "@/hooks/useTokenBalances";
 import { TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 import type { VaultCacheResponse } from "@/hooks/useVaultCache";
 
@@ -105,6 +105,64 @@ describe("useTokenBalances logic", () => {
       const allowlist = new Set([listedToken.token.toLowerCase()]);
       expect(shouldAutoIncludeWalletToken({ ...listedToken, price: 0 }, allowlist)).toBe(false);
       expect(shouldAutoIncludeWalletToken({ ...listedToken, amount: "0" }, allowlist)).toBe(false);
+    });
+  });
+
+  describe("collectPriceAddresses", () => {
+    const token = (address: string) => createToken("T", address);
+
+    it("always includes the first 20 listed tokens", () => {
+      const tokens = Array.from({ length: 30 }, (_, i) =>
+        createToken(`T${i}`, `0x${(i + 1).toString().padStart(40, "0")}`)
+      );
+
+      const addresses = collectPriceAddresses({ tokens });
+      expect(addresses).toHaveLength(20);
+    });
+
+    it("skips held tokens that Enso balances already priced", () => {
+      const addresses = collectPriceAddresses({
+        tokens: [],
+        ensoBalances: [
+          { token: "0xaaa0000000000000000000000000000000000001", amount: "1000", price: 5, decimals: 18 },
+          { token: "0xbbb0000000000000000000000000000000000002", amount: "1000", price: 0, decimals: 18 },
+        ],
+      });
+
+      expect(addresses).toEqual(["0xbbb0000000000000000000000000000000000002"]);
+    });
+
+    it("keeps a large priced wallet to a single batch of work", () => {
+      const ensoBalances = Array.from({ length: 300 }, (_, i) => ({
+        token: `0x${(i + 1).toString(16).padStart(40, "0")}`,
+        amount: "1000000000000000000",
+        price: 1,
+        decimals: 18,
+      }));
+
+      const addresses = collectPriceAddresses({
+        tokens: [token("0x00000000000000000000000000000000000000aa")],
+        ensoBalances,
+      });
+
+      // Only the listed token still needs a price lookup.
+      expect(addresses).toEqual(["0x00000000000000000000000000000000000000aa"]);
+    });
+
+    it("includes unpriced held tokens and positive on-chain balances", () => {
+      const addresses = collectPriceAddresses({
+        tokens: [],
+        ensoBalances: [{ token: "0x1111111111111111111111111111111111111111", amount: "10", price: 0, decimals: 6 }],
+        onchainBalances: [
+          { address: "0x2222222222222222222222222222222222222222", balance: BigInt(5) },
+          { address: "0x3333333333333333333333333333333333333333", balance: BigInt(0) },
+        ],
+      });
+
+      expect(addresses).toEqual([
+        "0x1111111111111111111111111111111111111111",
+        "0x2222222222222222222222222222222222222222",
+      ]);
     });
   });
 

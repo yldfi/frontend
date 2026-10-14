@@ -2411,9 +2411,27 @@ export interface EnsoTokenPrice {
   name?: string;
 }
 
+const tokenPricesInFlight = new Map<string, Promise<EnsoTokenPrice[]>>();
+
+function tokenPricesRequestKey(addresses: readonly string[]): string {
+  return [...new Set(addresses.map((address) => address.toLowerCase()))].sort().join(",");
+}
+
 export async function fetchTokenPrices(addresses: string[]): Promise<EnsoTokenPrice[]> {
   if (addresses.length === 0) return [];
 
+  const key = tokenPricesRequestKey(addresses);
+  const existing = tokenPricesInFlight.get(key);
+  if (existing) return existing;
+
+  const pending = fetchTokenPricesUncached(addresses).finally(() => {
+    tokenPricesInFlight.delete(key);
+  });
+  tokenPricesInFlight.set(key, pending);
+  return pending;
+}
+
+async function fetchTokenPricesUncached(addresses: string[]): Promise<EnsoTokenPrice[]> {
   if (typeof window !== "undefined") {
     const res = await fetch("/api/enso/prices", {
       method: "POST",
