@@ -67,6 +67,47 @@ export function applyVaultSharePrices(
   }
 }
 
+interface OnchainPriceBalance {
+  address: string;
+  balance: bigint;
+}
+
+/**
+ * Addresses that still need a /api/enso/prices lookup.
+ *
+ * Enso's balances response already prices every held token, so held tokens are only
+ * re-requested when Enso left them unpriced. Without this a large wallet produced a
+ * request list hundreds of addresses long, which the prices route had to fan out into
+ * many sequential Enso calls.
+ */
+export function collectPriceAddresses({
+  tokens,
+  ensoBalances,
+  onchainBalances,
+}: {
+  tokens: EnsoToken[];
+  ensoBalances?: readonly WalletTokenCandidate[] | null;
+  onchainBalances?: readonly OnchainPriceBalance[] | null;
+}): string[] {
+  const addresses = new Map<string, string>();
+  for (const token of tokens.slice(0, 20)) {
+    addresses.set(token.address.toLowerCase(), token.address);
+  }
+  for (const item of ensoBalances ?? []) {
+    try {
+      if (BigInt(item.amount) > 0n && !(item.price > 0)) {
+        addresses.set(item.token.toLowerCase(), item.token);
+      }
+    } catch {
+      // Ignore malformed upstream balances.
+    }
+  }
+  for (const item of onchainBalances ?? []) {
+    if (item.balance > 0n) addresses.set(item.address.toLowerCase(), item.address);
+  }
+  return Array.from(addresses.values());
+}
+
 /**
  * Fetch wallet balances and return sorted tokens.
  * - Mainnet: Enso API (efficient, includes prices)
@@ -170,23 +211,10 @@ export function useTokenBalances(tokens: EnsoToken[], options: UseTokenBalancesO
   });
 
   // Prices (from Enso — works for both paths, prices are mainnet-based anyway)
-  const tokenPriceAddresses = useMemo(() => {
-    const addresses = new Map<string, string>();
-    for (const token of tokens.slice(0, 20)) {
-      addresses.set(token.address.toLowerCase(), token.address);
-    }
-    for (const item of ensoBalances ?? []) {
-      try {
-        if (BigInt(item.amount) > 0n) addresses.set(item.token.toLowerCase(), item.token);
-      } catch {
-        // Ignore malformed upstream balances.
-      }
-    }
-    for (const item of onchainBalances ?? []) {
-      if (item.balance > 0n) addresses.set(item.address.toLowerCase(), item.address);
-    }
-    return Array.from(addresses.values());
-  }, [ensoBalances, onchainBalances, tokens]);
+  const tokenPriceAddresses = useMemo(
+    () => collectPriceAddresses({ tokens, ensoBalances, onchainBalances }),
+    [ensoBalances, onchainBalances, tokens],
+  );
 
   const { data: tokenPrices, isLoading: pricesLoading } = useQuery({
     queryKey: ["enso-token-prices", tokenPriceAddresses],
