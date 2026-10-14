@@ -258,6 +258,27 @@ const GEO_EXEMPT_PATHS = [
   "/social/weekly-apy", // X social card (rendered by Browser Rendering)
 ];
 
+// Requests that can never map to an application route: crawler/scanner probes such as
+// /.env, /.git/config, /wp-login.php or /backup.sql. These never belong to the app, so
+// answer them with a tiny static 404 instead of spending CPU rendering a 404 page.
+// Deliberately narrow: it must not shadow real assets (fonts, images, _next, robots.txt,
+// sitemap.xml) or application routes.
+export const NEVER_A_ROUTE =
+  /(?:^|\/)\.(?:env|git|svn|hg|aws|ssh|ds_store|htaccess|htpasswd)(?:$|\/)|\.(?:php|phtml|asp|aspx|jsp|jspx|cgi|pl|py|rb|sql|bak|backup|old|orig|save|swp|swo|log|ini|cfg|conf|key|pem|crt|sh|bash|yml|yaml|toml|lock)$/i;
+
+const notFoundHtml = `<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Not Found | yld</title>
+</head>
+<body>
+  <h1>404</h1>
+  <p>Page not found.</p>
+</body>
+</html>`;
+
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -273,6 +294,17 @@ export function middleware(request: NextRequest) {
     pathname.endsWith(".js")
   ) {
     return NextResponse.next();
+  }
+
+  // Cheap static 404 for scanner/crawler noise so it never reaches the renderer.
+  if (NEVER_A_ROUTE.test(pathname)) {
+    return new NextResponse(notFoundHtml, {
+      status: 404,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "public, max-age=3600",
+      },
+    });
   }
 
   // MAINTENANCE MODE — block everything except static assets and exempt APIs
@@ -320,11 +352,13 @@ export function middleware(request: NextRequest) {
   response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   const isEEA = EEA_COUNTRIES.has(country);
 
-  // In development, don't overwrite manually set geo_region cookie (for testing)
+  // Only set the cookie when it is missing. Re-emitting Set-Cookie on every response
+  // forces Cloudflare to treat the response as uncacheable (Set-Cookie triggers a cache
+  // bypass), which would prevent edge caching of these pages. A manually set cookie
+  // (e.g. for local testing) is left untouched.
   const existingGeoRegion = request.cookies.get("geo_region")?.value;
-  const isDev = process.env.NODE_ENV === "development";
 
-  if (!isDev || !existingGeoRegion) {
+  if (!existingGeoRegion) {
     response.cookies.set("geo_region", isEEA ? "EEA" : "OTHER", {
       httpOnly: false, // Must be readable by JavaScript
       secure: process.env.NODE_ENV === "production",

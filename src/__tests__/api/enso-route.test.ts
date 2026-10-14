@@ -15,6 +15,7 @@ vi.mock("@ensofinance/sdk", () => ({
 }));
 
 import { POST } from "@/app/api/enso/[method]/route";
+import { clearMemoryEnsoPrices } from "@/lib/enso-prices-cache";
 
 function request(body: Record<string, unknown>): Request {
   return new Request("https://yldfi.co/api/enso/bundle", {
@@ -30,6 +31,7 @@ function request(body: Record<string, unknown>): Request {
 describe("Enso API route boundary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearMemoryEnsoPrices();
     vi.stubEnv("ENSO_API_KEY", "test-key");
   });
 
@@ -114,6 +116,53 @@ describe("Enso API route boundary", () => {
       const response = await prices(addresses);
       expect(response.status).toBe(400);
       expect(mockGetMultiplePriceData).not.toHaveBeenCalled();
+    });
+
+    it("serves a burst of identical requests from cache after one upstream fan-out", async () => {
+      mockGetMultiplePriceData.mockImplementation(async ({ addresses }: { addresses: string[] }) =>
+        addresses.map((address) => ({ chainId: 1, address, price: 1, decimals: 18 })));
+      const input = Array.from({ length: 120 }, (_, i) => addr(i + 1));
+
+      const first = await prices(input);
+      expect(first.headers.get("X-Enso-Price-Cache")).toBe("miss");
+      expect(mockGetMultiplePriceData).toHaveBeenCalledTimes(3);
+
+      const second = await prices(input);
+      expect(second.headers.get("X-Enso-Price-Cache")).toBe("hit");
+      expect(mockGetMultiplePriceData).toHaveBeenCalledTimes(3);
+      await expect(second.json()).resolves.toEqual(await first.json());
+    });
+
+    it("treats reordered and re-cased addresses as the same cache entry", async () => {
+      mockGetMultiplePriceData.mockImplementation(async ({ addresses }: { addresses: string[] }) =>
+        addresses.map((address) => ({ chainId: 1, address, price: 1, decimals: 18 })));
+      const input = [addr(10), addr(11), addr(12)];
+
+      await prices(input);
+      await prices([input[2].toUpperCase(), input[0], input[1]]);
+
+      expect(mockGetMultiplePriceData).toHaveBeenCalledTimes(1);
+    });
+
+    it("collapses concurrent identical requests onto a single upstream fan-out", async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      mockGetMultiplePriceData.mockImplementation(async ({ addresses }: { addresses: string[] }) => {
+        await gate;
+        return addresses.map((address) => ({ chainId: 1, address, price: 1, decimals: 18 }));
+      });
+
+      const input = [addr(10), addr(11)];
+      const first = prices(input);
+      const second = prices(input);
+      release();
+      const [a, b] = await Promise.all([first, second]);
+
+      expect(a.status).toBe(200);
+      expect(b.status).toBe(200);
+      expect(mockGetMultiplePriceData).toHaveBeenCalledTimes(1);
     });
   });
 });

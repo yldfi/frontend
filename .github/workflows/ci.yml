@@ -257,6 +257,12 @@ jobs:
           # Server-side secrets (ENSO_API_KEY, TOKEN_HOLDER_API_KEY, ETHERSCAN_API_KEY, etc.)
           # are configured as Cloudflare Worker secrets, not at build time
 
+      - name: Populate static assets cache
+        run: pnpm populate:cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Deploy to Cloudflare
         run: npx wrangler deploy
         env:
