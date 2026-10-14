@@ -3,9 +3,23 @@
   "main": "workers/yldfi-edge.ts",
   "compatibility_date": "2026-09-02",
   "compatibility_flags": ["nodejs_compat"],
+  // Workers Caching is DISABLED. Its cache key does NOT reliably partition on
+  // `Vary: cf-ipcountry`, so a page cached for an allowed region was served to a
+  // blocked region (GB), bypassing the regulatory geo-block. Re-enable only with a
+  // country-keyed design (e.g. a gateway entrypoint passing country via ctx.props).
+  "cache": {
+    "enabled": false
+  },
   "observability": {
     "enabled": true,
-    "head_sampling_rate": 1
+    // 10% sampling: enough to debug, without emitting a log line for every request.
+    "head_sampling_rate": 0.1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 0.1,
+      "persist": true,
+      "invocation_logs": true
+    }
   },
   "assets": {
     "directory": ".open-next/assets",

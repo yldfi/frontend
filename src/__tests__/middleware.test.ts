@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { NEVER_A_ROUTE } from "@/middleware";
 
 // Test the middleware logic by extracting testable functions
 // Since Next.js server components are hard to test directly, we test the business logic
@@ -308,5 +309,41 @@ describe("middleware geo-blocking logic", () => {
     it("still blocks US user for /api/explorer", () => {
       expect(getMiddlewareDecision("US", "/api/explorer")).toBe("block");
     });
+  });
+});
+
+describe("scanner 404 fast-path", () => {
+  it.each([
+    "/.env",
+    "/.git/config",
+    "/.aws/credentials",
+    "/wp-login.php",
+    "/backup.sql",
+    "/config.ini",
+    "/server.pem",
+    "/docker-compose.yml",
+    "/app.py",
+  ])("matches %s", (path) => {
+    expect(NEVER_A_ROUTE.test(path)).toBe(true);
+  });
+
+  it.each([
+    "/",
+    "/zap",
+    "/terms",
+    "/privacy",
+    "/rewards",
+    "/debug",
+    "/vaults/0x1234567890123456789012345678901234567890",
+    "/vaults/0x1234567890123456789012345678901234567890/lending",
+    "/social/weekly-apy",
+    "/robots.txt",
+    "/sitemap.xml",
+    "/manifest.webmanifest",
+    "/fonts/inter.woff2",
+    "/_next/static/chunks/main.js",
+    "/api/enso/prices",
+  ])("does not match %s", (path) => {
+    expect(NEVER_A_ROUTE.test(path)).toBe(false);
   });
 });
