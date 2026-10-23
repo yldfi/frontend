@@ -20,11 +20,13 @@ import { createPublicClient, http, parseEther, formatEther, type Address } from 
 import { mainnet } from "viem/chains";
 import crossFetch from "cross-fetch";
 
-// Restore real fetch for live API tests
-// The global mock in vitest.setup.ts breaks network requests
-// We use cross-fetch as a real fetch implementation
+// Restore real fetch for live API tests. The global mock in vitest.setup.ts
+// breaks network requests. Use the native fetch rather than cross-fetch: viem
+// reads `response.body.getReader`, which the node-fetch ponyfill lacks.
+const realFetch = (globalThis as unknown as { __nativeFetch?: typeof fetch }).__nativeFetch;
+
 beforeAll(() => {
-  vi.stubGlobal("fetch", crossFetch);
+  vi.stubGlobal("fetch", realFetch ?? crossFetch);
 });
 
 // Test configuration
