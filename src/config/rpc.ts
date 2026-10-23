@@ -70,6 +70,9 @@ async function fetchChainlistRpcs(): Promise<string[]> {
 }
 
 function ensureDynamicRpcsFetched(): void {
+  // Tests (and anyone debugging an RPC issue) can pin the static list so the
+  // background chainid.network fetch cannot race a mocked or metered endpoint.
+  if (process.env.RPC_DYNAMIC_DISCOVERY === "off") return;
   const now = Date.now();
   // Refetch after cache TTL expires
   if (dynamicFetchPromise && now - dynamicFetchedAt < DYNAMIC_CACHE_TTL) return;

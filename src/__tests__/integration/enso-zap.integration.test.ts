@@ -13,6 +13,7 @@
  * Run with: pnpm vitest run src/__tests__/integration/enso-zap.integration.test.ts
  */
 import { describe, it, expect, beforeAll, vi } from "vitest";
+import { logSkippedSuite, probeRpc } from "./helpers/rpc-probe";
 import crossFetch from "cross-fetch";
 
 // Restore real fetch for live API tests
@@ -102,6 +103,11 @@ function isValidBundle(result: { tx?: { to: string; data: string } }): boolean {
 // Uses DEBUG_RPC_URL from .env.local (e.g. Tenderly or Alchemy with debug API access)
 const SIMULATION_RPC_URL = process.env.DEBUG_RPC_URL || process.env.NEXT_PUBLIC_ALCHEMY_RPC_URL;
 const SIMULATION_RPC_AUTH = process.env.DEBUG_RPC_AUTH;
+
+// Probe once: a dead/blocked endpoint is an environment problem, not a code
+// regression, so skip loudly instead of failing every case with a parse error.
+const simulationRpcReason = await probeRpc(SIMULATION_RPC_URL, SIMULATION_RPC_AUTH);
+if (simulationRpcReason) logSkippedSuite("Enso zap simulation tests", simulationRpcReason);
 
 // Enso contracts involved in routes. Router V2 is the user approval spender.
 // These MUST match the addresses in src/lib/enso.ts
@@ -1371,7 +1377,7 @@ describe("Enso Zap Integration Tests", () => {
   // ============================================
   describe("Transaction Simulation - yscvgCVX Routes", () => {
     // Skip simulation tests if no RPC URL is configured
-    const skipIfNoRpc = !SIMULATION_RPC_URL ? it.skip : it;
+    const skipIfNoRpc = simulationRpcReason ? it.skip : it;
 
     skipIfNoRpc(
       "ETH → yscvgCVX simulation succeeds",
@@ -1497,7 +1503,7 @@ describe("Enso Zap Integration Tests", () => {
   // ============================================
   // Uses dynamic wallet discovery to find EOAs that hold vault shares
   describe("Transaction Simulation - Vault-to-Vault", () => {
-    const skipIfNoRpc = !SIMULATION_RPC_URL ? it.skip : it;
+    const skipIfNoRpc = simulationRpcReason ? it.skip : it;
 
     skipIfNoRpc(
       "ycvxCRV → yscvgCVX simulation succeeds",
