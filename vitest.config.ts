@@ -54,6 +54,12 @@ export default defineConfig({
           environment: "node",
           include: [INTEGRATION_INCLUDE],
           exclude: [...configDefaults.exclude, ...INTEGRATION_DOM_INCLUDE],
+          // These suites talk to live upstreams (Enso routing, RPC, token
+          // holder APIs) that intermittently answer "Swap not found" or a 5xx.
+          // One retry keeps a single upstream hiccup from costing the nightly a
+          // whole 2-minute attempt; a real regression still fails twice, and the
+          // job-level retry loop remains the backstop.
+          retry: 1,
         },
       },
       {
