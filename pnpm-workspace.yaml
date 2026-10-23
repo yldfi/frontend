@@ -3,13 +3,16 @@ saveExact: true
 blockExoticSubdeps: true
 auditConfig:
   ignoreGhsas:
-    # zod <4.6.6 memory exhaustion while validating oversized constrained
-    # collections (GHSA-mrhx-c7xc-m3w5). There is no patched 3.x release, and
-    # every zod 3 copy in the tree is a transitive peer of a wallet SDK pinned to
-    # the v3 API (@reown/appkit-wallet, @coinbase/cdp-sdk via @base-org/account,
-    # abitype via viem/ox/porto), so an override to 4.x would break them. The
-    # remaining exposure is a client-side tab DoS from provider-controlled
-    # payloads. The zod 4 copies are overridden to >=4.6.7 in package.json.
+    # Zod memory exhaustion in $ZodArray.handleArrayResult (GHSA-mrhx-c7xc-m3w5).
+    # The vulnerable path is zod 4 core only. The remaining zod 3 copies
+    # (3.22.4 via @reown/appkit-wallet, 3.25.76 via @coinbase/cdp-sdk and
+    # abitype) resolve to the legacy v3 core, which has no $ZodArray or
+    # handleArrayResult: 3.25.76 only ships the v4 core under its v4/ subpath and
+    # nothing imports it (verified: no zod/v4 or zod/v3 imports in those dists).
+    # They cannot move to 4.x either: both call z.record(schema) with one argument
+    # and z.string().email(), which the v4 API rejects when the schema is built.
+    # zod 4 copies are overridden to ^4.6.7, so the advisory only matches on its
+    # semver range (<4.6.6 sorts above 3.x).
     - GHSA-mrhx-c7xc-m3w5
     # braces <=3.0.3 stack-exhaustion DoS: no fixed release exists yet. Only
     # reached via eslint-config-next > fast-glob > micromatch (lint, dev only).
