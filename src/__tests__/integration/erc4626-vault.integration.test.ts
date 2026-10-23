@@ -267,7 +267,11 @@ async function rpcCall(method: string, params: unknown[]): Promise<unknown> {
 }
 
 /**
- * Simulate a transaction using debug_traceCall with state overrides
+ * Simulate a transaction with state overrides.
+ *
+ * Prefers debug_traceCall (revert reason + return data), then falls back to
+ * eth_call: path-key endpoints expose eth_call with overrides but usually keep
+ * the debug_* namespace closed.
  */
 async function simulateTransaction(params: {
   from: string;
@@ -301,10 +305,25 @@ async function simulateTransaction(params: {
 
     return { success: true, returnData: trace.output };
   } catch (e) {
-    return {
-      success: false,
-      error: e instanceof Error ? e.message : "Simulation failed",
-    };
+    const message = e instanceof Error ? e.message : "Simulation failed";
+    if (!/method not allowed|not supported|does not exist|unsupported/i.test(message)) {
+      return { success: false, error: message };
+    }
+
+    try {
+      const returnData = await callWithOverrides({
+        to: params.to,
+        data: params.data,
+        from: params.from,
+        stateOverrides: params.stateOverrides,
+      });
+      return { success: true, returnData: returnData as string };
+    } catch (fallbackError) {
+      return {
+        success: false,
+        error: fallbackError instanceof Error ? fallbackError.message : "Simulation failed",
+      };
+    }
   }
 }
 
@@ -314,10 +333,11 @@ async function simulateTransaction(params: {
 async function callWithOverrides(params: {
   to: string;
   data: string;
+  from?: string;
   stateOverrides?: Record<string, { stateDiff: Record<string, string> }>;
 }): Promise<string> {
   const result = await rpcCall("eth_call", [
-    { to: params.to, data: params.data },
+    { to: params.to, data: params.data, ...(params.from ? { from: params.from } : {}) },
     "latest",
     params.stateOverrides || {},
   ]);
