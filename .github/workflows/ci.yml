@@ -147,10 +147,12 @@ jobs:
   test-integration:
     name: Integration Tests
     runs-on: ubuntu-latest
-    # Run nightly (2am UTC) or on manual trigger only - not on every push
+    # Run nightly (2am UTC) or on manual trigger only - not on every push.
+    # This is not a PR check, so a red nightly run does not block merges or
+    # deploys: keep it honest instead of hiding failures behind
+    # continue-on-error. Suites that need an external endpoint they cannot
+    # reach (simulation RPC, Enso API key) skip loudly rather than fail.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    # Don't fail the workflow if integration tests fail (they depend on external APIs)
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
 

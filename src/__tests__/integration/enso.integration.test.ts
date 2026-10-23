@@ -1,12 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock the Enso SDK module - must be hoisted before imports
-const { mockGetTokenData, mockGetBalances, mockGetMultiplePriceData, mockGetRouteData, mockGetBundleData } = vi.hoisted(() => ({
+const { mockGetTokenData, mockGetBalances, mockGetMultiplePriceData, mockGetRouteData, mockGetBundleData, mockGetAggregators } = vi.hoisted(() => ({
   mockGetTokenData: vi.fn(),
   mockGetBalances: vi.fn(),
   mockGetMultiplePriceData: vi.fn(),
   mockGetRouteData: vi.fn(),
   mockGetBundleData: vi.fn(),
+  mockGetAggregators: vi.fn(),
 }));
 
 vi.mock("@ensofinance/sdk", () => {
@@ -17,6 +18,7 @@ vi.mock("@ensofinance/sdk", () => {
       getMultiplePriceData = mockGetMultiplePriceData;
       getRouteData = mockGetRouteData;
       getBundleData = mockGetBundleData;
+      getAggregators = mockGetAggregators;
     },
   };
 });
@@ -54,6 +56,12 @@ const mockFetch = vi.mocked(globalThis.fetch);
 describe("enso.ts integration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    // Clear queued/one-shot fetch responses so an unconsumed mock cannot leak
+    // into the next RPC test.
+    mockFetch.mockReset();
   });
 
   describe("constants", () => {
@@ -369,9 +377,12 @@ describe("enso.ts integration", () => {
       // Verify SDK was called with actions
       expect(mockGetBundleData).toHaveBeenCalled();
       const [, actions] = mockGetBundleData.mock.calls[0];
-      expect(actions).toHaveLength(2);
-      expect(actions[0].action).toBe("route");
-      expect(actions[1].action).toBe("deposit");
+      expect(actions.map((a: { action: string }) => a.action)).toEqual([
+        "route",
+        "deposit",
+        "slippage",
+      ]);
+      expect(actions[2].args.amountOut).toEqual({ useOutputOfCallAt: 1 });
     });
   });
 
@@ -384,6 +395,7 @@ describe("enso.ts integration", () => {
     });
 
     it("creates zap out bundle with redeem and swap", async () => {
+      mockGetAggregators.mockResolvedValueOnce(["grapher", "openocean", "uniswap"]);
       mockGetBundleData.mockResolvedValueOnce(createBundleResponse());
 
       await fetchZapOutRoute({
@@ -395,9 +407,16 @@ describe("enso.ts integration", () => {
 
       expect(mockGetBundleData).toHaveBeenCalled();
       const [, actions] = mockGetBundleData.mock.calls[0];
-      expect(actions).toHaveLength(2);
-      expect(actions[0].action).toBe("redeem");
-      expect(actions[1].action).toBe("route");
+      // redeem → route (into WETH) → unwrap WETH to ETH → terminal slippage guard
+      expect(actions.map((a: { action: string }) => a.action)).toEqual([
+        "redeem",
+        "route",
+        "redeem",
+        "slippage",
+      ]);
+      expect(actions[0].protocol).toBe("erc4626");
+      expect(actions[2].protocol).toBe("wrapped-native");
+      expect(actions[1].args.ignoreAggregators).toEqual(["uniswap"]);
     });
   });
 
@@ -421,7 +440,11 @@ describe("enso.ts integration", () => {
 
       expect(mockGetBundleData).toHaveBeenCalled();
       const [, actions] = mockGetBundleData.mock.calls[0];
-      expect(actions).toHaveLength(2);
+      expect(actions.map((a: { action: string }) => a.action)).toEqual([
+        "redeem",
+        "deposit",
+        "slippage",
+      ]);
       expect(actions[0].action).toBe("redeem");
       expect(actions[1].action).toBe("deposit");
     });
@@ -580,7 +603,8 @@ describe("enso.ts integration", () => {
     });
 
     it("throws on network error", async () => {
-      mockFetch.mockRejectedValueOnce(new Error("Network error"));
+      // Every RPC URL in the fallback list fails, so the last error surfaces.
+      mockFetch.mockRejectedValue(new Error("Network error"));
 
       await expect(getCvgCvxPoolBalances()).rejects.toThrow("Network error");
     });

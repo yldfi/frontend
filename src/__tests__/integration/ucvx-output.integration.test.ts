@@ -13,6 +13,7 @@ afterAll(() => {
 
 import { ETH_ADDRESS, fetchAnyToPxCvxRoute, fetchPxCvxZapInRoute } from "@/lib/enso";
 import { LLAMA_AIRFORCE, VAULT_ADDRESSES } from "@/config/vaults";
+import { logSkippedSuite, probeRpc } from "./helpers/rpc-probe";
 
 const TEST_WALLET = "0xd8da6bf26964af9d7eed9e03e53415d37aa96045";
 const TEST_ETH_IN = "30000000000000000"; // 0.03 ETH
@@ -20,6 +21,12 @@ const API_TIMEOUT = 90000;
 
 const SIMULATION_RPC_URL = process.env.DEBUG_RPC_URL || process.env.NEXT_PUBLIC_ALCHEMY_RPC_URL;
 const SIMULATION_RPC_AUTH = process.env.DEBUG_RPC_AUTH;
+
+// Probe once: a dead/blocked endpoint is an environment problem, not a code
+// regression, so skip loudly instead of failing every case with a parse error.
+const simulationRpcReason = await probeRpc(SIMULATION_RPC_URL, SIMULATION_RPC_AUTH);
+if (simulationRpcReason) logSkippedSuite("uCVX output integration tests", simulationRpcReason);
+const describeWithRpc = simulationRpcReason ? describe.skip : describe;
 
 function decodeRevertReason(error: { message?: string; data?: string }): string | undefined {
   if (error.message) return error.message;
@@ -120,7 +127,7 @@ async function simulateEthBundle(params: {
   return { success: true };
 }
 
-describe("uCVX output integration", () => {
+describeWithRpc("uCVX output integration", () => {
   const runIfConfigured = SIMULATION_RPC_URL ? it : it.skip;
 
   runIfConfigured(

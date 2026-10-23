@@ -80,9 +80,13 @@ describe("useZapActions integration", () => {
   const mockWriteContract = vi.fn();
   const mockResetApprove = vi.fn();
   const mockSendTransaction = vi.fn();
+  const mockSendTransactionAsync = vi.fn();
   const mockResetZap = vi.fn();
   const mockRefetchAllowance = vi.fn();
   const mockPublicClientCall = vi.fn();
+  const mockReadAllowance = vi.fn();
+  const mockGetBlockNumber = vi.fn();
+  const mockEstimateGas = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -126,10 +130,12 @@ describe("useZapActions integration", () => {
 
     mockUseSendTransaction.mockReturnValue({
       sendTransaction: mockSendTransaction,
+      sendTransactionAsync: mockSendTransactionAsync,
       data: undefined,
       reset: mockResetZap,
       error: null,
     } as unknown as ReturnType<typeof useSendTransaction>);
+    mockSendTransactionAsync.mockResolvedValue("0xzaphash" as `0x${string}`);
 
     mockUseReadContract.mockReturnValue({
       data: undefined,
@@ -144,6 +150,11 @@ describe("useZapActions integration", () => {
     // Mock usePublicClient with call method for eth_call simulation
     mockUsePublicClient.mockReturnValue({
       call: mockPublicClientCall.mockResolvedValue(undefined),
+      getBlockNumber: mockGetBlockNumber.mockResolvedValue(19_000_000n),
+      readContract: mockReadAllowance.mockResolvedValue(
+        BigInt("1000000000000000000000000") // plenty of allowance
+      ),
+      estimateGas: mockEstimateGas.mockResolvedValue(21_000n),
     } as unknown as ReturnType<typeof usePublicClient>);
   });
 
@@ -161,11 +172,14 @@ describe("useZapActions integration", () => {
         await result.current.executeZap();
       });
 
-      expect(mockSendTransaction).toHaveBeenCalledWith({
-        to: mockEthQuote.tx.to,
-        data: mockEthQuote.tx.data,
-        value: BigInt(mockEthQuote.tx.value || "0"),
-      });
+      // sendTx estimates gas first, so the wallet receives the buffered gas limit too.
+      expect(mockSendTransactionAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: mockEthQuote.tx.to,
+          data: mockEthQuote.tx.data,
+          value: BigInt(mockEthQuote.tx.value || "0"),
+        })
+      );
     });
 
     it("shows zapping status after executeZap", async () => {
@@ -255,10 +269,11 @@ describe("useZapActions integration", () => {
 
   describe("transaction states", () => {
     it("shows waitingApproval when approval is pending", () => {
-      mockUseWaitForTransactionReceipt.mockReturnValue({
-        isLoading: true,
-        isSuccess: false,
-      } as unknown as ReturnType<typeof useWaitForTransactionReceipt>);
+      mockUseWaitForTransactionReceipt.mockImplementation((params) =>
+        (params?.hash === ("0xapprovehash" as `0x${string}`)
+          ? { isLoading: true, isSuccess: false }
+          : { isLoading: false, isSuccess: false }) as unknown as ReturnType<typeof useWaitForTransactionReceipt>
+      );
 
       mockUseWriteContract.mockReturnValue({
         writeContract: mockWriteContract,
@@ -273,65 +288,54 @@ describe("useZapActions integration", () => {
       expect(result.current.isLoading).toBe(true);
     });
 
-    it("shows waitingTx when zap tx is pending", () => {
+    it("shows waitingTx when zap tx is pending", async () => {
       const zapHash = "0xzaphash" as `0x${string}`;
 
-      // Mock to return loading for zap hash, not for approval (undefined hash)
-      mockUseWaitForTransactionReceipt.mockImplementation((params) => {
-        if (params?.hash === zapHash) {
-          return {
-            isLoading: true,
-            isSuccess: false,
-          } as unknown as ReturnType<typeof useWaitForTransactionReceipt>;
-        }
-        return {
-          isLoading: false,
-          isSuccess: false,
-        } as unknown as ReturnType<typeof useWaitForTransactionReceipt>;
-      });
-
-      mockUseSendTransaction.mockReturnValue({
-        sendTransaction: mockSendTransaction,
-        data: zapHash,
-        reset: mockResetZap,
-        error: null,
-      } as unknown as ReturnType<typeof useSendTransaction>);
+      // The zap hash is internal state set from sendTx, so drive the flow and
+      // let the receipt hook report the pending zap.
+      mockUseWaitForTransactionReceipt.mockImplementation((params) =>
+        (params?.hash === zapHash
+          ? { isLoading: true, isSuccess: false }
+          : { isLoading: false, isSuccess: false }) as unknown as ReturnType<typeof useWaitForTransactionReceipt>
+      );
 
       const { result } = renderHook(() => useZapActions(mockEthQuote));
+
+      await act(async () => {
+        await result.current.executeZap();
+      });
 
       expect(result.current.status).toBe("waitingTx");
     });
 
-    it("shows success when zap tx succeeds", () => {
-      mockUseWaitForTransactionReceipt.mockReturnValue({
-        isLoading: false,
-        isSuccess: true,
-      } as unknown as ReturnType<typeof useWaitForTransactionReceipt>);
+    it("shows success when zap tx succeeds", async () => {
+      const zapHash = "0xzaphash" as `0x${string}`;
 
-      mockUseSendTransaction.mockReturnValue({
-        sendTransaction: mockSendTransaction,
-        data: "0xzaphash" as `0x${string}`,
-        reset: mockResetZap,
-        error: null,
-      } as unknown as ReturnType<typeof useSendTransaction>);
+      mockUseWaitForTransactionReceipt.mockImplementation((params) =>
+        (params?.hash === zapHash
+          ? { isLoading: false, isSuccess: true, data: { status: "success" } }
+          : { isLoading: false, isSuccess: false }) as unknown as ReturnType<typeof useWaitForTransactionReceipt>
+      );
 
       const { result } = renderHook(() => useZapActions(mockEthQuote));
+
+      await act(async () => {
+        await result.current.executeZap();
+      });
 
       expect(result.current.status).toBe("success");
       expect(result.current.isSuccess).toBe(true);
     });
 
-    it("returns zapHash when transaction is sent", () => {
+    it("returns zapHash when transaction is sent", async () => {
       const zapHash = "0xabcdef1234567890" as `0x${string}`;
-
-      mockUseSendTransaction.mockReturnValue({
-        sendTransaction: mockSendTransaction,
-        data: zapHash,
-        reset: mockResetZap,
-        error: null,
-      } as unknown as ReturnType<typeof useSendTransaction>);
+      mockSendTransactionAsync.mockResolvedValue(zapHash);
 
       const { result } = renderHook(() => useZapActions(mockEthQuote));
+
+      await act(async () => {
+        await result.current.executeZap();
+      });
 
       expect(result.current.zapHash).toBe(zapHash);
     });
@@ -354,33 +358,27 @@ describe("useZapActions integration", () => {
       expect(result.current.error).toBe("Transaction cancelled");
     });
 
-    it("shows error status when zap fails", () => {
-      const zapError = new Error("Insufficient funds");
-
-      mockUseSendTransaction.mockReturnValue({
-        sendTransaction: mockSendTransaction,
-        data: undefined,
-        reset: mockResetZap,
-        error: zapError,
-      } as unknown as ReturnType<typeof useSendTransaction>);
+    it("shows error status when zap fails", async () => {
+      mockSendTransactionAsync.mockRejectedValue(new Error("Insufficient funds"));
 
       const { result } = renderHook(() => useZapActions(mockEthQuote));
+
+      await act(async () => {
+        await result.current.executeZap();
+      });
 
       expect(result.current.status).toBe("error");
-      expect(result.current.error).toBe("Insufficient funds");
+      expect(result.current.error).toBe("Insufficient balance");
     });
 
-    it("parses user rejected error message", () => {
-      const zapError = new Error("User rejected transaction");
-
-      mockUseSendTransaction.mockReturnValue({
-        sendTransaction: mockSendTransaction,
-        data: undefined,
-        reset: mockResetZap,
-        error: zapError,
-      } as unknown as ReturnType<typeof useSendTransaction>);
+    it("parses user rejected error message", async () => {
+      mockSendTransactionAsync.mockRejectedValue(new Error("User rejected transaction"));
 
       const { result } = renderHook(() => useZapActions(mockEthQuote));
+
+      await act(async () => {
+        await result.current.executeZap();
+      });
 
       expect(result.current.error).toBe("Transaction cancelled");
     });
@@ -395,7 +393,7 @@ describe("useZapActions integration", () => {
       });
 
       expect(mockResetApprove).toHaveBeenCalled();
-      expect(mockResetZap).toHaveBeenCalled();
+      expect(result.current.status).toBe("idle");
     });
   });
 
@@ -492,7 +490,7 @@ describe("useZapActions integration", () => {
         await result.current.executeZap();
       });
 
-      expect(mockSendTransaction).toHaveBeenCalledWith(
+      expect(mockSendTransactionAsync).toHaveBeenCalledWith(
         expect.objectContaining({
           value: BigInt(0),
         })
@@ -516,7 +514,7 @@ describe("useZapActions integration", () => {
         await result.current.executeZap();
       });
 
-      expect(mockSendTransaction).toHaveBeenCalledWith(
+      expect(mockSendTransactionAsync).toHaveBeenCalledWith(
         expect.objectContaining({
           value: BigInt(0),
         })
