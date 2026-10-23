@@ -59,16 +59,16 @@
   "devDependencies": {
     "@opennextjs/cloudflare": "1.20.6",
     "@openzeppelin/contracts": "5.6.1",
-    "@playwright/test": "1.62.1",
+    "@playwright/test": "1.64.1",
     "@tailwindcss/postcss": "4.3.3",
     "@testing-library/dom": "10.4.2",
     "@testing-library/react": "16.3.3",
     "@types/dotenv": "8.2.3",
-    "@types/node": "26.4.1",
+    "@types/node": "26.6.5",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.2",
-    "@vitest/coverage-v8": "5.0.3",
+    "@vitest/coverage-v8": "5.0.5",
     "cross-fetch": "4.1.0",
     "dotenv": "18.0.5",
     "eslint": "9.39.2",
@@ -80,7 +80,7 @@
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
     "vite": "8.3.4",
-    "vitest": "5.0.3",
+    "vitest": "5.0.5",
     "wrangler": "4.129.0"
   },
   "pnpm": {
