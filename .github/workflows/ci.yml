@@ -19,6 +19,13 @@ on:
 env:
   NODE_VERSION: "24"
 
+# One run per ref: a new push supersedes the previous one instead of queueing
+# behind a deploy that will be overwritten anyway.
+concurrency:
+  # Include the event so the nightly run never cancels an in-flight main deploy.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   id-token: none
@@ -247,6 +254,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -284,6 +292,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
