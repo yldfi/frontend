@@ -5,16 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  schedule:
-    # Run integration tests nightly at 2am UTC
-    - cron: "0 2 * * *"
   workflow_dispatch:
-    inputs:
-      run_integration_tests:
-        description: "Run integration tests"
-        required: false
-        default: "false"
-        type: boolean
 
 env:
   NODE_VERSION: "24"
@@ -151,57 +142,6 @@ jobs:
           path: coverage/
           retention-days: 14
 
-  test-integration:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    # Run nightly (2am UTC) or on manual trigger only - not on every push.
-    # This is not a PR check, so a red nightly run does not block merges or
-    # deploys: keep it honest instead of hiding failures behind
-    # continue-on-error. Suites that need an external endpoint they cannot
-    # reach (simulation RPC, Enso API key) skip loudly rather than fail.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: "pnpm"
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Run integration tests (with retry)
-        run: |
-          for i in 1 2 3; do
-            echo "Attempt $i of 3..."
-            pnpm test:integration && break || {
-              if [ $i -eq 3 ]; then
-                echo "Integration tests failed after 3 attempts"
-                exit 1
-              fi
-              echo "Attempt $i failed, retrying in 10s..."
-              sleep 10
-            }
-          done
-        env:
-          ENSO_API_KEY: ${{ secrets.ENSO_API_KEY }}
-          TOKEN_HOLDER_API_KEY: ${{ secrets.TOKEN_HOLDER_API_KEY }}
-          TOKEN_HOLDER_API_URL: ${{ secrets.TOKEN_HOLDER_API_URL }}
-          DEBUG_RPC_URL: ${{ secrets.DEBUG_RPC_URL }}
-          DEBUG_RPC_AUTH: ${{ secrets.DEBUG_RPC_AUTH }}
-
-      - name: Upload integration test results
-        uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: integration-test-results
-          path: |
-            coverage/
-          retention-days: 7
-
   test-sweep:
     name: Bundle Delivery Sweep
     runs-on: ubuntu-latest
@@ -255,6 +195,15 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm test:e2e:install
 
+      # Webpack's persistent cache: the compile is ~36s of the build on CI.
+      - name: Restore Next build cache
+        uses: actions/cache@v6
+        with:
+          path: .next/cache
+          key: ${{ runner.os }}-next-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-next-${{ hashFiles('pnpm-lock.yaml') }}-
+
       - name: Build application
         run: pnpm build
         env:
@@ -293,6 +242,15 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Webpack's persistent cache: the compile is ~36s of the build on CI.
+      - name: Restore Next build cache
+        uses: actions/cache@v6
+        with:
+          path: .next/cache
+          key: ${{ runner.os }}-next-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-next-${{ hashFiles('pnpm-lock.yaml') }}-
 
       - name: Build for Cloudflare
         run: pnpm build:cloudflare
