@@ -234,11 +234,19 @@ async function build(body: Body, amount: bigint): Promise<{ actions: Action[] | 
   return { actions, error: res.status >= 400 ? String(((await res.json()) as { error?: unknown }).error) : undefined };
 }
 
+// The sweep is ~670 cases x 4 quote modes (~2,700 real intent-route calls,
+// ~51ms each). CI shards it across concurrent vitest processes via
+// SWEEP_PART/SWEEP_TOTAL so one file does not serialise the whole unit gate;
+// with neither set it runs everything.
+const SWEEP_PART = Number(process.env.SWEEP_PART ?? 0);
+const SWEEP_TOTAL = Math.max(1, Number(process.env.SWEEP_TOTAL ?? 1));
+
 describe("bundle delivery sweep", () => {
-  const cases = acceptedCases();
+  const allCases = acceptedCases();
+  const cases = allCases.filter((_, index) => index % SWEEP_TOTAL === SWEEP_PART);
 
   it("covers every accepted intent combination", () => {
-    expect(cases.length).toBeGreaterThan(100);
+    expect(allCases.length).toBeGreaterThan(100);
   });
 
   it("delivers every bundle's output to the user across all quote-dependent branches", async () => {
@@ -254,10 +262,12 @@ describe("bundle delivery sweep", () => {
       }
     }
     if (process.env.SWEEP_OUT) (await import("fs")).writeFileSync(process.env.SWEEP_OUT, [...new Set(report)].join("\n"));
-    expect(built).toBeGreaterThan(1000);
+    expect(built).toBeGreaterThan(SWEEP_TOTAL === 1 ? 1000 : 0);
     const isKnown = (line: string) => KNOWN_ISSUES.some((k) => line.startsWith(`${k.intent} `) && k.violation.test(line));
     expect([...new Set(report)].filter((line) => !isKnown(line))).toEqual([]);
     for (const known of KNOWN_ISSUES) {
+      // A shard only asserts the issues whose cases it actually ran.
+      if (!cases.some((c) => c.body.intent === known.intent)) continue;
       expect(report.some((line) => line.startsWith(`${known.intent} `) && known.violation.test(line)),
         `known issue no longer reproduces, remove it from KNOWN_ISSUES: ${known.note}`).toBe(true);
     }

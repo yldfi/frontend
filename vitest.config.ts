@@ -7,6 +7,9 @@ import * as dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 
 const UNIT_INCLUDE = "src/**/*.{test,spec}.{ts,tsx}";
+// One sequential combinatorial sweep (~2,700 intent-route calls). It gets its own
+// project so CI can shard it across processes instead of serialising the unit gate.
+const SWEEP_FILE = "src/__tests__/lib/bundle-delivery-sweep.test.ts";
 const INTEGRATION_DIR = "src/__tests__/integration";
 const INTEGRATION_INCLUDE = `${INTEGRATION_DIR}/**/*.{test,spec}.{ts,tsx}`;
 
@@ -44,7 +47,7 @@ export default defineConfig({
           name: "unit",
           environment: "jsdom",
           include: [UNIT_INCLUDE],
-          exclude: [...configDefaults.exclude, `${INTEGRATION_DIR}/**`],
+          exclude: [...configDefaults.exclude, `${INTEGRATION_DIR}/**`, SWEEP_FILE],
         },
       },
       {
@@ -60,6 +63,13 @@ export default defineConfig({
           // whole 2-minute attempt; a real regression still fails twice, and the
           // job-level retry loop remains the backstop.
           retry: 1,
+        },
+      },
+      {
+        test: {
+          name: "sweep",
+          environment: "node",
+          include: [SWEEP_FILE],
         },
       },
       {

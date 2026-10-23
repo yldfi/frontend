@@ -202,6 +202,39 @@ jobs:
             coverage/
           retention-days: 7
 
+  test-sweep:
+    name: Bundle Delivery Sweep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # ~2,700 intent-route builds in one file: serialising it made the unit gate
+      # ~3 minutes. Each shard is its own vitest process, so the work spreads
+      # across the runner's cores while staying one source file.
+      - name: Run sweep in parallel shards
+        run: |
+          for i in 0 1 2 3; do
+            SWEEP_PART="$i" SWEEP_TOTAL=4 pnpm test:sweep >"/tmp/sweep-$i.log" 2>&1 &
+          done
+          status=0
+          for pid in $(jobs -p); do wait "$pid" || status=1; done
+          for i in 0 1 2 3; do
+            echo "::group::sweep shard $i"
+            cat "/tmp/sweep-$i.log"
+            echo "::endgroup::"
+          done
+          exit "$status"
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
@@ -282,7 +315,7 @@ jobs:
   deploy:
     name: Deploy to Cloudflare
     runs-on: ubuntu-latest
-    needs: [lint, type-check, test-unit, build-cloudflare]
+    needs: [lint, type-check, test-unit, test-sweep, build-cloudflare]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
       - uses: actions/checkout@v7
