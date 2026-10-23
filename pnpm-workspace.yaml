@@ -3,6 +3,14 @@ saveExact: true
 blockExoticSubdeps: true
 auditConfig:
   ignoreGhsas:
+    # zod <4.6.6 memory exhaustion while validating oversized constrained
+    # collections (GHSA-mrhx-c7xc-m3w5). There is no patched 3.x release, and
+    # every zod 3 copy in the tree is a transitive peer of a wallet SDK pinned to
+    # the v3 API (@reown/appkit-wallet, @coinbase/cdp-sdk via @base-org/account,
+    # abitype via viem/ox/porto), so an override to 4.x would break them. The
+    # remaining exposure is a client-side tab DoS from provider-controlled
+    # payloads. The zod 4 copies are overridden to >=4.6.7 in package.json.
+    - GHSA-mrhx-c7xc-m3w5
     # braces <=3.0.3 stack-exhaustion DoS: no fixed release exists yet. Only
     # reached via eslint-config-next > fast-glob > micromatch (lint, dev only).
     - GHSA-vfj7-8cjw-p6xm
