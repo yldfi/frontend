@@ -23,6 +23,7 @@
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration --project integration-dom",
     "test:coverage": "vitest run --coverage --project unit",
+    "test:sweep": "vitest run --project sweep",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
