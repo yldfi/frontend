@@ -27,6 +27,10 @@ Object.defineProperty(globalThis, "fetch", {
   writable: true,
 });
 
+// Keep the module-level RPC list static so the background chainid.network
+// lookup cannot consume a mocked fetch response or hit the network.
+process.env.RPC_DYNAMIC_DISCOVERY = "off";
+
 // Mock wagmi hooks and utilities
 vi.mock("wagmi", () => ({
   useReadContracts: vi.fn(() => ({

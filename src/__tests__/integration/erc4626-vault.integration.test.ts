@@ -12,13 +12,21 @@ import { parseEther, encodeFunctionData, keccak256, toHex, pad, concat } from "v
 import crossFetch from "cross-fetch";
 import { VAULT_ADDRESSES, TOKENS } from "@/config/vaults";
 import { ERC4626_ABI as ERC4626_VIEW_ABI, VAULT_ABI } from "@/lib/abis";
+import { logSkippedSuite, probeRpc } from "./helpers/rpc-probe";
 
 // Combined ABI for ERC4626 view + write operations used in tests
 const ERC4626_ABI = [...ERC4626_VIEW_ABI, ...VAULT_ABI] as const;
 
-// RPC configuration
-const SIMULATION_RPC_URL = process.env.DEBUG_RPC_URL || "https://eth.llamarpc.com";
+// RPC configuration. There is deliberately no public fallback: these tests need
+// debug_traceCall with state overrides, which public endpoints do not serve.
+const SIMULATION_RPC_URL = process.env.DEBUG_RPC_URL ?? "";
 const SIMULATION_RPC_AUTH = process.env.DEBUG_RPC_AUTH || "";
+
+// Probe once: a dead/blocked endpoint is an environment problem, not a code
+// regression, so skip loudly instead of failing every case with a parse error.
+const simulationRpcReason = await probeRpc(SIMULATION_RPC_URL, SIMULATION_RPC_AUTH);
+if (simulationRpcReason) logSkippedSuite("ERC4626 vault integration tests", simulationRpcReason);
+const describeWithRpc = simulationRpcReason ? describe.skip : describe;
 
 // Token holders API
 const TOKEN_HOLDER_API_URL = process.env.TOKEN_HOLDER_API_URL || "http://localhost:3000/api/token-holders";
@@ -320,7 +328,7 @@ async function callWithOverrides(params: {
 // Tests
 // ============================================================================
 
-describe("Direct ERC4626 Vault Operations", () => {
+describeWithRpc("Direct ERC4626 Vault Operations", () => {
   beforeAll(() => {
     if (!SIMULATION_RPC_URL) {
       console.warn("DEBUG_RPC_URL not set - skipping ERC4626 vault integration tests");

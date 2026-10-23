@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import path from "path";
 import * as dotenv from "dotenv";
@@ -6,16 +6,65 @@ import * as dotenv from "dotenv";
 // Load env from .env.local for tests
 dotenv.config({ path: ".env.local" });
 
+const UNIT_INCLUDE = "src/**/*.{test,spec}.{ts,tsx}";
+const INTEGRATION_DIR = "src/__tests__/integration";
+const INTEGRATION_INCLUDE = `${INTEGRATION_DIR}/**/*.{test,spec}.{ts,tsx}`;
+
+// Integration tests that need a DOM: React hooks rendered with
+// @testing-library/react, and modules that read `window` directly (gtag).
+// Everything else runs in node so libraries take their server-side path
+// instead of the browser `/api/*` proxies (and so `typeof window` checks in
+// src/lib/enso.ts pick the SDK branch the tests mock).
+const INTEGRATION_DOM_MODULES = [
+  "useZapActions",
+  "useZapQuote",
+  "usePricePerShare",
+  "useVaultBalance",
+  "useVaultCache",
+  "useVaultData",
+  "useYearnVault",
+  "analytics",
+  "direct-vault-deposit",
+];
+const INTEGRATION_DOM_INCLUDE = INTEGRATION_DOM_MODULES.map(
+  (name) => `${INTEGRATION_DIR}/${name}.*.{test,spec}.{ts,tsx}`
+);
+
 export default defineConfig({
   plugins: [react()],
   define: {
     "process.env.ENSO_API_KEY": JSON.stringify(process.env.ENSO_API_KEY),
   },
   test: {
-    environment: "jsdom",
     globals: true,
     setupFiles: ["./vitest.setup.ts"],
-    include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    projects: [
+      {
+        test: {
+          name: "unit",
+          environment: "jsdom",
+          include: [UNIT_INCLUDE],
+          exclude: [...configDefaults.exclude, `${INTEGRATION_DIR}/**`],
+        },
+      },
+      {
+        // Server-side libraries, SDK calls and on-chain/RPC probes.
+        test: {
+          name: "integration",
+          environment: "node",
+          include: [INTEGRATION_INCLUDE],
+          exclude: [...configDefaults.exclude, ...INTEGRATION_DOM_INCLUDE],
+        },
+      },
+      {
+        // Hooks and browser-only modules still need jsdom.
+        test: {
+          name: "integration-dom",
+          environment: "jsdom",
+          include: INTEGRATION_DOM_INCLUDE,
+        },
+      },
+    ],
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html", "lcov"],
