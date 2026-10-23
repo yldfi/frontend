@@ -20,11 +20,13 @@ import { createPublicClient, http, parseEther, formatEther, type Address } from 
 import { mainnet } from "viem/chains";
 import crossFetch from "cross-fetch";
 
-// Restore real fetch for live API tests
-// The global mock in vitest.setup.ts breaks network requests
-// We use cross-fetch as a real fetch implementation
+// Restore real fetch for live API tests. The global mock in vitest.setup.ts
+// breaks network requests. Use the native fetch rather than cross-fetch: viem
+// reads `response.body.getReader`, which the node-fetch ponyfill lacks.
+const realFetch = (globalThis as unknown as { __nativeFetch?: typeof fetch }).__nativeFetch;
+
 beforeAll(() => {
-  vi.stubGlobal("fetch", crossFetch);
+  vi.stubGlobal("fetch", realFetch ?? crossFetch);
 });
 
 // Test configuration
@@ -171,7 +173,7 @@ async function simulateBundle(params: {
   data: string;
   value: string;
 }): Promise<{ success: boolean; failedStep?: number; error?: string }> {
-  if (!DEBUG_RPC_URL || !DEBUG_RPC_AUTH) {
+  if (!DEBUG_RPC_URL) {
     return { success: false, error: "No debug RPC configured" };
   }
 
@@ -179,7 +181,9 @@ async function simulateBundle(params: {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Basic ${DEBUG_RPC_AUTH}`,
+      // Path-key RPC endpoints need no Authorization header; keep basic auth
+      // support for proxies that still require it.
+      ...(DEBUG_RPC_AUTH ? { Authorization: `Basic ${DEBUG_RPC_AUTH}` } : {}),
     },
     body: JSON.stringify({
       jsonrpc: "2.0",
@@ -561,7 +565,9 @@ describeWithApi("Zap Integration Tests", () => {
   });
 
   describe("Simulation with debug_traceCall", () => {
-    const hasDebugRpc = DEBUG_RPC_URL && DEBUG_RPC_AUTH;
+    // Path-key endpoints expose eth_call + state overrides but not debug_*, so
+    // the URL alone is what gates these.
+    const hasDebugRpc = Boolean(DEBUG_RPC_URL);
 
     it.skipIf(!hasDebugRpc)("ETH → yscvgCVX: simulates successfully", { timeout: 30000 }, async () => {
       const { fetchCvgCvxZapInRoute } = await import("@/lib/enso");
