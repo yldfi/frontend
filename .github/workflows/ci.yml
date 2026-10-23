@@ -196,6 +196,7 @@ jobs:
         run: pnpm test:e2e:install
 
       # Webpack's persistent cache: the compile is ~36s of the build on CI.
+      # Measured before this step: build job 118s (cold, no cache available).
       - name: Restore Next build cache
         uses: actions/cache@v6
         with:
