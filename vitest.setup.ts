@@ -22,9 +22,19 @@ Object.defineProperty(globalThis, "localStorage", {
 });
 
 // Mock fetch for API tests
+const nativeFetch = globalThis.fetch;
 Object.defineProperty(globalThis, "fetch", {
   value: vi.fn(),
   writable: true,
+});
+
+// viem (used by some integration tests) needs a spec-compliant Response body,
+// which the cross-fetch/node-fetch ponyfill does not provide. Keep the native
+// implementation reachable so live-network tests can restore it explicitly.
+Object.defineProperty(globalThis, "__nativeFetch", {
+  value: nativeFetch,
+  writable: true,
+  configurable: true,
 });
 
 // Keep the module-level RPC list static so the background chainid.network
