@@ -1,6 +1,9 @@
 "use client";
 
-import { useReadContract, useWaitForTransactionReceipt, useAccount, usePublicClient } from "wagmi";
+import { useReadContract, useAccount, usePublicClient } from "wagmi";
+import { useTxReceipt } from "@/hooks/useTxReceipt";
+import { useSafeBatch } from "@/hooks/useSafeBatch";
+import { buildApprovalSimulationTransaction, type ApprovalSimulationTransaction } from "@/lib/tenderly-simulation-bundle";
 import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
 import { parseUnits, maxUint256, encodeFunctionData } from "viem";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
@@ -31,7 +34,10 @@ export function useVaultActions(
   const pendingTx = useRef<{
     type: "deposit" | "withdraw";
     args: readonly [bigint, `0x${string}`] | readonly [bigint, `0x${string}`, `0x${string}`];
+    /** Safe batch: approval call(s) sent atomically before the deposit. */
+    approvals?: ApprovalSimulationTransaction[];
   } | null>(null);
+  const { canBatch, sendBatch } = useSafeBatch();
 
   // Check allowance
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
@@ -65,17 +71,17 @@ export function useVaultActions(
   const handledApprovalHashRef = useRef<`0x${string}` | undefined>(undefined);
 
   // Wait for transactions - poll every 1 second until confirmed
-  const { isLoading: isApprovalPending, isSuccess: isApprovalSuccess, data: approvalReceipt } = useWaitForTransactionReceipt({
+  const { isLoading: isApprovalPending, isSuccess: isApprovalSuccess, data: approvalReceipt, safe: approvalSafe } = useTxReceipt({
     hash: approveHash,
     pollingInterval: 1_000,
   });
 
-  const { isLoading: isDepositPending, isSuccess: isDepositSuccess, data: depositReceipt } = useWaitForTransactionReceipt({
+  const { isLoading: isDepositPending, isSuccess: isDepositSuccess, data: depositReceipt, safe: depositSafe } = useTxReceipt({
     hash: depositHash,
     pollingInterval: 1_000,
   });
 
-  const { isLoading: isWithdrawPending, isSuccess: isWithdrawSuccess, data: withdrawReceipt } = useWaitForTransactionReceipt({
+  const { isLoading: isWithdrawPending, isSuccess: isWithdrawSuccess, data: withdrawReceipt, safe: withdrawSafe } = useTxReceipt({
     hash: withdrawHash,
     pollingInterval: 1_000,
   });
@@ -236,6 +242,7 @@ export function useVaultActions(
   const runSimulation = useCallback(async (
     calldata: `0x${string}`,
     value: bigint = 0n,
+    approvals?: ApprovalSimulationTransaction[],
   ): Promise<SimulationResult | null> => {
     if (!userAddress || !publicClient) return null;
 
@@ -265,6 +272,11 @@ export function useVaultActions(
                 to: vaultAddress,
                 data: calldata,
                 value: value.toString(),
+                // Safe batch: simulate the approval call(s) right before the
+                // deposit, exactly as the batch will execute them.
+                ...(approvals?.length
+                  ? { inputToken: tokenAddress, spender: vaultAddress, approvalTransactions: approvals }
+                  : {}),
                 nonce: nonceResult.nonce,
                 expires: nonceResult.expires,
                 sig: nonceResult.sig,
@@ -381,11 +393,34 @@ export function useVaultActions(
     }
 
     return simResult.result ?? null;
-  }, [userAddress, vaultAddress, publicClient, testNetworkType, chainId]);
+  }, [userAddress, vaultAddress, tokenAddress, publicClient, testNetworkType, chainId]);
 
-  // Deposit with pre-flight simulation
-  // Options: previewOnly — when true, run Tenderly simulation and return result without sending tx
-  const deposit = useCallback(async (amount: string, options?: { previewOnly?: boolean }): Promise<SimulationResult | null> => {
+  // Approval call(s) for a Safe batch: approve(0) first when the token
+  // requires resetting a non-zero allowance, then approve(amount).
+  const buildBatchApprovals = useCallback(async (approvalAmount: bigint): Promise<ApprovalSimulationTransaction[]> => {
+    const needsZeroReset = userAddress ? await shouldResetApprovalToZeroFirst({
+      publicClient,
+      owner: userAddress,
+      token: tokenAddress,
+      spender: vaultAddress,
+      amount: approvalAmount,
+      currentAllowance: allowance as bigint | undefined,
+    }) : false;
+    return [
+      ...(needsZeroReset ? [buildApprovalSimulationTransaction(tokenAddress, vaultAddress, 0n)] : []),
+      buildApprovalSimulationTransaction(tokenAddress, vaultAddress, approvalAmount),
+    ];
+  }, [userAddress, publicClient, tokenAddress, vaultAddress, allowance]);
+
+  const sendDeposit = useCallback(async (calldata: `0x${string}`, approvals?: ApprovalSimulationTransaction[]) => {
+    if (!approvals?.length) return sendTx({ to: vaultAddress, data: calldata });
+    return sendBatch([...approvals.map((t) => ({ to: t.to, data: t.data })), { to: vaultAddress, data: calldata }]);
+  }, [sendTx, sendBatch, vaultAddress]);
+
+  // Deposit with pre-flight simulation.
+  // Options: previewOnly — run Tenderly simulation and return the result without sending.
+  //          batchApproval — Safe only: approve this amount in the same atomic batch.
+  const deposit = useCallback(async (amount: string, options?: { previewOnly?: boolean; batchApproval?: bigint }): Promise<SimulationResult | null> => {
     if (!userAddress || !amount || !publicClient) return null;
 
     setSimulationError(null);
@@ -395,6 +430,9 @@ export function useVaultActions(
     setActionState("simulating");
 
     const amountWei = parseUnits(amount, decimals);
+    const approvals = options?.batchApproval !== undefined && canBatch
+      ? await buildBatchApprovals(options.batchApproval)
+      : undefined;
 
     if (options?.previewOnly) {
       // Tenderly preview mode: encode calldata, run Tenderly + eth_call
@@ -405,14 +443,34 @@ export function useVaultActions(
       });
 
       // Store pending tx for executeAfterPreview
-      pendingTx.current = { type: "deposit", args: [amountWei, userAddress] };
+      pendingTx.current = { type: "deposit", args: [amountWei, userAddress], approvals };
 
-      const result = await runSimulation(calldata);
+      const result = await runSimulation(calldata, 0n, approvals);
       // If simulation succeeded (or was previewOnly), stay idle so modal can show
       if (result) {
         setActionState("idle");
       }
       return result;
+    }
+
+    // Safe batch without preview: the allowance isn't on-chain yet, so
+    // simulateContract would fail. Validate with the bundled simulation.
+    if (approvals) {
+      const calldata = encodeFunctionData({ abi: VAULT_ABI, functionName: "deposit", args: [amountWei, userAddress] });
+      const result = await runSimulation(calldata, 0n, approvals);
+      if (!result?.success) {
+        if (!result) setSimulationError("Deposit would fail");
+        setActionState("idle");
+        return null;
+      }
+      setActionState("depositing");
+      try {
+        setDepositHash(await sendDeposit(calldata, approvals));
+      } catch (err) {
+        setTxError(err instanceof Error ? err : new Error(String(err)));
+        setActionState("idle");
+      }
+      return null;
     }
 
     // Standard path: viem simulateContract + send
@@ -449,7 +507,7 @@ export function useVaultActions(
       setActionState("idle");
     }
     return null;
-  }, [userAddress, vaultAddress, decimals, publicClient, sendTx, runSimulation]);
+  }, [userAddress, vaultAddress, decimals, publicClient, sendTx, runSimulation, canBatch, buildBatchApprovals, sendDeposit]);
 
   // Withdraw with pre-flight simulation (using redeem for shares)
   // Options: previewOnly — when true, run Tenderly simulation and return result without sending tx
@@ -521,7 +579,7 @@ export function useVaultActions(
   const executeAfterPreview = useCallback(async () => {
     if (!pendingTx.current) return;
 
-    const { type, args } = pendingTx.current;
+    const { type, args, approvals } = pendingTx.current;
     pendingTx.current = null;
 
     try {
@@ -532,7 +590,7 @@ export function useVaultActions(
           functionName: "deposit",
           args: args as readonly [bigint, `0x${string}`],
         });
-        const hash = await sendTx({ to: vaultAddress, data: calldata });
+        const hash = await sendDeposit(calldata, approvals);
         setDepositHash(hash);
       } else {
         setActionState("withdrawing");
@@ -548,7 +606,7 @@ export function useVaultActions(
       setTxError(err instanceof Error ? err : new Error(String(err)));
       setActionState("idle");
     }
-  }, [vaultAddress, sendTx]);
+  }, [vaultAddress, sendTx, sendDeposit]);
 
   // Reset state
   const reset = useCallback(() => {
@@ -577,6 +635,10 @@ export function useVaultActions(
     isLoading: status !== "idle" && status !== "success" && status !== "error" && status !== "reverted",
     isSuccess: status === "success",
     isReverted: status === "reverted",
+    /** Approval and deposit go out as one Safe transaction. */
+    batchesApproval: canBatch,
+    /** Set while a Safe transaction (approve/deposit/withdraw) waits for signatures/execution. */
+    safePending: [depositSafe, withdrawSafe, approvalSafe].find((s) => s?.isAwaitingExecution) ?? null,
     refetchAllowance,
     // Transaction hashes for tracking
     depositHash,

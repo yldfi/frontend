@@ -43,6 +43,8 @@ process.env.RPC_DYNAMIC_DISCOVERY = "off";
 
 // Mock wagmi hooks and utilities
 vi.mock("wagmi", () => ({
+  // EIP-5792 capabilities: none by default, so Safe batching stays off.
+  useCapabilities: vi.fn(() => ({ data: undefined })),
   useReadContracts: vi.fn(() => ({
     data: undefined,
     isLoading: false,

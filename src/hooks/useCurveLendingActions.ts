@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useAccount, usePublicClient, useWaitForTransactionReceipt } from "wagmi";
+import { useAccount, usePublicClient } from "wagmi";
+import { useTxReceipt } from "@/hooks/useTxReceipt";
 import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
 import { maxUint256 } from "viem";
 import {
@@ -207,7 +208,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
   } = useWriteContract();
 
   // Wait for approval tx
-  const { isLoading: isApprovalPending, isSuccess: isRawApprovalSuccess } = useWaitForTransactionReceipt({
+  const { isLoading: isApprovalPending, isSuccess: isRawApprovalSuccess } = useTxReceipt({
     hash: approveHash,
     pollingInterval: 1_000,
   });
@@ -217,7 +218,7 @@ export function useCurveLendingActions(): UseCurveLendingActionsResult {
   const effectiveStatus: LendingStatus =
     isApproveError && status === "approving" ? "needsApproval" : status;
 
-  useWaitForTransactionReceipt({
+  useTxReceipt({
     hash: txHash ?? undefined,
     query: {
       enabled: !!txHash && effectiveStatus === "waitingTx",
