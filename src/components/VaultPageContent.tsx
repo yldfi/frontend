@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { notFound, useRouter } from "next/navigation";
 import { useAccount, useBalance, useBlockNumber, useGasPrice, usePublicClient } from "wagmi";
-import { parseUnits, formatUnits } from "viem";
+import { parseUnits, formatUnits, maxUint256 } from "viem";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { MaxButton } from "@/components/MaxButton";
 import { ArrowUpRight, ExternalLink, Search, Route, RouteOff, Copy, ChevronDown, ChevronRight, Check, X, Clock, ArrowRightLeft, Wallet, Banknote, TrendingUp, Coins, Gift } from "lucide-react";
@@ -762,6 +762,7 @@ export function VaultPageContent({ id }: { id: string }) {
     withdrawHash,
     simulationResult: vaultSimulationResult,
     safePending: vaultSafePending,
+    batchesApproval: vaultBatchesApproval,
   } = useVaultActions(vaultAddressTyped, vault?.assetAddress ?? TOKENS.CVXCRV, vault?.assetDecimals ?? 18);
 
   // Zap quote - fetch route from Enso (debounced to prevent rate limiting)
@@ -805,6 +806,7 @@ export function VaultPageContent({ id }: { id: string }) {
     toggleFlashbots: _toggleFlashbots,
     simulationResult,
     safePending: zapSafePending,
+    batchesApproval: zapBatchesApproval,
   } = useZapActions(zapQuote);
 
   const vaultCompletionResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -981,12 +983,12 @@ export function VaultPageContent({ id }: { id: string }) {
   })();
 
   // Run Tenderly simulation preview for vault deposit/withdraw
-  const runVaultSimulationPreview = useCallback(async () => {
+  const runVaultSimulationPreview = useCallback(async (batchApproval?: bigint) => {
     if (!vault || !amount) return null;
     setIsSimulatingPreview(true);
     try {
       const result = activeTab === "deposit"
-        ? await deposit(amount, { previewOnly: true })
+        ? await deposit(amount, { previewOnly: true, batchApproval })
         : await withdraw(amount, { previewOnly: true });
       if (result) {
         simulationBlock.current = currentBlock ?? 0n;
@@ -1084,7 +1086,26 @@ export function VaultPageContent({ id }: { id: string }) {
         toast.error(`New ${vault.symbol} entry is hidden in the UI. Exchange to yscvxCRV instead.`);
         return;
       }
-      if (requiresApproval) {
+      if (requiresApproval && vaultBatchesApproval) {
+        // Safe: approve + deposit as one transaction, no separate approval step.
+        const batchApproval = exactApprovalAmount ?? maxUint256;
+        trackApprovalInitiated(vault.assetSymbol, id);
+        if (showSimulationPreview) {
+          const result = await runVaultSimulationPreview(batchApproval);
+          if (result) return; // Modal opened; Confirm sends the batch
+        }
+        trackDepositInitiated(id, amount, vault.assetSymbol);
+        const outputAmt = pricePerShare ? (inputAmount / pricePerShare).toFixed(4) : inputAmount.toFixed(4);
+        setPendingTxDetails({
+          fromAmount: inputAmount.toFixed(4),
+          fromSymbol: vault.assetSymbol,
+          fromLogo: `/tokens/${vault.assetSymbol.toLowerCase()}.png`,
+          toAmount: outputAmt,
+          toSymbol: vault.symbol,
+          toLogo: vault.logo,
+        });
+        deposit(amount, { batchApproval });
+      } else if (requiresApproval) {
         trackApprovalInitiated(vault.assetSymbol, id);
         // Set multi-step state for approval + deposit
         const outputAmt = pricePerShare ? (inputAmount / pricePerShare).toFixed(4) : inputAmount.toFixed(4);
@@ -2173,6 +2194,11 @@ export function VaultPageContent({ id }: { id: string }) {
                             <div className="text-sm text-[var(--muted-foreground)]">
                               Approve {vault.assetSymbol} for{" "}<span className="whitespace-nowrap">{vault.symbol} vault <a href={`https://etherscan.io/address/${vault.address}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={12} className="!inline -mt-0.5" /></a></span>
                             </div>
+                            {vaultBatchesApproval && (
+                              <div className="text-xs text-[var(--muted-foreground)]">
+                                Your Safe approves and deposits in one transaction.
+                              </div>
+                            )}
                             <div className="flex gap-2">
                               <button
                                 onClick={() => {
@@ -2578,6 +2604,7 @@ export function VaultPageContent({ id }: { id: string }) {
                         approvalProgress={zapApprovalProgress}
                         decimals={zapDirection === "in" ? (zapInputToken?.decimals ?? 18) : 18}
                         isApproving={zapIsApproving}
+                        note={zapBatchesApproval ? "Your Safe approves and zaps in one transaction. If it executes after the price moves past your slippage, it fails and nothing changes." : undefined}
                         onApprove={(exact) => guardHighImpact("Approve & zap", () => zapApprove(exact))}
                       />
 
