@@ -17,3 +17,9 @@ auditConfig:
     # braces <=3.0.3 stack-exhaustion DoS: no fixed release exists yet. Only
     # reached via eslint-config-next > fast-glob > micromatch (lint, dev only).
     - GHSA-vfj7-8cjw-p6xm
+    # decode-uri-component <=0.5.0 quadratic-replacement DoS (GHSA-qr28-fpjm-wq7f).
+    # Only reached via WalletConnect's query-string@7 (browser-side, decoding
+    # wallet-pairing URIs in the user's own tab). The only fixed release, 0.5.1,
+    # is ESM-only and query-string@7 require()s it, so an override would break
+    # WalletConnect. Revisit when WalletConnect moves off query-string@7.
+    - GHSA-qr28-fpjm-wq7f
