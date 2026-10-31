@@ -3,12 +3,15 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle } from "lucide-react";
-import { useChainId } from "wagmi";
+import { useAccount, useChainId } from "wagmi";
 import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
+import { useIsSafeWallet } from "@/hooks/useIsSafeWallet";
 import { cn } from "@/lib/utils";
-
-
-const SIMULATION_STORAGE_KEY = "yldfi-show-simulation";
+import {
+  readStoredSimulationPreview,
+  resolveSimulationPreview,
+  writeStoredSimulationPreview,
+} from "@/lib/simulation-preview-setting";
 
 interface SlippageModalProps {
   open: boolean;
@@ -28,31 +31,27 @@ export function SlippageModal({
   const chainId = useChainId();
   const { isFlashbotsEnabled, isFlashbotsSupported, toggleFlashbots } = useFlashbotsProtect();
 
-  // Tenderly simulation toggle (localStorage-backed)
-  const [showSimulationPreview, setShowSimulationPreviewState] = useState(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem(SIMULATION_STORAGE_KEY) === "true";
-    }
-    return false;
-  });
+  // Tenderly simulation toggle (localStorage-backed; on by default for Safes)
+  const { address } = useAccount();
+  const isSafe = useIsSafeWallet(address, chainId);
+  const [storedSimulationPreview, setStoredSimulationPreview] = useState<boolean | null>(readStoredSimulationPreview);
+  const showSimulationPreview = resolveSimulationPreview(storedSimulationPreview, isSafe);
 
   // Re-read from localStorage when modal opens (React "adjust state from props" pattern)
   const [prevOpen, setPrevOpen] = useState(open);
   if (open !== prevOpen) {
     setPrevOpen(open);
-    if (open && typeof window !== "undefined") {
-      const stored = localStorage.getItem(SIMULATION_STORAGE_KEY) === "true";
-      if (stored !== showSimulationPreview) {
-        setShowSimulationPreviewState(stored);
+    if (open) {
+      const stored = readStoredSimulationPreview();
+      if (stored !== storedSimulationPreview) {
+        setStoredSimulationPreview(stored);
       }
     }
   }
 
   const setShowSimulationPreview = (value: boolean) => {
-    setShowSimulationPreviewState(value);
-    if (typeof window !== "undefined") {
-      localStorage.setItem(SIMULATION_STORAGE_KEY, String(value));
-    }
+    setStoredSimulationPreview(value);
+    writeStoredSimulationPreview(value);
   };
 
   if (!open) return null;

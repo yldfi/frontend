@@ -853,7 +853,8 @@ export function ZapPageContent() {
                   approvalProgress={approvalProgress}
                   decimals={inputToken.decimals ?? 18}
                   isApproving={isApproving}
-                  note={batchesApproval ? "Your Safe approves and zaps in one transaction. If it executes after the price moves past your slippage, it fails and nothing changes." : undefined}
+                  title={batchesApproval ? "Approve & zap in one Safe transaction" : undefined}
+                  note={batchesApproval ? "If your Safe executes after the price moves past your slippage, the zap fails and nothing changes." : undefined}
                   onApprove={(exact) => guardHighImpact("Approve & zap", () => approve(exact))}
                 />
 

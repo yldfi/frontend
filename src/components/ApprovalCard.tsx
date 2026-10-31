@@ -15,6 +15,8 @@ interface ApprovalCardProps {
   description?: React.ReactNode;
   /** Extra line under the description, e.g. Safe batching. */
   note?: React.ReactNode;
+  /** Overrides the "Approval Required" heading. */
+  title?: React.ReactNode;
   decimals?: number;
   isApproving: boolean;
   onApprove: (exact: boolean) => void;
@@ -26,6 +28,7 @@ export function ApprovalCard({
   approvalProgress,
   description,
   note,
+  title,
   decimals: decimalsProp,
   isApproving,
   onApprove,
@@ -48,7 +51,7 @@ export function ApprovalCard({
         {pendingApproval && (
           <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-3">
             <div className="text-sm font-medium">
-              {hasMultiStep ? "Approvals Required" : "Approval Required"}
+              {title ?? (hasMultiStep ? "Approvals Required" : "Approval Required")}
             </div>
 
             {/* Multi-step progress */}
