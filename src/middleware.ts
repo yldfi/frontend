@@ -250,6 +250,9 @@ const maintenancePageHtml = `<!DOCTYPE html>
 </html>`;
 
 // Paths that should bypass geo-blocking (social cards for X, CI/testing, programmatic access)
+/** Origins allowed to embed the site: itself, and Safe{Wallet} for Safe Apps. */
+const FRAME_ANCESTORS = "'self' https://app.safe.global";
+
 const GEO_EXEMPT_PATHS = [
   "/api/token-holders",
   "/api/simulate",
@@ -344,8 +347,10 @@ export function middleware(request: NextRequest) {
 
   // Security headers
   const response = NextResponse.next();
-  response.headers.set("X-Frame-Options", "DENY");
-  response.headers.set("Content-Security-Policy", "frame-ancestors 'none'");
+  // Framing is allowed only by Safe{Wallet}, so the site can run as a Safe App.
+  // X-Frame-Options can't allow a single origin (ALLOW-FROM is unsupported), so
+  // it's omitted; every current browser enforces CSP frame-ancestors instead.
+  response.headers.set("Content-Security-Policy", `frame-ancestors ${FRAME_ANCESTORS}`);
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");

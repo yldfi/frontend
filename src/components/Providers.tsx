@@ -9,6 +9,7 @@ import { useState } from "react";
 import { AnalyticsProvider } from "@/components/AnalyticsProvider";
 import { TestNetworkProvider } from "@/contexts/TestNetworkContext";
 import { Toaster } from "sonner";
+import { SafeAppAutoConnect } from "@/components/SafeAppAutoConnect";
 
 import "@rainbow-me/rainbowkit/styles.css";
 
@@ -86,6 +87,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
               },
             }}
           />
+          <SafeAppAutoConnect />
           <TestNetworkProvider>
             <AnalyticsProvider>{children}</AnalyticsProvider>
           </TestNetworkProvider>

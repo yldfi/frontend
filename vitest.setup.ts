@@ -45,6 +45,7 @@ process.env.RPC_DYNAMIC_DISCOVERY = "off";
 vi.mock("wagmi", () => ({
   // EIP-5792 capabilities: none by default, so Safe batching stays off.
   useCapabilities: vi.fn(() => ({ data: undefined })),
+  useConnect: vi.fn(() => ({ connect: vi.fn(), connectors: [] })),
   useReadContracts: vi.fn(() => ({
     data: undefined,
     isLoading: false,

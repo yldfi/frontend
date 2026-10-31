@@ -30,10 +30,15 @@ export function useSafeBatch() {
     query: { enabled: isSafe, staleTime: Infinity, retry: false },
   });
 
-  const atomicStatus = chainId !== undefined
-    ? (capabilities as Record<number, { atomic?: { status?: string } }> | undefined)?.[chainId]?.atomic?.status
+  const chainCapabilities = chainId !== undefined
+    ? (capabilities as Record<number, { atomic?: { status?: string }; atomicBatch?: { supported?: boolean } }> | undefined)?.[chainId]
     : undefined;
-  const canBatch = isSafe && atomicStatus === "supported" && Boolean(walletClient);
+  // Safe{Wallet} over WalletConnect reports `atomic.status`; the Safe Apps
+  // provider (dapp opened inside Safe{Wallet}) only reports the older
+  // `atomicBatch.supported`, which viem passes through unchanged.
+  const supportsAtomic = chainCapabilities?.atomic?.status === "supported"
+    || chainCapabilities?.atomicBatch?.supported === true;
+  const canBatch = isSafe && supportsAtomic && Boolean(walletClient);
 
   const sendBatch = useCallback(async (calls: BatchCall[]): Promise<Hash> => {
     if (!walletClient || !address) throw new Error("Wallet is not ready");
