@@ -34,6 +34,14 @@ describe("shouldRedirectFromLending", () => {
     expect(shouldRedirectFromLending({ ...deprecatedMarket, positionError: true })).toBe(false);
   });
 
+  it("keeps deprecated markets viewable without a loan in local development", () => {
+    expect(shouldRedirectFromLending({ ...deprecatedMarket, isDevelopment: true })).toBe(false);
+  });
+
+  it("still redirects unknown vaults in local development", () => {
+    expect(shouldRedirectFromLending({ ...deprecatedMarket, vaultFound: false, isDevelopment: true })).toBe(true);
+  });
+
   it("redirects once the wallet and position are settled and there is no loan", () => {
     expect(shouldRedirectFromLending(deprecatedMarket)).toBe(true);
   });
