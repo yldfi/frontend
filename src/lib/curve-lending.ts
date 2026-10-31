@@ -1,5 +1,5 @@
 // Curve LlamaLend bundle functions using Enso API
-// Repay bundles only — loan creation, collateral, and leverage operations use the Zapper contract
+// Repay bundles only — loan creation and collateral operations call the controller directly
 
 import type { EnsoBundleAction, EnsoBundleResponse } from "@/types/enso";
 import { CURVE_CONTROLLERS, VAULTS, EXTERNAL_VAULT_CONFIG, TOKENS, PIREX } from "@/config/vaults";

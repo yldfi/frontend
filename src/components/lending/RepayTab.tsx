@@ -17,8 +17,6 @@ import {
   Route,
   RouteOff,
   ArrowRightLeft,
-  Plus,
-  X,
 } from "lucide-react";
 import { ApprovalCard } from "@/components/ApprovalCard";
 import { useAccount, usePublicClient, useGasPrice, useBlockNumber } from "wagmi";
@@ -125,45 +123,12 @@ export function RepayTab({
     [setRepayAmount]
   );
 
-  // Withdraw collateral (optional)
-  const [showWithdrawInput, setShowWithdrawInput] = useState(false);
-  const [withdrawAmount, setWithdrawAmountState] = useState("");
-  const setWithdrawAmount = useCallback(
-    (v: string) => setWithdrawAmountState(sanitizeAmount(v)),
-    []
-  );
-  const debouncedWithdrawAmount = useDebouncedValue(withdrawAmount, 500);
-
-  // Withdrawal output token (default: vault's collateral token; can swap to other tokens)
-  const defaultWithdrawToken: EnsoToken = useMemo(() => ({
-    address: vault.address,
-    chainId: 1,
-    name: vault.name,
-    symbol: vault.symbol,
-    decimals: vault.decimals,
-    logoURI: vault.logoSmall || "",
-    type: "defi" as const,
-  }), [vault]);
-  const [withdrawToken, setWithdrawToken] = useState<EnsoToken>(defaultWithdrawToken);
-  const isWithdrawSwap = withdrawToken.address.toLowerCase() !== vault.address.toLowerCase();
-
   const {
     slippage, updateSlippage, showSlippageModal, setShowSlippageModal,
     showSimulationPreview, refreshSimulationPreview,
     showSimulationModal, setShowSimulationModal,
     showRoute, toggleRoute,
-    zappersEnabled,
   } = useSettings();
-
-  // Reset withdraw token to default when zappers are disabled (withdrawal requires zapper)
-  useEffect(() => {
-    if (!zappersEnabled) {
-      const timer = setTimeout(() => {
-        setWithdrawToken(defaultWithdrawToken);
-      }, 0);
-      return () => clearTimeout(timer);
-    }
-  }, [zappersEnabled, defaultWithdrawToken]);
 
   const [rateInverted, setRateInverted] = useState(false);
 
@@ -211,7 +176,6 @@ export function RepayTab({
   // Lending actions
   const {
     repayDirect,
-    repayAndWithdraw,
     repayWithSwap,
     pendingApproval,
     approvalProgress,
@@ -257,13 +221,6 @@ export function RepayTab({
     const value = parseFloat(balanceFormatted) || 0;
     return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
   }, [balanceFormatted]);
-
-  // Collateral balance for optional withdrawal
-  const _formattedCollateral = useMemo(() => {
-    if (!position?.collateral) return "0";
-    const value = Number(formatUnits(position.collateral, vault.decimals));
-    return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
-  }, [position?.collateral, vault.decimals]);
 
   // Debounced amount for quote fetching
   const debouncedAmount = useDebouncedValue(repayAmount, 500);
@@ -625,245 +582,6 @@ export function RepayTab({
     return ((inputUsd - outputUsd) / inputUsd) * 100;
   }, [quoteLoading, estimatedCrvUsdOut, debouncedAmount, tokenPrices, priceTokenAddress, vaultInfo, repayUnderlyingEquivalent]);
 
-  // Compute max withdrawable collateral via binary search on health_calculator.
-  // Pre-computed so MAX button is instant; recalculates when repay amount changes.
-  const { data: maxWithdrawable, isLoading: maxWithdrawableLoading } = useQuery({
-    queryKey: [
-      "max-withdrawable",
-      controllerAddress,
-      address,
-      debouncedAmount,
-      isCrvUsd,
-      estimatedCrvUsdOut?.toString(),
-      position?.collateral?.toString(),
-      position?.debt?.toString(),
-    ],
-    queryFn: async () => {
-      if (!publicClient || !address || !position?.hasLoan || !position.collateral) return "0";
-
-      // Calculate debt change from current repay input
-      let dDebt = 0n;
-      if (isCrvUsd && debouncedAmount && Number(debouncedAmount) > 0) {
-        try {
-          const repayWei = parseUnits(debouncedAmount, 18);
-          dDebt = -(repayWei > position.debt ? position.debt : repayWei);
-        } catch { /* invalid input */ }
-      } else if (!isCrvUsd && estimatedCrvUsdOut !== null) {
-        dDebt = -(estimatedCrvUsdOut > position.debt ? position.debt : estimatedCrvUsdOut);
-      }
-
-      const total = position.collateral;
-      const minHealth = 5n * 10n ** 14n; // 5% health buffer
-
-      // Quick check: can we withdraw everything?
-      try {
-        const h = await publicClient.readContract({
-          address: controllerAddress,
-          abi: CONTROLLER_ABI,
-          functionName: "health_calculator",
-          args: [address, -total, BigInt(dDebt), true, 0n],
-        }) as bigint;
-        if (h > minHealth) {
-          return parseFloat(Number(formatUnits(total, vault.decimals)).toFixed(4)).toString();
-        }
-      } catch { /* full withdrawal not possible */ }
-
-      // Binary search for max withdrawable
-      let low = 0n;
-      let high = total;
-
-      for (let i = 0; i < 10; i++) {
-        const mid = (low + high) / 2n;
-        if (mid === low) break;
-        try {
-          const h = await publicClient.readContract({
-            address: controllerAddress,
-            abi: CONTROLLER_ABI,
-            functionName: "health_calculator",
-            args: [address, -mid, BigInt(dDebt), true, 0n],
-          }) as bigint;
-          if (h > minHealth) {
-            low = mid;
-          } else {
-            high = mid;
-          }
-        } catch {
-          high = mid;
-        }
-      }
-
-      return parseFloat(Number(formatUnits(low, vault.decimals)).toFixed(4)).toString();
-    },
-    enabled: !!publicClient && !!address && !!position?.hasLoan && !isClosingLoan && !position?.inSoftLiquidation,
-    refetchInterval: 60_000,
-    staleTime: 15_000,
-  });
-
-  // For non-collateral withdrawal tokens: convert maxWithdrawable to withdrawal token units
-  // Used for MAX button display and input → collateral conversion rate
-  const { data: maxWithdrawInTokenUnits, isLoading: maxWithdrawInTokenLoading } = useQuery({
-    queryKey: [
-      "max-withdraw-token",
-      vault.address,
-      withdrawToken.address,
-      maxWithdrawable,
-      address,
-    ],
-    queryFn: async () => {
-      if (!address || !maxWithdrawable || Number(maxWithdrawable) <= 0) throw new Error("Missing");
-      const amountWei = parseUnits(maxWithdrawable, vault.decimals);
-      const quote = await fetchRoute({
-        fromAddress: address,
-        tokenIn: vault.address,
-        tokenOut: withdrawToken.address,
-        amountIn: amountWei.toString(),
-        slippage: "300",
-      });
-      if (!quote?.amountOut) return null;
-      const out = Number(formatUnits(BigInt(quote.amountOut), withdrawToken.decimals));
-      // Apply small haircut for quote spread (0.5%)
-      return (out * 0.995).toFixed(Math.min(withdrawToken.decimals, 8));
-    },
-    enabled: isWithdrawSwap && !!address && !!maxWithdrawable && Number(maxWithdrawable) > 0 && status === "idle",
-    refetchInterval: 60_000,
-    staleTime: 30_000,
-    retry: 1,
-  });
-
-  // Reverse quote: withdrawal token → collateral (same pattern as BorrowTab's swapQuote)
-  // User enters desired token amount; quote tells us how much collateral to withdraw
-  const {
-    data: withdrawReverseQuote,
-    isLoading: withdrawSwapLoading,
-    isFetching: withdrawSwapFetching,
-  } = useQuery({
-    queryKey: [
-      "withdraw-reverse-quote",
-      vault.address,
-      withdrawToken.address,
-      debouncedWithdrawAmount,
-      slippage,
-      address,
-    ],
-    queryFn: async (): Promise<EnsoRouteResponse> => {
-      if (!address) throw new Error("No address");
-      const amountWei = parseUnits(debouncedWithdrawAmount, withdrawToken.decimals);
-      return fetchRoute({
-        fromAddress: address,
-        tokenIn: withdrawToken.address,
-        tokenOut: vault.address,
-        amountIn: amountWei.toString(),
-        slippage,
-      });
-    },
-    enabled:
-      isWithdrawSwap &&
-      !!address &&
-      !!debouncedWithdrawAmount &&
-      Number(debouncedWithdrawAmount) > 0 &&
-      status === "idle",
-    refetchInterval: 30_000,
-    staleTime: 10_000,
-    retry: 1,
-    placeholderData: (prev: EnsoRouteResponse | undefined) => prev,
-  });
-
-  // Collateral amount in wei — for non-collateral tokens, derived from reverse quote
-  const withdrawAmountWei = (() => {
-    if (!debouncedWithdrawAmount || Number(debouncedWithdrawAmount) === 0) return 0n;
-    try {
-      if (isWithdrawSwap) {
-        // Use reverse quote output: exact collateral equivalent for desired token amount
-        if (!withdrawReverseQuote?.amountOut) return 0n;
-        return BigInt(withdrawReverseQuote.amountOut);
-      }
-      return parseUnits(debouncedWithdrawAmount, vault.decimals);
-    } catch {
-      return 0n;
-    }
-  })();
-
-  // Rate: 1 collateral = X withdrawal token (derived from reverse quote)
-  const withdrawSwapRate = useMemo(() => {
-    if (!isWithdrawSwap || !debouncedWithdrawAmount || Number(debouncedWithdrawAmount) === 0) return null;
-    if (!withdrawReverseQuote?.amountOut) return null;
-    const collateralFormatted = Number(formatUnits(BigInt(withdrawReverseQuote.amountOut), vault.decimals));
-    if (collateralFormatted === 0) return null;
-    return Number(debouncedWithdrawAmount) / collateralFormatted;
-  }, [withdrawReverseQuote, debouncedWithdrawAmount, isWithdrawSwap, vault.decimals]);
-
-  // Estimated collateral to withdraw (for display in quote box)
-  const withdrawCollateralEstimate = useMemo(() => {
-    if (!withdrawReverseQuote?.amountOut) return null;
-    return Number(formatUnits(BigInt(withdrawReverseQuote.amountOut), vault.decimals));
-  }, [withdrawReverseQuote, vault.decimals]);
-
-  // Withdrawal price impact: manual USD comparison (same pattern as repay priceImpact)
-  // Collateral is a vault token (ERC4626) — price its underlying for accuracy
-  const collateralVaultInfo = useMemo(
-    () => getVaultInfo(vault.address),
-    [vault.address]
-  );
-
-  const withdrawPriceTokenAddress = useMemo(() => {
-    if (collateralVaultInfo) return collateralVaultInfo.underlying;
-    return vault.address;
-  }, [collateralVaultInfo, vault.address]);
-
-  const withdrawOutputPriceAddress = useMemo(() => {
-    if (withdrawToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase()) return WETH_ADDRESS;
-    return withdrawToken.address;
-  }, [withdrawToken.address]);
-
-  const { data: withdrawTokenPrices } = useQuery({
-    queryKey: ["withdraw-token-prices", withdrawPriceTokenAddress, withdrawOutputPriceAddress],
-    queryFn: () => fetchTokenPrices([withdrawPriceTokenAddress, withdrawOutputPriceAddress]),
-    enabled: isWithdrawSwap,
-    refetchInterval: 60_000,
-    staleTime: 30_000,
-  });
-
-  // Convert collateral to underlying for accurate USD pricing (if vault token)
-  const { data: withdrawCollateralUnderlying } = useQuery({
-    queryKey: ["withdraw-collateral-underlying", collateralVaultInfo?.address, withdrawAmountWei.toString()],
-    queryFn: async () => {
-      if (!publicClient || !collateralVaultInfo) throw new Error("Missing");
-      const result = await publicClient.readContract({
-        address: collateralVaultInfo.address as `0x${string}`,
-        abi: ERC4626_ABI,
-        functionName: "convertToAssets",
-        args: [withdrawAmountWei],
-      });
-      return result.toString();
-    },
-    enabled: !!collateralVaultInfo && !!publicClient && withdrawAmountWei > 0n,
-    staleTime: 30_000,
-  });
-
-  const withdrawPriceImpact = useMemo(() => {
-    if (withdrawSwapLoading) return null;
-    if (!withdrawCollateralEstimate || !debouncedWithdrawAmount || Number(debouncedWithdrawAmount) <= 0) return null;
-    if (!withdrawTokenPrices || withdrawTokenPrices.length < 2) return null;
-
-    const collateralPrice = withdrawTokenPrices.find(
-      (p) => p.address.toLowerCase() === withdrawPriceTokenAddress.toLowerCase()
-    )?.price;
-    const outputPrice = withdrawTokenPrices.find(
-      (p) => p.address.toLowerCase() === withdrawOutputPriceAddress.toLowerCase()
-    )?.price;
-    if (!collateralPrice || !outputPrice) return null;
-
-    // Input: collateral value (use underlying equivalent if vault token)
-    const inputAmount = collateralVaultInfo && withdrawCollateralUnderlying
-      ? Number(formatUnits(BigInt(withdrawCollateralUnderlying), collateralVaultInfo.underlyingDecimals))
-      : withdrawCollateralEstimate;
-    const inputUsd = inputAmount * collateralPrice;
-    // Output: withdrawal token value (what user receives)
-    const outputUsd = Number(debouncedWithdrawAmount) * outputPrice;
-    if (inputUsd === 0) return null;
-    return ((inputUsd - outputUsd) / inputUsd) * 100;
-  }, [withdrawSwapLoading, withdrawCollateralEstimate, debouncedWithdrawAmount, withdrawTokenPrices, withdrawPriceTokenAddress, withdrawOutputPriceAddress, collateralVaultInfo, withdrawCollateralUnderlying]);
-
   // Calculate estimated health
   useEffect(() => {
     async function calculateHealth() {
@@ -894,10 +612,7 @@ export function RepayTab({
           dDebt = -capped;
         }
 
-        // Collateral change from optional withdrawal
-        const dCollateral = withdrawAmountWei > 0n ? -withdrawAmountWei : 0n;
-
-        if (dDebt === 0n && dCollateral === 0n) {
+        if (dDebt === 0n) {
           setEstimatedHealth(null);
           return;
         }
@@ -906,7 +621,7 @@ export function RepayTab({
           address: controllerAddress,
           abi: CONTROLLER_ABI,
           functionName: "health_calculator",
-          args: [address, BigInt(dCollateral), BigInt(dDebt), true, 0n],
+          args: [address, 0n, BigInt(dDebt), true, 0n],
         });
 
         setEstimatedHealth(Number(health) / 1e16);
@@ -926,7 +641,6 @@ export function RepayTab({
     isCrvUsd,
     estimatedCrvUsdOut,
     isClosingLoan,
-    withdrawAmountWei,
   ]);
 
   // Report estimated health to parent
@@ -962,7 +676,6 @@ export function RepayTab({
 
   const isBelowMinimumPartialRepay =
     !isClosingLoan &&
-    withdrawAmountWei === 0n &&
     !!position?.debt &&
     !!enteredRepayCrvUsdWei &&
     !!minimumPartialRepayWei &&
@@ -985,10 +698,10 @@ export function RepayTab({
     }
   }, [isCrvUsd, repayAmount, estimatedCrvUsdOut, onDebtDeltaChange]);
 
-  // Report collateral delta to parent (negative = withdrawing collateral)
+  // Repay never changes collateral
   useEffect(() => {
-    onCollateralDeltaChange?.(withdrawAmountWei > 0n ? -withdrawAmountWei : null);
-  }, [withdrawAmountWei, onCollateralDeltaChange]);
+    onCollateralDeltaChange?.(null);
+  }, [onCollateralDeltaChange]);
 
   // Report tx state to parent for full-screen overlay
   useEffect(() => {
@@ -1001,16 +714,13 @@ export function RepayTab({
           ? Number(formatUnits(estimatedCrvUsdOut, 18)).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })
           : "~";
       // Build a descriptive message for the overlay
-      const withdrawSuffix = withdrawAmountWei > 0n
-        ? ` + withdrawing ${Number(formatUnits(withdrawAmountWei, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${vault.symbol}`
-        : "";
       let message: string | undefined;
       if (isCrvUsd) {
-        message = `Repaying ${repayAmount} crvUSD debt${withdrawSuffix}`;
+        message = `Repaying ${repayAmount} crvUSD debt`;
       } else if (isVaultWithCrvUsdUnderlying) {
-        message = `Repaying ${crvUsdAmount} crvUSD debt with ${repayAmount} ${repayToken.symbol}${withdrawSuffix}`;
+        message = `Repaying ${crvUsdAmount} crvUSD debt with ${repayAmount} ${repayToken.symbol}`;
       } else {
-        message = `Repaying ${crvUsdAmount} crvUSD debt with ${repayAmount} ${repayToken.symbol}${withdrawSuffix}`;
+        message = `Repaying ${crvUsdAmount} crvUSD debt with ${repayAmount} ${repayToken.symbol}`;
       }
       const fromNum = Number(repayAmount);
       const fromDp = fromNum > 0 && fromNum < 0.01 ? 6 : fromNum < 1 ? 4 : 2;
@@ -1027,7 +737,7 @@ export function RepayTab({
       const mapped = isPending ? "pending" : status;
       onTxStateChange?.({ status: mapped as "pending" | "success" | "reverted", action, hash: txHash, details });
     }
-  }, [status, txHash, isClosingLoan, onTxStateChange, repayAmount, repayToken, isCrvUsd, isVaultWithCrvUsdUnderlying, estimatedCrvUsdOut, withdrawAmountWei, debouncedWithdrawAmount, vault.symbol, vault.decimals]);
+  }, [status, txHash, isClosingLoan, onTxStateChange, repayAmount, repayToken, isCrvUsd, isVaultWithCrvUsdUnderlying, estimatedCrvUsdOut]);
 
   // Handle transaction success — clear all inputs and reset to idle
   useEffect(() => {
@@ -1035,7 +745,6 @@ export function RepayTab({
       trackLendingRepaySuccess(vault.id, repayAmount);
       const timer = setTimeout(() => {
         setRepayAmountState("");
-        setWithdrawAmountState("");
         setIsClosingLoan(false);
         setAutoCapQuotePending(false);
       }, 0);
@@ -1082,14 +791,12 @@ export function RepayTab({
       reset();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [repayAmount, withdrawAmount, withdrawToken.address]);
+  }, [repayAmount]);
 
   // Clear amount and reset action state when switching tokens
   useEffect(() => {
     const timer = setTimeout(() => {
       setRepayAmountState("");
-      setWithdrawAmountState("");
-      setWithdrawToken(defaultWithdrawToken);
       setIsClosingLoan(false);
       setHasAutoCapped(false);
       setAutoCapQuotePending(false);
@@ -1098,17 +805,6 @@ export function RepayTab({
     }, 0);
     return () => clearTimeout(timer);
   }, [repayToken.address]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Close withdrawal panel when closing loan (full repay returns all collateral automatically)
-  useEffect(() => {
-    if (isClosingLoan) {
-      const timer = setTimeout(() => {
-        setWithdrawAmountState("");
-        setShowWithdrawInput(false);
-      }, 0);
-      return () => clearTimeout(timer);
-    }
-  }, [isClosingLoan]);
 
   // Auto-cap repay amount when swap quote exceeds debt (unless closing loan)
   // Handles the case where MAX is clicked before any exchange rate is known
@@ -1155,28 +851,11 @@ export function RepayTab({
     }
   }, [suppressQuoteDisplay, quoteLoading, debouncedAmount, repayAmount, hasAutoCapped]);
 
-  // Clear withdrawal amount when withdrawal token changes (denomination changes)
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setWithdrawAmountState("");
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [withdrawToken.address]);
-
-  // Reset action state when withdrawal amount or token changes
-  useEffect(() => {
-    if (status !== "idle") {
-      reset();
-    }
-  }, [debouncedWithdrawAmount, withdrawToken.address]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const handleSubmit = async () => {
     if (!address || !controllerAddress || !repayAmount || !position?.hasLoan)
       return;
 
     trackLendingRepayInitiated(vault.id, repayAmount);
-
-    const hasWithdrawal = !isClosingLoan && withdrawAmountWei > 0n;
 
     try {
       if (closeRepayNeedsMoreMessage) {
@@ -1185,8 +864,8 @@ export function RepayTab({
         return;
       }
 
-      if (isCrvUsd && !hasWithdrawal) {
-        // Path A: direct controller.repay() — no withdrawal, no bundle needed
+      if (isCrvUsd) {
+        // Path A: direct controller.repay() — no bundle needed
         const repayWei = parseUnits(repayAmount, 18);
         if (showSimulationPreview) {
           const result = await repayDirect(controllerAddress, repayWei, { previewOnly: true, closeLoan: isClosingLoan });
@@ -1198,32 +877,12 @@ export function RepayTab({
           if (wasApprovalRequested()) return;
         }
         await repayDirect(controllerAddress, repayWei, { closeLoan: isClosingLoan });
-      } else if (isCrvUsd && hasWithdrawal) {
-        // Path B: crvUSD repay + collateral withdrawal — Enso bundle
-        const repayWei = parseUnits(repayAmount, 18);
-        const withdrawOpts = {
-          closeLoan: isClosingLoan,
-          ...(isWithdrawSwap ? { withdrawTokenOut: withdrawToken.address, withdrawTokenSymbol: withdrawToken.symbol } : {}),
-        };
-        if (showSimulationPreview) {
-          const result = await repayAndWithdraw(controllerAddress, repayWei, withdrawAmountWei, vault.address as `0x${string}`, { previewOnly: true, ...withdrawOpts });
-          if (result) {
-            simulationBlock.current = currentBlock ?? 0n;
-            setShowSimulationModal(true);
-            return;
-          }
-          if (wasApprovalRequested()) return;
-        }
-        await repayAndWithdraw(controllerAddress, repayWei, withdrawAmountWei, vault.address as `0x${string}`, withdrawOpts);
       } else {
-        // Path C: Enso bundle — handles vault tokens (redeem + repay) and regular tokens (swap + repay)
-        // Optionally includes withdrawal via withdrawAmount param
-        const swapOptions: { previewOnly?: boolean; tokenSymbol?: string; inSoftLiquidation?: boolean; closeLoan?: boolean; maxRepayAmount?: string; withdrawAmount?: string; withdrawTokenOut?: string; withdrawTokenSymbol?: string } = {
+        // Path B: Enso bundle — handles vault tokens (redeem + repay) and regular tokens (swap + repay)
+        const swapOptions: { previewOnly?: boolean; tokenSymbol?: string; inSoftLiquidation?: boolean; closeLoan?: boolean; maxRepayAmount?: string } = {
           tokenSymbol: repayToken.symbol,
           inSoftLiquidation: position?.inSoftLiquidation,
           ...(isClosingLoan ? { closeLoan: true, maxRepayAmount: position.debt.toString() } : {}),
-          ...(hasWithdrawal ? { withdrawAmount: withdrawAmountWei.toString() } : {}),
-          ...(hasWithdrawal && isWithdrawSwap ? { withdrawTokenOut: withdrawToken.address, withdrawTokenSymbol: withdrawToken.symbol } : {}),
         };
         if (showSimulationPreview) {
           const result = await repayWithSwap(
@@ -1270,14 +929,6 @@ export function RepayTab({
     status !== "reverted" &&
     status !== "needsApproval";
 
-  // Withdrawal reverse quote is loading (collateral amount not yet known)
-  const withdrawDebouncePending = withdrawAmount !== debouncedWithdrawAmount;
-  const withdrawQuoteFetching = withdrawSwapFetching || withdrawDebouncePending;
-  const withdrawRateLoading = isWithdrawSwap &&
-    !!withdrawAmount &&
-    Number(withdrawAmount) > 0 &&
-    (withdrawSwapLoading || withdrawQuoteFetching);
-
   const isCloseSwap =
     isClosingLoan &&
     !isCrvUsd &&
@@ -1305,8 +956,6 @@ export function RepayTab({
     ? `This amount is expected to produce ${formatCrvUsdAmount(estimatedCrvUsdOut)} crvUSD, but closing requires at least ${formatCrvUsdAmount(position.debt)} crvUSD. Increase the amount or use crvUSD.`
     : null;
 
-  const needsZapperForRepay = withdrawAmountWei > 0n;
-
   const isFormValid =
     !!repayAmount &&
     Number(repayAmount) > 0 &&
@@ -1315,8 +964,7 @@ export function RepayTab({
     !isBelowMinimumPartialRepay &&
     !closeRepayNeedsMore &&
     !closeRepayQuotePending &&
-    (isCrvUsd || isVaultWithCrvUsdUnderlying || (!isCrvUsd && !quoteLoading)) &&
-    (!needsZapperForRepay || zappersEnabled);
+    (isCrvUsd || isVaultWithCrvUsdUnderlying || (!isCrvUsd && !quoteLoading));
 
   const getButtonText = () => {
     if (status === "building") return <>Building transaction<LoadingDots /></>;
@@ -1327,18 +975,16 @@ export function RepayTab({
     if (isBelowMinimumPartialRepay && minimumPartialRepayFormatted) return `Repay at least ${minimumPartialRepayFormatted} crvUSD`;
     if (closeRepayNeedsMore) return "Increase amount to close";
     if (closeRepayQuotePending) return <>Checking close quote<LoadingDots /></>;
-    const hasWithdrawal = withdrawAmountWei > 0n;
-
     if (isCrvUsd) {
       if (isClosingLoan) return "Close Loan";
-      return hasWithdrawal ? "Repay & Withdraw" : "Repay Debt";
+      return "Repay Debt";
     }
     if (isVaultWithCrvUsdUnderlying) {
       if (isClosingLoan) return "Redeem & Close Loan";
-      return hasWithdrawal ? "Redeem, Repay & Withdraw" : "Redeem & Repay";
+      return "Redeem & Repay";
     }
     if (isClosingLoan) return "Swap & Close Loan";
-    return hasWithdrawal ? "Swap, Repay & Withdraw" : "Swap & Repay";
+    return "Swap & Repay";
   };
 
   if (!position?.hasLoan) {
@@ -1364,7 +1010,7 @@ export function RepayTab({
               {position.health <= 0 ? "Position Underwater" : "Soft Liquidation"}
             </div>
             <div className="text-xs mt-0.5">
-              Reduce debt from your wallet — your collateral stays deposited and the position remains open. Use <button type="button" onClick={() => onSwitchTab("leverage")} className={cn("underline transition-colors", position.health <= 0 ? "hover:text-red-300" : "hover:text-yellow-300")}>Liquidate</button> to withdraw collateral and close instead.
+              Reduce debt from your wallet — your collateral stays deposited and the position remains open. Use <button type="button" onClick={() => onSwitchTab("liquidate")} className={cn("underline transition-colors", position.health <= 0 ? "hover:text-red-300" : "hover:text-yellow-300")}>Liquidate</button> to withdraw collateral and close instead.
             </div>
           </div>
         </div>
@@ -1507,135 +1153,6 @@ export function RepayTab({
         )
       )}
 
-      {/* Withdraw Collateral toggle + panel — hidden during soft-liq, closing loan, and when zappers disabled */}
-      {!position?.inSoftLiquidation && !isClosingLoan && zappersEnabled && (
-        <div>
-          <button
-            type="button"
-            onClick={() => {
-              if (showWithdrawInput) {
-                setWithdrawAmountState("");
-                setWithdrawToken(defaultWithdrawToken);
-              }
-              setShowWithdrawInput(v => !v);
-            }}
-            className="flex items-center gap-1 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
-          >
-            {showWithdrawInput ? <X size={12} /> : <Plus size={12} />}
-            {showWithdrawInput ? "Cancel" : "Withdraw collateral"}
-          </button>
-          <div
-            className="grid transition-[grid-template-rows] duration-300 ease-in-out"
-            style={{ gridTemplateRows: showWithdrawInput ? "1fr" : "0fr" }}
-          >
-            <div className={showWithdrawInput ? "overflow-visible" : "overflow-hidden"}>
-              <div className="pt-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-sm text-[var(--muted-foreground)]">
-                    Withdraw Collateral
-                  </label>
-                  <span className="text-xs text-[var(--muted-foreground)]">
-                    {isWithdrawSwap ? (
-                      maxWithdrawInTokenLoading || !maxWithdrawInTokenUnits
-                        ? <>Max: <LoadingDots /></>
-                        : <>Max: {Number(maxWithdrawInTokenUnits).toLocaleString(undefined, { maximumFractionDigits: 4 })} {withdrawToken.symbol}</>
-                    ) : (
-                      maxWithdrawableLoading || !maxWithdrawable
-                        ? <>Max: <LoadingDots /></>
-                        : <>Max: {Number(maxWithdrawable).toLocaleString(undefined, { maximumFractionDigits: 4 })} {withdrawToken.symbol}</>
-                    )}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 p-3 rounded-lg bg-[var(--muted)] border border-[var(--border)] focus-within:ring-2 focus-within:ring-inset focus-within:ring-[var(--accent)] transition-shadow">
-                  <input
-                    type="text"
-                    value={withdrawAmount}
-                    onChange={(e) => setWithdrawAmount(e.target.value)}
-                    placeholder="0.0"
-                    className="flex-1 min-w-0 bg-transparent mono text-sm outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
-                  />
-                  <TokenSelector
-                    selectedToken={withdrawToken}
-                    onSelect={setWithdrawToken}
-                    priorityTokens={[defaultWithdrawToken, CRVUSD_TOKEN]}
-                    disabled={!zappersEnabled}
-                  />
-                  {isWithdrawSwap ? (
-                    maxWithdrawInTokenUnits ? (
-                      <MaxButton
-                        balance={maxWithdrawInTokenUnits}
-                        onSelect={setWithdrawAmount}
-                      />
-                    ) : (
-                      <MaxButtonSkeleton />
-                    )
-                  ) : (
-                    <MaxButton
-                      balance={maxWithdrawable ?? "0"}
-                      onSelect={setWithdrawAmount}
-                    />
-                  )}
-                </div>
-
-                {/* Withdrawal swap quote details */}
-                {isWithdrawSwap && withdrawAmount && Number(withdrawAmount) > 0 && withdrawReverseQuote && withdrawSwapRate !== null && (
-                  <div className="relative p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
-                    {withdrawQuoteFetching && (
-                      <div className="absolute inset-0 flex items-center justify-center z-10">
-                        <span className="inline-flex items-center gap-1 text-[var(--muted-foreground)] text-2xl">
-                          <span className="animate-bounce" style={{ animationDelay: "0ms", animationDuration: "600ms" }}>.</span>
-                          <span className="animate-bounce" style={{ animationDelay: "150ms", animationDuration: "600ms" }}>.</span>
-                          <span className="animate-bounce" style={{ animationDelay: "300ms", animationDuration: "600ms" }}>.</span>
-                        </span>
-                      </div>
-                    )}
-                    <div className={cn("space-y-2 transition-opacity duration-200", withdrawQuoteFetching && "opacity-0")}>
-                    <div className="flex justify-between items-center">
-                      <span className="text-[var(--muted-foreground)]">Rate</span>
-                      <span className="mono">
-                        1 {vault.symbol} = {withdrawSwapRate.toLocaleString(undefined, { maximumFractionDigits: 4 })} {withdrawToken.symbol}
-                      </span>
-                    </div>
-                    {withdrawPriceImpact !== null && (
-                      <div className="flex justify-between">
-                        <span className="text-[var(--muted-foreground)]">Price Impact</span>
-                        <span className={cn(
-                          "mono",
-                          withdrawPriceImpact <= 0
-                            ? "text-green-500"
-                            : withdrawPriceImpact < 3
-                              ? "text-yellow-500"
-                              : "text-red-500"
-                        )}>
-                          {withdrawPriceImpact > 0 ? "" : "+"}{(-withdrawPriceImpact).toFixed(2)}%
-                        </span>
-                      </div>
-                    )}
-                    {withdrawCollateralEstimate !== null && (
-                      <div className="flex justify-between">
-                        <span className="text-[var(--muted-foreground)]">Withdrawing</span>
-                        <span className="mono">
-                          {withdrawCollateralEstimate.toLocaleString(undefined, { maximumFractionDigits: 4 })} {vault.symbol}
-                        </span>
-                      </div>
-                    )}
-                    {debouncedWithdrawAmount && Number(debouncedWithdrawAmount) > 0 && (
-                      <div className="flex justify-between">
-                        <span className="text-[var(--muted-foreground)]">Receiving</span>
-                        <span className="mono">
-                          ~{Number(debouncedWithdrawAmount).toLocaleString(undefined, { maximumFractionDigits: 4 })} {withdrawToken.symbol}
-                        </span>
-                      </div>
-                    )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Approval Flow */}
       <ApprovalCard
         show={showApprovalCard}
@@ -1715,19 +1232,19 @@ export function RepayTab({
               } else if (simulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
                 // Re-open cached simulation modal if same block
                 setShowSimulationModal(true);
-              } else if (!quoteFetching && !suppressQuoteDisplay && !withdrawRateLoading) {
+              } else if (!quoteFetching && !suppressQuoteDisplay) {
                 handleSubmit();
               }
             }}
-            disabled={showApprovalCard || isProcessing || quoteFetching || suppressQuoteDisplay || withdrawRateLoading || (!isFormValid && status === "idle")}
+            disabled={showApprovalCard || isProcessing || quoteFetching || suppressQuoteDisplay || (!isFormValid && status === "idle")}
             className={cn(
               "w-full py-3 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
-              isProcessing || quoteFetching || suppressQuoteDisplay || withdrawRateLoading || (!isFormValid && status === "idle")
+              isProcessing || quoteFetching || suppressQuoteDisplay || (!isFormValid && status === "idle")
                 ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
                 : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
             )}
           >
-            {((!isCrvUsd && (quoteFetching || suppressQuoteDisplay)) || withdrawRateLoading) && status === "idle" ? (
+            {!isCrvUsd && (quoteFetching || suppressQuoteDisplay) && status === "idle" ? (
               <>Getting quote<LoadingDots /></>
             ) : (
               getButtonText()
@@ -1880,24 +1397,6 @@ export function RepayTab({
                               action: "Repay",
                               protocol: "Curve LlamaLend",
                             },
-                            ...(withdrawAmountWei > 0n ? [
-                              {
-                                tokenSymbol: vault.symbol,
-                                amount: Number(formatUnits(withdrawAmountWei, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 }),
-                                action: "Withdraw",
-                                description: isWithdrawSwap ? "collateral from position" : "collateral to wallet",
-                                protocol: "Curve LlamaLend",
-                              },
-                              ...(isWithdrawSwap ? [{
-                                tokenSymbol: withdrawToken.symbol,
-                                amount: debouncedWithdrawAmount
-                                  ? Number(debouncedWithdrawAmount).toLocaleString(undefined, { maximumFractionDigits: 4 })
-                                  : undefined,
-                                action: "Receive",
-                                description: `from ${vault.symbol} swap`,
-                                protocol: "Enso",
-                              }] : []),
-                            ] : []),
                           ],
                         }
                       : undefined
@@ -1908,11 +1407,9 @@ export function RepayTab({
                     repayAmount ? Number(repayAmount).toFixed(4) : undefined
                   }
                   outputAmount={
-                    withdrawAmountWei > 0n
-                      ? undefined
-                      : estimatedCrvUsdOut
-                        ? Number(formatUnits(estimatedCrvUsdOut, 18)).toFixed(4)
-                        : undefined
+                    estimatedCrvUsdOut
+                      ? Number(formatUnits(estimatedCrvUsdOut, 18)).toFixed(4)
+                      : undefined
                   }
                   isLoading={quoteLoading}
                   closingLoan={isClosingLoan && position?.hasLoan && !closeRepayNeedsMore && !closeRepayQuotePending ? {

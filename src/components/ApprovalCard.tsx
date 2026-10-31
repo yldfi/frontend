@@ -33,7 +33,7 @@ export function ApprovalCard({
   const approvingType = isApproving ? approvingTypeRaw : null;
 
   const hasMultiStep = approvalProgress && approvalProgress.total > 1;
-  const hasExactAmount = pendingApproval?.type !== "controller" && pendingApproval?.amount;
+  const hasExactAmount = pendingApproval?.amount;
   const hasForbiddenApproval = isForbiddenApprovalSpender(pendingApproval?.spender);
 
   return (
@@ -91,9 +91,7 @@ export function ApprovalCard({
             {!hasMultiStep && (
               <div className="text-sm text-[var(--muted-foreground)]">
                 {description ?? (
-                  pendingApproval.type === "controller"
-                    ? <>Allow {pendingApproval.spenderName ?? "yld Zapper"} to manage position on LlamaLend{" "}<span className="whitespace-nowrap">controller <a href={`https://etherscan.io/address/${pendingApproval.spender}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={12} className="!inline -mt-0.5" /></a></span></>
-                    : <>Allow {pendingApproval.spenderName ?? <><a href={`https://etherscan.io/address/${pendingApproval.spender}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors underline underline-offset-2 decoration-[var(--muted-foreground)]/50">{`${pendingApproval.spender.slice(0, 6)}...${pendingApproval.spender.slice(-4)}`}</a></>}{pendingApproval.spenderName && <>{" "}<a href={`https://etherscan.io/address/${pendingApproval.spender}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={10} className="!inline -mt-0.5" /></a></>} to spend your {pendingApproval.tokenSymbol}</>
+                  <>Allow {pendingApproval.spenderName ?? <><a href={`https://etherscan.io/address/${pendingApproval.spender}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors underline underline-offset-2 decoration-[var(--muted-foreground)]/50">{`${pendingApproval.spender.slice(0, 6)}...${pendingApproval.spender.slice(-4)}`}</a></>}{pendingApproval.spenderName && <>{" "}<a href={`https://etherscan.io/address/${pendingApproval.spender}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={10} className="!inline -mt-0.5" /></a></>} to spend your {pendingApproval.tokenSymbol}</>
                 )}
               </div>
             )}

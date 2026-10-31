@@ -21,8 +21,6 @@ import {
   trackLendingRepaySuccess,
   trackLendingCollateralAddInitiated,
   trackLendingCollateralAddSuccess,
-  trackLendingLeverageInitiated,
-  trackLendingLeverageSuccess,
   trackLendingSelfLiquidateInitiated,
   trackLendingSelfLiquidateSuccess,
   trackRewardsPageView,
@@ -371,25 +369,6 @@ describe("analytics.ts integration", () => {
         vault_id: VAULT_ID,
         amount_bucket: "100-1K",
         token_symbol: "ycvxCRV",
-      });
-    });
-
-    it("tracks leverage initiated and success", () => {
-      trackLendingLeverageInitiated(VAULT_ID, "1000", "2.50");
-      expect(mockGtag).toHaveBeenCalledWith("event", "lending_leverage_initiated", {
-        vault_id: VAULT_ID,
-        amount_bucket: "1K-10K",
-        leverage_multiplier: "2.50",
-      });
-
-      trackLendingLeverageSuccess(VAULT_ID, "1000", "2.50");
-      expect(mockGtag).toHaveBeenCalledWith("event", "lending_leverage_success", {
-        vault_id: VAULT_ID,
-        amount_bucket: "1K-10K",
-        leverage_multiplier: "2.50",
-      });
-      expect(mockGtag).toHaveBeenCalledWith("set", "user_properties", {
-        has_used_leverage: true,
       });
     });
 

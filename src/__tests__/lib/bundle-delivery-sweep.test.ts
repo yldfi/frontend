@@ -23,7 +23,7 @@ vi.mock("@ensofinance/sdk", () => ({
   },
 }));
 
-vi.mock("@/lib/zapper", () => ({
+vi.mock("@/lib/enso-route-decode", () => ({
   extractInnerSwapData: vi.fn(() => "0xinner"),
 }));
 

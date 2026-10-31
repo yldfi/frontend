@@ -3,7 +3,6 @@ import { createPublicClient, encodeAbiParameters, formatUnits, http, keccak256, 
 import { TOKENS, VAULT_ADDRESSES, CURVE_CONTROLLERS, getVaultByAddress, LLAMA_AIRFORCE, CONCENTRATOR, CURVE_SAVINGS, ASYMMETRY } from "@/config/vaults";
 import { fetchTokenPricesDirect, ENSO_ROUTER_V2, MORPHO_BUNDLER3_ADDRESS } from "@/lib/enso";
 import { CRVUSD_ADDRESS, USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
-import { ZAPPER_ADDRESS } from "@/lib/zapper";
 import { ERC4626_ABI } from "@/lib/abis";
 import {
   enrichSimulationPrices,
@@ -564,11 +563,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Build allowlist of simulation targets: Enso router + Morpho bundler + vaults + controllers + zappers
+  // Build allowlist of simulation targets: Enso router + Morpho bundler + vaults + controllers
   const allowedTargets = new Set<string>([
     ENSO_ROUTER_V2.toLowerCase(),
     MORPHO_BUNDLER3_ADDRESS.toLowerCase(),
-    ZAPPER_ADDRESS.toLowerCase(),
     ...Object.values(VAULT_ADDRESSES).map((a) => a.toLowerCase()),
     ...Object.values(CURVE_CONTROLLERS).map((a) => a.toLowerCase()),
   ]);

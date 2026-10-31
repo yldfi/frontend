@@ -95,30 +95,6 @@ export const ERC20_METADATA_ABI = [
   },
 ] as const;
 
-// Curve LlamaLend Controller approve - approve(address, bool) NOT ERC20 approve(address, uint256)
-export const CONTROLLER_APPROVE_ABI = [
-  {
-    name: "approve",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "spender", type: "address" },
-      { name: "approved", type: "bool" },
-    ],
-    outputs: [],
-  },
-  {
-    name: "approval",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "owner", type: "address" },
-      { name: "spender", type: "address" },
-    ],
-    outputs: [{ name: "", type: "bool" }],
-  },
-] as const;
-
 // ERC4626 read-only view functions (asset, decimals, convertToAssets, previewDeposit, previewRedeem)
 export const ERC4626_ABI = [
   {
@@ -220,21 +196,6 @@ export const AMM_ABI = [
     type: "function",
     stateMutability: "view",
     inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-] as const;
-
-// Curve pool get_dy (int128 for old-style StableSwap pools)
-export const CURVE_GET_DY_ABI = [
-  {
-    name: "get_dy",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "i", type: "int128" },
-      { name: "j", type: "int128" },
-      { name: "dx", type: "uint256" },
-    ],
     outputs: [{ name: "", type: "uint256" }],
   },
 ] as const;

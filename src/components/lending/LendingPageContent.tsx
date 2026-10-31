@@ -8,7 +8,6 @@ import { ChevronRight, AlertTriangle, ExternalLink, Info, Activity, Coins, Trend
 import { useAccount } from "wagmi";
 import { formatUnits } from "viem";
 import { getVault, CURVE_CONTROLLERS, CURVE_SAVINGS, isLendingDisabledWithoutPosition } from "@/config/vaults";
-import { useSettings } from "@/hooks/useSettings";
 import {
   getYldMerklCampaignIds,
   splitMerklRewardsByCampaign,
@@ -31,7 +30,6 @@ import { useClearOnNavigation } from "@/hooks/useClearOnNavigation";
 export function LendingPageContent({ vaultId }: { vaultId: string }) {
   const router = useRouter();
   const { address, isConnecting, isReconnecting } = useAccount();
-  const { zappersEnabled } = useSettings();
   const vault = getVault(vaultId);
   const { balance } = useVaultBalance(vault?.address as `0x${string}`);
 
@@ -109,12 +107,8 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
     `yldfi-lending-borrow-collateral-${vaultAddr}`,
     `yldfi-lending-borrow-amount-${vaultAddr}`,
     `yldfi-lending-repay-${vaultAddr}`,
-    `yldfi-lending-leverage-${vaultAddr}`,
     `yldfi-lending-newloan-amount-${vaultAddr}`,
     `yldfi-lending-newloan-debt-${vaultAddr}`,
-    `yldfi-lending-newloan-token-${vaultAddr}`,
-    `yldfi-lending-newloan-output-${vaultAddr}`,
-    "yldfi-newloan-tab",
     "yldfi-loan-source",
   ], "yldfi-lending-is-refresh");
 
@@ -286,7 +280,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                     <div>
                       <h3 className="text-base font-medium text-[var(--foreground)]">Market Overview</h3>
                       <p className="text-sm text-[var(--muted-foreground)] leading-relaxed mt-1">
-                        Borrow crvUSD against {vault.symbol} collateral.{zappersEnabled ? " Use leverage to amplify your position." : ""}
+                        Borrow crvUSD against {vault.symbol} collateral.
                       </p>
                     </div>
                   </div>

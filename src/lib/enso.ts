@@ -295,7 +295,6 @@ export const ENSO_ROUTER_EXECUTOR = ENSO_ROUTER_V2;
 // the Router that execute in ENSO_SHORTCUTS' context. If a user approves
 // ENSO_SHORTCUTS, their tokens can be drained via crafted routeMulti commands.
 // For user approvals, use ENSO_ROUTER_V2 (the Router) instead.
-// For complex flows needing mid-bundle token pulls, use the LlamaLendZapper contract.
 export const ENSO_SHORTCUTS = ENSO_SHORTCUTS_ADDRESS;
 const HYBRID_EXTRA_BUFFER_BPS = Number(process.env.ENSO_HYBRID_EXTRA_BUFFER_BPS ?? "200");
 
@@ -2214,7 +2213,7 @@ export async function fetchRoute(params: EnsoRouteRequest): Promise<EnsoRouteRes
   }
 
   // Client-side fallback for internal route builders that intentionally use an
-  // app receiver such as a zapper contract or Enso shortcut context.
+  // app receiver such as an Enso shortcut context.
   if (typeof window !== "undefined") {
     const res = await fetch("/api/enso/route", {
       method: "POST",
@@ -2661,7 +2660,7 @@ export async function fetchLegacyMorphoWrapRoute(params: {
   ];
 
   if (!wrapOnly) {
-    const { extractInnerSwapData } = await import("@/lib/zapper");
+    const { extractInnerSwapData } = await import("@/lib/enso-route-decode");
     const standaloneRoute = await fetchRoute({
       fromAddress: params.fromAddress,
       tokenIn: MORPHO_TOKEN_ADDRESS,
@@ -2749,7 +2748,7 @@ export async function fetchLegacyMorphoZapInRoute(params: {
   const vaultSymbol = vaultConfig?.symbol ?? getTokenSymbol(params.vaultAddress);
   const underlyingSymbol = getTokenSymbol(underlying);
 
-  const { extractInnerSwapData } = await import("@/lib/zapper");
+  const { extractInnerSwapData } = await import("@/lib/enso-route-decode");
   const standaloneRoute = await fetchRoute({
     fromAddress: params.fromAddress,
     tokenIn: MORPHO_TOKEN_ADDRESS,
