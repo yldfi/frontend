@@ -26,25 +26,6 @@ export function parseEnsoError(hexData: string): { step: number; target: string;
 }
 
 // ---------------------------------------------------------------------------
-// Unwrap Zapper SwapFailed(bytes) — selector 0xd9d027cc
-// Inner bytes are typically Enso ExecutionFailed(uint256,address,string)
-// ---------------------------------------------------------------------------
-
-export function parseSwapFailedError(hexData: string): { step: number; target: string; message: string } | null {
-  const data = hexData.replace(/^0x/, "").replace(/\.\s*$/, "");
-  if (!data.toLowerCase().startsWith("d9d027cc")) return null;
-  // SwapFailed(bytes): selector(4B) + offset(32B) + length(32B) + data
-  const body = data.slice(8);
-  if (body.length < 128) return null;
-  const offset = parseInt(body.slice(0, 64), 16);
-  if (offset !== 32) return null;
-  const length = parseInt(body.slice(64, 128), 16);
-  if (length === 0 || 128 + length * 2 > body.length) return null;
-  const innerData = body.slice(128, 128 + length * 2);
-  return parseEnsoError(innerData);
-}
-
-// ---------------------------------------------------------------------------
 // Fallback: scan ABI-encoded hex for any embedded string
 // ---------------------------------------------------------------------------
 
@@ -75,7 +56,6 @@ export const CUSTOM_ERROR_SELECTORS: Record<string, string> = {
   "0x756688fe": "Deadline expired - transaction took too long",
   "0x675cae38": "Invalid path",
   "0x7939f424": "Transfer failed",
-  "0xd9d027cc": "Swap failed during transaction. Try refreshing the quote or increasing slippage.",
 };
 
 export const CURVE_DEBT_TOO_HIGH_MESSAGE =
@@ -186,26 +166,6 @@ export function parseErrorMessage(error: unknown, defaultMsg?: string): string {
         return "Swap route failed. Try increasing slippage or use a different token.";
       }
       return `Transaction failed: ${parsed.message}`;
-    }
-  }
-
-  // Unwrap Zapper SwapFailed(bytes) wrapping Enso ExecutionFailed
-  const swapFailedMatch = errorStr.match(/custom error 0xd9d027cc[:\s]*([0-9a-f.]+)/i);
-  if (swapFailedMatch) {
-    const parsed = parseSwapFailedError("d9d027cc" + swapFailedMatch[1].replace(/\.\s*$/, ""));
-    if (parsed) {
-      if (process.env.NODE_ENV === "development") console.log("[SwapFailed → Enso error]", { step: parsed.step, target: parsed.target, message: parsed.message });
-      const msg = parsed.message.toLowerCase();
-      if (msg.includes("condition not met") || msg.includes("return amount is not enough")) {
-        return SWAP_OUTPUT_BELOW_MINIMUM_MESSAGE;
-      }
-      if (msg.includes("call failed")) {
-        return "Swap route failed. Try increasing slippage or use a different token.";
-      }
-      if (msg === "unknown") {
-        return "Swap failed during transaction. Try refreshing the quote or increasing slippage.";
-      }
-      return `Swap failed: ${parsed.message}`;
     }
   }
 

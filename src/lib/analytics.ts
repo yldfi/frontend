@@ -12,7 +12,6 @@
  * - lending_borrow_initiated / lending_borrow_success: Borrow operations
  * - lending_repay_initiated / lending_repay_success: Repay operations
  * - lending_collateral_add_initiated / lending_collateral_add_success: Add collateral
- * - lending_leverage_initiated / lending_leverage_success: Leverage/deleverage
  * - lending_self_liquidate_initiated / lending_self_liquidate_success: Self-liquidation
  * - rewards_page_view: Rewards page viewed
  * - rewards_claim_click: Claim button clicked
@@ -296,7 +295,7 @@ export function categorizeError(error: Error | string | unknown): TransactionErr
 
 // Error Events
 export function trackTransactionError(
-  action: "deposit" | "withdraw" | "approval" | "zap" | "borrow" | "repay" | "collateral" | "leverage" | "self_liquidate",
+  action: "deposit" | "withdraw" | "approval" | "zap" | "borrow" | "repay" | "collateral" | "self_liquidate",
   vaultId: string,
   errorOrMessage: Error | string | unknown,
   errorType?: TransactionErrorType
@@ -310,7 +309,7 @@ export function trackTransactionError(
 
 // Cancelled Events (user rejected in wallet)
 export function trackTransactionCancelled(
-  action: "deposit" | "withdraw" | "approval" | "zap" | "borrow" | "repay" | "collateral" | "leverage" | "self_liquidate",
+  action: "deposit" | "withdraw" | "approval" | "zap" | "borrow" | "repay" | "collateral" | "self_liquidate",
   vaultId: string
 ): void {
   trackEvent("transaction_cancelled", {
@@ -439,32 +438,6 @@ export function trackLendingCollateralAddSuccess(
     amount_bucket: bucketAmount(amount),
     token_symbol: tokenSymbol,
   });
-}
-
-// Lending Events — Leverage
-export function trackLendingLeverageInitiated(
-  vaultId: string,
-  amount: string,
-  leverageMultiplier: string
-): void {
-  trackEvent("lending_leverage_initiated", {
-    vault_id: vaultId,
-    amount_bucket: bucketAmount(amount),
-    leverage_multiplier: leverageMultiplier,
-  });
-}
-
-export function trackLendingLeverageSuccess(
-  vaultId: string,
-  amount: string,
-  leverageMultiplier: string
-): void {
-  trackEvent("lending_leverage_success", {
-    vault_id: vaultId,
-    amount_bucket: bucketAmount(amount),
-    leverage_multiplier: leverageMultiplier,
-  });
-  setUserProperty("has_used_leverage", true);
 }
 
 // Lending Events — Self-Liquidate

@@ -43,12 +43,6 @@ vi.mock("@/lib/curve/rpc", () => ({
   getCurveGetDy: vi.fn(() => Promise.resolve(940000000000000000n)),
 }));
 
-// Mock @/lib/zapper — re-exports CRVUSD_ADDRESS and ZAPPER_ADDRESS
-vi.mock("@/lib/zapper", () => ({
-  CRVUSD_ADDRESS: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E",
-  ZAPPER_ADDRESS: "0xED653FF2410A4686a0B69Fc4C0D1c0cccDFddb83",
-}));
-
 import { fetchRepayBundle, fetchRepayWithSwapBundle } from "@/lib/curve-lending";
 import { TOKENS, VAULT_ADDRESSES, CURVE_CONTROLLERS, PIREX, CURVE_SAVINGS } from "@/config/vaults";
 

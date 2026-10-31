@@ -14,32 +14,24 @@ import {
 } from "@/lib/analytics";
 import {
   AlertTriangle,
-  Route,
-  RouteOff,
   Plus,
   Minus,
-  ArrowRightLeft,
 } from "lucide-react";
 import { ApprovalCard } from "@/components/ApprovalCard";
-import { useAccount, usePublicClient, useBalance, useGasPrice, useBlockNumber } from "wagmi";
+import { useAccount, usePublicClient, useGasPrice, useBlockNumber } from "wagmi";
 import { formatUnits, parseUnits } from "viem";
-import { useQuery } from "@tanstack/react-query";
 import type { VaultConfig } from "@/config/vaults";
 import type { LendingPosition } from "@/hooks/useCurveLendingPosition";
 import { useCurveLendingActions } from "@/hooks/useCurveLendingActions";
-import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { TokenSelector } from "@/components/TokenSelector";
-import { RouteDisplay } from "@/components/RouteDisplay";
 import { MaxButton } from "@/components/MaxButton";
 import { cn } from "@/lib/utils";
 import { LoadingDots } from "@/components/LoadingDots";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { useSettings } from "@/hooks/useSettings";
-import { fetchRoute, fetchTokenPrices, ETH_ADDRESS } from "@/lib/enso";
-import { getMaxEthAmount } from "@/lib/eth-gas";
-import { WETH_ADDRESS, CHAINLINK_ETH_USD } from "@/config/addresses";
-import type { EnsoToken, EnsoRouteResponse } from "@/types/enso";
-import { CONTROLLER_ABI, ERC4626_ABI } from "@/lib/abis";
+import { CHAINLINK_ETH_USD } from "@/config/addresses";
+import type { EnsoToken } from "@/types/enso";
+import { CONTROLLER_ABI } from "@/lib/abis";
 import { isLendingTxPendingVisible } from "@/lib/transaction-ui";
 
 type CollateralMode = "add" | "remove";
@@ -73,7 +65,7 @@ export function CollateralTab({
   // +/- mode
   const [mode, setMode] = useState<CollateralMode>("add");
 
-  // Default token for this vault
+  // Collateral is always the vault token
   const vaultToken: EnsoToken = useMemo(() => ({
     address: vault.address,
     chainId: 1,
@@ -83,11 +75,6 @@ export function CollateralTab({
     logoURI: vault.logoSmall,
     type: "defi" as const,
   }), [vault]);
-
-  // Token selection — default is the vault token
-  const [selectedToken, setSelectedToken] = useState<EnsoToken>(vaultToken);
-  const isVaultToken =
-    selectedToken.address.toLowerCase() === vault.address.toLowerCase();
 
   // Form state — persisted across refresh
   const storageKey = `yldfi-lending-collateral-${vault.address}`;
@@ -108,19 +95,7 @@ export function CollateralTab({
     slippage, updateSlippage, showSlippageModal, setShowSlippageModal,
     showSimulationPreview, refreshSimulationPreview,
     showSimulationModal, setShowSimulationModal,
-    showRoute, toggleRoute,
-    zappersEnabled,
   } = useSettings();
-
-  // Reset to vault token when zappers are disabled
-  useEffect(() => {
-    if (!zappersEnabled) {
-      const timer = setTimeout(() => setSelectedToken(vaultToken), 0);
-      return () => clearTimeout(timer);
-    }
-  }, [zappersEnabled, vaultToken]);
-
-  const [rateInverted, setRateInverted] = useState(false);
 
   // Health estimation
   const [estimatedHealth, setEstimatedHealth] = useState<number | null>(null);
@@ -134,8 +109,6 @@ export function CollateralTab({
   const {
     addCollateral,
     removeCollateral,
-    addCollateralWithSwap,
-    removeCollateralAndSwap,
     pendingApproval,
     approvalProgress,
     approve,
@@ -154,263 +127,35 @@ export function CollateralTab({
 
   const showApprovalCard = !!(pendingApproval && (status === "needsApproval" || status === "approving"));
 
-  // Read selected token balance (native ETH or ERC20)
-  const isEth = selectedToken.address.toLowerCase() === ETH_ADDRESS.toLowerCase();
-  const { data: tokenBalance, refetch: refetchBalance } = useBalance({
-    address,
-    token: isEth ? undefined : (selectedToken.address as `0x${string}`),
-    query: { enabled: !!address },
-  });
-
-  // Swap quote — only needed when token != vault token
-  const needsSwap = !isVaultToken;
-  const isRemoveWithSwap = mode === "remove" && !isVaultToken;
-
-  // Debounced amount for quote fetching
-  const debouncedAmount = useDebouncedValue(amount, 500);
-
-  // Rate probe for remove mode with non-vault token
-  // Used to convert between output token and vault token units
-  const { data: removeRate } = useQuery({
-    queryKey: ["collateral-remove-rate", vault.address, selectedToken.address, address],
-    queryFn: async () => {
-      if (!address) throw new Error("No address");
-      const probeAmount = parseUnits("1", vault.decimals).toString();
-      const route = await fetchRoute({
-        fromAddress: address,
-        tokenIn: vault.address,
-        tokenOut: selectedToken.address,
-        amountIn: probeAmount,
-        slippage: "100",
-      });
-      if (!route?.amountOut) throw new Error("No route");
-      return Number(formatUnits(BigInt(route.amountOut), selectedToken.decimals));
-    },
-    enabled: isRemoveWithSwap && !!address,
-    staleTime: 30_000,
-    refetchInterval: 60_000,
-  });
-
-  // In remove mode with non-vault token, input is in output token units
-  // Convert back to vault token amount for swap quote and health calculations
-  const debouncedVaultAmount = useMemo(() => {
-    if (!isRemoveWithSwap || !removeRate || removeRate <= 0) return debouncedAmount;
-    if (!debouncedAmount || Number(debouncedAmount) <= 0) return debouncedAmount;
-    const vt = Number(debouncedAmount) / removeRate;
-    return vt.toFixed(Math.min(vault.decimals, 8));
-  }, [isRemoveWithSwap, removeRate, debouncedAmount, vault.decimals]);
-
-  // Non-debounced vault token amount (for submit handler)
-  const amountAsVaultToken = useMemo(() => {
-    if (!isRemoveWithSwap || !removeRate || removeRate <= 0 || !amount || Number(amount) <= 0) return amount;
-    const vt = Number(amount) / removeRate;
-    return vt.toFixed(Math.min(vault.decimals, 8));
-  }, [isRemoveWithSwap, removeRate, amount, vault.decimals]);
-
   // Max balance for add mode
-  const addMaxBalance = useMemo(() => {
-    if (isVaultToken) {
-      return formatUnits(BigInt(userBalance), vault.decimals);
-    }
-    if (isEth && tokenBalance?.value) {
-      return getMaxEthAmount(tokenBalance.value, gasPrice);
-    }
-    return tokenBalance?.formatted ?? "0";
-  }, [isVaultToken, isEth, userBalance, vault.decimals, tokenBalance, gasPrice]);
+  const addMaxBalance = useMemo(
+    () => formatUnits(BigInt(userBalance), vault.decimals),
+    [userBalance, vault.decimals]
+  );
 
   // Max balance for remove mode (max withdrawable without breaking health)
-  // When non-vault token selected, convert to output token units using removeRate
   const removeMaxBalance = useMemo(() => {
     if (!position?.hasLoan) return "0";
-    if (isRemoveWithSwap && removeRate && removeRate > 0) {
-      const maxVt = Number(formatUnits(position.maxWithdrawable, vault.decimals));
-      const converted = maxVt * removeRate;
-      return converted.toFixed(Math.min(selectedToken.decimals, 8));
-    }
     return formatUnits(position.maxWithdrawable, vault.decimals);
-  }, [position, vault.decimals, isRemoveWithSwap, removeRate, selectedToken.decimals]);
+  }, [position, vault.decimals]);
 
   const maxBalance = mode === "add" ? addMaxBalance : removeMaxBalance;
-  const currentTokenBalance = isVaultToken
-    ? BigInt(userBalance)
-    : (tokenBalance?.value ?? 0n);
+  const currentTokenBalance = BigInt(userBalance);
 
   const formattedBalance = useMemo(() => {
     const value = parseFloat(maxBalance) || 0;
     return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
   }, [maxBalance]);
 
-  // Add mode: quote tokenIn → vaultToken
-  // Remove mode: quote vaultToken → tokenOut
-  const {
-    data: swapQuote,
-    isLoading: swapQuoteLoading,
-  } = useQuery({
-    queryKey: [
-      "collateral-swap-quote",
-      mode,
-      selectedToken.address,
-      vault.address,
-      debouncedAmount,
-      slippage,
-      address,
-      isRemoveWithSwap ? removeRate : null,
-    ],
-    queryFn: async (): Promise<EnsoRouteResponse> => {
-      if (!address) throw new Error("No address");
-
-      if (mode === "add") {
-        // tokenIn → vaultToken
-        const amountWei = parseUnits(debouncedAmount, selectedToken.decimals).toString();
-        return fetchRoute({
-          fromAddress: address,
-          tokenIn: selectedToken.address,
-          tokenOut: vault.address,
-          amountIn: amountWei,
-          slippage,
-        });
-      } else {
-        // vaultToken → tokenOut (convert output-token input back to vault token)
-        const vtAmount = isRemoveWithSwap ? debouncedVaultAmount : debouncedAmount;
-        const amountWei = parseUnits(vtAmount, vault.decimals).toString();
-        return fetchRoute({
-          fromAddress: address,
-          tokenIn: vault.address,
-          tokenOut: selectedToken.address,
-          amountIn: amountWei,
-          slippage,
-        });
-      }
-    },
-    enabled:
-      needsSwap &&
-      !!address &&
-      !!debouncedAmount &&
-      Number(debouncedAmount) > 0 &&
-      (!isRemoveWithSwap || (removeRate != null && removeRate > 0)),
-    refetchInterval: 30_000,
-    staleTime: 10_000,
-    retry: 1,
-  });
-
-  const quoteLoading = needsSwap && swapQuoteLoading;
-
-  // Estimated vault token amount from swap (for health calculation)
+  // Vault token amount (for health calculation)
   const estimatedVaultTokenAmount = useMemo(() => {
-    if (isVaultToken) {
-      if (!amount || Number(amount) <= 0) return null;
-      try {
-        return parseUnits(amount, vault.decimals);
-      } catch {
-        return null;
-      }
-    }
-    if (mode === "add" && swapQuote?.amountOut) {
-      return BigInt(swapQuote.amountOut);
-    }
-    if (mode === "remove") {
-      if (!amount || Number(amount) <= 0) return null;
-      try {
-        if (isRemoveWithSwap && removeRate && removeRate > 0) {
-          const vtStr = (Number(amount) / removeRate).toFixed(Math.min(vault.decimals, 8));
-          return parseUnits(vtStr, vault.decimals);
-        }
-        return parseUnits(amount, vault.decimals);
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  }, [isVaultToken, amount, vault.decimals, mode, swapQuote, isRemoveWithSwap, removeRate]);
-
-  // Exchange rate
-  const exchangeRate = useMemo(() => {
-    if (!swapQuote?.amountOut || !debouncedAmount || Number(debouncedAmount) === 0)
+    if (!amount || Number(amount) <= 0) return null;
+    try {
+      return parseUnits(amount, vault.decimals);
+    } catch {
       return null;
-    if (mode === "add") {
-      // tokenIn → vaultToken: 1 tokenIn = X vaultToken
-      const outFormatted = Number(formatUnits(BigInt(swapQuote.amountOut), vault.decimals));
-      return outFormatted / Number(debouncedAmount);
-    } else {
-      // vaultToken → tokenOut: 1 vaultToken = X tokenOut
-      const outFormatted = Number(formatUnits(BigInt(swapQuote.amountOut), selectedToken.decimals));
-      const vtAmount = isRemoveWithSwap ? Number(debouncedVaultAmount) : Number(debouncedAmount);
-      if (!vtAmount || vtAmount <= 0) return null;
-      return outFormatted / vtAmount;
     }
-  }, [swapQuote, debouncedAmount, debouncedVaultAmount, isRemoveWithSwap, mode, vault.decimals, selectedToken.decimals]);
-
-  // Price impact: manual calculation using USD token prices + convertToAssets
-  // Same pattern as BorrowTab/useZapQuote: ((inputUsd - outputUsd) / inputUsd) × 100
-  const priceTokenAddress = useMemo(
-    () => (isEth ? WETH_ADDRESS : selectedToken.address),
-    [isEth, selectedToken.address]
-  );
-  const { data: tokenPrices } = useQuery({
-    queryKey: ["collateral-token-prices", priceTokenAddress, vault.assetAddress],
-    queryFn: () => fetchTokenPrices([priceTokenAddress, vault.assetAddress]),
-    enabled: needsSwap,
-    refetchInterval: 60_000,
-    staleTime: 30_000,
-  });
-
-  // Convert vault token amount to underlying via convertToAssets for pricing
-  const vaultTokenAmountForPricing = useMemo(() => {
-    if (!needsSwap || !swapQuote?.amountOut) return null;
-    if (mode === "add") return BigInt(swapQuote.amountOut);
-    // remove: use vault token amount (converted from output-token input)
-    const vtStr = isRemoveWithSwap ? debouncedVaultAmount : debouncedAmount;
-    if (!vtStr || Number(vtStr) <= 0) return null;
-    try { return parseUnits(vtStr, vault.decimals); } catch { return null; }
-  }, [needsSwap, swapQuote, mode, debouncedAmount, debouncedVaultAmount, isRemoveWithSwap, vault.decimals]);
-
-  const { data: underlyingEquivalent } = useQuery({
-    queryKey: ["collateral-underlying-eq", vault.address, vaultTokenAmountForPricing?.toString()],
-    queryFn: async () => {
-      if (!publicClient || !vaultTokenAmountForPricing) throw new Error("Missing");
-      const result = await publicClient.readContract({
-        address: vault.address as `0x${string}`,
-        abi: ERC4626_ABI,
-        functionName: "convertToAssets",
-        args: [vaultTokenAmountForPricing],
-      });
-      return result.toString();
-    },
-    enabled: needsSwap && !!publicClient && vaultTokenAmountForPricing !== null && vaultTokenAmountForPricing > 0n,
-    staleTime: 30_000,
-  });
-
-  const priceImpact = useMemo(() => {
-    if (quoteLoading) return null;
-    if (!debouncedAmount || Number(debouncedAmount) <= 0) return null;
-    if (!swapQuote?.amountOut) return null;
-    if (!tokenPrices || tokenPrices.length < 2) return null;
-    if (!underlyingEquivalent) return null;
-
-    const selectedPrice = tokenPrices.find(
-      (p) => p.address.toLowerCase() === priceTokenAddress.toLowerCase()
-    )?.price;
-    const underlyingPrice = tokenPrices.find(
-      (p) => p.address.toLowerCase() === vault.assetAddress.toLowerCase()
-    )?.price;
-    if (!selectedPrice || !underlyingPrice) return null;
-
-    const underlyingAmount = Number(formatUnits(BigInt(underlyingEquivalent), vault.assetDecimals));
-
-    if (mode === "add") {
-      // Input: user sends selectedToken, output: vault token (priced via underlying)
-      const inputUsd = Number(debouncedAmount) * selectedPrice;
-      const outputUsd = underlyingAmount * underlyingPrice;
-      if (inputUsd === 0) return null;
-      return ((inputUsd - outputUsd) / inputUsd) * 100;
-    } else {
-      // Remove: input: vault token (priced via underlying), output: user receives selectedToken
-      const inputUsd = underlyingAmount * underlyingPrice;
-      const outputUsd = Number(formatUnits(BigInt(swapQuote.amountOut), selectedToken.decimals)) * selectedPrice;
-      if (inputUsd === 0) return null;
-      return ((inputUsd - outputUsd) / inputUsd) * 100;
-    }
-  }, [quoteLoading, debouncedAmount, swapQuote, tokenPrices, underlyingEquivalent, priceTokenAddress, vault.assetAddress, vault.assetDecimals, selectedToken.decimals, mode]);
+  }, [amount, vault.decimals]);
 
   // Calculate estimated health
   useEffect(() => {
@@ -474,23 +219,23 @@ export function CollateralTab({
       const action = mode === "add" ? "Add Collateral" : "Remove Collateral";
       const details = amount && Number(amount) > 0 ? (mode === "add" ? {
         fromAmount: amount,
-        fromSymbol: selectedToken.symbol,
-        fromLogo: selectedToken.logoURI || "/tokens/unknown.png",
-        toAmount: isVaultToken ? amount : estimatedVaultTokenAmount ? Number(formatUnits(estimatedVaultTokenAmount, vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 }) : "~",
+        fromSymbol: vaultToken.symbol,
+        fromLogo: vaultToken.logoURI || "/tokens/unknown.png",
+        toAmount: amount,
         toSymbol: vault.symbol,
         toLogo: vault.logo,
       } : {
-        fromAmount: isRemoveWithSwap ? amountAsVaultToken : amount,
+        fromAmount: amount,
         fromSymbol: vault.symbol,
         fromLogo: vault.logo,
-        toAmount: isVaultToken ? amount : swapQuote?.amountOut ? Number(formatUnits(BigInt(swapQuote.amountOut), selectedToken.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 }) : amount,
-        toSymbol: selectedToken.symbol,
-        toLogo: selectedToken.logoURI || "/tokens/unknown.png",
+        toAmount: amount,
+        toSymbol: vaultToken.symbol,
+        toLogo: vaultToken.logoURI || "/tokens/unknown.png",
       }) : undefined;
       const mapped = isPending ? "pending" : status;
       onTxStateChange?.({ status: mapped as "pending" | "success" | "reverted", action, hash: txHash, details });
     }
-  }, [status, txHash, mode, onTxStateChange, amount, selectedToken, isVaultToken, isRemoveWithSwap, amountAsVaultToken, estimatedVaultTokenAmount, vault, swapQuote]);
+  }, [status, txHash, mode, onTxStateChange, amount, vaultToken, vault]);
 
   // Collateral change summary from Tenderly simulation + position data
   const collateralSummary = useMemo(() => {
@@ -531,17 +276,16 @@ export function CollateralTab({
       setShowSimulationModal(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [amount, selectedToken.address, mode]);
+  }, [amount, mode]);
 
   // Handle transaction success — clear all inputs and reset to idle
   useEffect(() => {
     if (status === "success" && txHash) {
       if (mode === "add") {
-        trackLendingCollateralAddSuccess(vault.id, amount, selectedToken.symbol);
+        trackLendingCollateralAddSuccess(vault.id, amount, vaultToken.symbol);
       }
       const timer = setTimeout(() => {
         setAmountState("");
-        setSelectedToken(vaultToken);
       }, 0);
       try { sessionStorage.removeItem(storageKey); } catch { /* */ }
       toast.success(mode === "add" ? "Collateral added!" : "Collateral removed!", {
@@ -551,11 +295,10 @@ export function CollateralTab({
         },
       });
       onTransactionSuccess();
-      refetchBalance();
       reset();
       return () => clearTimeout(timer);
     }
-  }, [status, txHash, mode, onTransactionSuccess, reset, refetchBalance, storageKey, vault.id, amount, selectedToken.symbol]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [status, txHash, mode, onTransactionSuccess, reset, storageKey, vault.id, amount, vaultToken.symbol]);
 
   async function fetchEthPrice() {
     if (!publicClient) return;
@@ -611,126 +354,67 @@ export function CollateralTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isApprovalSuccess, status]);
 
-  // Clear amount and reset when switching mode or token
+  // Clear amount and reset when switching mode
   useEffect(() => {
     const timer = setTimeout(() => {
       setAmountState("");
       reset();
     }, 0);
     return () => clearTimeout(timer);
-  }, [mode, selectedToken.address, reset]);
+  }, [mode, reset]);
 
   const handleSubmit = async () => {
     if (!address || !controllerAddress || !amount || Number(amount) <= 0) return;
 
     if (mode === "add") {
-      trackLendingCollateralAddInitiated(vault.id, amount, selectedToken.symbol);
+      trackLendingCollateralAddInitiated(vault.id, amount, vaultToken.symbol);
     }
 
     try {
       if (mode === "add") {
-        if (isVaultToken) {
-          if (showSimulationPreview) {
-            const result = await addCollateral(
-              vault.address as `0x${string}`,
-              amount,
-              { tokenSymbol: vault.symbol, previewOnly: true }
-            );
-            if (result) {
-              simulationBlock.current = currentBlock ?? 0n;
-              setShowSimulationModal(true);
-              fetchEthPrice();
-              return; // Modal opened — bail
-            }
-            // Approval needed — approval card will handle it, auto-execute after approval
-            if (wasApprovalRequested()) return;
-            // No simulation data (e.g. Anvil) — fall through to execute
-          }
-          await addCollateral(
+        if (showSimulationPreview) {
+          const result = await addCollateral(
             vault.address as `0x${string}`,
             amount,
-            { tokenSymbol: vault.symbol }
+            { tokenSymbol: vault.symbol, previewOnly: true }
           );
-        } else {
-          // Swap: tokenIn → vaultToken → add_collateral
-          if (showSimulationPreview) {
-            const result = await addCollateralWithSwap(
-              vault.address as `0x${string}`,
-              selectedToken.address,
-              amount,
-              Number(slippage),
-              { previewOnly: true, tokenSymbol: selectedToken.symbol, decimals: selectedToken.decimals }
-            );
-            if (result) {
-              simulationBlock.current = currentBlock ?? 0n;
-              setShowSimulationModal(true);
-              fetchEthPrice();
-              return; // Modal opened — bail
-            }
-            // Approval needed — approval card will handle it, auto-execute after approval
-            if (wasApprovalRequested()) return;
-            // No simulation data (e.g. Anvil) — fall through to execute
+          if (result) {
+            simulationBlock.current = currentBlock ?? 0n;
+            setShowSimulationModal(true);
+            fetchEthPrice();
+            return; // Modal opened — bail
           }
-          await addCollateralWithSwap(
-            vault.address as `0x${string}`,
-            selectedToken.address,
-            amount,
-            Number(slippage),
-            { tokenSymbol: selectedToken.symbol, decimals: selectedToken.decimals }
-          );
+          // Approval needed — approval card will handle it, auto-execute after approval
+          if (wasApprovalRequested()) return;
+          // No simulation data (e.g. Anvil) — fall through to execute
         }
+        await addCollateral(
+          vault.address as `0x${string}`,
+          amount,
+          { tokenSymbol: vault.symbol }
+        );
       } else {
         // Remove mode
-        if (isVaultToken) {
-          if (showSimulationPreview) {
-            const result = await removeCollateral(
-              vault.address as `0x${string}`,
-              amount,
-              { previewOnly: true }
-            );
-            if (result) {
-              simulationBlock.current = currentBlock ?? 0n;
-              setShowSimulationModal(true);
-              fetchEthPrice();
-              return; // Modal opened — bail
-            }
-            // Approval needed — approval card will handle it, auto-execute after approval
-            if (wasApprovalRequested()) return;
-            // No simulation data (e.g. Anvil) — fall through to execute
-          }
-          await removeCollateral(
+        if (showSimulationPreview) {
+          const result = await removeCollateral(
             vault.address as `0x${string}`,
             amount,
+            { previewOnly: true }
           );
-        } else {
-          // Swap: remove_collateral → vaultToken → tokenOut
-          // amountAsVaultToken converts output-token input back to ycvxCRV
-          if (showSimulationPreview) {
-            const result = await removeCollateralAndSwap(
-              vault.address as `0x${string}`,
-              amountAsVaultToken,
-              selectedToken.address,
-              Number(slippage),
-              { previewOnly: true, tokenSymbol: selectedToken.symbol }
-            );
-            if (result) {
-              simulationBlock.current = currentBlock ?? 0n;
-              setShowSimulationModal(true);
-              fetchEthPrice();
-              return; // Modal opened — bail
-            }
-            // Approval needed — approval card will handle it, auto-execute after approval
-            if (wasApprovalRequested()) return;
-            // No simulation data (e.g. Anvil) — fall through to execute
+          if (result) {
+            simulationBlock.current = currentBlock ?? 0n;
+            setShowSimulationModal(true);
+            fetchEthPrice();
+            return; // Modal opened — bail
           }
-          await removeCollateralAndSwap(
-            vault.address as `0x${string}`,
-            amountAsVaultToken,
-            selectedToken.address,
-            Number(slippage),
-            { tokenSymbol: selectedToken.symbol }
-          );
+          // Approval needed — approval card will handle it, auto-execute after approval
+          if (wasApprovalRequested()) return;
+          // No simulation data (e.g. Anvil) — fall through to execute
         }
+        await removeCollateral(
+          vault.address as `0x${string}`,
+          amount,
+        );
       }
     } catch (err) {
       console.error("Collateral action failed:", err);
@@ -749,28 +433,22 @@ export function CollateralTab({
   const hasInsufficientBalance = useMemo(() => {
     if (mode === "remove" || !amount || Number(amount) === 0) return false;
     try {
-      const amountWei = parseUnits(amount, isVaultToken ? vault.decimals : selectedToken.decimals);
+      const amountWei = parseUnits(amount, vault.decimals);
       return amountWei > currentTokenBalance;
     } catch {
       return false;
     }
-  }, [mode, amount, isVaultToken, vault.decimals, selectedToken.decimals, currentTokenBalance]);
+  }, [mode, amount, vault.decimals, currentTokenBalance]);
 
   const exceedsCollateral = useMemo(() => {
     if (mode !== "remove" || !amount || Number(amount) === 0 || !position?.hasLoan) return false;
     try {
-      let amountWei: bigint;
-      if (isRemoveWithSwap && removeRate && removeRate > 0) {
-        const vtStr = (Number(amount) / removeRate).toFixed(Math.min(vault.decimals, 8));
-        amountWei = parseUnits(vtStr, vault.decimals);
-      } else {
-        amountWei = parseUnits(amount, vault.decimals);
-      }
+      const amountWei = parseUnits(amount, vault.decimals);
       return amountWei > position.maxWithdrawable;
     } catch {
       return false;
     }
-  }, [mode, amount, vault.decimals, position, isRemoveWithSwap, removeRate]);
+  }, [mode, amount, vault.decimals, position]);
 
   const healthTooLow = estimatedHealth !== null && estimatedHealth <= 0 && mode === "remove";
 
@@ -786,9 +464,7 @@ export function CollateralTab({
     Number(amount) > 0 &&
     !hasInsufficientBalance &&
     !exceedsCollateral &&
-    !healthTooLow &&
-    (isVaultToken || (!quoteLoading && swapQuote !== undefined)) &&
-    (isVaultToken || zappersEnabled);
+    !healthTooLow;
 
   const getButtonText = () => {
     if (status === "building") return <>Building transaction<LoadingDots /></>;
@@ -799,13 +475,7 @@ export function CollateralTab({
     if (exceedsCollateral) return "Exceeds collateral";
     if (healthTooLow) return "Position would be unhealthy";
 
-    if (mode === "add") {
-      if (isVaultToken) return "Add Collateral";
-      return "Swap & Add Collateral";
-    } else {
-      if (isVaultToken) return "Remove Collateral";
-      return "Remove & Swap";
-    }
+    return mode === "add" ? "Add Collateral" : "Remove Collateral";
   };
 
   if (position?.inSoftLiquidation) {
@@ -814,7 +484,7 @@ export function CollateralTab({
         <AlertTriangle size={20} className="mx-auto text-yellow-500" />
         <div className="text-sm font-medium text-[var(--foreground)]">Collateral management unavailable</div>
         <div className="text-xs text-[var(--muted-foreground)]">
-          Your position is in soft-liquidation.{onSwitchTab ? (<> Use <button type="button" onClick={() => onSwitchTab("repay")} className="underline hover:text-[var(--foreground)] transition-colors">Repay</button> to reduce debt or <button type="button" onClick={() => onSwitchTab("leverage")} className="underline hover:text-[var(--foreground)] transition-colors">Liquidate</button> to close your position.</>) : " Repay debt or close your position."}
+          Your position is in soft-liquidation.{onSwitchTab ? (<> Use <button type="button" onClick={() => onSwitchTab("repay")} className="underline hover:text-[var(--foreground)] transition-colors">Repay</button> to reduce debt or <button type="button" onClick={() => onSwitchTab("liquidate")} className="underline hover:text-[var(--foreground)] transition-colors">Liquidate</button> to close your position.</>) : " Repay debt or close your position."}
         </div>
       </div>
     );
@@ -869,11 +539,11 @@ export function CollateralTab({
             className="flex-1 min-w-0 bg-transparent mono text-sm outline-none ring-0 focus:outline-none focus:ring-0 placeholder:text-[var(--muted-foreground)]/50"
           />
           <TokenSelector
-            selectedToken={selectedToken}
-            onSelect={setSelectedToken}
+            selectedToken={vaultToken}
+            onSelect={() => {}}
             priorityTokens={[vaultToken]}
             excludeDefiTokens={mode === "add"}
-            disabled={!zappersEnabled}
+            disabled
           />
           <MaxButton
             balance={maxBalance}
@@ -881,84 +551,6 @@ export function CollateralTab({
           />
         </div>
       </div>
-
-      {/* Quote details (non-vault-token, when amount entered and quote loaded) */}
-      {needsSwap && amount && Number(amount) > 0 && swapQuote && !quoteLoading && (
-        <div className="p-3 rounded-lg bg-[var(--muted)]/50 border border-[var(--border)] space-y-2 text-sm">
-          {/* Output estimate */}
-          {swapQuote.amountOut && (
-            mode === "add" ? (
-              <>
-                <div className="flex justify-between">
-                  <span className="text-[var(--muted-foreground)]">Sending</span>
-                  <span className="mono">
-                    {Number(debouncedAmount).toLocaleString(undefined, { maximumFractionDigits: 4 })} {selectedToken.symbol}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-[var(--muted-foreground)]">Adding</span>
-                  <span className="mono">
-                    ~{Number(formatUnits(BigInt(swapQuote.amountOut), vault.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })} {vault.symbol}
-                  </span>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="flex justify-between">
-                  <span className="text-[var(--muted-foreground)]">Removing</span>
-                  <span className="mono">
-                    {Number(debouncedVaultAmount).toLocaleString(undefined, { maximumFractionDigits: 4 })} {vault.symbol}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-[var(--muted-foreground)]">Receiving</span>
-                  <span className="mono">
-                    ~{Number(formatUnits(BigInt(swapQuote.amountOut), selectedToken.decimals)).toLocaleString(undefined, { maximumFractionDigits: 4 })} {selectedToken.symbol}
-                  </span>
-                </div>
-              </>
-            )
-          )}
-
-          {/* Exchange rate */}
-          {exchangeRate !== null && (
-            <div className="flex justify-between items-center">
-              <span className="text-[var(--muted-foreground)]">Rate</span>
-              <button
-                type="button"
-                onClick={() => setRateInverted(v => !v)}
-                className="flex items-center gap-1 mono hover:text-[var(--accent)] transition-colors"
-              >
-                {rateInverted
-                  ? <>1 {mode === "add" ? vault.symbol : selectedToken.symbol} = {(1 / exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 4 })} {mode === "add" ? selectedToken.symbol : vault.symbol}</>
-                  : <>1 {mode === "add" ? selectedToken.symbol : vault.symbol} = {exchangeRate.toLocaleString(undefined, { maximumFractionDigits: 4 })} {mode === "add" ? vault.symbol : selectedToken.symbol}</>
-                }
-                <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
-              </button>
-            </div>
-          )}
-
-          {/* Price impact */}
-          {priceImpact !== null && (
-            <div className="flex justify-between">
-              <span className="text-[var(--muted-foreground)]">Price Impact</span>
-              <span
-                className={cn(
-                  "mono",
-                  priceImpact <= 0
-                    ? "text-green-500"
-                    : priceImpact < 3
-                      ? "text-yellow-500"
-                      : "text-red-500"
-                )}
-              >
-                {priceImpact > 0 ? "" : "+"}{(-priceImpact).toFixed(2)}%
-              </span>
-            </div>
-          )}
-
-        </div>
-      )}
 
       {/* Approval Flow */}
       <ApprovalCard
@@ -1001,175 +593,37 @@ export function CollateralTab({
                 reset();
               } else if (simulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
                 setShowSimulationModal(true);
-              } else if (!quoteLoading) {
+              } else {
                 handleSubmit();
               }
             }}
-            disabled={showApprovalCard || isProcessing || quoteLoading || (!isFormValid && status === "idle")}
+            disabled={showApprovalCard || isProcessing || (!isFormValid && status === "idle")}
             className={cn(
               "w-full py-3 px-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2",
-              isProcessing || quoteLoading || (!isFormValid && status === "idle")
+              isProcessing || (!isFormValid && status === "idle")
                 ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
                 : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90"
             )}
           >
-            {needsSwap && quoteLoading && status === "idle" ? (
-              <>Getting quote<LoadingDots /></>
-            ) : (
-              getButtonText()
-            )}
+            {getButtonText()}
           </button>
         </div>
       </div>
 
-      {/* Settings icon for direct vault token paths (no swap) */}
-      <div
-        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
-        style={{ gridTemplateRows: !needsSwap ? "1fr" : "0fr" }}
-      >
-        <div className="overflow-hidden">
-          <div className="flex items-center justify-end">
-            <button
-              onClick={() => setShowSlippageModal(true)}
-              className="flex items-center gap-1.5 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
-              title="Settings"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="4" y1="6" x2="20" y2="6" />
-                <circle cx="8" cy="6" r="2" />
-                <line x1="4" y1="18" x2="20" y2="18" />
-                <circle cx="16" cy="18" r="2" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Enso Attribution + Route Toggle + Slippage Settings */}
-      <div
-        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
-        style={{ gridTemplateRows: needsSwap ? "1fr" : "0fr" }}
-      >
-        <div className="overflow-hidden">
-          <div className="flex items-center justify-between pt-2">
-            <a
-              href="https://www.enso.build"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
-            >
-              <span>Powered by</span>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="/enso.png"
-                alt="Enso"
-                width={14}
-                height={14}
-                className="rounded-sm"
-              />
-              <span className="font-medium">Enso</span>
-            </a>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={toggleRoute}
-                className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
-                title={showRoute ? "Hide route" : "Show route"}
-              >
-                {showRoute ? <RouteOff size={16} /> : <Route size={16} />}
-              </button>
-              <button
-                onClick={() => setShowSlippageModal(true)}
-                className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
-                title="Slippage settings"
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <line x1="4" y1="6" x2="20" y2="6" />
-                  <circle cx="8" cy="6" r="2" />
-                  <line x1="4" y1="18" x2="20" y2="18" />
-                  <circle cx="16" cy="18" r="2" />
-                </svg>
-              </button>
-            </div>
-          </div>
-
-        </div>
-      </div>
-
-      {/* Route details panel */}
-      <div
-        className="grid transition-[grid-template-rows] duration-300 ease-in-out"
-        style={{
-          gridTemplateRows:
-            showRoute && amount && Number(amount) > 0 && (swapQuote || quoteLoading) ? "1fr" : "0fr",
-        }}
-      >
-        <div className="overflow-hidden">
-          <div className="pt-3 mt-3 border-t border-[var(--border)]">
-                <div className="text-xs text-[var(--muted-foreground)] mb-2">
-                  Route
-                </div>
-                <RouteDisplay
-                  routeInfo={
-                    swapQuote
-                      ? {
-                          steps: mode === "add"
-                            ? [
-                                {
-                                  tokenSymbol: selectedToken.symbol,
-                                  action: "Swap",
-                                  description: `for ${vault.symbol}`,
-                                  protocol: "Enso Router",
-                                },
-                                {
-                                  tokenSymbol: vault.symbol,
-                                  action: "Add Collateral",
-                                  protocol: "Curve LlamaLend",
-                                },
-                              ]
-                            : [
-                                {
-                                  tokenSymbol: vault.symbol,
-                                  action: "Remove Collateral",
-                                  protocol: "Curve LlamaLend",
-                                },
-                                {
-                                  tokenSymbol: selectedToken.symbol,
-                                  action: "Swap",
-                                  description: `from ${vault.symbol}`,
-                                  protocol: "Enso Router",
-                                },
-                              ],
-                        }
-                      : undefined
-                  }
-                  inputSymbol={mode === "add" ? selectedToken.symbol : vault.symbol}
-                  outputSymbol={mode === "add" ? vault.symbol : selectedToken.symbol}
-                  inputAmount={
-                    amount
-                      ? Number(isRemoveWithSwap ? amountAsVaultToken : amount).toFixed(4)
-                      : undefined
-                  }
-                  outputAmount={
-                    swapQuote?.amountOut
-                      ? Number(formatUnits(
-                          BigInt(swapQuote.amountOut),
-                          mode === "add" ? vault.decimals : selectedToken.decimals
-                        )).toFixed(4)
-                      : undefined
-                  }
-                  isLoading={quoteLoading}
-                />
-          </div>
-        </div>
+      {/* Settings */}
+      <div className="flex items-center justify-end">
+        <button
+          onClick={() => setShowSlippageModal(true)}
+          className="flex items-center gap-1.5 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1"
+          title="Settings"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="4" y1="6" x2="20" y2="6" />
+            <circle cx="8" cy="6" r="2" />
+            <line x1="4" y1="18" x2="20" y2="18" />
+            <circle cx="16" cy="18" r="2" />
+          </svg>
+        </button>
       </div>
 
       {/* Connect wallet prompt */}
