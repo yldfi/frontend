@@ -32,7 +32,8 @@ import { useClearOnNavigation } from "@/hooks/useClearOnNavigation";
  * serve existing borrowers, only redirect once we *know* there is no loan:
  * not while the wallet is still (re)connecting on a direct page load (no
  * address yet, so the position query is disabled and reports "not loading"),
- * and not when the position read failed.
+ * and not when the position read failed. Local development skips the
+ * no-loan redirect so deprecated markets stay inspectable with any wallet.
  */
 export function shouldRedirectFromLending(state: {
   vaultFound: boolean;
@@ -42,9 +43,10 @@ export function shouldRedirectFromLending(state: {
   positionLoading: boolean;
   positionError: boolean;
   hasLoan: boolean;
+  isDevelopment?: boolean;
 }): boolean {
   if (!state.vaultFound || !state.hasController) return true;
-  if (!state.lendingDisabledWithoutPosition) return false;
+  if (!state.lendingDisabledWithoutPosition || state.isDevelopment) return false;
   if (state.walletSettling || state.positionLoading || state.positionError) return false;
   return !state.hasLoan;
 }
@@ -138,6 +140,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
     vaultFound: Boolean(vault),
     hasController: Boolean(controllerAddress),
     lendingDisabledWithoutPosition: isLendingDisabledWithoutPosition(vault),
+    isDevelopment: process.env.NODE_ENV === "development",
     walletSettling: isConnecting || isReconnecting,
     positionLoading,
     positionError,
