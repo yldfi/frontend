@@ -1,12 +1,19 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { useAccount } from "wagmi";
+import { useIsSafeWallet } from "@/hooks/useIsSafeWallet";
+import {
+  readStoredSimulationPreview,
+  resolveSimulationPreview,
+  writeStoredSimulationPreview,
+} from "@/lib/simulation-preview-setting";
 
 /**
  * Shared settings hook for slippage, simulation preview, and route display.
  * Reads/writes the same localStorage keys across all components:
  *   - yldfi-slippage (default "50", basis points)
- *   - yldfi-show-simulation (default false)
+ *   - yldfi-show-simulation (default false; true for Safe accounts)
  *   - yldfi-lending-show-route (default true)
  */
 export function useSettings() {
@@ -29,30 +36,20 @@ export function useSettings() {
   }, []);
 
   // --- Simulation preview ---
-  const [showSimulationPreview, setShowSimulationPreviewState] = useState(() => {
-    if (typeof window === "undefined") return false;
-    try {
-      return localStorage.getItem("yldfi-show-simulation") === "true";
-    } catch {
-      return false;
-    }
-  });
+  const { address, chainId } = useAccount();
+  const isSafe = useIsSafeWallet(address, chainId);
+  const [storedSimulationPreview, setStoredSimulationPreview] = useState<boolean | null>(readStoredSimulationPreview);
+  const showSimulationPreview = resolveSimulationPreview(storedSimulationPreview, isSafe);
   const [showSimulationModal, setShowSimulationModal] = useState(false);
 
   const setShowSimulationPreview = useCallback((value: boolean) => {
-    setShowSimulationPreviewState(value);
-    try {
-      localStorage.setItem("yldfi-show-simulation", String(value));
-    } catch { /* ignore */ }
+    setStoredSimulationPreview(value);
+    writeStoredSimulationPreview(value);
   }, []);
 
   /** Re-read simulation preview from localStorage (call after SlippageModal closes) */
   const refreshSimulationPreview = useCallback(() => {
-    try {
-      setShowSimulationPreviewState(
-        localStorage.getItem("yldfi-show-simulation") === "true"
-      );
-    } catch { /* ignore */ }
+    setStoredSimulationPreview(readStoredSimulationPreview());
   }, []);
 
   // --- Route display toggle ---
