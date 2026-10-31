@@ -84,3 +84,33 @@ describe("simulation dollar value visibility", () => {
     expect(screen.getByText("~$<0.01")).toBeTruthy();
   });
 });
+
+describe("empty asset changes", () => {
+  const renderEmpty = (extra: { simulationUnavailable?: boolean; simulationUnavailableReason?: string } = {}) =>
+    render(
+      <SimulationModal
+        isOpen
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+        simulationResult={{
+          success: true,
+          gasUsed: 158139,
+          errorMessage: null,
+          tenderlyUrl: null,
+          assetChanges: [],
+          ...extra,
+        }}
+      />,
+    );
+
+  it("warns that the preview is incomplete when a successful simulation has no token movements", () => {
+    renderEmpty();
+    expect(screen.getByText(/returned no token movements/)).toBeTruthy();
+  });
+
+  it("shows only the unavailable banner when Tenderly fell back to eth_call", () => {
+    renderEmpty({ simulationUnavailable: true, simulationUnavailableReason: "tenderly_fetch timed out" });
+    expect(screen.getByText(/temporarily unavailable/)).toBeTruthy();
+    expect(screen.queryByText(/returned no token movements/)).toBeNull();
+  });
+});
