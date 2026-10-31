@@ -3,7 +3,7 @@ import { join } from "path";
 import { describe, expect, it } from "vitest";
 import { toFunctionSelector } from "viem";
 
-import { BEEFY, LLAMA_AIRFORCE, PIREX, TANGENT, TOKENS } from "@/config/vaults";
+import { BEEFY, LLAMA_AIRFORCE, PIREX } from "@/config/vaults";
 import fixture from "@/__tests__/fixtures/contract-selectors.json";
 
 const CURVE_ROUTER = "0x99a58482BD75cbab83b27EC03CA68fF489b5788f";
@@ -19,9 +19,6 @@ const STATIC_TARGETS: Record<string, string> = {
   "pirex.LPXCVX": PIREX.LPXCVX,
   "PIREX.LPXCVX_CVX_POOL": PIREX.LPXCVX_CVX_POOL,
   "PIREX.PIREX_CVX": PIREX.PIREX_CVX,
-  "TANGENT.CVGCVX_CONTRACT": TANGENT.CVGCVX_CONTRACT,
-  "TANGENT.CVX1_CVGCVX_POOL": TANGENT.CVX1_CVGCVX_POOL,
-  "TOKENS.CVX1": TOKENS.CVX1,
 };
 // Calls whose target is chosen at runtime must match a function on every vault of the family they
 // can point to (uCRV-style or Beefy-style external vaults).

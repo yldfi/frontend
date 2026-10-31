@@ -1,5 +1,5 @@
 export interface PendingApproval {
-  type?: "erc20" | "controller";
+  type?: "erc20";
   token: `0x${string}`;
   tokenSymbol: string;
   spender: `0x${string}`;

@@ -50,7 +50,6 @@ export function applyVaultSharePrices(
   const cachedUnderlyingPrices = new Map<string, number>([
     ["cvx", vaultCache.cvxPrice],
     ["cvxcrv", vaultCache.cvxCrvPrice],
-    ["cvgcvx", vaultCache.cvgCvxPrice],
     ["pxcvx", vaultCache.pxCvxPrice],
   ]);
 

@@ -65,8 +65,6 @@ async function getRpcUrls(env: Env): Promise<{ rpcUrls: string[]; privateCount: 
 const CVXCRV_TOKEN = "0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7";
 const YCVXCRV_VAULT = "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86";
 const YSCVXCRV_VAULT = "0xCa960E6DF1150100586c51382f619efCCcF72706";
-const YCVGCVX_VAULT = "0x0849b046292293f78dF3002F8461f8A7e2eC2b82";
-const YSCVGCVX_VAULT = "0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359";
 const YSPXCVX_VAULT = "0xB246DB2A73EEE3ee026153660c74657C123f8E42";
 const YSCVX_VAULT = "0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e";
 
@@ -287,24 +285,20 @@ async function getVaultData(vaultAddress: string, rpcUrls: string[], logger: Log
 }
 
 // Underlying token addresses for price lookups
-const CVGCVX_TOKEN = "0x2191DF768ad71140F9F3E96c1e4407A4aA31d082";
 const PXCVX_TOKEN = "0xBCe0Cf87F513102F22232436CCa2ca49e815C3aC";
 const CVX_TOKEN = "0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B";
 
 // Curve pools for Curve-pool price fallback (when Enso has no feed)
 const LPXCVX_CVX_POOL = "0x72725C0C879489986D213A9A6D2116dE45624c1c"; // CryptoSwap: coin0=CVX, coin1=lpxCVX
-const CVX1_CVGCVX_POOL = "0xc50E191F703FB3160fC15d8b168A8c740fec3666"; // StableSwap: coin0=CVX1, coin1=cvgCVX
 
 // Chainlink CVX/USD price feed — used to convert on-chain CVX balances to USD
 // when building historical (backfilled) TVL. latestRoundData() answer is 8dp.
 const CVX_USD_FEED = "0xc27e191714b429c51e18fafba6a4c31135b2e157";
 const LATEST_ROUND_DATA = "0xfeaf968c"; // latestRoundData()
 
-// get_dy selectors — encoded with abi.encodeWithSelector
+// get_dy selector — encoded with abi.encodeWithSelector
 // CryptoSwap: get_dy(uint256 i, uint256 j, uint256 dx) → 0x556d6e9f
-// StableSwap: get_dy(int128 i, int128 j, uint256 dx)   → 0x5e0d443f
 const GET_DY_UINT256 = "0x556d6e9f";
-const GET_DY_INT128 = "0x5e0d443f";
 
 function padHex32(value: bigint | number | string): string {
   const hex = typeof value === "bigint" ? value.toString(16) : BigInt(value).toString(16);
@@ -312,10 +306,9 @@ function padHex32(value: bigint | number | string): string {
 }
 
 /**
- * Curve-pool market price derivation for cvgCVX/pxCVX/lpxCVX.
+ * Curve-pool market price derivation for pxCVX/lpxCVX.
  * Uses a 1-CVX probe against the pool's get_dy to read the mid-rate.
  *   1 CVX → X lpxCVX → 1 lpxCVX (= 1 pxCVX) market = cvxPrice / X
- *   1 CVX1 (≈1 CVX) → Y cvgCVX → 1 cvgCVX market = cvxPrice / Y
  * Returns 0 on failure (caller treats as "no price").
  */
 async function getPxCvxPriceFromCurve(
@@ -341,29 +334,6 @@ async function getPxCvxPriceFromCurve(
   }
 }
 
-async function getCvgCvxPriceFromCurve(
-  cvxPrice: number,
-  rpcUrls: string[],
-  logger: Logger,
-): Promise<number> {
-  if (cvxPrice <= 0) return 0;
-  try {
-    // get_dy(0, 1, 1e18): i=CVX1, j=cvgCVX, dx=1 CVX1 (int128 args)
-    const data =
-      GET_DY_INT128 + padHex32(0) + padHex32(1) + padHex32(10n ** 18n);
-    const resultHex = await ethCall(CVX1_CVGCVX_POOL, data, rpcUrls, logger);
-    const cvgCvxOut = BigInt(resultHex);
-    if (cvgCvxOut === 0n) return 0;
-    const rate = Number(cvgCvxOut) / 1e18; // cvgCVX per 1 CVX1 (≈CVX, 1:1 wrap)
-    return cvxPrice / rate;
-  } catch (e) {
-    logger.warn("getCvgCvxPriceFromCurve", "Curve price derivation failed", {
-      error: String(e),
-    });
-    return 0;
-  }
-}
-
 interface KongVaultData {
   tvl: { close: number } | null;
   totalAssets: string | null;
@@ -376,8 +346,6 @@ interface KongResponse {
   data: {
     ycvxcrv: KongVaultData | null;
     yscvxcrv: KongVaultData | null;
-    ycvgcvx: KongVaultData | null;
-    yscvgcvx: KongVaultData | null;
   };
 }
 
@@ -410,8 +378,6 @@ async function fetchKongVaults(): Promise<KongResponse> {
   const query = `{
     ycvxcrv: vault(chainId: 1, address: "${YCVXCRV_VAULT}") { tvl { close } totalAssets pricePerShare decimals }
     yscvxcrv: vault(chainId: 1, address: "${YSCVXCRV_VAULT}") { tvl { close } totalAssets pricePerShare decimals }
-    ycvgcvx: vault(chainId: 1, address: "${YCVGCVX_VAULT}") { tvl { close } totalAssets pricePerShare decimals }
-    yscvgcvx: vault(chainId: 1, address: "${YSCVGCVX_VAULT}") { tvl { close } totalAssets pricePerShare decimals }
   }`;
 
   const response = await fetchWithRetry(KONG_API_URL, {
@@ -428,7 +394,7 @@ async function fetchKongVaults(): Promise<KongResponse> {
   if (result.errors?.length || !result.data) {
     throw new Error("Kong returned an incomplete vault response");
   }
-  for (const key of ["ycvxcrv", "yscvxcrv", "ycvgcvx", "yscvgcvx"] as const) {
+  for (const key of ["ycvxcrv", "yscvxcrv"] as const) {
     const vault = result.data[key];
     if (!vault || !/^\d+$/.test(vault.totalAssets ?? "") ||
         !/^\d+$/.test(vault.pricePerShare ?? "") || BigInt(vault.pricePerShare!) <= 0n) {
@@ -468,12 +434,11 @@ async function fetchVaultData(env: Env, logger: Logger) {
   logger.info("fetchVaultData", `Using ${rpcUrls.length} RPCs (${privateCount} private, ${publicCount} public)`);
 
   // Use allSettled so one failure doesn't kill the entire update
-  const [kongResult, yspxcvxResult, yscvxResult, cvxCrvPriceResult, cvgCvxPriceResult, pxCvxPriceResult, cvxPriceResult] = await Promise.allSettled([
+  const [kongResult, yspxcvxResult, yscvxResult, cvxCrvPriceResult, pxCvxPriceResult, cvxPriceResult] = await Promise.allSettled([
     fetchKongVaults(),
     getVaultData(YSPXCVX_VAULT, rpcUrls, logger),
     getVaultData(YSCVX_VAULT, rpcUrls, logger),
     getTokenPrice(CVXCRV_TOKEN, env.ENSO_API_KEY),
-    getTokenPrice(CVGCVX_TOKEN, env.ENSO_API_KEY),
     getTokenPrice(PXCVX_TOKEN, env.ENSO_API_KEY),
     getTokenPrice(CVX_TOKEN, env.ENSO_API_KEY),
   ]);
@@ -496,9 +461,6 @@ async function fetchVaultData(env: Env, logger: Logger) {
   const cvxCrvPrice = cvxCrvPriceResult.status === "fulfilled"
     ? cvxCrvPriceResult.value
     : 0;
-  let cvgCvxPrice = cvgCvxPriceResult.status === "fulfilled"
-    ? cvgCvxPriceResult.value
-    : 0;
   let pxCvxPrice = pxCvxPriceResult.status === "fulfilled"
     ? pxCvxPriceResult.value
     : 0;
@@ -506,18 +468,11 @@ async function fetchVaultData(env: Env, logger: Logger) {
     ? cvxPriceResult.value
     : 0;
 
-  // For cvgCVX/pxCVX the Curve pool is the authoritative price source (these
-  // tokens only trade on one pool each). Enso's aggregator feed can lag the
+  // For pxCVX the Curve pool is the authoritative price source (it only
+  // trades on one pool). Enso's aggregator feed can lag the
   // pool mid-rate by several percent, so we prefer the on-chain Curve rate
   // and only use Enso as a last-resort fallback when the pool query fails.
   if (cvxPrice > 0) {
-    const cvgCvxCurvePrice = await getCvgCvxPriceFromCurve(cvxPrice, rpcUrls, logger);
-    if (cvgCvxCurvePrice > 0) {
-      cvgCvxPrice = cvgCvxCurvePrice;
-      logger.info("fetchVaultData", "cvgCVX price from Curve pool (primary)", { price: cvgCvxPrice });
-    } else if (cvgCvxPrice > 0) {
-      logger.info("fetchVaultData", "cvgCVX price from Enso fallback", { price: cvgCvxPrice });
-    }
     const pxCvxCurvePrice = await getPxCvxPriceFromCurve(cvxPrice, rpcUrls, logger);
     if (pxCvxCurvePrice > 0) {
       pxCvxPrice = pxCvxCurvePrice;
@@ -527,7 +482,7 @@ async function fetchVaultData(env: Env, logger: Logger) {
     }
   }
 
-  for (const [token, price] of Object.entries({ cvxCrvPrice, cvgCvxPrice, pxCvxPrice, cvxPrice })) {
+  for (const [token, price] of Object.entries({ cvxCrvPrice, pxCvxPrice, cvxPrice })) {
     if (!Number.isFinite(price) || price <= 0) {
       throw new Error(`${token} unavailable; retaining previous snapshot`);
     }
@@ -540,14 +495,12 @@ async function fetchVaultData(env: Env, logger: Logger) {
     const vaultAPYs = await Promise.allSettled([
       getVaultAPY(YCVXCRV_VAULT, currentBlock, rpcUrls, logger),
       getVaultAPY(YSCVXCRV_VAULT, currentBlock, rpcUrls, logger),
-      getVaultAPY(YSCVGCVX_VAULT, currentBlock, rpcUrls, logger),
       getVaultAPY(YSCVX_VAULT, currentBlock, rpcUrls, logger),
     ]);
     apys = {
       ycvxcrv: vaultAPYs[0].status === "fulfilled" ? vaultAPYs[0].value : null,
       yscvxcrv: vaultAPYs[1].status === "fulfilled" ? vaultAPYs[1].value : null,
-      yscvgcvx: vaultAPYs[2].status === "fulfilled" ? vaultAPYs[2].value : null,
-      yscvx: vaultAPYs[3].status === "fulfilled" ? vaultAPYs[3].value : null,
+      yscvx: vaultAPYs[2].status === "fulfilled" ? vaultAPYs[2].value : null,
     };
     logger.info("fetchVaultData", "On-chain APYs computed", apys as Record<string, unknown>);
   } catch (e) {
@@ -557,8 +510,6 @@ async function fetchVaultData(env: Env, logger: Logger) {
   return {
     ycvxcrv: { ...formatKongVault(YCVXCRV_VAULT, kongData.data.ycvxcrv, cvxCrvPrice), apy: apys.ycvxcrv ?? null },
     yscvxcrv: { ...formatKongVault(YSCVXCRV_VAULT, kongData.data.yscvxcrv, cvxCrvPrice), apy: apys.yscvxcrv ?? null },
-    ycvgcvx: { ...formatKongVault(YCVGCVX_VAULT, kongData.data.ycvgcvx, cvgCvxPrice), apy: null },
-    yscvgcvx: { ...formatKongVault(YSCVGCVX_VAULT, kongData.data.yscvgcvx, cvgCvxPrice), apy: apys.yscvgcvx ?? null },
     // yscvx not yet indexed by Kong (standalone strategy, no Yearn allocator vault) — direct RPC
     yscvx: {
       address: YSCVX_VAULT,
@@ -579,7 +530,6 @@ async function fetchVaultData(env: Env, logger: Logger) {
       apy: null,
     },
     cvxCrvPrice,
-    cvgCvxPrice,
     cvxPrice,
     pxCvxPrice,
     lastUpdated: new Date().toISOString(),
@@ -587,7 +537,7 @@ async function fetchVaultData(env: Env, logger: Logger) {
 }
 
 /**
- * Legacy sampler for yspxCVX. The three tracked vaults use vault-history.ts.
+ * Legacy sampler for yspxCVX. The other tracked vaults use vault-history.ts.
  * We sample totalAssets/pricePerShare ourselves on each cron and append to the
  * R2 history so the frontend can render TVL/performance charts for them.
  */

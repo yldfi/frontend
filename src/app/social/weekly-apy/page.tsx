@@ -37,13 +37,15 @@ export default async function WeeklyApyPage({ searchParams }: WeeklyApyPageProps
 
       <section className={styles.hero}>
         <h1>
-          <span>Vault</span>
+          <span>{vaults.length === 1 ? "Strategy" : "Vault"}</span>
           <em>weekly</em>
-          <span>yields.</span>
+          <span>{vaults.length === 1 ? "yield." : "yields."}</span>
         </h1>
       </section>
 
-      <section className={`${styles.vaultGrid} ${vaults.length === 2 ? styles.vaultGridTwo : ""}`} aria-label="Vault weekly APYs">
+      <section
+        className={`${styles.vaultGrid} ${vaults.length === 1 ? styles.vaultGridOne : ""} ${vaults.length === 2 ? styles.vaultGridTwo : ""}`}
+        aria-label="Vault weekly APYs">
         {vaults.map((vault) => (
           <article key={vault.address}>
             <Image className={styles.vaultIcon} src={vault.icon} alt="" width={86} height={86} priority />

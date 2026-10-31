@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CVGCVX_STRATEGY_TRIGGER, getHarvestConfig } from "@/config/harvest";
+import { getHarvestConfig } from "@/config/harvest";
 import { VAULT_ADDRESSES } from "@/config/vaults";
 
 describe("getHarvestConfig", () => {
@@ -11,14 +11,7 @@ describe("getHarvestConfig", () => {
     });
   });
 
-  it("does not configure an auction for yscvgCVX", () => {
-    expect(getHarvestConfig(VAULT_ADDRESSES.YSCVGCVX)).toEqual({
-      kind: "yscvgcvx",
-      strategy: VAULT_ADDRESSES.YSCVGCVX,
-      trigger: {
-        address: CVGCVX_STRATEGY_TRIGGER,
-        functionName: "reportTrigger",
-      },
-    });
+  it("has no harvest configuration for the sunset yscvgCVX strategy", () => {
+    expect(getHarvestConfig("0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359")).toBeNull();
   });
 });

@@ -40,7 +40,7 @@ async function mockZapOutBundle(page: Page) {
 test.describe("Zap In Flow", () => {
   test.beforeEach(async ({ page }) => {
     await mockZapInBundle(page);
-    await page.goto("/vaults/yscvgcvx");
+    await page.goto("/vaults/yscvxcrv");
   });
 
   test("should display zap tab and token selector", async ({ page }) => {
@@ -127,7 +127,7 @@ test.describe("Zap In quotes (test wallet)", () => {
   test.beforeEach(async ({ page }) => {
     await injectTestWallet(page);
     intentCalls = await mockZapIntent(page, mockZapInBundleResponse);
-    await page.goto("/vaults/yscvgcvx");
+    await page.goto("/vaults/yscvxcrv");
     await connectTestWallet(page);
     await page.getByRole("button", { name: "Zap" }).click();
     await expect(page.getByRole("button", { name: "Zap In" })).toBeVisible({ timeout: 10000 });
@@ -140,7 +140,7 @@ test.describe("Zap In quotes (test wallet)", () => {
     await amountInput(page).pressSequentially("123", { delay: 50 });
 
     // The mock quotes a fixed output, so its arrival means the debounced request has resolved
-    await expect(page.getByText("1489.8461").first()).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("15214.8461").first()).toBeVisible({ timeout: 10000 });
     await page.waitForTimeout(1000);
 
     // One request for the settled amount, not one per keystroke
@@ -150,27 +150,27 @@ test.describe("Zap In quotes (test wallet)", () => {
   test("should display quote details after entering amount", async ({ page }) => {
     await amountInput(page).fill("1");
 
-    await expect(page.getByText("1 ETH = 1489.8461 yscvgCVX")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText("1489.8461").first()).toBeVisible();
+    await expect(page.getByText("1 ETH = 15214.8461 yscvxCRV")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("15214.8461").first()).toBeVisible();
     await expect(page.getByRole("button", { name: "Zap In", exact: true }).last()).toBeEnabled();
   });
 
   test("should show route display when toggle clicked", async ({ page }) => {
     await amountInput(page).fill("1");
-    await expect(page.getByText("1 ETH = 1489.8461 yscvgCVX")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("1 ETH = 15214.8461 yscvxCRV")).toBeVisible({ timeout: 10000 });
 
     const toggle = page.getByTitle(/(Show|Hide) route/);
     if ((await toggle.getAttribute("title")) === "Show route") await toggle.click();
 
     await expect(page.getByTitle("Hide route")).toBeVisible();
-    await expect(page.getByText("Deposit into yscvgCVX")).toBeVisible();
+    await expect(page.getByText("Deposit into yscvxCRV")).toBeVisible();
   });
 });
 
 test.describe("Zap Out Flow", () => {
   test.beforeEach(async ({ page }) => {
     await mockZapOutBundle(page);
-    await page.goto("/vaults/yscvgcvx");
+    await page.goto("/vaults/yscvxcrv");
   });
 
   test("should switch to Zap Out tab", async ({ page }) => {
@@ -196,7 +196,7 @@ test.describe("Zap Out Flow", () => {
 
 test.describe("Deposit Flow", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/vaults/yscvgcvx");
+    await page.goto("/vaults/yscvxcrv");
   });
 
   test("should display deposit tab by default", async ({ page }) => {
@@ -205,9 +205,9 @@ test.describe("Deposit Flow", () => {
   });
 
   test("should show underlying token for direct deposit", async ({ page }) => {
-    // Deposit tab shows the underlying token (cvgCVX for yscvgCVX vault)
+    // Deposit tab shows the underlying token (cvxCRV for yscvxCRV vault)
     // The token name appears multiple times, check the header/description area
-    await expect(page.locator("text=cvgCVX").first()).toBeVisible({ timeout: 10000 });
+    await expect(page.locator("text=cvxCRV").first()).toBeVisible({ timeout: 10000 });
   });
 
   test("should show Connect Wallet button when not connected", async ({ page }) => {
@@ -223,7 +223,7 @@ test.describe("Deposit Flow", () => {
 
 test.describe("Withdraw Flow", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/vaults/yscvgcvx");
+    await page.goto("/vaults/yscvxcrv");
   });
 
   test("should switch to withdraw tab", async ({ page }) => {
@@ -237,14 +237,14 @@ test.describe("Withdraw Flow", () => {
   test("should show vault shares as input in withdraw mode", async ({ page }) => {
     await page.getByRole("button", { name: "Withdraw" }).click();
 
-    // Should reference vault shares (yscvgCVX) - appears in multiple places
-    await expect(page.locator("text=yscvgCVX").first()).toBeVisible();
+    // Should reference vault shares (yscvxCRV) - appears in multiple places
+    await expect(page.locator("text=yscvxCRV").first()).toBeVisible();
   });
 });
 
 test.describe("Vault-to-Vault Flow", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/vaults/yscvgcvx");
+    await page.goto("/vaults/yscvxcrv");
   });
 
   test("should show yld vaults in token selector", async ({ page }) => {
@@ -327,7 +327,7 @@ test.describe("Error Handling", () => {
       });
     });
 
-    await page.goto("/vaults/yscvgcvx");
+    await page.goto("/vaults/yscvxcrv");
 
     // Page should load without crashing
     await expect(page.getByRole("button", { name: "Deposit" })).toBeVisible({ timeout: 10000 });
@@ -345,7 +345,7 @@ test.describe("Error Handling", () => {
       });
     });
 
-    await page.goto("/vaults/yscvgcvx");
+    await page.goto("/vaults/yscvxcrv");
 
     // Page should still be functional
     await expect(page.getByRole("button", { name: "Deposit" })).toBeVisible({ timeout: 10000 });
@@ -355,7 +355,7 @@ test.describe("Error Handling", () => {
 
 test.describe("UI State Persistence", () => {
   test("should remember selected tab after page navigation", async ({ page }) => {
-    await page.goto("/vaults/yscvgcvx");
+    await page.goto("/vaults/yscvxcrv");
 
     // Select Zap tab
     await page.getByRole("button", { name: "Zap" }).click();
@@ -364,7 +364,7 @@ test.describe("UI State Persistence", () => {
     await page.goto("/");
 
     // Navigate back
-    await page.goto("/vaults/yscvgcvx");
+    await page.goto("/vaults/yscvxcrv");
 
     // Note: Tab state may or may not persist based on implementation
     // This test verifies the page loads correctly after navigation
@@ -374,7 +374,7 @@ test.describe("UI State Persistence", () => {
 
 test.describe("Accessibility", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/vaults/yscvgcvx");
+    await page.goto("/vaults/yscvxcrv");
   });
 
   test("should have proper button labels", async ({ page }) => {

@@ -217,8 +217,6 @@ describe("ZapPageContent", () => {
       setShowSimulationModal,
       showRoute: true,
       toggleRoute,
-      zappersEnabled: true,
-      setZappersEnabled: vi.fn(),
       setShowSimulationPreview: vi.fn(),
     });
 
@@ -345,8 +343,6 @@ describe("ZapPageContent", () => {
       setShowSimulationModal,
       showRoute: true,
       toggleRoute,
-      zappersEnabled: true,
-      setZappersEnabled: vi.fn(),
       setShowSimulationPreview: vi.fn(),
     });
 
@@ -642,8 +638,6 @@ describe("ZapPageContent", () => {
       setShowSimulationModal,
       showRoute: true,
       toggleRoute,
-      zappersEnabled: true,
-      setZappersEnabled: vi.fn(),
       setShowSimulationPreview: vi.fn(),
     });
 

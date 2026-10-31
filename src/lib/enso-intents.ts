@@ -58,12 +58,8 @@ export type EnsoIntentName =
   | "yldVaultZapIn"
   | "yldVaultZapOut"
   | "yldVaultToVault"
-  | "yldVaultToCvgCvxVault"
-  | "cvgCvxVaultToYldVault"
   | "yldVaultToPxCvxVault"
   | "pxCvxVaultToYldVault"
-  | "cvgCvxZapIn"
-  | "cvgCvxZapOut"
   | "pxCvxZapIn"
   | "pxCvxZapOut"
   | "externalVaultZapInToYld"
@@ -114,8 +110,6 @@ export type YldVaultToVaultIntentRequest = BaseIntentRequest & {
 
 export type SpecialYldVaultToVaultIntentRequest = BaseIntentRequest & {
   intent:
-    | "yldVaultToCvgCvxVault"
-    | "cvgCvxVaultToYldVault"
     | "yldVaultToPxCvxVault"
     | "pxCvxVaultToYldVault";
   sourceVault: string;
@@ -123,13 +117,13 @@ export type SpecialYldVaultToVaultIntentRequest = BaseIntentRequest & {
 };
 
 export type SpecialYldVaultZapInIntentRequest = BaseIntentRequest & {
-  intent: "cvgCvxZapIn" | "pxCvxZapIn";
+  intent: "pxCvxZapIn";
   inputToken: string;
   vaultAddress: string;
 };
 
 export type SpecialYldVaultZapOutIntentRequest = BaseIntentRequest & {
-  intent: "cvgCvxZapOut" | "pxCvxZapOut";
+  intent: "pxCvxZapOut";
   vaultAddress: string;
   outputToken: string;
 };
@@ -263,11 +257,9 @@ const BASE_INTENT_FIELDS = [
   "receiver",
 ] as const;
 const SPECIAL_STANDARD_DEFERRED_ASSETS = new Set([
-  TOKENS.CVGCVX.toLowerCase(),
   TOKENS.PXCVX.toLowerCase(),
 ]);
 const SPECIAL_INPUT_TOKENS = new Set([
-  TOKENS.CVGCVX.toLowerCase(),
   TOKENS.PXCVX.toLowerCase(),
   TOKENS.LPXCVX.toLowerCase(),
 ]);
@@ -282,12 +274,8 @@ const INTENT_TX_TARGET_ALLOWLIST: Record<EnsoIntentName, readonly string[]> = {
   yldVaultZapIn: COMMON_INTENT_TX_TARGETS,
   yldVaultZapOut: COMMON_INTENT_TX_TARGETS,
   yldVaultToVault: COMMON_INTENT_TX_TARGETS,
-  yldVaultToCvgCvxVault: COMMON_INTENT_TX_TARGETS,
-  cvgCvxVaultToYldVault: COMMON_INTENT_TX_TARGETS,
   yldVaultToPxCvxVault: COMMON_INTENT_TX_TARGETS,
   pxCvxVaultToYldVault: COMMON_INTENT_TX_TARGETS,
-  cvgCvxZapIn: COMMON_INTENT_TX_TARGETS,
-  cvgCvxZapOut: COMMON_INTENT_TX_TARGETS,
   pxCvxZapIn: COMMON_INTENT_TX_TARGETS,
   pxCvxZapOut: COMMON_INTENT_TX_TARGETS,
   externalVaultZapInToYld: COMMON_INTENT_TX_TARGETS,
@@ -310,12 +298,8 @@ const INTENT_CALLDATA_SELECTOR_ALLOWLIST: Record<EnsoIntentName, readonly `0x${s
   yldVaultZapIn: COMMON_INTENT_CALLDATA_SELECTORS,
   yldVaultZapOut: COMMON_INTENT_CALLDATA_SELECTORS,
   yldVaultToVault: COMMON_INTENT_CALLDATA_SELECTORS,
-  yldVaultToCvgCvxVault: COMMON_INTENT_CALLDATA_SELECTORS,
-  cvgCvxVaultToYldVault: COMMON_INTENT_CALLDATA_SELECTORS,
   yldVaultToPxCvxVault: COMMON_INTENT_CALLDATA_SELECTORS,
   pxCvxVaultToYldVault: COMMON_INTENT_CALLDATA_SELECTORS,
-  cvgCvxZapIn: COMMON_INTENT_CALLDATA_SELECTORS,
-  cvgCvxZapOut: COMMON_INTENT_CALLDATA_SELECTORS,
   pxCvxZapIn: COMMON_INTENT_CALLDATA_SELECTORS,
   pxCvxZapOut: COMMON_INTENT_CALLDATA_SELECTORS,
   externalVaultZapInToYld: COMMON_INTENT_CALLDATA_SELECTORS,
@@ -373,7 +357,7 @@ function assertSupportedIlliquidToken(
 ): asserts value is `0x${string}` {
   assertAddress(value, field);
   if (!SPECIAL_INPUT_TOKENS.has(normalizeAddress(value))) {
-    failValidation(`${field} must be pxCVX, cvgCVX, or lpxCVX`);
+    failValidation(`${field} must be pxCVX or lpxCVX`);
   }
 }
 
@@ -430,8 +414,6 @@ function getVaultToVaultIntentName(
   // because pxCVX exits need the Pirex unwrap/swap path even when the target is
   // another special vault.
   if (sourceAsset === TOKENS.PXCVX.toLowerCase()) return "pxCvxVaultToYldVault";
-  if (targetAsset === TOKENS.CVGCVX.toLowerCase()) return "yldVaultToCvgCvxVault";
-  if (sourceAsset === TOKENS.CVGCVX.toLowerCase()) return "cvgCvxVaultToYldVault";
   if (targetAsset === TOKENS.PXCVX.toLowerCase()) return "yldVaultToPxCvxVault";
   return "yldVaultToVault";
 }
@@ -517,22 +499,12 @@ function assertSpecialYldVaultZapIn(request: Record<string, unknown>): asserts r
   assertBaseIntentFields(request, { requireSlippage: true });
   assertLiquidTokenAddress(request.inputToken, "inputToken");
 
-  if (request.intent === "cvgCvxZapIn") {
-    assertYldVaultAsset(request.vaultAddress, "vaultAddress", TOKENS.CVGCVX, "cvgCVX");
-    return;
-  }
-
   assertYldVaultAsset(request.vaultAddress, "vaultAddress", TOKENS.PXCVX, "pxCVX");
 }
 
 function assertSpecialYldVaultZapOut(request: Record<string, unknown>): asserts request is SpecialYldVaultZapOutIntentRequest {
   assertBaseIntentFields(request, { requireSlippage: true });
   assertLiquidTokenAddress(request.outputToken, "outputToken");
-
-  if (request.intent === "cvgCvxZapOut") {
-    assertYldVaultAsset(request.vaultAddress, "vaultAddress", TOKENS.CVGCVX, "cvgCVX");
-    return;
-  }
 
   assertYldVaultAsset(request.vaultAddress, "vaultAddress", TOKENS.PXCVX, "pxCVX");
 }
@@ -547,16 +519,15 @@ function assertExternalVaultZapInToYld(request: Record<string, unknown>): assert
   }
 }
 
-// pxCVX / lpxCVX / cvgCVX into a yld vault. These bundles are server-built because the
+// pxCVX / lpxCVX into a yld vault. These bundles are server-built because the
 // raw actions can't be submitted from the browser. A vault whose asset is the input itself is a
 // direct deposit. lpxCVX -> yspxCVX is allowed: it unwraps to pxCVX and deposits.
 function assertIlliquidToYldVault(request: Record<string, unknown>): asserts request is IlliquidToYldVaultIntentRequest {
   assertBaseIntentFields(request, { requireSlippage: true });
   assertAddress(request.inputToken, "inputToken");
   const input = normalizeAddress(request.inputToken);
-  const inputIsCvgCvx = input === normalizeAddress(TOKENS.CVGCVX);
-  if (input !== normalizeAddress(TOKENS.PXCVX) && input !== normalizeAddress(TOKENS.LPXCVX) && !inputIsCvgCvx) {
-    failValidation("inputToken must be pxCVX, lpxCVX or cvgCVX");
+  if (input !== normalizeAddress(TOKENS.PXCVX) && input !== normalizeAddress(TOKENS.LPXCVX)) {
+    failValidation("inputToken must be pxCVX or lpxCVX");
   }
   assertYldVault(request.vaultAddress, "vaultAddress");
   const asset = normalizeAddress(getIntentVault(request.vaultAddress)!.assetAddress);
@@ -699,19 +670,15 @@ export function assertValidEnsoIntentRequest(value: unknown): asserts value is E
       assertOnlyIntentFields(value, ["sourceVault", "targetVault"]);
       assertYldVaultToVault(value);
       return;
-    case "yldVaultToCvgCvxVault":
-    case "cvgCvxVaultToYldVault":
     case "yldVaultToPxCvxVault":
     case "pxCvxVaultToYldVault":
       assertOnlyIntentFields(value, ["sourceVault", "targetVault"]);
       assertSpecialYldVaultToVault(value);
       return;
-    case "cvgCvxZapIn":
     case "pxCvxZapIn":
       assertOnlyIntentFields(value, ["inputToken", "vaultAddress"]);
       assertSpecialYldVaultZapIn(value);
       return;
-    case "cvgCvxZapOut":
     case "pxCvxZapOut":
       assertOnlyIntentFields(value, ["vaultAddress", "outputToken"]);
       assertSpecialYldVaultZapOut(value);
@@ -943,16 +910,12 @@ function getIntentInputToken(request: EnsoIntentRequest): string {
     case "plainTokenSwap":
       return request.tokenIn;
     case "yldVaultZapIn":
-    case "cvgCvxZapIn":
     case "pxCvxZapIn":
       return request.inputToken;
     case "yldVaultZapOut":
-    case "cvgCvxZapOut":
     case "pxCvxZapOut":
       return request.vaultAddress;
     case "yldVaultToVault":
-    case "yldVaultToCvgCvxVault":
-    case "cvgCvxVaultToYldVault":
     case "yldVaultToPxCvxVault":
     case "pxCvxVaultToYldVault":
     case "yldVaultToExternalVault":
@@ -983,14 +946,12 @@ function getIntentOutputToken(request: EnsoIntentRequest): string | undefined {
     case "plainTokenSwap":
       return request.tokenOut;
     case "yldVaultZapIn":
-    case "cvgCvxZapIn":
     case "pxCvxZapIn":
     case "externalVaultZapInToYld":
     case "illiquidToYldVault":
     case "legacyMorphoZapIn":
       return request.vaultAddress;
     case "yldVaultZapOut":
-    case "cvgCvxZapOut":
     case "pxCvxZapOut":
     case "yldVaultToIlliquid":
     case "specialTokenToIlliquid":
@@ -1000,8 +961,6 @@ function getIntentOutputToken(request: EnsoIntentRequest): string | undefined {
     case "legacyMorphoWrap":
       return request.outputToken;
     case "yldVaultToVault":
-    case "yldVaultToCvgCvxVault":
-    case "cvgCvxVaultToYldVault":
     case "yldVaultToPxCvxVault":
     case "pxCvxVaultToYldVault":
     case "yldVaultToExternalVault":

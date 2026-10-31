@@ -8,7 +8,6 @@ vi.unmock("@tanstack/react-query");
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 describe("tracked vault history", () => {
   it.each([
-    ["yscvgcvx", "0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359"],
     ["yscvxcrv", "0xCa960E6DF1150100586c51382f619efCCcF72706"],
     ["yscvx", "0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e"],
   ])("reads %s from yldfi without filling zero or missing values", async (key, address) => {

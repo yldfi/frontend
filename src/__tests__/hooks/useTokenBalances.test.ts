@@ -51,12 +51,9 @@ describe("useTokenBalances logic", () => {
     const cache = {
       ycvxcrv: vaultData(VAULT_ADDRESSES.YCVXCRV, 1),
       yscvxcrv: vaultData(VAULT_ADDRESSES.YSCVXCRV, 1.1),
-      ycvgcvx: vaultData(VAULT_ADDRESSES.YCVGCVX, 1),
-      yscvgcvx: vaultData(VAULT_ADDRESSES.YSCVGCVX, 1),
       yscvx: vaultData(VAULT_ADDRESSES.YSCVX, 1),
       yspxcvx: vaultData(VAULT_ADDRESSES.YSPXCVX, 1.2),
       cvxCrvPrice: 0.5,
-      cvgCvxPrice: 2,
       pxCvxPrice: 3,
       cvxPrice: 4,
       lastUpdated: "2026-09-04T00:00:00Z",

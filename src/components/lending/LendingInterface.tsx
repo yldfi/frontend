@@ -8,7 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { usePublicClient } from "wagmi";
 import type { VaultConfig } from "@/config/vaults";
 import type { LendingPosition } from "@/hooks/useCurveLendingPosition";
-import { LeverageTab } from "./LeverageTab";
+import { SelfLiquidateTab } from "./SelfLiquidateTab";
 import { RepayTab } from "./RepayTab";
 import { BorrowTab } from "./BorrowTab";
 import { CollateralTab } from "./CollateralTab";
@@ -20,7 +20,6 @@ import { useVaultCache } from "@/hooks/useVaultCache";
 import { useCurveMarketRates } from "@/hooks/useCurveMarketRates";
 import { LoadingDots } from "@/components/LoadingDots";
 import { TxAssetDetailsPill } from "@/components/TxAssetDetailsPill";
-import { useSettings } from "@/hooks/useSettings";
 import { trackLendingTabSwitch } from "@/lib/analytics";
 import { aprToApy, computeNetApy, curveBorrowRateToApr } from "@/lib/lending";
 import {
@@ -55,7 +54,7 @@ interface LendingPanelProps {
   rewardApr?: number;
 }
 
-type Tab = "collateral" | "borrow" | "repay" | "leverage";
+type Tab = "collateral" | "borrow" | "repay" | "liquidate";
 
 // LTV indicator with soft/hard liquidation thresholds
 // Shows LTV value and soft/hard liquidation thresholds, all in muted grey
@@ -78,7 +77,6 @@ export function LendingInterface({
   rewardApr,
 }: LendingPanelProps) {
   const publicClient = usePublicClient();
-  const { zappersEnabled } = useSettings();
 
   // Oracle price for accurate leverage display
   const [oraclePrice, setOraclePrice] = useState<bigint>(0n);
@@ -167,7 +165,9 @@ export function LendingInterface({
     if (typeof window === "undefined") return "borrow";
     try {
       const saved = localStorage.getItem("yldfi-lending-tab");
-      if (saved === "collateral" || saved === "borrow" || saved === "repay" || saved === "leverage") return saved;
+      if (saved === "collateral" || saved === "borrow" || saved === "repay" || saved === "liquidate") return saved;
+      // Legacy key: the liquidate tab used to be stored as "leverage"
+      if (saved === "leverage") return "liquidate";
     } catch {
       // localStorage unavailable
     }
@@ -298,7 +298,7 @@ export function LendingInterface({
   }, [setActiveTab]);
 
   // Debug tx state (dev only)
-  type DebugLendingTxState = "none" | "borrow-pending" | "borrow-success" | "borrow-reverted" | "repay-pending" | "repay-success" | "repay-reverted" | "collateral-pending" | "collateral-success" | "collateral-reverted" | "leverage-pending" | "leverage-success" | "leverage-reverted" | "newloan-pending" | "newloan-success" | "newloan-reverted";
+  type DebugLendingTxState = "none" | "borrow-pending" | "borrow-success" | "borrow-reverted" | "repay-pending" | "repay-success" | "repay-reverted" | "collateral-pending" | "collateral-success" | "collateral-reverted" | "liquidate-pending" | "liquidate-success" | "liquidate-reverted" | "newloan-pending" | "newloan-success" | "newloan-reverted";
   const [debugTxState, setDebugTxState] = useState<DebugLendingTxState>("none");
   const [debugMinimized, setDebugMinimized] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -312,7 +312,7 @@ export function LendingInterface({
     });
   }, []);
   const [debugSoftLiq, setDebugSoftLiq] = useState(false);
-  type DebugApprovalScenario = "none" | "ctrl-1of1" | "erc20-1of2" | "ctrl-2of2" | "approving";
+  type DebugApprovalScenario = "none" | "erc20-1of1" | "erc20-1of2" | "erc20-2of2" | "approving";
   const [debugApproval, setDebugApproval] = useState<DebugApprovalScenario>("none");
   const debugHash = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
   const debugLendingTxState: LendingTxState = useMemo(() => {
@@ -320,7 +320,7 @@ export function LendingInterface({
     const [action, status] = debugTxState.split("-") as [string, string];
     const actionMap: Record<string, string> = {
       borrow: "Borrow", repay: "Repay", collateral: "Add Collateral",
-      leverage: "Leverage Up", newloan: "Create Loan",
+      liquidate: "Self Liquidate", newloan: "Create Loan",
     };
     return {
       status: status as "pending" | "success" | "reverted",
@@ -343,40 +343,40 @@ export function LendingInterface({
     if (debugApproval === "none") return null;
     const mockAmount = 10n ** BigInt(vault.decimals) * 100n;
     const scenarios: Record<Exclude<DebugApprovalScenario, "none">, {
-      type: "erc20" | "controller";
+      type: "erc20";
       tokenSymbol: string;
       amount?: bigint;
       progress: { step: number; total: number; steps: { label: string; description: string; done: boolean }[] };
       isApproving: boolean;
     }> = {
-      "ctrl-1of1": {
-        type: "controller", tokenSymbol: "Controller",
+      "erc20-1of1": {
+        type: "erc20", tokenSymbol: vault.symbol, amount: mockAmount,
         progress: { step: 1, total: 1, steps: [
-          { label: "yld Zapper", description: "Allow yld Zapper to manage position on LlamaLend controller", done: false },
+          { label: vault.symbol, description: `Approve ${vault.symbol} for Curve controller`, done: false },
         ]},
         isApproving: false,
       },
       "erc20-1of2": {
         type: "erc20", tokenSymbol: vault.symbol, amount: mockAmount,
         progress: { step: 1, total: 2, steps: [
-          { label: vault.symbol, description: `Approve ${vault.symbol} for yld Zapper`, done: false },
-          { label: "yld Zapper", description: "Allow yld Zapper to manage position on LlamaLend controller", done: false },
+          { label: vault.symbol, description: `Approve ${vault.symbol} for Curve controller`, done: false },
+          { label: "crvUSD", description: "Approve crvUSD for Curve controller", done: false },
         ]},
         isApproving: false,
       },
-      "ctrl-2of2": {
-        type: "controller", tokenSymbol: "Controller",
+      "erc20-2of2": {
+        type: "erc20", tokenSymbol: "crvUSD", amount: mockAmount,
         progress: { step: 2, total: 2, steps: [
-          { label: vault.symbol, description: `Approve ${vault.symbol} for yld Zapper`, done: true },
-          { label: "yld Zapper", description: "Allow yld Zapper to manage position on LlamaLend controller", done: false },
+          { label: vault.symbol, description: `Approve ${vault.symbol} for Curve controller`, done: true },
+          { label: "crvUSD", description: "Approve crvUSD for Curve controller", done: false },
         ]},
         isApproving: false,
       },
       "approving": {
         type: "erc20", tokenSymbol: vault.symbol, amount: mockAmount,
         progress: { step: 1, total: 2, steps: [
-          { label: vault.symbol, description: `Approve ${vault.symbol} for yld Zapper`, done: false },
-          { label: "yld Zapper", description: "Allow yld Zapper to manage position on LlamaLend controller", done: false },
+          { label: vault.symbol, description: `Approve ${vault.symbol} for Curve controller`, done: false },
+          { label: "crvUSD", description: "Approve crvUSD for Curve controller", done: false },
         ]},
         isApproving: true,
       },
@@ -671,20 +671,20 @@ export function LendingInterface({
   }, [position, debugSoftLiq]);
   const deprecatedMarket = Boolean(vault.deprecated?.disableLendingWithoutPosition);
 
-  // Reset off leverage tab when zappers are disabled (unless in soft-liq, where it becomes "liquidate")
+  // Reset off the liquidate tab once the position is no longer in soft liquidation
   useEffect(() => {
-    if (!zappersEnabled && activeTab === "leverage" && !effectivePosition?.inSoftLiquidation) {
+    if (activeTab === "liquidate" && !effectivePosition?.inSoftLiquidation) {
       const timer = setTimeout(() => setActiveTab("borrow"), 0);
       return () => clearTimeout(timer);
     }
-  }, [zappersEnabled, activeTab, effectivePosition?.inSoftLiquidation, setActiveTab]);
+  }, [activeTab, effectivePosition?.inSoftLiquidation, setActiveTab]);
 
   const managementTabs = useMemo(() => {
     const tabs: Tab[] = deprecatedMarket
       ? ["repay", "collateral"]
-      : ["borrow", "leverage", "repay", "collateral"];
-    return tabs.filter((tab) => tab !== "leverage" || zappersEnabled || effectivePosition?.inSoftLiquidation);
-  }, [deprecatedMarket, effectivePosition?.inSoftLiquidation, zappersEnabled]);
+      : ["borrow", "liquidate", "repay", "collateral"];
+    return tabs.filter((tab) => tab !== "liquidate" || effectivePosition?.inSoftLiquidation);
+  }, [deprecatedMarket, effectivePosition?.inSoftLiquidation]);
 
   useEffect(() => {
     if (!hasLoan) return;
@@ -729,8 +729,6 @@ export function LendingInterface({
       try {
         sessionStorage.removeItem(`yldfi-lending-newloan-amount-${vault.address}`);
         sessionStorage.removeItem(`yldfi-lending-newloan-debt-${vault.address}`);
-        sessionStorage.removeItem(`yldfi-lending-newloan-token-${vault.address}`);
-        sessionStorage.removeItem(`yldfi-lending-newloan-output-${vault.address}`);
       } catch { /* */ }
     }
   }, [clearChildTabState, vault.address]);
@@ -847,7 +845,7 @@ export function LendingInterface({
     { label: "Borrow", prefix: "borrow" },
     { label: "Repay", prefix: "repay" },
     { label: "Collateral", prefix: "collateral" },
-    { label: "Leverage", prefix: "leverage" },
+    { label: "Liquidate", prefix: "liquidate" },
     { label: "New Loan", prefix: "newloan" },
   ];
 
@@ -940,9 +938,9 @@ export function LendingInterface({
         <div className="flex gap-1 mt-1 pt-1 border-t border-[var(--border)]">
           <span className="text-[10px] text-[var(--muted-foreground)] w-16 flex items-center">Approve</span>
           {([
-            { key: "ctrl-1of1" as const, label: "1/1" },
+            { key: "erc20-1of1" as const, label: "1/1" },
             { key: "erc20-1of2" as const, label: "1/2" },
-            { key: "ctrl-2of2" as const, label: "2/2" },
+            { key: "erc20-2of2" as const, label: "2/2" },
             { key: "approving" as const, label: "Spin" },
           ]).map(({ key, label }) => (
             <button
@@ -1042,9 +1040,7 @@ export function LendingInterface({
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-sm">yld</div>
                 <div className="text-xs text-[var(--muted-foreground)]">
-                  {zappersEnabled
-                    ? "Deposit and borrow any token using Enso swaps. Optional leverage"
-                    : "Deposit and borrow using the yld interface. Manage your collateral and debt positions"}
+                  Deposit and borrow using the yld interface. Manage your collateral and debt positions
                 </div>
               </div>
               <ArrowRight size={16} className="text-[var(--muted-foreground)] group-hover:text-[var(--accent)] transition-colors shrink-0" />
@@ -1520,7 +1516,7 @@ export function LendingInterface({
                     : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                 )}
               >
-                {tab === "leverage" && effectivePosition?.inSoftLiquidation ? "liquidate" : tab}
+                {tab}
                 {activeTab === tab && (
                   <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--foreground)]" />
                 )}
@@ -1573,10 +1569,9 @@ export function LendingInterface({
                 onSwitchTab={(t) => setActiveTab(t as Tab)}
               />
             )}
-            {!deprecatedMarket && activeTab === "leverage" && (
-              <LeverageTab
+            {!deprecatedMarket && activeTab === "liquidate" && (
+              <SelfLiquidateTab
                 vault={vault}
-                userBalance={userBalance}
                 position={effectivePosition}
                 controllerAddress={controllerAddress}
                 onTransactionSuccess={onTransactionSuccess}

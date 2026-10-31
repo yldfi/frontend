@@ -19,7 +19,6 @@ vi.mock("@/lib/enso", () => ({
   fetchRoute: mockFetchRoute,
   fetchBundle: mockEnsoFetchBundle,
   getLpxCvxToCvxSwapRate: mockGetLpxCvxToCvxSwapRate,
-  getCvgCvxReverseSwapRate: vi.fn(),
   ENSO_SHORTCUTS: "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003",
   ENSO_ROUTER_V2: "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf",
 }));
@@ -41,12 +40,6 @@ vi.mock("@/lib/curve", () => ({
 vi.mock("@/lib/curve/rpc", () => ({
   previewRedeem: vi.fn(() => Promise.resolve("950000000000000000")),
   getCurveGetDy: vi.fn(() => Promise.resolve(940000000000000000n)),
-}));
-
-// Mock @/lib/zapper — re-exports CRVUSD_ADDRESS and ZAPPER_ADDRESS
-vi.mock("@/lib/zapper", () => ({
-  CRVUSD_ADDRESS: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E",
-  ZAPPER_ADDRESS: "0xED653FF2410A4686a0B69Fc4C0D1c0cccDFddb83",
 }));
 
 import { fetchRepayBundle, fetchRepayWithSwapBundle } from "@/lib/curve-lending";

@@ -9,7 +9,7 @@ import {
   DEFISAVER_CURVE_HELPER,
   CURVE_VIEW_ABI,
   CURVE_HELPER_ABI,
-} from "@/lib/zapper";
+} from "@/lib/curve-lending-views";
 
 export interface LendingPosition {
   // Raw values from user_state

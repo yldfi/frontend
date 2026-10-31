@@ -31,8 +31,6 @@ import {
   fetchZapInRoute,
   fetchZapOutRoute,
   fetchVaultToVaultRoute,
-  fetchCvgCvxZapInRoute,
-  fetchCvgCvxZapOutRoute,
   fetchPxCvxZapInRoute,
   fetchPxCvxZapOutRoute,
   ETH_ADDRESS,
@@ -159,63 +157,6 @@ describe("Enso Live API Integration", () => {
     );
   });
 
-  describe("fetchCvgCvxZapInRoute - ERC20 → cvgCVX vault", () => {
-    it(
-      "ETH → yscvgCVX (custom cvgCVX routing)",
-      async () => {
-        const result = await fetchCvgCvxZapInRoute({
-          fromAddress: TEST_WALLET,
-          vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
-          inputToken: ETH_ADDRESS,
-          amountIn: ONE_ETH,
-          slippage: TEST_SLIPPAGE,
-        });
-
-        expect(result.amountsOut).toBeDefined();
-        const vaultOutput =
-          result.amountsOut[VAULT_ADDRESSES.YSCVGCVX.toLowerCase()] ||
-          result.amountsOut[VAULT_ADDRESSES.YSCVGCVX];
-        expect(vaultOutput).toBeDefined();
-        expect(BigInt(vaultOutput)).toBeGreaterThan(0n);
-        expect(result.tx).toBeDefined();
-      },
-      API_TIMEOUT
-    );
-
-    it(
-      "CVX → yscvgCVX (direct CVX to cvgCVX)",
-      async () => {
-        let result;
-        try {
-          result = await fetchCvgCvxZapInRoute({
-            fromAddress: TEST_WALLET,
-            vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
-            inputToken: TOKENS.CVX,
-            amountIn: "100000000000000000000", // 100 CVX
-            slippage: TEST_SLIPPAGE,
-          });
-        } catch (e) {
-          // Handle Enso simulation error when test wallet has insufficient balance
-          // The API tries to simulate the tx but fails because TEST_WALLET has no CVX
-          const errorStr = JSON.stringify(e);
-          if (errorStr.includes("transfer amount exceeds balance") || errorStr.includes("Could not simulate tx")) {
-            console.log("Note: Enso API simulation failed (test wallet has no CVX - expected)");
-            throw e;
-          }
-          throw e;
-        }
-
-        expect(result.amountsOut).toBeDefined();
-        const vaultOutput =
-          result.amountsOut[VAULT_ADDRESSES.YSCVGCVX.toLowerCase()] ||
-          result.amountsOut[VAULT_ADDRESSES.YSCVGCVX];
-        expect(vaultOutput).toBeDefined();
-        expect(BigInt(vaultOutput)).toBeGreaterThan(0n);
-      },
-      API_TIMEOUT
-    );
-  });
-
   describe("fetchPxCvxZapInRoute - ERC20 → pxCVX vault", () => {
     it(
       "ETH → yspxCVX (custom pxCVX routing)",
@@ -247,29 +188,6 @@ describe("Enso Live API Integration", () => {
         const result = await fetchZapOutRoute({
           fromAddress: TEST_WALLET,
           vaultAddress: VAULT_ADDRESSES.YCVXCRV,
-          outputToken: ETH_ADDRESS,
-          amountIn: TEN_VAULT_SHARES,
-          slippage: TEST_SLIPPAGE,
-        });
-
-        expect(result.amountsOut).toBeDefined();
-        const ethOutput =
-          result.amountsOut[ETH_ADDRESS.toLowerCase()] || result.amountsOut[ETH_ADDRESS];
-        expect(ethOutput).toBeDefined();
-        expect(BigInt(ethOutput)).toBeGreaterThan(0n);
-        expect(result.tx).toBeDefined();
-      },
-      API_TIMEOUT
-    );
-  });
-
-  describe("fetchCvgCvxZapOutRoute - cvgCVX vault → ERC20", () => {
-    it(
-      "yscvgCVX → ETH (custom cvgCVX routing)",
-      async () => {
-        const result = await fetchCvgCvxZapOutRoute({
-          fromAddress: TEST_WALLET,
-          vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
           outputToken: ETH_ADDRESS,
           amountIn: TEN_VAULT_SHARES,
           slippage: TEST_SLIPPAGE,
@@ -323,16 +241,6 @@ describe("Enso Live API Integration", () => {
   describe("fetchVaultToVaultRoute - Vault → Vault zaps", () => {
     const additionalRouteCases = [
       {
-        name: "yscvgCVX → ysCVX (cvgCVX → CVX)",
-        sourceVault: VAULT_ADDRESSES.YSCVGCVX,
-        targetVault: VAULT_ADDRESSES.YSCVX,
-      },
-      {
-        name: "ysCVX → yscvgCVX (CVX → cvgCVX)",
-        sourceVault: VAULT_ADDRESSES.YSCVX,
-        targetVault: VAULT_ADDRESSES.YSCVGCVX,
-      },
-      {
         name: "yspxCVX → ysCVX (pxCVX → CVX)",
         sourceVault: VAULT_ADDRESSES.YSPXCVX,
         targetVault: VAULT_ADDRESSES.YSCVX,
@@ -341,16 +249,6 @@ describe("Enso Live API Integration", () => {
         name: "yscvxCRV → ysCVX (cvxCRV → CVX)",
         sourceVault: VAULT_ADDRESSES.YSCVXCRV,
         targetVault: VAULT_ADDRESSES.YSCVX,
-      },
-      {
-        name: "ycvgCVX → yscvgCVX (same underlying: cvgCVX)",
-        sourceVault: VAULT_ADDRESSES.YCVGCVX,
-        targetVault: VAULT_ADDRESSES.YSCVGCVX,
-      },
-      {
-        name: "yscvgCVX → ycvgCVX (same underlying: cvgCVX, reverse)",
-        sourceVault: VAULT_ADDRESSES.YSCVGCVX,
-        targetVault: VAULT_ADDRESSES.YCVGCVX,
       },
     ] as const;
 
@@ -420,60 +318,6 @@ describe("Enso Live API Integration", () => {
     );
 
     it(
-      "ycvxCRV → yscvgCVX (different underlying: cvxCRV → cvgCVX)",
-      async () => {
-        const result = await fetchVaultToVaultRoute({
-          fromAddress: TEST_WALLET,
-          sourceVault: VAULT_ADDRESSES.YCVXCRV,
-          targetVault: VAULT_ADDRESSES.YSCVGCVX,
-          amountIn: TEN_VAULT_SHARES,
-          slippage: TEST_SLIPPAGE,
-        });
-
-        expect(result.amountsOut).toBeDefined();
-        const targetOutput =
-          result.amountsOut[VAULT_ADDRESSES.YSCVGCVX.toLowerCase()] ||
-          result.amountsOut[VAULT_ADDRESSES.YSCVGCVX];
-        expect(targetOutput).toBeDefined();
-        expect(BigInt(targetOutput)).toBeGreaterThan(0n);
-      },
-      API_TIMEOUT
-    );
-
-    it(
-      "yscvgCVX → ycvxCRV (different underlying: cvgCVX → cvxCRV)",
-      async () => {
-        // Retry once on transient RPC failures
-        let result;
-        try {
-          result = await fetchVaultToVaultRoute({
-            fromAddress: TEST_WALLET,
-            sourceVault: VAULT_ADDRESSES.YSCVGCVX,
-            targetVault: VAULT_ADDRESSES.YCVXCRV,
-            amountIn: TEN_VAULT_SHARES,
-            slippage: TEST_SLIPPAGE,
-          });
-        } catch (e) {
-          // Handle transient RPC failures gracefully in CI
-          const errorMsg = e instanceof Error ? e.message : String(e);
-          if (errorMsg.includes("Failed to preview redeem")) {
-            console.log("Note: RPC previewRedeem failed (transient network issue in CI)");
-            throw e;
-          }
-          throw e;
-        }
-
-        expect(result.amountsOut).toBeDefined();
-        const targetOutput =
-          result.amountsOut[VAULT_ADDRESSES.YCVXCRV.toLowerCase()] ||
-          result.amountsOut[VAULT_ADDRESSES.YCVXCRV];
-        expect(targetOutput).toBeDefined();
-        expect(BigInt(targetOutput)).toBeGreaterThan(0n);
-      },
-      API_TIMEOUT
-    );
-
-    it(
       "yspxCVX → ycvxCRV (different underlying: pxCVX → cvxCRV)",
       async () => {
         // Retry once on transient RPC failures
@@ -500,66 +344,6 @@ describe("Enso Live API Integration", () => {
         const targetOutput =
           result.amountsOut[VAULT_ADDRESSES.YCVXCRV.toLowerCase()] ||
           result.amountsOut[VAULT_ADDRESSES.YCVXCRV];
-        expect(targetOutput).toBeDefined();
-        expect(BigInt(targetOutput)).toBeGreaterThan(0n);
-      },
-      API_TIMEOUT
-    );
-
-    it(
-      "yspxCVX → yscvgCVX (different underlying: pxCVX → cvgCVX)",
-      async () => {
-        let result;
-        try {
-          result = await fetchVaultToVaultRoute({
-            fromAddress: TEST_WALLET,
-            sourceVault: VAULT_ADDRESSES.YSPXCVX,
-            targetVault: VAULT_ADDRESSES.YSCVGCVX,
-            amountIn: TEN_VAULT_SHARES,
-            slippage: TEST_SLIPPAGE,
-          });
-        } catch (e) {
-          if (isTransientRpcError(e)) {
-            console.log("Note: RPC failed (transient network issue in CI)");
-            return;
-          }
-          throw e;
-        }
-
-        expect(result.amountsOut).toBeDefined();
-        const targetOutput =
-          result.amountsOut[VAULT_ADDRESSES.YSCVGCVX.toLowerCase()] ||
-          result.amountsOut[VAULT_ADDRESSES.YSCVGCVX];
-        expect(targetOutput).toBeDefined();
-        expect(BigInt(targetOutput)).toBeGreaterThan(0n);
-      },
-      API_TIMEOUT
-    );
-
-    it(
-      "yscvgCVX → yspxCVX (different underlying: cvgCVX → pxCVX)",
-      async () => {
-        let result;
-        try {
-          result = await fetchVaultToVaultRoute({
-            fromAddress: TEST_WALLET,
-            sourceVault: VAULT_ADDRESSES.YSCVGCVX,
-            targetVault: VAULT_ADDRESSES.YSPXCVX,
-            amountIn: TEN_VAULT_SHARES,
-            slippage: TEST_SLIPPAGE,
-          });
-        } catch (e) {
-          if (isTransientRpcError(e)) {
-            console.log("Note: RPC failed (transient network issue in CI)");
-            return;
-          }
-          throw e;
-        }
-
-        expect(result.amountsOut).toBeDefined();
-        const targetOutput =
-          result.amountsOut[VAULT_ADDRESSES.YSPXCVX.toLowerCase()] ||
-          result.amountsOut[VAULT_ADDRESSES.YSPXCVX];
         expect(targetOutput).toBeDefined();
         expect(BigInt(targetOutput)).toBeGreaterThan(0n);
       },
@@ -597,36 +381,6 @@ describe("Enso Live API Integration", () => {
     );
 
     it(
-      "yscvxCRV → yscvgCVX (different underlying: cvxCRV → cvgCVX)",
-      async () => {
-        let result;
-        try {
-          result = await fetchVaultToVaultRoute({
-            fromAddress: TEST_WALLET,
-            sourceVault: VAULT_ADDRESSES.YSCVXCRV,
-            targetVault: VAULT_ADDRESSES.YSCVGCVX,
-            amountIn: TEN_VAULT_SHARES,
-            slippage: TEST_SLIPPAGE,
-          });
-        } catch (e) {
-          if (isTransientRpcError(e)) {
-            console.log("Note: RPC failed (transient network issue in CI)");
-            return;
-          }
-          throw e;
-        }
-
-        expect(result.amountsOut).toBeDefined();
-        const targetOutput =
-          result.amountsOut[VAULT_ADDRESSES.YSCVGCVX.toLowerCase()] ||
-          result.amountsOut[VAULT_ADDRESSES.YSCVGCVX];
-        expect(targetOutput).toBeDefined();
-        expect(BigInt(targetOutput)).toBeGreaterThan(0n);
-      },
-      API_TIMEOUT
-    );
-
-    it(
       "yscvxCRV → yspxCVX (different underlying: cvxCRV → pxCVX)",
       async () => {
         let result;
@@ -650,36 +404,6 @@ describe("Enso Live API Integration", () => {
         const targetOutput =
           result.amountsOut[VAULT_ADDRESSES.YSPXCVX.toLowerCase()] ||
           result.amountsOut[VAULT_ADDRESSES.YSPXCVX];
-        expect(targetOutput).toBeDefined();
-        expect(BigInt(targetOutput)).toBeGreaterThan(0n);
-      },
-      API_TIMEOUT
-    );
-
-    it(
-      "yscvgCVX → yscvxCRV (different underlying: cvgCVX → cvxCRV)",
-      async () => {
-        let result;
-        try {
-          result = await fetchVaultToVaultRoute({
-            fromAddress: TEST_WALLET,
-            sourceVault: VAULT_ADDRESSES.YSCVGCVX,
-            targetVault: VAULT_ADDRESSES.YSCVXCRV,
-            amountIn: TEN_VAULT_SHARES,
-            slippage: TEST_SLIPPAGE,
-          });
-        } catch (e) {
-          if (isTransientRpcError(e)) {
-            console.log("Note: RPC failed (transient network issue in CI)");
-            return;
-          }
-          throw e;
-        }
-
-        expect(result.amountsOut).toBeDefined();
-        const targetOutput =
-          result.amountsOut[VAULT_ADDRESSES.YSCVXCRV.toLowerCase()] ||
-          result.amountsOut[VAULT_ADDRESSES.YSCVXCRV];
         expect(targetOutput).toBeDefined();
         expect(BigInt(targetOutput)).toBeGreaterThan(0n);
       },

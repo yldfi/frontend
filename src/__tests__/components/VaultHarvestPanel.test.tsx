@@ -4,7 +4,7 @@ import { useAccount, useReadContract, useReadContracts, useWaitForTransactionRec
 import { parseUnits, stringToHex } from "viem";
 
 import { estimateLikelySettlementAt, VaultHarvestPanel } from "@/components/VaultHarvestPanel";
-import { CVGCVX_STRATEGY_TRIGGER, PERMISSIONLESS_KEEPER } from "@/config/harvest";
+import { PERMISSIONLESS_KEEPER } from "@/config/harvest";
 import { TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 import { useDirectWriteContract } from "@/hooks/useDirectWriteContract";
 import { useVaultCache } from "@/hooks/useVaultCache";
@@ -82,7 +82,6 @@ describe("VaultHarvestPanel", () => {
       data: {
         cvxCrvPrice: 0.05,
         cvxPrice: 1,
-        cvgCvxPrice: 0.8,
         pxCvxPrice: 0.9,
       },
     } as unknown as ReturnType<typeof useVaultCache>);
@@ -236,33 +235,6 @@ describe("VaultHarvestPanel", () => {
     render(<VaultHarvestPanel vaultAddress={VAULT_ADDRESSES.YSCVX} />);
 
     expect(screen.getByText("16.41 / 100 cvxCRV accumulated by the strategy. It needs more before it can harvest.")).toBeTruthy();
-  });
-
-  it("omits auction controls for yscvgCVX", () => {
-    mockUseReadContracts.mockReturnValue({
-      data: [
-        { status: "success", result: [2n * 10n ** 18n, [{ token: TOKENS.CVX, amount: 3n * 10n ** 18n }]] },
-        { status: "success", result: [true, "0x"] },
-        { status: "success", result: 0n },
-      ],
-      isLoading: false,
-      refetch,
-    } as unknown as ReturnType<typeof useReadContracts>);
-
-    render(<VaultHarvestPanel vaultAddress={VAULT_ADDRESSES.YSCVGCVX} />);
-
-    expect(mockUseReadContracts).toHaveBeenCalledWith(expect.objectContaining({
-      contracts: expect.arrayContaining([
-        expect.objectContaining({
-          address: CVGCVX_STRATEGY_TRIGGER,
-          functionName: "reportTrigger",
-          args: [VAULT_ADDRESSES.YSCVGCVX],
-        }),
-      ]),
-    }));
-    expect(screen.getByText("2 CVG")).toBeTruthy();
-    expect(screen.getByText("3 CVX")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Start auction" })).toBeNull();
   });
 
   it.each(["full", "partial", "missing-initial"])("keeps the screenshot auction above market with %s inventory data", (scenario) => {

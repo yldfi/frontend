@@ -7,7 +7,7 @@ compatibility_flags = ["no_nodejs_compat", "no_nodejs_compat_v2"]
 CLOUDFLARE_ACCOUNT_ID = "7f4f33bd3b9086164518eee1e9b8590a"
 SITE_URL = "https://yldfi.co"
 SOCIAL_RENDER_PATH = "/social/weekly-apy"
-X_WEEKLY_COPY = "Weekly yld vault yields are here\n\nAuto-compounding vaults for cvxCRV and cvgCVX.\n\nyldfi.co"
+X_WEEKLY_COPY = "Weekly yld vault yields are here\n\nAuto-compounding cvxCRV with the yscvxCRV strategy.\n\nyldfi.co"
 X_DRY_RUN = "false"
 
 [triggers]

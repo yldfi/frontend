@@ -14,7 +14,6 @@ import { useDirectWriteContract } from "@/hooks/useDirectWriteContract";
 import { useTokenMetadata } from "@/hooks/useTokenMetadata";
 import { useVaultCache } from "@/hooks/useVaultCache";
 import {
-  CVGCVX_STAKING,
   CVXCRV_WRAPPER,
   PERMISSIONLESS_KEEPER,
   getHarvestConfig,
@@ -24,11 +23,6 @@ import { TOKENS } from "@/config/vaults";
 
 const REPORT_TRIGGER_ABI = [{
   name: "strategyReportTrigger", type: "function", stateMutability: "view",
-  inputs: [{ name: "strategy", type: "address" }],
-  outputs: [{ name: "shouldReport", type: "bool" }, { name: "data", type: "bytes" }],
-}] as const;
-const CUSTOM_REPORT_TRIGGER_ABI = [{
-  name: "reportTrigger", type: "function", stateMutability: "view",
   inputs: [{ name: "strategy", type: "address" }],
   outputs: [{ name: "shouldReport", type: "bool" }, { name: "data", type: "bytes" }],
 }] as const;
@@ -79,10 +73,6 @@ const WRAPPER_ABI = [{
   name: "earned", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }],
   outputs: [{ type: "tuple[]", components: [{ name: "token", type: "address" }, { name: "amount", type: "uint256" }] }],
 }] as const;
-const CVG_STAKING_ABI = [{
-  name: "getAllClaimableAmounts", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }],
-  outputs: [{ name: "cvgAmount", type: "uint256" }, { name: "rewards", type: "tuple[]", components: [{ name: "token", type: "address" }, { name: "amount", type: "uint256" }] }],
-}] as const;
 
 type TokenAmount = { token: `0x${string}`; amount: bigint };
 type AuctionState = {
@@ -99,14 +89,11 @@ type AuctionState = {
   paymentBalance: bigint;
   paymentAllowance: bigint;
 };
-const CVG_TOKEN = "0x97efFB790f2fbB701D88f89DB4521348A2B77be8" as const;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 
 const KNOWN_TOKENS: Record<string, { symbol: string; decimals: number; logo?: string }> = {
   [TOKENS.CVXCRV.toLowerCase()]: { symbol: "cvxCRV", decimals: 18, logo: "/tokens/cvxcrv.png" },
   [TOKENS.CVX.toLowerCase()]: { symbol: "CVX", decimals: 18, logo: "/tokens/cvx.png" },
-  [TOKENS.CVGCVX.toLowerCase()]: { symbol: "cvgCVX", decimals: 18, logo: "/tokens/cvgcvx.png" },
-  [CVG_TOKEN.toLowerCase()]: { symbol: "CVG", decimals: 18 },
   [TOKENS.PXCVX.toLowerCase()]: { symbol: "pxCVX", decimals: 18, logo: "/tokens/pxcvx.png" },
   ["0xf939e0a03fb07f59a73314e73794be0e57ac1b4e"]: { symbol: "crvUSD", decimals: 18, logo: "/tokens/crvusd.png" },
   ["0xd533a949740bb3306d119cc777fa900ba034cd52"]: { symbol: "CRV", decimals: 18 },
@@ -256,23 +243,16 @@ export function estimateLikelySettlementAt({
 function rewardRead(config: HarvestConfig) {
   if (config.kind === "yscvx") return { address: config.strategy, abi: STRATEGY_ABI, functionName: "pendingRewards" } as const;
   if (config.kind === "yscvxcrv") return { address: CVXCRV_WRAPPER, abi: WRAPPER_ABI, functionName: "earned", args: [config.strategy] } as const;
-  if (config.kind === "yscvgcvx") return { address: CVGCVX_STAKING, abi: CVG_STAKING_ABI, functionName: "getAllClaimableAmounts", args: [config.strategy] } as const;
   return { address: config.strategy, abi: STRATEGY_ABI, functionName: "getRewardTokensWithBalances" } as const;
 }
 
 function reportTriggerRead(config: HarvestConfig) {
-  return config.trigger.functionName === "reportTrigger"
-    ? { address: config.trigger.address, abi: CUSTOM_REPORT_TRIGGER_ABI, functionName: "reportTrigger", args: [config.strategy] } as const
-    : { address: config.trigger.address, abi: REPORT_TRIGGER_ABI, functionName: "strategyReportTrigger", args: [config.strategy] } as const;
+  return { address: config.trigger.address, abi: REPORT_TRIGGER_ABI, functionName: "strategyReportTrigger", args: [config.strategy] } as const;
 }
 
 function parseRewards(config: HarvestConfig, value: unknown): TokenAmount[] {
   if (config.kind === "yscvx") return [{ token: TOKENS.CVXCRV, amount: (value as bigint | undefined) ?? 0n }];
   if (config.kind === "yscvxcrv") return ((value as readonly { token: `0x${string}`; amount: bigint }[] | undefined) ?? []).filter((item) => item.amount > 0n);
-  if (config.kind === "yscvgcvx") {
-    const [cvgAmount = 0n, rewards = []] = (value as readonly [bigint, readonly { token: `0x${string}`; amount: bigint }[]] | undefined) ?? [];
-    return [...(cvgAmount > 0n ? [{ token: CVG_TOKEN, amount: cvgAmount }] : []), ...rewards.filter((item) => item.amount > 0n)];
-  }
   const [tokens = [], amounts = []] = (value as readonly [readonly `0x${string}`[], readonly bigint[]] | undefined) ?? [];
   return tokens.map((token, index) => ({ token, amount: amounts[index] ?? 0n })).filter((item) => item.amount > 0n);
 }
@@ -536,7 +516,6 @@ export function VaultHarvestPanel({ vaultAddress }: { vaultAddress: string }) {
       const address = token.toLowerCase();
       if (address === TOKENS.CVXCRV.toLowerCase()) return vaultCache?.cvxCrvPrice ?? 0;
       if (address === TOKENS.CVX.toLowerCase()) return vaultCache?.cvxPrice ?? 0;
-      if (address === TOKENS.CVGCVX.toLowerCase()) return vaultCache?.cvgCvxPrice ?? 0;
       if (address === TOKENS.PXCVX.toLowerCase()) return vaultCache?.pxCvxPrice ?? 0;
       if (address === "0xf939e0a03fb07f59a73314e73794be0e57ac1b4e") return 1;
       return 0;

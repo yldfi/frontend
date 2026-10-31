@@ -162,7 +162,7 @@ export interface RouteStep {
   rawAmount?: string;       // Optional raw token amount, for quote math
   bonus?: number;           // Optional: bonus % for this step (e.g., +2.5% from Curve swap)
   bonusAmount?: string;     // Optional: bonus amount (e.g., "2.5" extra tokens vs 1:1 mint)
-  bonusSymbol?: string;     // Optional: token symbol for bonus (e.g., "cvgCVX")
+  bonusSymbol?: string;     // Optional: token symbol for bonus (e.g., "pxCVX")
   slippage?: number;        // Optional: price-impact % for this step (e.g., 8.03 for 8.03% loss vs market mid-price)
 }
 
@@ -170,9 +170,9 @@ export interface RouteStep {
 export interface RouteInfo {
   steps: RouteStep[];       // Detailed steps for visual display
   // Legacy format (backward compat)
-  tokens?: string[];        // Token symbols: ["ETH", "CVX", "cvgCVX", "yscvgCVX"]
+  tokens?: string[];        // Token symbols: ["ETH", "CVX", "pxCVX", "yspxCVX"]
   protocols?: string[];     // Protocols: ["Enso", "Curve", "Yearn"]
-  // Hybrid route details (cvgCVX/pxCVX only)
+  // Hybrid route details (pxCVX/lpxCVX only)
   hybrid?: {
     swapAmount: string;     // Amount swapped via Curve (formatted)
     mintAmount: string;     // Amount minted 1:1 (formatted)

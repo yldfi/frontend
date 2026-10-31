@@ -191,14 +191,11 @@ describe("RepayTab", () => {
       setShowSimulationModal: vi.fn(),
       showRoute: true,
       toggleRoute: vi.fn(),
-      zappersEnabled: false,
-      setZappersEnabled: vi.fn(),
       setShowSimulationPreview: vi.fn(),
     }));
 
     mockUseCurveLendingActions.mockReturnValue({
       repayDirect: vi.fn(),
-      repayAndWithdraw: vi.fn(),
       repayWithSwap: vi.fn(),
       pendingApproval: null,
       approvalProgress: null,

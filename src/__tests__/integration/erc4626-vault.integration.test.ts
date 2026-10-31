@@ -40,17 +40,6 @@ const TEST_TIMEOUT = 30000;
 
 // Vault configurations with their underlying tokens and storage slots
 const VAULT_CONFIGS = {
-  yscvgCVX: {
-    vault: VAULT_ADDRESSES.YSCVGCVX,
-    underlying: TOKENS.CVGCVX,
-    name: "yscvgCVX",
-    underlyingName: "cvgCVX",
-    // cvgCVX is ERC20Upgradeable - slot 51 for balance, 52 for allowance
-    underlyingBalanceSlot: 51,
-    underlyingAllowanceSlot: 52,
-    // Yearn V3 tokenized strategy - slot 0 for balance
-    vaultBalanceSlot: 0,
-  },
   yspxCVX: {
     vault: VAULT_ADDRESSES.YSPXCVX,
     underlying: TOKENS.PXCVX,

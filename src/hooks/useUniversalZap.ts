@@ -8,8 +8,6 @@ import {
   fetchZapInRoute,
   fetchZapOutRoute,
   fetchVaultToVaultRoute,
-  fetchCvgCvxZapInRoute,
-  fetchCvgCvxZapOutRoute,
   fetchYldVaultToExternalVaultRoute,
   fetchPxCvxZapInRoute,
   fetchPxCvxZapOutRoute,
@@ -17,17 +15,14 @@ import {
   fetchLpxCvxZapInRoute,
   fetchPxCvxTokenZapInRoute,
   fetchAnyToPxCvxRoute,
-  fetchAnyToCvgCvxRoute,
   fetchAnyToLpxCvxRoute,
   fetchAnyToExternalVaultRoute,
   fetchAnyFromPxCvxRoute,
-  fetchAnyFromCvgCvxRoute,
   fetchAnyFromLpxCvxRoute,
   fetchAnyFromUCvxRoute,
   fetchAnyFromErc4626ExternalVaultRoute,
   fetchAnyFromUCrvRoute,
   fetchAnyFromBeefyRoute,
-  fetchComposableZapInRoute,
   fetchSpecialTokenToIlliquidRoute,
   fetchSpecialTokenToExternalVaultRoute,
   fetchYldVaultToIlliquidRoute,
@@ -37,8 +32,6 @@ import {
   previewBeefyWithdraw,
   fetchTokenPrices,
   getPxCvxSwapRate,
-  getCvgCvxSwapRate,
-  getCvgCvxReverseSwapRate,
   getLpxCvxToCvxSwapRate,
   isYldfiVault,
   isPxCvxToken,
@@ -171,7 +164,7 @@ async function getPrices(addresses: string[]): Promise<Map<string, number | null
     if (!out.has(a.toLowerCase())) out.set(a.toLowerCase(), null);
   }
 
-  // For pxCVX / lpxCVX / cvgCVX the Curve pool mid-rate is the authoritative
+  // For pxCVX / lpxCVX the Curve pool mid-rate is the authoritative
   // price (these tokens trade on one pool each, and Enso's aggregator feed can
   // lag by a few percent). We OVERRIDE any Enso value with a fresh Curve-derived
   // price when we have a CVX reference price. Falls back to whatever Enso
@@ -179,37 +172,22 @@ async function getPrices(addresses: string[]): Promise<Map<string, number | null
   const cvxKey = TOKENS.CVX.toLowerCase();
   const pxCvxKey = TOKENS.PXCVX.toLowerCase();
   const lpxCvxKey = TOKENS.LPXCVX.toLowerCase();
-  const cvgCvxKey = TOKENS.CVGCVX.toLowerCase();
   const needsPxCvx =
     addresses.some((a) => a.toLowerCase() === pxCvxKey) ||
     addresses.some((a) => a.toLowerCase() === lpxCvxKey);
-  const needsCvgCvx = addresses.some((a) => a.toLowerCase() === cvgCvxKey);
   const cvxPx = out.get(cvxKey) ?? null;
-  if (cvxPx !== null && (needsPxCvx || needsCvgCvx)) {
+  if (cvxPx !== null && needsPxCvx) {
     const probe = (10n ** 18n).toString();
-    if (needsPxCvx) {
-      try {
-        const lpxCvxOut = await getPxCvxSwapRate(probe);
-        if (lpxCvxOut > 0n) {
-          const rate = Number(lpxCvxOut) / 1e18;
-          const price = cvxPx / rate;
-          out.set(lpxCvxKey, price);
-          out.set(pxCvxKey, price); // wraps 1:1
-        }
-      } catch {
-        // fall back to Enso value (if any)
+    try {
+      const lpxCvxOut = await getPxCvxSwapRate(probe);
+      if (lpxCvxOut > 0n) {
+        const rate = Number(lpxCvxOut) / 1e18;
+        const price = cvxPx / rate;
+        out.set(lpxCvxKey, price);
+        out.set(pxCvxKey, price); // wraps 1:1
       }
-    }
-    if (needsCvgCvx) {
-      try {
-        const cvgCvxOut = await getCvgCvxSwapRate(probe);
-        if (cvgCvxOut > 0n) {
-          const rate = Number(cvgCvxOut) / 1e18;
-          out.set(cvgCvxKey, cvxPx / rate);
-        }
-      } catch {
-        // fall back to Enso value (if any)
-      }
+    } catch {
+      // fall back to Enso value (if any)
     }
   }
 
@@ -220,7 +198,7 @@ async function getPrices(addresses: string[]): Promise<Map<string, number | null
  * Universal zap dispatcher — works for any (input, output) pair:
  *   - yld vault → yld vault          (vault-to-vault)
  *   - yld vault → token              (zap out)
- *   - token → yld vault              (zap in, incl. cvgCVX/pxCVX/external vault sources)
+ *   - token → yld vault              (zap in, incl. pxCVX/external vault sources)
  *   - token → token                  (plain Enso swap)
  */
 export function useUniversalZap({
@@ -424,7 +402,7 @@ export function useUniversalZap({
           (vaultCache as Record<string, { pps?: number }> | undefined)?.[outputVault!.id]?.pps;
         // Include CVX in price fetch whenever either side's underlying is an
         // illiquid token, so getPrices can derive the Curve-pool mid-rate.
-        const illiquidUnderlyings = [TOKENS.CVGCVX, TOKENS.PXCVX, TOKENS.LPXCVX].map((a) => a.toLowerCase());
+        const illiquidUnderlyings = [TOKENS.PXCVX, TOKENS.LPXCVX].map((a) => a.toLowerCase());
         const hasIlliquid =
           illiquidUnderlyings.includes(sourceUnderlying.toLowerCase()) ||
           illiquidUnderlyings.includes(targetUnderlying.toLowerCase());
@@ -480,7 +458,6 @@ export function useUniversalZap({
       // ──────────────────────────────────────────────────────────
       if (inputIsYld && !outputIsYld) {
         const underlying = inputVault!.assetAddress;
-        const isCvg = underlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase();
         const isPx = underlying.toLowerCase() === TOKENS.PXCVX.toLowerCase();
 
         // yld vault → external vault: Enso can't route CVX/cvxCRV directly to
@@ -565,7 +542,6 @@ export function useUniversalZap({
 
         const outputIsIlliquid =
           outputToken.address.toLowerCase() === TOKENS.PXCVX.toLowerCase() ||
-          outputToken.address.toLowerCase() === TOKENS.CVGCVX.toLowerCase() ||
           outputToken.address.toLowerCase() === TOKENS.LPXCVX.toLowerCase();
         if (outputIsIlliquid) {
           const bundle = await fetchYldVaultToIlliquidRoute({
@@ -622,15 +598,7 @@ export function useUniversalZap({
           };
         }
 
-        const bundle = isCvg
-          ? await fetchCvgCvxZapOutRoute({
-              fromAddress: userAddress,
-              vaultAddress: inputToken.address,
-              outputToken: outputToken.address,
-              amountIn: amountInWei,
-              slippage,
-            })
-          : isPx
+        const bundle = isPx
           ? await fetchPxCvxZapOutRoute({
               fromAddress: userAddress,
               vaultAddress: inputToken.address,
@@ -655,10 +623,9 @@ export function useUniversalZap({
         const inNum = Number(inputAmount);
         const outNum = Number(outFmt);
 
-        // For cvgCVX/pxCVX/lpxCVX underlyings Enso often has no price feed,
+        // For pxCVX/lpxCVX underlyings Enso often has no price feed,
         // so fall back to CVX price (1:1 CVX-equivalent via mint/wrap).
         const underlyingNeedsCvxFallback =
-          underlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase() ||
           underlying.toLowerCase() === TOKENS.PXCVX.toLowerCase() ||
           underlying.toLowerCase() === TOKENS.LPXCVX.toLowerCase();
         const inputCachePps =
@@ -689,24 +656,20 @@ export function useUniversalZap({
         const intermediateUnderlyingAmount =
           aps !== null ? (inNum * aps).toFixed(4) : undefined;
 
-        // Build detailed fallback route. For cvgCVX/pxCVX vaults the underlying
+        // Build detailed fallback route. For pxCVX vaults the underlying
         // isn't directly swappable on Enso, so the real route goes through a
-        // Curve pool + CVX1 unwrap (cvgCVX) or wrap+pool (pxCVX). Matches the
-        // detailed display used on the vault pages for consistency.
-        const isCvgCvxUnderlying =
-          underlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase();
+        // wrap + Curve pool. Matches the detailed display used on the vault
+        // pages for consistency.
         const isPxCvxUnderlying =
           underlying.toLowerCase() === TOKENS.PXCVX.toLowerCase();
 
         // Estimate the CVX amount mid-bundle by simulating the Curve pool swap
         // of the redeemed underlying, so the route can display "X CVX".
         let cvxIntermediateAmount: string | undefined;
-        if (aps !== null && (isCvgCvxUnderlying || isPxCvxUnderlying)) {
+        if (aps !== null && isPxCvxUnderlying) {
           try {
             const redeemedWei = parseUnits((inNum * aps).toFixed(18), 18).toString();
-            const cvxOut = isCvgCvxUnderlying
-              ? await getCvgCvxReverseSwapRate(redeemedWei)
-              : await getLpxCvxToCvxSwapRate(redeemedWei);
+            const cvxOut = await getLpxCvxToCvxSwapRate(redeemedWei);
             if (cvxOut > 0n) {
               cvxIntermediateAmount = (Number(cvxOut) / 1e18).toFixed(4);
             }
@@ -722,50 +685,7 @@ export function useUniversalZap({
           outputToken.address.toLowerCase() === TOKENS.CVX.toLowerCase();
 
         let fallbackRouteInfo: RouteInfo;
-        if (isCvgCvxUnderlying) {
-          fallbackRouteInfo = {
-            steps: [
-              {
-                tokenSymbol: inputToken.symbol,
-                action: "Redeem",
-                description: `${inputToken.symbol} for cvgCVX`,
-                protocol: "yld",
-              },
-              {
-                tokenSymbol: "cvgCVX",
-                amount: intermediateUnderlyingAmount,
-                action: "Swap",
-                description: "cvgCVX → CVX1 → CVX",
-                protocol: "LiquidBoost",
-              },
-              ...(outputIsCvx
-                ? [
-                    {
-                      tokenSymbol: "CVX",
-                      amount: cvxIntermediateAmount,
-                      action: "Receive",
-                      description: "tokens",
-                      protocol: "LiquidBoost",
-                    } satisfies RouteStep,
-                  ]
-                : [
-                    {
-                      tokenSymbol: "CVX",
-                      amount: cvxIntermediateAmount,
-                      action: "Swap",
-                      description: `CVX for ${outputToken.symbol}`,
-                      protocol: "Enso",
-                    } satisfies RouteStep,
-                    {
-                      tokenSymbol: outputToken.symbol,
-                      action: "Receive",
-                      description: "tokens",
-                      protocol: "Enso",
-                    } satisfies RouteStep,
-                  ]),
-            ],
-          };
-        } else if (isPxCvxUnderlying) {
+        if (isPxCvxUnderlying) {
           fallbackRouteInfo = {
             steps: [
               {
@@ -857,7 +777,6 @@ export function useUniversalZap({
       // ──────────────────────────────────────────────────────────
       if (!inputIsYld && outputIsYld) {
         const underlying = outputVault!.assetAddress;
-        const targetIsCvg = underlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase();
         const targetIsPx = underlying.toLowerCase() === TOKENS.PXCVX.toLowerCase();
 
         let bundle;
@@ -868,14 +787,6 @@ export function useUniversalZap({
             amountIn: amountInWei,
             slippage,
             underlyingToken: underlying,
-          });
-        } else if (inputToken.address.toLowerCase() === TOKENS.CVGCVX.toLowerCase() && !targetIsCvg) {
-          bundle = await fetchComposableZapInRoute({
-            fromAddress: userAddress,
-            inputToken: inputToken.address,
-            vaultAddress: outputToken.address,
-            amountIn: amountInWei,
-            slippage,
           });
         } else if (inputIsExternal) {
           bundle = await fetchExternalVaultZapInRoute({
@@ -896,14 +807,6 @@ export function useUniversalZap({
           bundle = await fetchPxCvxTokenZapInRoute({
             fromAddress: userAddress,
             vaultAddress: outputToken.address,
-            amountIn: amountInWei,
-            slippage,
-          });
-        } else if (targetIsCvg) {
-          bundle = await fetchCvgCvxZapInRoute({
-            fromAddress: userAddress,
-            vaultAddress: outputToken.address,
-            inputToken: inputToken.address,
             amountIn: amountInWei,
             slippage,
           });
@@ -935,7 +838,6 @@ export function useUniversalZap({
         const outNum = Number(outFmt);
 
         const underlyingNeedsCvxFallback =
-          underlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase() ||
           underlying.toLowerCase() === TOKENS.PXCVX.toLowerCase() ||
           underlying.toLowerCase() === TOKENS.LPXCVX.toLowerCase();
         const outputCachePps =
@@ -1021,16 +923,14 @@ export function useUniversalZap({
       const inAddr = inputToken.address.toLowerCase();
       const outAddr = outputToken.address.toLowerCase();
       const inputIsPxCvx = inAddr === TOKENS.PXCVX.toLowerCase();
-      const inputIsCvgCvx = inAddr === TOKENS.CVGCVX.toLowerCase();
       const inputIsLpxCvx = inAddr === TOKENS.LPXCVX.toLowerCase();
       const outputIsPxCvx = outAddr === TOKENS.PXCVX.toLowerCase();
-      const outputIsCvgCvx = outAddr === TOKENS.CVGCVX.toLowerCase();
       const outputIsLpxCvx = outAddr === TOKENS.LPXCVX.toLowerCase();
       const inputExternalConfig = isExternalVaultToken(inputToken.address)
         ? getExternalVaultConfigFn(inputToken.address)
         : undefined;
       const inputIsSpecialInput =
-        !!inputExternalConfig || inputIsPxCvx || inputIsCvgCvx || inputIsLpxCvx;
+        !!inputExternalConfig || inputIsPxCvx || inputIsLpxCvx;
 
       // External vaults as output (uCVX / aCVX / aCRV / afCVX / mooCvxCRV /
       // mooCvxCVX / uCRV / scrvUSD). Enso's aggregator can't build routes to
@@ -1123,7 +1023,6 @@ export function useUniversalZap({
             : null;
         const outputUnderlyingIsIlliquid =
           outputExternalConfig.underlying.toLowerCase() === TOKENS.PXCVX.toLowerCase() ||
-          outputExternalConfig.underlying.toLowerCase() === TOKENS.CVGCVX.toLowerCase() ||
           outputExternalConfig.underlying.toLowerCase() === TOKENS.LPXCVX.toLowerCase();
         const priceImpact = outputUnderlyingIsIlliquid
           ? calculateCvxLegPriceImpact({
@@ -1149,7 +1048,7 @@ export function useUniversalZap({
         };
       }
 
-      if (inputIsSpecialInput && (outputIsPxCvx || outputIsCvgCvx || outputIsLpxCvx)) {
+      if (inputIsSpecialInput && (outputIsPxCvx || outputIsLpxCvx)) {
         const bundle = await fetchSpecialTokenToIlliquidRoute({
           fromAddress: userAddress,
           inputToken: inputToken.address,
@@ -1344,7 +1243,7 @@ export function useUniversalZap({
       // redeem them to their underlying first and then route to the output.
       if (
         inputExternalConfig &&
-        !(outputIsPxCvx || outputIsCvgCvx || outputIsLpxCvx) &&
+        !(outputIsPxCvx || outputIsLpxCvx) &&
         !outputIsYld
       ) {
         const isUcvx =
@@ -1452,20 +1351,13 @@ export function useUniversalZap({
         };
       }
 
-      // Custom routes for illiquid inputs (pxCVX/cvgCVX/lpxCVX → any token)
+      // Custom routes for illiquid inputs (pxCVX/lpxCVX → any token)
       if (
-        (inputIsPxCvx || inputIsCvgCvx || inputIsLpxCvx) &&
-        !(outputIsPxCvx || outputIsCvgCvx || outputIsLpxCvx)
+        (inputIsPxCvx || inputIsLpxCvx) &&
+        !(outputIsPxCvx || outputIsLpxCvx)
       ) {
         const bundle = inputIsPxCvx
           ? await fetchAnyFromPxCvxRoute({
-              fromAddress: userAddress,
-              outputToken: outputToken.address,
-              amountIn: amountInWei,
-              slippage,
-            })
-          : inputIsCvgCvx
-          ? await fetchAnyFromCvgCvxRoute({
               fromAddress: userAddress,
               outputToken: outputToken.address,
               amountIn: amountInWei,
@@ -1516,16 +1408,9 @@ export function useUniversalZap({
       }
 
       // Custom hybrid routes for illiquid targets (Enso aggregator has no good route)
-      if (outputIsPxCvx || outputIsCvgCvx || outputIsLpxCvx) {
+      if (outputIsPxCvx || outputIsLpxCvx) {
         const bundle = outputIsPxCvx
           ? await fetchAnyToPxCvxRoute({
-              fromAddress: userAddress,
-              inputToken: inputToken.address,
-              amountIn: amountInWei,
-              slippage,
-            })
-          : outputIsCvgCvx
-          ? await fetchAnyToCvgCvxRoute({
               fromAddress: userAddress,
               inputToken: inputToken.address,
               amountIn: amountInWei,
@@ -1545,7 +1430,7 @@ export function useUniversalZap({
         const outNum = Number(outFmt);
 
         // Price impact should measure only actual routing slippage (the
-        // input → CVX Enso leg). The CVX → pxCVX/cvgCVX/lpxCVX leg is either a
+        // input → CVX Enso leg). The CVX → pxCVX/lpxCVX leg is either a
         // 1:1 mint (no slippage) or a Curve pool swap that can return a peg
         // bonus (shown as "+X vs mint" on the route). Conflating the bonus
         // with slippage would cause the summary to show a "gain" that the user
@@ -1570,7 +1455,7 @@ export function useUniversalZap({
           outputAmountFormatted: outFmt,
           exchangeRate: inNum > 0 ? outNum / inNum : 0,
           inputUsdValue: inUsd,
-          // Market-price value (what pxCVX/cvgCVX/lpxCVX is worth today).
+          // Market-price value (what pxCVX/lpxCVX is worth today).
           outputUsdValue: marketOutUsd,
           priceImpact,
           gasEstimate: bundle.gas,
