@@ -228,7 +228,6 @@ const VAULT_COLLATERAL_TOKENS = new Set([
 const KNOWN_TOKEN_SYMBOLS: Record<string, string> = {
   [TOKENS.CVX.toLowerCase()]: "CVX",
   [TOKENS.CVXCRV.toLowerCase()]: "cvxCRV",
-  [TOKENS.CVGCVX.toLowerCase()]: "cvgCVX",
   [TOKENS.PXCVX.toLowerCase()]: "pxCVX",
 };
 

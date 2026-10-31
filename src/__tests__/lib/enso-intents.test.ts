@@ -169,27 +169,8 @@ describe("Enso intent validation", () => {
     })).not.toThrow();
   });
 
-  it("accepts special cvgCVX and pxCVX vault zap intents", () => {
-    expect(isStandardYldVaultIntentVault(VAULT_ADDRESSES.YSCVGCVX)).toBe(false);
+  it("accepts special pxCVX vault zap intents", () => {
     expect(isStandardYldVaultIntentVault(VAULT_ADDRESSES.YSPXCVX)).toBe(false);
-
-    expect(() => assertValidEnsoIntentRequest({
-      intent: "cvgCvxZapIn",
-      fromAddress: USER,
-      vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
-      inputToken: TOKENS.CVX,
-      amountIn: ONE_ETHER,
-      slippage: "100",
-    })).not.toThrow();
-
-    expect(() => assertValidEnsoIntentRequest({
-      intent: "cvgCvxZapOut",
-      fromAddress: USER,
-      vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
-      outputToken: TOKENS.CVX,
-      amountIn: ONE_ETHER,
-      slippage: "100",
-    })).not.toThrow();
 
     expect(() => assertValidEnsoIntentRequest({
       intent: "pxCvxZapIn",
@@ -262,7 +243,7 @@ describe("Enso intent validation", () => {
         intent: "specialTokenToIlliquid",
         fromAddress: USER,
         inputToken: LLAMA_AIRFORCE.UCRV,
-        outputToken: TOKENS.CVGCVX,
+        outputToken: TOKENS.LPXCVX,
         amountIn: ONE_ETHER,
         slippage: "100",
       },
@@ -277,7 +258,7 @@ describe("Enso intent validation", () => {
       {
         intent: "illiquidToAny",
         fromAddress: USER,
-        inputToken: TOKENS.CVGCVX,
+        inputToken: TOKENS.PXCVX,
         outputToken: TOKENS.CVX,
         amountIn: ONE_ETHER,
         slippage: "100",
@@ -332,7 +313,7 @@ describe("Enso intent validation", () => {
     expect(() => assertValidEnsoIntentRequest({
       intent: "yldVaultZapIn",
       fromAddress: USER,
-      vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+      vaultAddress: VAULT_ADDRESSES.YSPXCVX,
       inputToken: TOKENS.CVX,
       amountIn: ONE_ETHER,
     })).toThrow("special asset flow");
@@ -340,18 +321,18 @@ describe("Enso intent validation", () => {
 
   it("rejects special zap intents when the vault asset does not match", () => {
     expect(() => assertValidEnsoIntentRequest({
-      intent: "cvgCvxZapIn",
+      intent: "pxCvxZapIn",
       fromAddress: USER,
-      vaultAddress: VAULT_ADDRESSES.YSPXCVX,
+      vaultAddress: VAULT_ADDRESSES.YSCVXCRV,
       inputToken: TOKENS.CVX,
       amountIn: ONE_ETHER,
       slippage: "100",
-    })).toThrow("cvgCVX-backed");
+    })).toThrow("pxCVX-backed");
 
     expect(() => assertValidEnsoIntentRequest({
       intent: "pxCvxZapOut",
       fromAddress: USER,
-      vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+      vaultAddress: VAULT_ADDRESSES.YSCVXCRV,
       outputToken: TOKENS.CVX,
       amountIn: ONE_ETHER,
       slippage: "100",
@@ -401,38 +382,28 @@ describe("Enso intent validation", () => {
 
     expect(getYldVaultToVaultIntentName({
       sourceVault: VAULT_ADDRESSES.YCVXCRV,
-      targetVault: VAULT_ADDRESSES.YSCVGCVX,
-    })).toBe("yldVaultToCvgCvxVault");
-
-    expect(getYldVaultToVaultIntentName({
-      sourceVault: VAULT_ADDRESSES.YSCVGCVX,
-      targetVault: VAULT_ADDRESSES.YCVXCRV,
-    })).toBe("cvgCvxVaultToYldVault");
-
-    expect(getYldVaultToVaultIntentName({
-      sourceVault: VAULT_ADDRESSES.YCVXCRV,
       targetVault: VAULT_ADDRESSES.YSPXCVX,
     })).toBe("yldVaultToPxCvxVault");
 
     expect(getYldVaultToVaultIntentName({
       sourceVault: VAULT_ADDRESSES.YSPXCVX,
-      targetVault: VAULT_ADDRESSES.YSCVGCVX,
+      targetVault: VAULT_ADDRESSES.YCVXCRV,
     })).toBe("pxCvxVaultToYldVault");
 
     expect(() => assertValidEnsoIntentRequest({
-      intent: "yldVaultToCvgCvxVault",
+      intent: "yldVaultToPxCvxVault",
       fromAddress: USER,
       sourceVault: VAULT_ADDRESSES.YCVXCRV,
-      targetVault: VAULT_ADDRESSES.YSCVGCVX,
+      targetVault: VAULT_ADDRESSES.YSPXCVX,
       amountIn: ONE_ETHER,
       slippage: "100",
     })).not.toThrow();
 
     expect(() => assertValidEnsoIntentRequest({
-      intent: "yldVaultToCvgCvxVault",
+      intent: "yldVaultToPxCvxVault",
       fromAddress: USER,
       sourceVault: VAULT_ADDRESSES.YCVXCRV,
-      targetVault: VAULT_ADDRESSES.YSPXCVX,
+      targetVault: VAULT_ADDRESSES.YSCVXCRV,
       amountIn: ONE_ETHER,
       slippage: "100",
     })).toThrow("does not match");
@@ -440,9 +411,9 @@ describe("Enso intent validation", () => {
 
   it("requires explicit slippage for complex server-owned recipes", () => {
     expect(() => assertValidEnsoIntentRequest({
-      intent: "cvgCvxZapIn",
+      intent: "pxCvxZapIn",
       fromAddress: USER,
-      vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+      vaultAddress: VAULT_ADDRESSES.YSPXCVX,
       inputToken: TOKENS.CVX,
       amountIn: ONE_ETHER,
     })).toThrow("slippage is required");
@@ -547,7 +518,7 @@ describe("Enso intent validation", () => {
       intent: "externalVaultToAny",
       fromAddress: USER,
       externalVaultAddress: LLAMA_AIRFORCE.UCRV,
-      outputToken: TOKENS.CVGCVX,
+      outputToken: TOKENS.LPXCVX,
       amountIn: ONE_ETHER,
       slippage: "100",
     })).toThrow("supported illiquid token");
@@ -572,7 +543,7 @@ describe("Enso intent validation", () => {
   });
 
   it("allows only per-intent Enso router transaction targets in intent responses", () => {
-    expect(() => assertEnsoIntentTxTarget("cvgCvxZapOut", {
+    expect(() => assertEnsoIntentTxTarget("pxCvxZapOut", {
       tx: {
         to: ENSO_ROUTER_V2,
         data: ROUTE_SINGLE_CALLDATA,
@@ -665,7 +636,7 @@ describe("Enso intent validation", () => {
       route: [],
     })).not.toThrow();
 
-    expect(() => assertEnsoIntentTxTarget("cvgCvxZapOut", {
+    expect(() => assertEnsoIntentTxTarget("pxCvxZapOut", {
       tx: {
         to: ENSO_SHORTCUTS,
         data: ROUTE_SINGLE_CALLDATA,
@@ -676,7 +647,7 @@ describe("Enso intent validation", () => {
       route: [],
     })).toThrow("forbidden transaction target");
 
-    expect(() => assertEnsoIntentTxTarget("cvgCvxZapOut", {
+    expect(() => assertEnsoIntentTxTarget("pxCvxZapOut", {
       tx: {
         to: OTHER,
         data: ROUTE_SINGLE_CALLDATA,
@@ -769,9 +740,7 @@ describe("illiquidToYldVault intent", () => {
     [TOKENS.PXCVX, VAULT_ADDRESSES.YSCVX],
     [TOKENS.LPXCVX, VAULT_ADDRESSES.YSCVX],
     [TOKENS.PXCVX, VAULT_ADDRESSES.YSCVXCRV],
-    [TOKENS.LPXCVX, VAULT_ADDRESSES.YSCVGCVX],
-    [TOKENS.CVGCVX, VAULT_ADDRESSES.YSCVX],
-    [TOKENS.CVGCVX, VAULT_ADDRESSES.YSCVXCRV],
+    [TOKENS.LPXCVX, VAULT_ADDRESSES.YSCVXCRV],
     // lpxCVX is not yspxCVX's asset: it unwraps to pxCVX and deposits.
     [TOKENS.LPXCVX, VAULT_ADDRESSES.YSPXCVX],
   ])("accepts %s into %s", (inputToken, vaultAddress) => {
@@ -779,10 +748,9 @@ describe("illiquidToYldVault intent", () => {
   });
 
   it("rejects other inputs, unknown vaults, and vaults that take the input directly", () => {
-    expect(() => assertValidEnsoIntentRequest({ ...base, inputToken: TOKENS.CVX, vaultAddress: VAULT_ADDRESSES.YSCVX })).toThrow("pxCVX, lpxCVX or cvgCVX");
+    expect(() => assertValidEnsoIntentRequest({ ...base, inputToken: TOKENS.CVX, vaultAddress: VAULT_ADDRESSES.YSCVX })).toThrow("pxCVX or lpxCVX");
     expect(() => assertValidEnsoIntentRequest({ ...base, inputToken: TOKENS.PXCVX, vaultAddress: OTHER })).toThrow("known YLD vault");
     expect(() => assertValidEnsoIntentRequest({ ...base, inputToken: TOKENS.PXCVX, vaultAddress: VAULT_ADDRESSES.YSPXCVX })).toThrow("deposit instead");
-    expect(() => assertValidEnsoIntentRequest({ ...base, inputToken: TOKENS.CVGCVX, vaultAddress: VAULT_ADDRESSES.YSCVGCVX })).toThrow("deposit instead");
     expect(() => assertValidEnsoIntentRequest({ ...base, inputToken: TOKENS.PXCVX, vaultAddress: VAULT_ADDRESSES.YSCVX, actions: [] })).toThrow();
   });
 
@@ -876,7 +844,7 @@ describe("Enso intent response protection", () => {
   it("rejects an Enso response that pulls a different token or amount", () => {
     expect(() => protectEnsoIntentResponse(
       swapRequest,
-      makeRouteResponse(makeRouteSingle(TOKENS.CVGCVX))
+      makeRouteResponse(makeRouteSingle(TOKENS.PXCVX))
     )).toThrow("input token or amount does not match");
 
     expect(() => protectEnsoIntentResponse(
@@ -943,7 +911,7 @@ describe("Enso intent response protection", () => {
 
     const wrongOutput = {
       tokenType: 1,
-      data: encodeTokenAmount(TOKENS.CVGCVX, "990000"),
+      data: encodeTokenAmount(TOKENS.PXCVX, "990000"),
     };
     const wrongOutputData = encodeFunctionData({
       abi: ENSO_ROUTER_ENTRYPOINT_ABI,

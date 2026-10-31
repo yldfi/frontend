@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { fetchComposableZapInRoute, fetchLpxCvxZapInRoute, fetchPxCvxTokenZapInRoute } from "@/lib/enso";
+import { fetchLpxCvxZapInRoute, fetchPxCvxTokenZapInRoute } from "@/lib/enso";
 import { TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 
 const USER = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
@@ -41,7 +41,6 @@ describe("browser-reachable Enso bundle builders", () => {
     it.each([
       ["pxCVX", () => fetchPxCvxTokenZapInRoute({ fromAddress: USER, vaultAddress: VAULT_ADDRESSES.YSCVX, amountIn: "1", slippage: "100" }), TOKENS.PXCVX],
       ["lpxCVX", () => fetchLpxCvxZapInRoute({ fromAddress: USER, vaultAddress: VAULT_ADDRESSES.YSCVX, amountIn: "1", slippage: "100" }), TOKENS.LPXCVX],
-      ["cvgCVX", () => fetchComposableZapInRoute({ fromAddress: USER, inputToken: TOKENS.CVGCVX, vaultAddress: VAULT_ADDRESSES.YSCVX, amountIn: "1", slippage: "100" }), TOKENS.CVGCVX],
     ])("sends %s -> yld vault zaps to the illiquidToYldVault intent", async (_label, build, inputToken) => {
       expect(typeof window).toBe("object");
       const fetchMock = vi.fn(async () => ({ ok: false, statusText: "stub", json: async () => ({ error: "stub" }) }));

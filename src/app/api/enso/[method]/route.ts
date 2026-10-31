@@ -103,23 +103,18 @@ export async function POST(
           NextResponse.json(protectEnsoIntentResponse(body, response), { headers: cors });
 
         const {
-          fetchCvgCvxZapInRoute,
-          fetchCvgCvxZapOutRoute,
           fetchAnyFromBeefyRoute,
-          fetchAnyFromCvgCvxRoute,
           fetchAnyFromErc4626ExternalVaultRoute,
           fetchAnyFromLpxCvxRoute,
           fetchAnyFromPxCvxRoute,
           fetchAnyFromUCvxRoute,
           fetchAnyFromUCrvRoute,
           fetchAnyToExternalVaultRoute,
-          fetchAnyToCvgCvxRoute,
           fetchAnyToLpxCvxRoute,
           fetchAnyToPxCvxRoute,
           fetchExternalVaultZapInRoute,
           fetchLpxCvxZapInRoute,
           fetchPxCvxTokenZapInRoute,
-          fetchComposableZapInRoute,
           fetchLegacyMorphoWrapRoute,
           fetchLegacyMorphoZapInRoute,
           fetchPxCvxZapInRoute,
@@ -181,8 +176,6 @@ export async function POST(
             return respond(bundle);
           }
 
-          case "yldVaultToCvgCvxVault":
-          case "cvgCvxVaultToYldVault":
           case "yldVaultToPxCvxVault":
           case "pxCvxVaultToYldVault": {
             const sourceVault = getIntentVault(body.sourceVault);
@@ -198,28 +191,6 @@ export async function POST(
               amountIn: body.amountIn,
               sourceUnderlyingToken: sourceVault.assetAddress,
               targetUnderlyingToken: targetVault.assetAddress,
-              slippage: body.slippage,
-            });
-            return respond(bundle);
-          }
-
-          case "cvgCvxZapIn": {
-            const bundle = await fetchCvgCvxZapInRoute({
-              fromAddress: body.fromAddress,
-              vaultAddress: body.vaultAddress,
-              inputToken: body.inputToken,
-              amountIn: body.amountIn,
-              slippage: body.slippage,
-            });
-            return respond(bundle);
-          }
-
-          case "cvgCvxZapOut": {
-            const bundle = await fetchCvgCvxZapOutRoute({
-              fromAddress: body.fromAddress,
-              vaultAddress: body.vaultAddress,
-              outputToken: body.outputToken,
-              amountIn: body.amountIn,
               slippage: body.slippage,
             });
             return respond(bundle);
@@ -266,11 +237,9 @@ export async function POST(
               amountIn: body.amountIn,
               slippage: body.slippage,
             };
-            const bundle = input === TOKENS.CVGCVX.toLowerCase()
-              ? await fetchComposableZapInRoute({ ...routeParams, inputToken: body.inputToken })
-              : input === TOKENS.LPXCVX.toLowerCase()
-                ? await fetchLpxCvxZapInRoute(routeParams)
-                : await fetchPxCvxTokenZapInRoute(routeParams);
+            const bundle = input === TOKENS.LPXCVX.toLowerCase()
+              ? await fetchLpxCvxZapInRoute(routeParams)
+              : await fetchPxCvxTokenZapInRoute(routeParams);
             return respond(bundle);
           }
 
@@ -395,19 +364,12 @@ export async function POST(
                     amountIn: body.amountIn,
                     slippage: body.slippage,
                   })
-                : input === TOKENS.CVGCVX.toLowerCase()
-                  ? await fetchAnyFromCvgCvxRoute({
-                      fromAddress: body.fromAddress,
-                      outputToken: body.outputToken,
-                      amountIn: body.amountIn,
-                      slippage: body.slippage,
-                    })
-                  : await fetchAnyFromLpxCvxRoute({
-                      fromAddress: body.fromAddress,
-                      outputToken: body.outputToken,
-                      amountIn: body.amountIn,
-                      slippage: body.slippage,
-                    });
+                : await fetchAnyFromLpxCvxRoute({
+                    fromAddress: body.fromAddress,
+                    outputToken: body.outputToken,
+                    amountIn: body.amountIn,
+                    slippage: body.slippage,
+                  });
             return respond(bundle);
           }
 
@@ -421,19 +383,12 @@ export async function POST(
                     amountIn: body.amountIn,
                     slippage: body.slippage,
                   })
-                : output === TOKENS.CVGCVX.toLowerCase()
-                  ? await fetchAnyToCvgCvxRoute({
-                      fromAddress: body.fromAddress,
-                      inputToken: body.inputToken,
-                      amountIn: body.amountIn,
-                      slippage: body.slippage,
-                    })
-                  : await fetchAnyToLpxCvxRoute({
-                      fromAddress: body.fromAddress,
-                      inputToken: body.inputToken,
-                      amountIn: body.amountIn,
-                      slippage: body.slippage,
-                    });
+                : await fetchAnyToLpxCvxRoute({
+                    fromAddress: body.fromAddress,
+                    inputToken: body.inputToken,
+                    amountIn: body.amountIn,
+                    slippage: body.slippage,
+                  });
             return respond(bundle);
           }
 
