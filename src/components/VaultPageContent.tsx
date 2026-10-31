@@ -96,6 +96,7 @@ import {
   isUserRejection,
 } from "@/lib/analytics";
 import { toast } from "sonner";
+import { formatApy, isApyOffScale, OFF_SCALE_APY_TITLE } from "@/lib/apy";
 
 const ENTRY_DISABLED_VAULT_ADDRESSES = Object.values(VAULTS)
   .filter(isVaultEntryDisabled)
@@ -672,7 +673,8 @@ export function VaultPageContent({ id }: { id: string }) {
 
   // On-chain APY from cache (convertToAssets now vs 24h ago), fallback to Kong
   const cachedApy = vault ? (vaultCache as Record<string, { apy?: number | null }> | undefined)?.[vault.id]?.apy : null;
-  const displayApy = cachedApy != null ? `${cachedApy.toFixed(2)}%` : displayApyFormatted;
+  const displayApyValue = cachedApy ?? (yearnVault?.apy != null ? yearnVault.apy : null);
+  const displayApy = cachedApy != null ? formatApy(cachedApy) : displayApyFormatted;
 
   // TVL from Kong, fallback to cached on-chain tvlUsd for vaults Kong doesn't
   // index (yscvx) or whose Kong tvl.close is missing (would otherwise be $0/—)
@@ -1644,7 +1646,10 @@ export function VaultPageContent({ id }: { id: string }) {
                     <TrendingUp size={16} />
                     <span className="text-xs font-medium uppercase tracking-wider">24 hr APY</span>
                   </div>
-                  <p className="mono xl:text-2xl text-xl font-medium text-[var(--success)]">
+                  <p
+                    className="mono xl:text-2xl text-xl font-medium text-[var(--success)] truncate"
+                    title={displayApyValue != null && isApyOffScale(displayApyValue) ? OFF_SCALE_APY_TITLE : undefined}
+                  >
                     {yearnLoading ? "..." : displayApy}
                   </p>
                 </div>

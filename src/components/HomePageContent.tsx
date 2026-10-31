@@ -31,6 +31,7 @@ import {
   useMerklOpportunities,
 } from "@/hooks/useMerklRewards";
 import { trackCtaClick, trackExternalLinkClick } from "@/lib/analytics";
+import { averageDisplayApy, formatApy } from "@/lib/apy";
 
 // Build vault configs from centralized config
 // In development, show all vaults including hidden ones
@@ -312,9 +313,7 @@ export function HomePageContent() {
     : `$${totalTvl.toFixed(2)}`;
 
   // Calculate average APY
-  const avgApy = vaults.length > 0
-    ? vaults.reduce((sum, v) => sum + v.apy, 0) / vaults.length
-    : 0;
+  const avgApy = averageDisplayApy(vaults.map((v) => v.apy));
 
   // Stats with live data
   const stats = [
@@ -565,7 +564,7 @@ export function HomePageContent() {
                     <div className="grid grid-cols-3 gap-2 pt-3 border-t border-[var(--border)]">
                       <div className="text-center">
                         <p className="mono text-base font-medium text-[var(--success)]">
-                          {isLoading ? "..." : `${vault.apy.toFixed(2)}%`}
+                          {isLoading ? "..." : formatApy(vault.apy)}
                         </p>
                         <p className="text-[10px] text-[var(--muted-foreground)] mt-0.5">APY</p>
                       </div>
@@ -659,7 +658,7 @@ export function HomePageContent() {
                     <div className="flex items-center gap-6">
                       <div className="text-right w-16">
                         <p className="mono text-lg font-medium text-[var(--success)]">
-                          {isLoading ? "..." : `${vault.apy.toFixed(2)}%`}
+                          {isLoading ? "..." : formatApy(vault.apy)}
                         </p>
                         <p className="text-xs text-[var(--muted-foreground)]">APY</p>
                       </div>

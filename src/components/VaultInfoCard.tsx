@@ -19,6 +19,7 @@ import { Info, Sprout, TrendingUp, Wallet } from "lucide-react";
 import { useVaultTvlHistory, useVault30dApyHistory, type HistoryPoint, type ApyPoint } from "@/hooks/useYearnHistory";
 import { formatUsd } from "@/lib/utils";
 import { VaultHarvestPanel } from "@/components/VaultHarvestPanel";
+import { formatApy } from "@/lib/apy";
 
 const TIME_RANGES = ["30d", "90d", "all"] as const;
 type TimeRange = (typeof TIME_RANGES)[number];
@@ -168,7 +169,7 @@ function PerformanceChart({ apyData, height = 320 }: PerformanceChartProps) {
           <div className="text-[var(--muted-foreground)] mb-1">{tooltip.time}</div>
           <div className="flex justify-between gap-3">
             <span style={{ color: "var(--accent)" }}>30D APY</span>
-            <span className="mono">{tooltip.apy.toFixed(2)}%</span>
+            <span className="mono">{formatApy(tooltip.apy)}</span>
           </div>
         </div>
       )}
