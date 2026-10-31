@@ -57,16 +57,6 @@ const WEEKLY_APY_VAULTS = [
     symbolSuffix: "cvxCRV",
     underlying: "cvxCRV",
   },
-  {
-    address: VAULT_ADDRESSES.YSCVGCVX,
-    icon: "/yscvgcvx-128.png",
-    label: "LiquidBoost",
-    protocolLogo: "/tokens/liquidboost.png",
-    symbol: "yscvgCVX",
-    symbolPrefix: "ys",
-    symbolSuffix: "cvgCVX",
-    underlying: "cvgCVX",
-  },
 ] as const;
 
 async function fetchVaultWeeklyApy(
