@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useAccount, usePublicClient, useWaitForTransactionReceipt } from "wagmi";
+import { useAccount, usePublicClient } from "wagmi";
+import { useTxReceipt } from "@/hooks/useTxReceipt";
 import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
 import { encodeFunctionData, maxUint256, toFunctionSelector } from "viem";
 import { CRVUSD_ADDRESS } from "@/config/addresses";
@@ -157,7 +158,7 @@ export function useSelfLiquidation(): UseSelfLiquidationResult {
     isError: isApproveError,
   } = useWriteContract();
 
-  const { isLoading: isApprovalPending, isSuccess: isRawApprovalSuccess } = useWaitForTransactionReceipt({
+  const { isLoading: isApprovalPending, isSuccess: isRawApprovalSuccess } = useTxReceipt({
     hash: approveHash,
     pollingInterval: 1_000,
   });
@@ -166,7 +167,7 @@ export function useSelfLiquidation(): UseSelfLiquidationResult {
   const effectiveStatus: SelfLiquidationStatus =
     isApproveError && status === "approving" ? "needsApproval" : status;
 
-  useWaitForTransactionReceipt({
+  useTxReceipt({
     hash: txHash ?? undefined,
     query: { enabled: !!txHash && effectiveStatus === "waitingTx" },
   });
