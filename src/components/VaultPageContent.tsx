@@ -2183,11 +2183,11 @@ export function VaultPageContent({ id }: { id: string }) {
 
                       {/* Action button */}
                       {isConnected ? (
-                        requiresApproval && !isLoading && !isSimulatingPreview ? (
+                        requiresApproval && !vaultBatchesApproval && !isLoading && !isSimulatingPreview ? (
                           /* Approval choice: Exact or Unlimited */
                           <div className="space-y-2">
                             <div className="text-sm text-[var(--muted-foreground)]">
-                              {vaultBatchesApproval ? <>Approve {vault.assetSymbol} &amp; deposit in one Safe transaction, for{" "}</> : <>Approve {vault.assetSymbol} for{" "}</>}<span className="whitespace-nowrap">{vault.symbol} vault <a href={`https://etherscan.io/address/${vault.address}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={12} className="!inline -mt-0.5" /></a></span>
+                              Approve {vault.assetSymbol} for{" "}<span className="whitespace-nowrap">{vault.symbol} vault <a href={`https://etherscan.io/address/${vault.address}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={12} className="!inline -mt-0.5" /></a></span>
                             </div>
                             <div className="flex gap-2">
                               <button
@@ -2225,6 +2225,9 @@ export function VaultPageContent({ id }: { id: string }) {
                               if (showSimulationPreview && vaultSimulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
                                 // Re-open cached simulation modal if same block
                                 setShowSimulationModal(true);
+                              } else if (requiresApproval && vaultBatchesApproval) {
+                                // Safe: approve the exact amount inside the deposit's batch.
+                                handleSubmit(parseUnits(amount, vault.assetDecimals ?? 18));
                               } else {
                                 handleSubmit();
                               }
@@ -2250,7 +2253,9 @@ export function VaultPageContent({ id }: { id: string }) {
                             ) : hasInsufficientBalance ? (
                               "Insufficient balance"
                             ) : (
-                              activeTab === "deposit" ? "Deposit" : "Withdraw"
+                              activeTab === "deposit"
+                                ? (requiresApproval && vaultBatchesApproval ? "Approve & deposit" : "Deposit")
+                                : "Withdraw"
                             )}
                           </button>
                         )
@@ -2594,8 +2599,6 @@ export function VaultPageContent({ id }: { id: string }) {
                         approvalProgress={zapApprovalProgress}
                         decimals={zapDirection === "in" ? (zapInputToken?.decimals ?? 18) : 18}
                         isApproving={zapIsApproving}
-                        title={zapBatchesApproval ? "Approve & zap in one Safe transaction" : undefined}
-                  note={zapBatchesApproval ? "If your Safe executes after the price moves past your slippage, the zap fails and nothing changes." : undefined}
                         onApprove={(exact) => guardHighImpact("Approve & zap", () => zapApprove(exact))}
                       />
 
@@ -2656,6 +2659,12 @@ export function VaultPageContent({ id }: { id: string }) {
                         >
                           Connect Wallet
                         </button>
+                      )}
+
+                      {zapBatchesApproval && zapAmount && !hasZapInsufficientBalance && zapNeedsApproval() && (
+                        <p className="text-xs text-[var(--muted-foreground)]">
+                          Your Safe approves and zaps in one transaction. If your Safe executes after the price moves past your slippage, the zap fails and nothing changes.
+                        </p>
                       )}
 
                       {/* Enso Attribution + Route Toggle + Slippage Settings */}
