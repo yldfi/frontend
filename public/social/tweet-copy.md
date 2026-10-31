@@ -44,22 +44,6 @@ Thank you to everyone who used ycvxCRV to borrow against their staked cvxCRV.
 
 Image: `public/social/ycvxcrv-sunset-promo.png`
 
-## yscvgCVX
-
-```text
-yscvgCVX automates @0xLiquidBoost's cvgCVX yield loop.
-
-cvgCVX is Tangent's liquid wrapper for locked $CVX, earning vlCVX vote incentives, CVX1 earnings, and treasury boosts.
-
-yld handles the harvest and reinvestment cycle.
-
-Deposit. Compound. Earn.
-
-yldfi.co/vaults/yscvgcvx
-```
-
-Image: `public/social/yscvgcvx-promo.png`
-
 ## yscvxCRV
 
 ```text

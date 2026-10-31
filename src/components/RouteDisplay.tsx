@@ -40,7 +40,6 @@ const TOKEN_LOGOS: Record<string, string> = {
   cvx: "/tokens/cvx.png",
   cvxcrv: "/tokens/cvxcrv.png",
   crv: "/tokens/crv.png",
-  cvgcvx: "/tokens/cvgcvx.png",
   pxcvx: "/tokens/pxcvx.png",
   lpxcvx: "/tokens/pxcvx.png", // Pirex logo for lpxCVX
   usdc: "/tokens/usdc.png",
@@ -194,7 +193,6 @@ const PROTOCOL_LINKS: Record<string, string> = {
   "hop": "https://hop.exchange",
   // Other
   "pirex": "https://pirex.io",
-  "liquidboost": "https://liquidboost.tangent.finance/stake/cvx",
   "weth": "https://weth.io",
 };
 
@@ -315,7 +313,6 @@ const PROTOCOL_DISPLAY_NAMES: Record<string, string> = {
   "hop": "Hop",
   // Other
   "pirex": "Pirex",
-  "liquidboost": "LiquidBoost",
   "weth": "WETH",
   "yld": "yld",
 };

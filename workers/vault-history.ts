@@ -1,7 +1,6 @@
-// Canonical daily history for the three tracked strategies. All inputs for a
+// Canonical daily history for the tracked strategies. All inputs for a
 // point are read at the last Ethereum block of that UTC day, never interpolated.
 export const HISTORY_VAULTS = {
-  yscvgcvx: { address: "0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359", inception: 23614679, firstDay: "2025-10-19" },
   yscvxcrv: { address: "0xCa960E6DF1150100586c51382f619efCCcF72706", inception: 23899777, firstDay: "2025-11-28" },
   yscvx: { address: "0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e", inception: 25565641, firstDay: "2026-07-19" },
 } as const;
@@ -26,12 +25,10 @@ export function isHistoryKey(key: string | null): key is HistoryKey {
   return key !== null && Object.hasOwn(HISTORY_VAULTS, key);
 }
 const hex = (n: number) => "0x" + n.toString(16);
-const word = (n: bigint | number) => BigInt(n).toString(16).padStart(64, "0");
 const unit = (raw: bigint) => Number(raw / 10n ** 18n) + Number(raw % 10n ** 18n) / 1e18;
 const CVX_FEED = "0xc27e191714b429c51e18fafba6a4c31135b2e157";
 const CRVUSD_FEED = "0xEEf0C605546958c1f899b6fB336C20671f9cD49F";
 const CVXCRV_ORACLE = "0xD7063E7e5EbF99b55c56F231f374F97C8578653a";
-const CVG_POOL = "0xc50E191F703FB3160fC15d8b168A8c740fec3666";
 
 export async function readBlock(rpc: Rpc, tag: number | "latest"): Promise<Block> {
   const raw = await rpc("eth_getBlockByNumber", [typeof tag === "number" ? hex(tag) : tag, false]) as { number?: string; timestamp?: string; hash?: string } | null;
@@ -80,12 +77,7 @@ async function priceAt(rpc: Rpc, key: HistoryKey, block: Block, inputs: DailyPoi
     if (oracle <= 0n) throw new Error("Invalid cvxCRV oracle price");
     return unit(oracle) * usd;
   }
-  const cvxUsd = await feed(CVX_FEED);
-  if (key === "yscvx") return cvxUsd;
-  // Same market-price basis as yldfi's useCvgCvxPrice: CVX1 wraps CVX 1:1.
-  const out = BigInt(await read(CVG_POOL, "0x5e0d443f" + word(0) + word(1) + word(10n ** 18n)));
-  if (out <= 0n) throw new Error("Unavailable cvgCVX pool quote");
-  return cvxUsd / unit(out);
+  return feed(CVX_FEED);
 }
 
 export async function sampleDay(rpc: Rpc, key: HistoryKey, time: number, block: Block): Promise<DailyPoint> {
@@ -104,7 +96,7 @@ export async function sampleDay(rpc: Rpc, key: HistoryKey, time: number, block: 
   const tvl = assets === 0n ? 0 : price === null ? null : unit(assets) * price;
   if (tvl !== null && !Number.isFinite(tvl)) throw new Error("Non-finite TVL");
   return { time, block, totalAssets: assets.toString(), pricePerShare: pps.toString(), pps: unit(pps), tvl,
-    priceUsd: price, priceSource: key === "yscvxcrv" ? "cvxCRV/crvUSD oracle × Chainlink crvUSD/USD" : key === "yscvgcvx" ? "Chainlink CVX/USD ÷ Curve CVX1→cvgCVX quote" : "Chainlink CVX/USD", priceInputs: inputs };
+    priceUsd: price, priceSource: key === "yscvxcrv" ? "cvxCRV/crvUSD oracle × Chainlink crvUSD/USD" : "Chainlink CVX/USD", priceInputs: inputs };
 }
 
 export function parseHistory(raw: string, key: HistoryKey): HistoryDocument {

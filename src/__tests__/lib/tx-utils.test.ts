@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   parseEnsoError,
-  parseSwapFailedError,
   extractStringFromHex,
   CUSTOM_ERROR_SELECTORS,
   CURVE_DEBT_TOO_HIGH_MESSAGE,
@@ -84,73 +83,6 @@ describe("parseEnsoError", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Helper: wrap an inner error blob in SwapFailed(bytes) ABI encoding
-// SwapFailed(bytes) — selector 0xd9d027cc
-// ---------------------------------------------------------------------------
-function buildSwapFailedHex(innerHex: string): string {
-  const selector = "d9d027cc";
-  // bytes parameter: offset(32) + length(32) + data (padded to 32-byte boundary)
-  const offsetHex = (32).toString(16).padStart(64, "0");
-  const innerBytes = innerHex.replace(/^0x/, "");
-  const byteLen = innerBytes.length / 2;
-  const lenHex = byteLen.toString(16).padStart(64, "0");
-  // Pad inner data to 32-byte boundary
-  const paddedData = innerBytes.padEnd(Math.ceil(innerBytes.length / 64) * 64, "0");
-  return selector + offsetHex + lenHex + paddedData;
-}
-
-// ---------------------------------------------------------------------------
-// 1b. parseSwapFailedError
-// ---------------------------------------------------------------------------
-describe("parseSwapFailedError", () => {
-  it("returns null for non-SwapFailed selector", () => {
-    const hex = "deadbeef" + "00".repeat(128);
-    expect(parseSwapFailedError(hex)).toBeNull();
-  });
-
-  it("returns null for data too short", () => {
-    const hex = "d9d027cc" + "ab".repeat(30);
-    expect(parseSwapFailedError(hex)).toBeNull();
-  });
-
-  it("unwraps SwapFailed wrapping ExecutionFailed with 'Unknown' message", () => {
-    const target = "bedfac7488dccaafdd66d1d7d56349780fe0477e";
-    const innerEnso = buildEnsoErrorHex(1, target, "Unknown");
-    const hex = buildSwapFailedHex(innerEnso);
-    const result = parseSwapFailedError(hex);
-    expect(result).not.toBeNull();
-    expect(result!.step).toBe(1);
-    expect(result!.target).toBe("0x" + target);
-    expect(result!.message).toBe("Unknown");
-  });
-
-  it("unwraps SwapFailed wrapping ExecutionFailed with 'Condition not met'", () => {
-    const target = "1234567890abcdef1234567890abcdef12345678";
-    const innerEnso = buildEnsoErrorHex(3, target, "Condition not met");
-    const hex = buildSwapFailedHex(innerEnso);
-    const result = parseSwapFailedError(hex);
-    expect(result).not.toBeNull();
-    expect(result!.step).toBe(3);
-    expect(result!.message).toBe("Condition not met");
-  });
-
-  it("handles 0x prefix", () => {
-    const target = "1234567890abcdef1234567890abcdef12345678";
-    const innerEnso = buildEnsoErrorHex(0, target, "Call failed");
-    const hex = "0x" + buildSwapFailedHex(innerEnso);
-    const result = parseSwapFailedError(hex);
-    expect(result).not.toBeNull();
-    expect(result!.message).toBe("Call failed");
-  });
-
-  it("returns null when inner data is not a valid Enso error", () => {
-    // Inner data is just garbage, not ExecutionFailed
-    const hex = buildSwapFailedHex("deadbeefcafebabe" + "00".repeat(60));
-    expect(parseSwapFailedError(hex)).toBeNull();
-  });
-});
-
-// ---------------------------------------------------------------------------
 // 2. extractStringFromHex
 // ---------------------------------------------------------------------------
 describe("extractStringFromHex", () => {
@@ -208,10 +140,6 @@ describe("CUSTOM_ERROR_SELECTORS", () => {
 
   it("maps 0x756688fe to deadline expired", () => {
     expect(CUSTOM_ERROR_SELECTORS["0x756688fe"]).toContain("Deadline expired");
-  });
-
-  it("maps 0xd9d027cc (SwapFailed) to swap failed message", () => {
-    expect(CUSTOM_ERROR_SELECTORS["0xd9d027cc"]).toContain("Swap failed");
   });
 });
 
@@ -365,53 +293,6 @@ describe("parseErrorMessage", () => {
     const innerHex = buildEnsoErrorHex(3, target, "Access denied").slice(8);
     const error = `custom error 0xef3dcb2f: ${innerHex}`;
     expect(parseErrorMessage(error)).toBe("Transaction failed: Access denied");
-  });
-
-  // SwapFailed(bytes) wrapping Enso ExecutionFailed
-  it("unwraps SwapFailed with 'Unknown' → friendly swap failed message", () => {
-    const target = "bedfac7488dccaafdd66d1d7d56349780fe0477e";
-    const innerEnso = buildEnsoErrorHex(1, target, "Unknown");
-    const swapFailedHex = buildSwapFailedHex(innerEnso);
-    const error = `custom error 0xd9d027cc: ${swapFailedHex.slice(8)}`; // strip selector for regex match
-    expect(parseErrorMessage(error)).toBe(
-      "Swap failed during transaction. Try refreshing the quote or increasing slippage."
-    );
-  });
-
-  it("unwraps SwapFailed with 'Condition not met' → slippage message", () => {
-    const target = "1234567890abcdef1234567890abcdef12345678";
-    const innerEnso = buildEnsoErrorHex(2, target, "Condition not met");
-    const swapFailedHex = buildSwapFailedHex(innerEnso);
-    const error = `custom error 0xd9d027cc: ${swapFailedHex.slice(8)}`;
-    expect(parseErrorMessage(error)).toBe(
-      "Swap output below minimum. Increase the amount or slippage."
-    );
-  });
-
-  it("unwraps SwapFailed with 'Call failed' → route failed message", () => {
-    const target = "1234567890abcdef1234567890abcdef12345678";
-    const innerEnso = buildEnsoErrorHex(0, target, "Call failed");
-    const swapFailedHex = buildSwapFailedHex(innerEnso);
-    const error = `custom error 0xd9d027cc: ${swapFailedHex.slice(8)}`;
-    expect(parseErrorMessage(error)).toBe(
-      "Swap route failed. Try increasing slippage or use a different token."
-    );
-  });
-
-  it("unwraps SwapFailed with custom message", () => {
-    const target = "1234567890abcdef1234567890abcdef12345678";
-    const innerEnso = buildEnsoErrorHex(1, target, "STF");
-    const swapFailedHex = buildSwapFailedHex(innerEnso);
-    const error = `custom error 0xd9d027cc: ${swapFailedHex.slice(8)}`;
-    expect(parseErrorMessage(error)).toBe("Swap failed: STF");
-  });
-
-  it("falls back to CUSTOM_ERROR_SELECTORS when SwapFailed inner parse fails", () => {
-    // SwapFailed selector matched but inner data is garbage → falls through to selector lookup
-    const error = "custom error 0xd9d027cc: " + "ab".repeat(30);
-    expect(parseErrorMessage(error)).toBe(
-      "Swap failed during transaction. Try refreshing the quote or increasing slippage."
-    );
   });
 
   // Known selectors

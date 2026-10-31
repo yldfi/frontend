@@ -8,7 +8,6 @@ import { ChevronRight, AlertTriangle, ExternalLink, Info, Activity, Coins, Trend
 import { useAccount } from "wagmi";
 import { formatUnits } from "viem";
 import { getVault, CURVE_CONTROLLERS, CURVE_SAVINGS, isLendingDisabledWithoutPosition } from "@/config/vaults";
-import { useSettings } from "@/hooks/useSettings";
 import {
   getYldMerklCampaignIds,
   splitMerklRewardsByCampaign,
@@ -28,10 +27,31 @@ import { LendingInterface } from "./LendingInterface";
 import { PriceChart } from "./PriceChart";
 import { useClearOnNavigation } from "@/hooks/useClearOnNavigation";
 
+/**
+ * Whether the lending page should send the user home. For markets that only
+ * serve existing borrowers, only redirect once we *know* there is no loan:
+ * not while the wallet is still (re)connecting on a direct page load (no
+ * address yet, so the position query is disabled and reports "not loading"),
+ * and not when the position read failed.
+ */
+export function shouldRedirectFromLending(state: {
+  vaultFound: boolean;
+  hasController: boolean;
+  lendingDisabledWithoutPosition: boolean;
+  walletSettling: boolean;
+  positionLoading: boolean;
+  positionError: boolean;
+  hasLoan: boolean;
+}): boolean {
+  if (!state.vaultFound || !state.hasController) return true;
+  if (!state.lendingDisabledWithoutPosition) return false;
+  if (state.walletSettling || state.positionLoading || state.positionError) return false;
+  return !state.hasLoan;
+}
+
 export function LendingPageContent({ vaultId }: { vaultId: string }) {
   const router = useRouter();
   const { address, isConnecting, isReconnecting } = useAccount();
-  const { zappersEnabled } = useSettings();
   const vault = getVault(vaultId);
   const { balance } = useVaultBalance(vault?.address as `0x${string}`);
 
@@ -39,7 +59,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
     ? (CURVE_CONTROLLERS[vault.address as keyof typeof CURVE_CONTROLLERS] as `0x${string}` | undefined)
     : undefined;
 
-  const { position, isLoading: positionLoading, refetch: refetchPosition } = useCurveLendingPosition(
+  const { position, isLoading: positionLoading, isError: positionError, refetch: refetchPosition } = useCurveLendingPosition(
     vault?.address as `0x${string}`,
     address
   );
@@ -109,19 +129,20 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
     `yldfi-lending-borrow-collateral-${vaultAddr}`,
     `yldfi-lending-borrow-amount-${vaultAddr}`,
     `yldfi-lending-repay-${vaultAddr}`,
-    `yldfi-lending-leverage-${vaultAddr}`,
     `yldfi-lending-newloan-amount-${vaultAddr}`,
     `yldfi-lending-newloan-debt-${vaultAddr}`,
-    `yldfi-lending-newloan-token-${vaultAddr}`,
-    `yldfi-lending-newloan-output-${vaultAddr}`,
-    "yldfi-newloan-tab",
     "yldfi-loan-source",
   ], "yldfi-lending-is-refresh");
 
-  const shouldRedirect =
-    !vault ||
-    !controllerAddress ||
-    (isLendingDisabledWithoutPosition(vault) && !positionLoading && !position?.hasLoan);
+  const shouldRedirect = shouldRedirectFromLending({
+    vaultFound: Boolean(vault),
+    hasController: Boolean(controllerAddress),
+    lendingDisabledWithoutPosition: isLendingDisabledWithoutPosition(vault),
+    walletSettling: isConnecting || isReconnecting,
+    positionLoading,
+    positionError,
+    hasLoan: Boolean(position?.hasLoan),
+  });
 
   useEffect(() => {
     if (shouldRedirect) {
@@ -129,7 +150,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
     }
   }, [shouldRedirect, router]);
 
-  if (shouldRedirect) {
+  if (shouldRedirect || !vault || !controllerAddress) {
     return null;
   }
 
@@ -286,7 +307,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
                     <div>
                       <h3 className="text-base font-medium text-[var(--foreground)]">Market Overview</h3>
                       <p className="text-sm text-[var(--muted-foreground)] leading-relaxed mt-1">
-                        Borrow crvUSD against {vault.symbol} collateral.{zappersEnabled ? " Use leverage to amplify your position." : ""}
+                        Borrow crvUSD against {vault.symbol} collateral.
                       </p>
                     </div>
                   </div>

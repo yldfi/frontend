@@ -7,7 +7,7 @@ import { injectTestWallet } from "./fixtures/wallet";
  * Records the live Kong/Merkl responses the specs' pages request, into upstream-responses.json.
  * Only runs with E2E_RECORD_UPSTREAM=1; normal runs replay that file (see api-mocks.ts).
  */
-const PAGES = ["/", "/vaults/ycvxcrv", "/vaults/yscvgcvx", "/vaults/invalid-vault-id", "/vaults/nonexistent"];
+const PAGES = ["/", "/vaults/ycvxcrv", "/vaults/yscvxcrv", "/vaults/invalid-vault-id", "/vaults/nonexistent"];
 
 test.describe("record upstream API responses", () => {
   test.skip(!RECORDING_UPSTREAM, "set E2E_RECORD_UPSTREAM=1 to re-record");

@@ -5,7 +5,6 @@
  * Domain-specific addresses stay in their own modules:
  *   - Vault configs → config/vaults.ts
  *   - Enso infra   → lib/enso.ts
- *   - Zapper       → lib/zapper.ts
  */
 
 // ── Tokens ──────────────────────────────────────────────────────────

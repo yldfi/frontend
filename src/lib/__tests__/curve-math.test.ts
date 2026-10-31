@@ -210,7 +210,7 @@ describe("StableSwap Math", () => {
   });
 
   describe("stableswapGetDyOffchain", () => {
-    // Known values from CVX1/cvgCVX pool snapshot
+    // Known values from a 2-coin StableSwap pool snapshot
     const poolParams = {
       xp: [52847921620037742048865n, 65464805601413182150594n] as [bigint, bigint],
       A: 37n,
@@ -223,7 +223,7 @@ describe("StableSwap Math", () => {
       const dx = 100n * 10n ** 18n;
       const dy = stableswapGetDyOffchain(dx, poolParams.xp, Ann, poolParams.fee, poolParams.offpegFeeMultiplier);
 
-      // Should get slightly more than input (pool has excess cvgCVX)
+      // Should get slightly more than input (pool has excess of the output coin)
       expect(dy).toBeGreaterThan(100n * 10n ** 18n);
       expect(dy).toBeLessThan(101n * 10n ** 18n);
     });

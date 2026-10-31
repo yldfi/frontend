@@ -4,7 +4,7 @@ export { CollateralTab } from "./CollateralTab";
 export { LendingInterface } from "./LendingInterface";
 export type { LendingTxState } from "./LendingInterface";
 export { LendingPageContent } from "./LendingPageContent";
-export { LeverageTab } from "./LeverageTab";
+export { SelfLiquidateTab } from "./SelfLiquidateTab";
 export { NewLoanForm } from "./NewLoanForm";
 export { RepayTab } from "./RepayTab";
 export { PriceChart } from "./PriceChart";

@@ -23,7 +23,7 @@ vi.mock("@ensofinance/sdk", () => ({
   },
 }));
 
-vi.mock("@/lib/zapper", () => ({
+vi.mock("@/lib/enso-route-decode", () => ({
   extractInnerSwapData: vi.fn(() => "0xinner"),
 }));
 
@@ -80,8 +80,8 @@ const ETH = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 const ONE = 10n ** 18n;
 
 const LIQUID = [ETH, USDC_ADDRESS, TOKENS.CVX, TOKENS.CVXCRV, CRVUSD_ADDRESS, "0x3432B6A60D23Ca0dFCa7761B7ab56459D9C964D0"];
-const ILLIQUID = [TOKENS.PXCVX, TOKENS.LPXCVX, TOKENS.CVGCVX];
-const YLD = [VAULT_ADDRESSES.YSCVX, VAULT_ADDRESSES.YSCVXCRV, VAULT_ADDRESSES.YSCVGCVX, VAULT_ADDRESSES.YSPXCVX, VAULT_ADDRESSES.YCVXCRV];
+const ILLIQUID = [TOKENS.PXCVX, TOKENS.LPXCVX];
+const YLD = [VAULT_ADDRESSES.YSCVX, VAULT_ADDRESSES.YSCVXCRV, VAULT_ADDRESSES.YSPXCVX, VAULT_ADDRESSES.YCVXCRV];
 const EXTERNAL = [LLAMA_AIRFORCE.UCVX, LLAMA_AIRFORCE.UCRV, CONCENTRATOR.ACVX, CONCENTRATOR.ACRV, ASYMMETRY.AFCVX, BEEFY.MOO_CVX_CRV, BEEFY.MOO_CVX_CVX, CURVE_SAVINGS.SCRVUSD, YEARN.YVUSDC1];
 const ALL = [...LIQUID, ...ILLIQUID, ...YLD, ...EXTERNAL];
 
@@ -91,12 +91,8 @@ const INTENTS: Array<[string, (a: string, b: string) => Body]> = [
   ["yldVaultZapIn", (a, b) => ({ inputToken: a, vaultAddress: b })],
   ["yldVaultZapOut", (a, b) => ({ vaultAddress: a, outputToken: b })],
   ["yldVaultToVault", (a, b) => ({ sourceVault: a, targetVault: b })],
-  ["yldVaultToCvgCvxVault", (a, b) => ({ sourceVault: a, targetVault: b })],
-  ["cvgCvxVaultToYldVault", (a, b) => ({ sourceVault: a, targetVault: b })],
   ["yldVaultToPxCvxVault", (a, b) => ({ sourceVault: a, targetVault: b })],
   ["pxCvxVaultToYldVault", (a, b) => ({ sourceVault: a, targetVault: b })],
-  ["cvgCvxZapIn", (a, b) => ({ inputToken: a, vaultAddress: b })],
-  ["cvgCvxZapOut", (a, b) => ({ vaultAddress: a, outputToken: b })],
   ["pxCvxZapIn", (a, b) => ({ inputToken: a, vaultAddress: b })],
   ["pxCvxZapOut", (a, b) => ({ vaultAddress: a, outputToken: b })],
   ["externalVaultZapInToYld", (a, b) => ({ externalVaultAddress: a, vaultAddress: b })],

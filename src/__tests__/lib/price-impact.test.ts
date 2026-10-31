@@ -36,14 +36,14 @@ describe("price impact route semantics", () => {
   });
 
   it("uses USD delta for routes whose value-changing leg is a mint at par", () => {
-    // aCVX -> ysCvgCVX at size: exit at NAV, then mint cvgCVX 1:1 though it trades ~25% below CVX.
+    // aCVX -> yspxCVX at size: exit at NAV, then mint pxCVX 1:1 though it trades well below CVX.
     // With no "Swap" step this used to report no impact, so the high-impact CONFIRM never fired.
     const routeInfo: RouteInfo = {
       steps: [
         { tokenSymbol: "aCVX", action: "Exit", protocol: "Concentrator" },
-        { tokenSymbol: "CVX", action: "Swap + Mint", protocol: "Curve+Convex" },
-        { tokenSymbol: "cvgCVX", action: "Deposit", protocol: "yld" },
-        { tokenSymbol: "ysCvgCVX", action: "Receive", protocol: "yld" },
+        { tokenSymbol: "CVX", action: "Swap + Mint", protocol: "Curve+Pirex" },
+        { tokenSymbol: "pxCVX", action: "Deposit", protocol: "yld" },
+        { tokenSymbol: "yspxCVX", action: "Receive", protocol: "yld" },
       ],
     };
 

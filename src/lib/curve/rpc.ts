@@ -233,7 +233,7 @@ async function withRetry<T>(
 
 /**
  * Get expected output from an old-style Curve pool (uses int128 indices)
- * These are pools like CVX1/cvgCVX that use get_dy(int128,int128,uint256)
+ * These are older StableSwap pools that use get_dy(int128,int128,uint256)
  * Includes retry logic for RPC resilience
  */
 export async function getCurveGetDy(

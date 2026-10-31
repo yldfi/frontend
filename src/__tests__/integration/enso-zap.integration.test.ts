@@ -7,7 +7,7 @@
  * 1. Zap In/Out for all vaults with ETH and USDC
  * 2. Vault-to-vault transfers (same and different underlying)
  * 3. UI validation - blocked operations (same vault, underlying tokens)
- * 4. CVX-specific routes for cvgCVX and pxCVX vaults
+ * 4. CVX-specific routes for pxCVX vaults
  * 5. Transaction simulation with eth_call + stateOverrides
  *
  * Run with: pnpm vitest run src/__tests__/integration/enso-zap.integration.test.ts
@@ -38,8 +38,7 @@ import {
   fetchZapInRoute,
   fetchZapOutRoute,
   fetchVaultToVaultRoute,
-  fetchCvgCvxZapInRoute,
-  fetchCvgCvxZapOutRoute,
+  fetchPxCvxZapInRoute,
   ETH_ADDRESS,
 } from "@/lib/enso";
 import { VAULT_ADDRESSES, TOKENS, VAULT_UNDERLYING_TOKENS } from "@/config/vaults";
@@ -51,7 +50,6 @@ const TEST_WALLET = "0xd8da6bf26964af9d7eed9e03e53415d37aa96045";
 const ONE_ETH = "1000000000000000000";
 const ONE_THOUSAND_USDC = "1000000000"; // 1000 USDC (6 decimals)
 const TEN_VAULT_SHARES = "10000000000000000000";
-const ONE_HUNDRED_CVX = "100000000000000000000";
 const FIFTY_CVX = "50000000000000000000"; // 50 CVX (safe for simulation tests)
 
 // USDC address
@@ -66,25 +64,6 @@ const API_TIMEOUT = 30000;
 function hasValidOutput(amountsOut: Record<string, string>, tokenAddress: string): boolean {
   const output = amountsOut[tokenAddress.toLowerCase()] || amountsOut[tokenAddress];
   return output !== undefined && BigInt(output) > 0n;
-}
-
-/**
- * Helper to check if error is a transient RPC failure (rate limiting, network issues)
- */
-function isTransientRpcError(e: unknown): boolean {
-  const errorMsg = e instanceof Error ? e.message : String(e);
-  const errorStr = JSON.stringify(e);
-  const transient = (
-    errorMsg.includes("Failed to preview redeem") ||
-    errorMsg.includes("429") ||
-    errorStr.includes("429") ||
-    errorMsg.includes("RPC request failed") ||
-    errorMsg.includes("get_dy after retries")
-  );
-  if (transient) {
-    throw e;
-  }
-  return false;
 }
 
 /**
@@ -115,9 +94,6 @@ const ENSO_ROUTER = "0x80EbA3855878739F4710233A8a19d89Bdd2ffB8E"; // Router V1 /
 const ENSO_ROUTER_V2 = "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf"; // Router V2 / current approval spender
 const ENSO_SHORTCUTS = "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003"; // EnsoShortcuts - executes calls, msg.sender for external contracts
 
-// CVX1 (wrapped CVX) - used in cvgCVX routes
-const CVX1_ADDRESS = "0x6C9815826FdF8c7a45cCfEd2064dbaB33a078712";
-
 // Additional intermediate tokens that may appear in routes
 const CRV_ADDRESS = "0xd533A9d4E4e73fB5FB8D0E26A2A8EdE82F5b7cFc"; // CRV token
 const WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"; // WETH token
@@ -136,16 +112,12 @@ const TOKEN_BALANCE_SLOTS: Record<string, number> = {
   [CRV_ADDRESS.toLowerCase()]: 0, // CRV is standard ERC20
   // WETH uses slot 3 for balanceOf (custom implementation)
   [WETH_ADDRESS.toLowerCase()]: 3,
-  // ERC20Upgradeable (OpenZeppelin) uses slot 51 after Initializable's 50-slot gap
-  [CVX1_ADDRESS.toLowerCase()]: 51,
-  [TOKENS.CVGCVX.toLowerCase()]: 51, // cvgCVX is also ERC20Upgradeable
   // USDC uses slot 9 (FiatTokenV2 proxy)
   [USDC_ADDRESS.toLowerCase()]: 9,
   // Yearn V3 Vyper vault uses slot 18 for balanceOf
   [VAULT_ADDRESSES.YCVXCRV.toLowerCase()]: 18,
   // Yearn V3 Solidity tokenized strategies use slot 0 (standard ERC20)
   [VAULT_ADDRESSES.YSCVXCRV.toLowerCase()]: 0,
-  [VAULT_ADDRESSES.YSCVGCVX.toLowerCase()]: 0,
   [VAULT_ADDRESSES.YSPXCVX.toLowerCase()]: 0,
 };
 
@@ -158,15 +130,11 @@ const TOKEN_ALLOWANCE_SLOTS: Record<string, number> = {
   [CRV_ADDRESS.toLowerCase()]: 1, // CRV is standard ERC20
   // WETH uses slot 4 for allowance (custom implementation)
   [WETH_ADDRESS.toLowerCase()]: 4,
-  // ERC20Upgradeable (OpenZeppelin) uses slot 52 after Initializable's 50-slot gap
-  [CVX1_ADDRESS.toLowerCase()]: 52,
-  [TOKENS.CVGCVX.toLowerCase()]: 52, // cvgCVX is also ERC20Upgradeable
   [USDC_ADDRESS.toLowerCase()]: 10, // USDC allowance is at slot 10
   // Yearn V3 Vyper vault uses slot 19 for allowance
   [VAULT_ADDRESSES.YCVXCRV.toLowerCase()]: 19,
   // Yearn V3 Solidity tokenized strategies use slot 1 (standard ERC20)
   [VAULT_ADDRESSES.YSCVXCRV.toLowerCase()]: 1,
-  [VAULT_ADDRESSES.YSCVGCVX.toLowerCase()]: 1,
   [VAULT_ADDRESSES.YSPXCVX.toLowerCase()]: 1,
 };
 
@@ -181,7 +149,6 @@ const VYPER_STORAGE_TOKENS: Set<string> = new Set([
 // StrategyData struct has balances/allowances at specific offsets
 const TOKENIZED_STRATEGY_TOKENS: Set<string> = new Set([
   VAULT_ADDRESSES.YSCVXCRV.toLowerCase(),
-  VAULT_ADDRESSES.YSCVGCVX.toLowerCase(),
   VAULT_ADDRESSES.YSPXCVX.toLowerCase(),
 ]);
 
@@ -304,8 +271,7 @@ async function getUsdcBlacklistSlot(address: string): Promise<string> {
 /**
  * Build state overrides for ERC20 token simulation
  * Sets balance and allowances for all Enso contracts that may call transferFrom
- * Also handles related tokens (e.g., CVX1 when CVX is input)
- * For vault tokens, also overrides intermediate tokens in the route (CVX, CVX1)
+ * For vault tokens, also overrides intermediate tokens in the route (CVX, cvxCRV, ...)
  *
  * Key insight: Enso bundles execute through Router V2, which holds tokens
  * during bundle execution. We need to override balances for BOTH the holder AND the executor.
@@ -319,7 +285,6 @@ async function buildStateOverrides(
   // Additional contracts that may need allowance during Enso bundle execution
   // These are DEX/swap contracts that Enso routes through
   const ADDITIONAL_SPENDERS = [
-    "0xc50E191F703FB3160fC15d8b168A8c740fec3666", // CVX1_CVGCVX_POOL (Curve pool for CVX1 <-> cvgCVX)
     "0xB576491F1E6e5E62f1d8F26062Ee822B40B0E0d4", // CVX_ETH_POOL (Curve)
     "0x72725C0C879489986D213A9A6D2116dE45624c1c", // LPXCVX_CVX_POOL (Curve)
     "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7", // Curve 3pool
@@ -351,7 +316,6 @@ async function buildStateOverrides(
     // Yearn vaults need allowance to pull underlying tokens during deposit
     VAULT_ADDRESSES.YCVXCRV,
     VAULT_ADDRESSES.YSCVXCRV,
-    VAULT_ADDRESSES.YSCVGCVX,
     VAULT_ADDRESSES.YSPXCVX,
   ];
 
@@ -401,27 +365,19 @@ async function buildStateOverrides(
   // Build overrides for the input token
   await addTokenOverrides(token);
 
-  // For CVX input, also add CVX1 overrides (Enso bundles use CVX1 as intermediate)
-  if (token.toLowerCase() === TOKENS.CVX.toLowerCase()) {
-    await addTokenOverrides(CVX1_ADDRESS);
-  }
-
-  // For Yearn vault tokens (ycvxCRV, yscvxCRV, yscvgCVX, yspxCVX), also override intermediate tokens
-  // Vault-to-vault routes that go through cvgCVX need CVX and CVX1 overrides
+  // For Yearn vault tokens (ycvxCRV, yscvxCRV, yspxCVX), also override intermediate tokens
   const yearnVaults = [
     VAULT_ADDRESSES.YCVXCRV.toLowerCase(),
     VAULT_ADDRESSES.YSCVXCRV.toLowerCase(),
-    VAULT_ADDRESSES.YSCVGCVX.toLowerCase(),
     VAULT_ADDRESSES.YSPXCVX.toLowerCase(),
   ];
 
   if (yearnVaults.includes(token.toLowerCase())) {
-    // For vault-to-vault routes, the Enso bundle may route through CVX and CVX1
+    // For vault-to-vault routes, the Enso bundle may route through CVX and cvxCRV
     // Add overrides for these intermediate tokens to handle slippage and balance issues
     await addTokenOverrides(TOKENS.CVX);
-    await addTokenOverrides(CVX1_ADDRESS);
     await addTokenOverrides(TOKENS.CVXCRV);
-    await addTokenOverrides(TOKENS.CVGCVX);
+    await addTokenOverrides(TOKENS.PXCVX);
     await addTokenOverrides(STKCVXCRV_ADDRESS);
     // CRV and WETH are common intermediates in DEX routes
     await addTokenOverrides(CRV_ADDRESS);
@@ -429,13 +385,12 @@ async function buildStateOverrides(
     // Also add the Yearn vault tokens themselves as intermediates
     // (vault-to-vault routes may transfer vault shares)
     await addTokenOverrides(VAULT_ADDRESSES.YCVXCRV);
-    await addTokenOverrides(VAULT_ADDRESSES.YSCVGCVX);
+    await addTokenOverrides(VAULT_ADDRESSES.YSPXCVX);
 
     // CRITICAL: Yearn V3 vaults may have 0 idle balance (all in strategies)
     // For simulation, we need the vault to have underlying tokens to transfer during redeem
     // Add underlying balance for the vault contracts themselves
     const vaultUnderlyingPairs = [
-      { vault: VAULT_ADDRESSES.YSCVGCVX, underlying: TOKENS.CVGCVX },
       { vault: VAULT_ADDRESSES.YCVXCRV, underlying: TOKENS.CVXCRV },
       { vault: VAULT_ADDRESSES.YSCVXCRV, underlying: TOKENS.CVXCRV },
       { vault: VAULT_ADDRESSES.YSPXCVX, underlying: TOKENS.PXCVX },
@@ -1057,68 +1012,6 @@ describe("Enso Zap Integration Tests", () => {
   });
 
   // ============================================
-  // 3. BASIC ZAP IN/OUT - yscvgCVX (cvgCVX vault)
-  // ============================================
-  describe("yscvgCVX (cvgCVX vault) - Zap In/Out", () => {
-    it("ETH → yscvgCVX (zap in)", async () => {
-      const result = await fetchCvgCvxZapInRoute({
-        fromAddress: TEST_WALLET,
-        vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
-        inputToken: ETH_ADDRESS,
-        amountIn: ONE_ETH,
-      });
-
-      expect(hasValidOutput(result.amountsOut, VAULT_ADDRESSES.YSCVGCVX)).toBe(true);
-    }, API_TIMEOUT * 2); // Extra time for complex ETH route
-
-    it("CVX → yscvgCVX (zap in)", async () => {
-      const result = await fetchCvgCvxZapInRoute({
-        fromAddress: TEST_WALLET,
-        vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
-        inputToken: TOKENS.CVX,
-        amountIn: ONE_HUNDRED_CVX,
-      });
-
-      expect(hasValidOutput(result.amountsOut, VAULT_ADDRESSES.YSCVGCVX)).toBe(true);
-    }, API_TIMEOUT * 2); // Extra time for complex CVX route
-
-    it("USDC → yscvgCVX (zap in)", async () => {
-      const result = await fetchCvgCvxZapInRoute({
-        fromAddress: TEST_WALLET,
-        vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
-        inputToken: USDC_ADDRESS,
-        amountIn: ONE_THOUSAND_USDC,
-      });
-
-      expect(hasValidOutput(result.amountsOut, VAULT_ADDRESSES.YSCVGCVX)).toBe(true);
-    }, API_TIMEOUT);
-
-    it("yscvgCVX → ETH (zap out)", async () => {
-      const result = await fetchCvgCvxZapOutRoute({
-        fromAddress: TEST_WALLET,
-        vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
-        outputToken: ETH_ADDRESS,
-        amountIn: TEN_VAULT_SHARES,
-      });
-
-      expect(hasValidOutput(result.amountsOut, ETH_ADDRESS)).toBe(true);
-    }, API_TIMEOUT);
-
-    it("yscvgCVX → CVX (zap out)", async () => {
-      const result = await fetchCvgCvxZapOutRoute({
-        fromAddress: TEST_WALLET,
-        vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
-        outputToken: TOKENS.CVX,
-        amountIn: TEN_VAULT_SHARES,
-      });
-
-      // CVX1.withdraw() sends CVX directly to user, not tracked in amountsOut
-      // Check for valid bundle instead
-      expect(isValidBundle(result)).toBe(true);
-    }, API_TIMEOUT);
-  });
-
-  // ============================================
   // 4. VAULT-TO-VAULT - Same underlying (cvxCRV)
   // ============================================
   describe("Vault-to-Vault - Same underlying (cvxCRV)", () => {
@@ -1142,91 +1035,6 @@ describe("Enso Zap Integration Tests", () => {
       });
 
       expect(hasValidOutput(result.amountsOut, VAULT_ADDRESSES.YCVXCRV)).toBe(true);
-    }, API_TIMEOUT);
-  });
-
-  // ============================================
-  // 5. VAULT-TO-VAULT - Different underlying
-  // ============================================
-  describe("Vault-to-Vault - Different underlying", () => {
-    it("ycvxCRV → yscvgCVX (cvxCRV → cvgCVX)", async () => {
-      let result;
-      try {
-        result = await fetchVaultToVaultRoute({
-          fromAddress: TEST_WALLET,
-          sourceVault: VAULT_ADDRESSES.YCVXCRV,
-          targetVault: VAULT_ADDRESSES.YSCVGCVX,
-          amountIn: TEN_VAULT_SHARES,
-        });
-      } catch (e) {
-        if (isTransientRpcError(e)) {
-          console.log("Note: RPC failed (transient network issue in CI)");
-          return;
-        }
-        throw e;
-      }
-
-      expect(hasValidOutput(result.amountsOut, VAULT_ADDRESSES.YSCVGCVX)).toBe(true);
-    }, API_TIMEOUT);
-
-    it("yscvgCVX → ycvxCRV (cvgCVX → cvxCRV)", async () => {
-      let result;
-      try {
-        result = await fetchVaultToVaultRoute({
-          fromAddress: TEST_WALLET,
-          sourceVault: VAULT_ADDRESSES.YSCVGCVX,
-          targetVault: VAULT_ADDRESSES.YCVXCRV,
-          amountIn: TEN_VAULT_SHARES,
-        });
-      } catch (e) {
-        if (isTransientRpcError(e)) {
-          console.log("Note: RPC failed (transient network issue in CI)");
-          return;
-        }
-        throw e;
-      }
-
-      expect(hasValidOutput(result.amountsOut, VAULT_ADDRESSES.YCVXCRV)).toBe(true);
-    }, API_TIMEOUT * 2); // Extra time for complex route with Curve swap estimation
-
-    it("yscvgCVX → yscvxCRV (cvgCVX → cvxCRV strategy)", async () => {
-      let result;
-      try {
-        result = await fetchVaultToVaultRoute({
-          fromAddress: TEST_WALLET,
-          sourceVault: VAULT_ADDRESSES.YSCVGCVX,
-          targetVault: VAULT_ADDRESSES.YSCVXCRV,
-          amountIn: TEN_VAULT_SHARES,
-        });
-      } catch (e) {
-        if (isTransientRpcError(e)) {
-          console.log("Note: RPC failed (transient network issue in CI)");
-          return;
-        }
-        throw e;
-      }
-
-      expect(hasValidOutput(result.amountsOut, VAULT_ADDRESSES.YSCVXCRV)).toBe(true);
-    }, API_TIMEOUT);
-
-    it("yscvxCRV → yscvgCVX (cvxCRV strategy → cvgCVX)", async () => {
-      let result;
-      try {
-        result = await fetchVaultToVaultRoute({
-          fromAddress: TEST_WALLET,
-          sourceVault: VAULT_ADDRESSES.YSCVXCRV,
-          targetVault: VAULT_ADDRESSES.YSCVGCVX,
-          amountIn: TEN_VAULT_SHARES,
-        });
-      } catch (e) {
-        if (isTransientRpcError(e)) {
-          console.log("Note: RPC failed (transient network issue in CI)");
-          return;
-        }
-        throw e;
-      }
-
-      expect(hasValidOutput(result.amountsOut, VAULT_ADDRESSES.YSCVGCVX)).toBe(true);
     }, API_TIMEOUT);
   });
 
@@ -1256,17 +1064,6 @@ describe("Enso Zap Integration Tests", () => {
       ).rejects.toThrow("Cannot zap from a vault to itself");
     });
 
-    it("yscvgCVX → yscvgCVX should throw error", async () => {
-      await expect(
-        fetchVaultToVaultRoute({
-          fromAddress: TEST_WALLET,
-          sourceVault: VAULT_ADDRESSES.YSCVGCVX,
-          targetVault: VAULT_ADDRESSES.YSCVGCVX,
-          amountIn: TEN_VAULT_SHARES,
-        })
-      ).rejects.toThrow("Cannot zap from a vault to itself");
-    });
-
     it("yspxCVX → yspxCVX should throw error", async () => {
       await expect(
         fetchVaultToVaultRoute({
@@ -1287,10 +1084,6 @@ describe("Enso Zap Integration Tests", () => {
   describe("UI Validation - Underlying token exclusion", () => {
     it("VAULT_UNDERLYING_TOKENS includes cvxCRV", () => {
       expect(VAULT_UNDERLYING_TOKENS).toContain(TOKENS.CVXCRV);
-    });
-
-    it("VAULT_UNDERLYING_TOKENS includes cvgCVX", () => {
-      expect(VAULT_UNDERLYING_TOKENS).toContain(TOKENS.CVGCVX);
     });
 
     it("VAULT_UNDERLYING_TOKENS includes pxCVX", () => {
@@ -1370,22 +1163,22 @@ describe("Enso Zap Integration Tests", () => {
   });
 
   // ============================================
-  // 10. TRANSACTION SIMULATION - cvgCVX/yscvgCVX Routes
+  // 10. TRANSACTION SIMULATION - yspxCVX Routes
   //
   // These tests actually simulate the transaction using eth_call
   // to verify the bundle executes correctly on-chain
   // ============================================
-  describe("Transaction Simulation - yscvgCVX Routes", () => {
+  describe("Transaction Simulation - yspxCVX Routes", () => {
     // Skip simulation tests if no RPC URL is configured
     const skipIfNoRpc = simulationRpcReason ? it.skip : it;
 
     skipIfNoRpc(
-      "ETH → yscvgCVX simulation succeeds",
+      "ETH → yspxCVX simulation succeeds",
       async () => {
         // First get the bundle
-        const result = await fetchCvgCvxZapInRoute({
+        const result = await fetchPxCvxZapInRoute({
           fromAddress: TEST_WALLET,
-          vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+          vaultAddress: VAULT_ADDRESSES.YSPXCVX,
           inputToken: ETH_ADDRESS,
           amountIn: ONE_ETH,
         });
@@ -1401,7 +1194,7 @@ describe("Enso Zap Integration Tests", () => {
         });
 
         if (!simulation.success) {
-          console.error("ETH → yscvgCVX simulation failed:", simulation.error, simulation.revertReason);
+          console.error("ETH → yspxCVX simulation failed:", simulation.error, simulation.revertReason);
         }
         expect(simulation.success).toBe(true);
       },
@@ -1409,7 +1202,7 @@ describe("Enso Zap Integration Tests", () => {
     );
 
     skipIfNoRpc(
-      "CVX → yscvgCVX simulation succeeds",
+      "CVX → yspxCVX simulation succeeds",
       async () => {
         // Find an EOA that holds CVX (Enso API validates balance)
         const minAmount = BigInt(FIFTY_CVX);
@@ -1420,9 +1213,9 @@ describe("Enso Zap Integration Tests", () => {
           return;
         }
 
-        const result = await fetchCvgCvxZapInRoute({
+        const result = await fetchPxCvxZapInRoute({
           fromAddress: holder,
-          vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+          vaultAddress: VAULT_ADDRESSES.YSPXCVX,
           inputToken: TOKENS.CVX,
           amountIn: FIFTY_CVX,
         });
@@ -1448,7 +1241,7 @@ describe("Enso Zap Integration Tests", () => {
     );
 
     skipIfNoRpc(
-      "USDC → yscvgCVX simulation succeeds",
+      "USDC → yspxCVX simulation succeeds",
       async () => {
         // Find multiple EOA holders - different holders may result in different routing paths
         // Some routes may go through blacklisted DEX contracts
@@ -1463,9 +1256,9 @@ describe("Enso Zap Integration Tests", () => {
         // Try each holder until we find one with a non-blacklisted route
         let lastError: string | undefined;
         for (const holder of holders) {
-          const result = await fetchCvgCvxZapInRoute({
+          const result = await fetchPxCvxZapInRoute({
             fromAddress: holder,
-            vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+            vaultAddress: VAULT_ADDRESSES.YSPXCVX,
             inputToken: USDC_ADDRESS,
             amountIn: ONE_THOUSAND_USDC,
           });
@@ -1506,7 +1299,7 @@ describe("Enso Zap Integration Tests", () => {
     const skipIfNoRpc = simulationRpcReason ? it.skip : it;
 
     skipIfNoRpc(
-      "ycvxCRV → yscvgCVX simulation succeeds",
+      "ycvxCRV → yspxCVX simulation succeeds",
       async () => {
         // Find an EOA that holds ycvxCRV vault shares
         const minAmount = BigInt(TEN_VAULT_SHARES);
@@ -1520,7 +1313,7 @@ describe("Enso Zap Integration Tests", () => {
         const result = await fetchVaultToVaultRoute({
           fromAddress: holder,
           sourceVault: VAULT_ADDRESSES.YCVXCRV,
-          targetVault: VAULT_ADDRESSES.YSCVGCVX,
+          targetVault: VAULT_ADDRESSES.YSPXCVX,
           amountIn: TEN_VAULT_SHARES,
         });
 
@@ -1534,7 +1327,7 @@ describe("Enso Zap Integration Tests", () => {
         });
 
         if (!simulation.success) {
-          console.error("ycvxCRV → yscvgCVX simulation failed:", simulation.error, simulation.revertReason);
+          console.error("ycvxCRV → yspxCVX simulation failed:", simulation.error, simulation.revertReason);
         }
         expect(simulation.success).toBe(true);
       },
@@ -1542,40 +1335,29 @@ describe("Enso Zap Integration Tests", () => {
     );
 
     skipIfNoRpc(
-      "yscvgCVX → ycvxCRV simulation succeeds",
+      "yspxCVX → ycvxCRV simulation succeeds",
       async () => {
-        // Use a test wallet with state overrides to give it yscvgCVX balance
-        // No EOA holders exist for yscvgCVX, so we use state overrides
+        // Use a test wallet with state overrides to give it yspxCVX balance
         const holder = TEST_WALLET;
 
         const result = await fetchVaultToVaultRoute({
           fromAddress: holder,
-          sourceVault: VAULT_ADDRESSES.YSCVGCVX,
+          sourceVault: VAULT_ADDRESSES.YSPXCVX,
           targetVault: VAULT_ADDRESSES.YCVXCRV,
           amountIn: TEN_VAULT_SHARES,
         });
 
         expect(isValidBundle(result)).toBe(true);
 
-        // Debug: Write full bundle response to file for analysis
-        const fs = await import("fs");
-        fs.writeFileSync("/tmp/yscvgcvx-route-debug.json", JSON.stringify({
-          route: result.route,
-          routeInfo: (result as { routeInfo?: unknown }).routeInfo,
-          amountsOut: result.amountsOut,
-          tx: { to: result.tx!.to, data: result.tx!.data.slice(0, 500) },
-        }, null, 2));
-        console.log("DEBUG: Route written to /tmp/yscvgcvx-route-debug.json");
-
         const simulation = await simulateBundle({
           from: holder,
           to: result.tx!.to,
           data: result.tx!.data,
-          tokenIn: VAULT_ADDRESSES.YSCVGCVX,
+          tokenIn: VAULT_ADDRESSES.YSPXCVX,
         });
 
         if (!simulation.success) {
-          console.error("yscvgCVX → ycvxCRV simulation failed:", simulation.error, simulation.revertReason);
+          console.error("yspxCVX → ycvxCRV simulation failed:", simulation.error, simulation.revertReason);
         }
         expect(simulation.success).toBe(true);
       },

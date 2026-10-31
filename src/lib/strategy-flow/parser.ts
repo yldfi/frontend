@@ -242,7 +242,7 @@ function extractYieldSource(source: string, _contractBody: string): YieldSourceI
   // Look for claim function in _harvestAndReport, _claimRewards, or helper functions
   // Search the entire source since claim logic may be in helper functions like _claimEpochRewards
   const claimFnMatch = source.match(
-    /(\w+)\.(getReward|claimReward|claim|harvest|claimCvgCvxRewards|claimAll|claimVotiumRewards|redeemSnapshotRewards)\s*\(/
+    /(\w+)\.(getReward|claimReward|claim|harvest|claimAll|claimVotiumRewards|redeemSnapshotRewards)\s*\(/
   );
   const claimFn = claimFnMatch ? claimFnMatch[2] : null;
   const claimContractName = claimFnMatch ? claimFnMatch[1] : null;
@@ -284,7 +284,6 @@ function inferSymbolFromName(name: string): string | null {
   const lower = name.toLowerCase();
   if (lower.includes("pxcvx")) return "pxCVX";
   if (lower.includes("cvxcrv")) return "cvxCRV";
-  if (lower.includes("cvgcvx")) return "cvgCVX";
   if (lower.includes("cvx")) return "CVX";
   if (lower.includes("wsteth")) return "wstETH";
   if (lower.includes("steth")) return "stETH";
@@ -306,7 +305,6 @@ function extractAsset(
   const assetSymbols = [
     { pattern: /pxCVX|PXCVX/i, symbol: "pxCVX" },
     { pattern: /cvxCRV/i, symbol: "cvxCRV" },
-    { pattern: /cvgCVX/i, symbol: "cvgCVX" },
     { pattern: /\bCVX\b/, symbol: "CVX" },
     { pattern: /yCRV/i, symbol: "yCRV" },
     { pattern: /yPRISMA/i, symbol: "yPRISMA" },
@@ -397,7 +395,6 @@ function extractRewards(
 
   // Order matters - check derivative tokens before base tokens
   const tokenPatterns = [
-    { pattern: /\bcvgCVX\b/i, symbol: "cvgCVX" },
     { pattern: /\bpxCVX\b/i, symbol: "pxCVX" },
     { pattern: /\bcvxCRV\b/i, symbol: "cvxCRV" },
     { pattern: /\bcrvUSD\b/i, symbol: "crvUSD" },
@@ -415,9 +412,6 @@ function extractRewards(
     rewardTokens.push("Votium bribes (various)");
   }
 
-  // Check the natspec/comments for reward mentions (more reliable than code)
-  const natspecMatch = source.match(/@notice.*?(?:earns?|rewards?|compounds?)([^.@*]+)/i);
-  const natspecRewards = natspecMatch ? natspecMatch[1].toLowerCase() : "";
 
   // Check claim function and harvest function for reward mentions
   for (const { pattern, symbol } of tokenPatterns) {
@@ -431,12 +425,9 @@ function extractRewards(
       }
 
       // Skip base tokens (CVX, CRV) if their derivatives are the actual asset/reward
-      // This catches cases like cvgCVX strategy where CVX appears in code but isn't the actual reward
+      // This catches cases like the pxCVX strategy where CVX appears in code but isn't the actual reward
       if (symbol === "CVX" && (
-        rewardTokens.includes("cvgCVX") ||
         rewardTokens.includes("pxCVX") ||
-        natspecRewards.includes("cvgcvx") ||
-        assetLower === "cvgcvx" ||
         assetLower === "pxcvx"
       )) {
         continue;

@@ -5,7 +5,6 @@ import { createPortal } from "react-dom";
 import { AlertTriangle } from "lucide-react";
 import { useChainId } from "wagmi";
 import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
-import { useSettings } from "@/hooks/useSettings";
 import { cn } from "@/lib/utils";
 
 
@@ -36,9 +35,6 @@ export function SlippageModal({
     }
     return false;
   });
-
-  // Zappers toggle (synced across all components via useSyncExternalStore)
-  const { zappersEnabled, setZappersEnabled } = useSettings();
 
   // Re-read from localStorage when modal opens (React "adjust state from props" pattern)
   const [prevOpen, setPrevOpen] = useState(open);
@@ -219,34 +215,6 @@ export function SlippageModal({
           </>
         )}
 
-        {/* Zappers Toggle — only in development */}
-        {process.env.NODE_ENV !== "production" && (<>
-        <div className="border-t border-[var(--border)]" />
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <AlertTriangle size={14} className="text-red-500" />
-            <span className="text-sm font-medium">Zapper Contract</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-500 font-medium uppercase tracking-wider">UNAUDITED</span>
-          </div>
-          <button
-            onClick={() => setZappersEnabled(!zappersEnabled)}
-            className={cn(
-              "relative w-11 h-6 rounded-full transition-colors",
-              zappersEnabled ? "bg-red-500" : "bg-[var(--muted)]"
-            )}
-          >
-            <span
-              className={cn(
-                "absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform",
-                zappersEnabled && "translate-x-5"
-              )}
-            />
-          </button>
-        </div>
-        <p className="text-xs text-red-400/80">
-          Enable leveraged loans, deleverage, and collateral swaps via yld zapper contract. This contract has not been audited. <span className="font-bold text-red-500">USE AT OWN RISK</span>
-        </p>
-        </>)}
       </div>
     </div>,
     document.body

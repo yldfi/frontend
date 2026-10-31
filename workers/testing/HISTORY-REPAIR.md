@@ -1,6 +1,6 @@
 # Owned vault history
 
-The three tracked strategies use `history/v2/{key}.json` in R2. The old objects
+The tracked strategies (yscvxCRV, ysCVX) use `history/v2/{key}.json` in R2. The old objects
 are retained for rollback. The public `/api/history` route serves daily TVL/PPS
 from this store; it does not query Kong. Current-day values remain in `/api/vaults`.
 
@@ -13,8 +13,7 @@ TVL while retaining PPS. The API inserts nulls for missing dates. Corrupt object
 return 503 instead of silently resetting history.
 
 Valuation is an estimate at that block, using the same sources as yldfi's price
-hooks: CVX uses Chainlink CVX/USD; cvgCVX uses CVX/USD divided by the Curve
-CVX1→cvgCVX one-token quote; cvxCRV uses the LlamaLend cvxCRV/crvUSD oracle times
+hooks: CVX uses Chainlink CVX/USD; cvxCRV uses the LlamaLend cvxCRV/crvUSD oracle times
 Chainlink crvUSD/USD. This is a quoted/oracle valuation, not a guarantee of
 liquidation proceeds. Feed answers must be positive, completed, and no more than
 48 hours old. Token amounts have 18 decimals; Chainlink feeds have 8 decimals.
@@ -43,11 +42,15 @@ pnpm test:unit
 The artifact audit recomputes every value from recorded RPC replies and verifies
 both boundary blocks, daily continuity and complete pricing. The worker replay
 loads the exact artifacts into isolated Miniflare R2 and compares public route
-responses for both metrics and all three vaults. It also exercises cold/corrupt
+responses for both metrics and all tracked vaults. It also exercises cold/corrupt
 data, RPC/price failure, true zero, invalid/stale oracle rounds, missed block
 slots, pricing repair, and cron sampling during a Kong outage.
 
 ## 14 September 2026 repair
+
+> yscvgCVX was removed from history sampling when cvgCVX was sunset (Tangent
+> LiquidBoost deprecation, October 2026). Its `history/v2/yscvgcvx.json` object
+> is no longer read or written; the figures below are kept as a historical record.
 
 Reconstructed 677 daily points through 13 September: yscvgCVX 330 (from
 19 October 2025), yscvxCRV 290 (from 28 November 2025), ysCVX 57 (from

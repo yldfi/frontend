@@ -74,28 +74,27 @@ describe('applySlippageBuffer', () => {
 
 describe('slippage buffer integration scenarios', () => {
   it('should provide safe input for vault-to-vault routes', () => {
-    // Scenario: cvgCVX vault → pxCVX vault
-    // Redeem 10 vault shares → ~10 cvgCVX
-    // Swap cvgCVX → CVX1 (slippage possible)
-    // Unwrap CVX1 → CVX (1:1)
-    // Swap CVX → lpxCVX (slippage possible)
-    // Unwrap lpxCVX → pxCVX (1:1)
-    // Deposit pxCVX → vault
+    // Scenario: pxCVX vault → cvxCRV vault
+    // Redeem 10 vault shares → ~10 pxCVX
+    // Wrap pxCVX → lpxCVX (1:1)
+    // Swap lpxCVX → CVX (slippage possible)
+    // Swap CVX → cvxCRV (slippage possible)
+    // Deposit cvxCRV → vault
 
-    const estimatedCvx1 = 10000000000000000000n; // 10 CVX1
+    const estimatedCvx = 10000000000000000000n; // 10 CVX
     const slippage = 100; // 1%
 
     // After first Curve swap, we conservatively expect 99% of estimated output
-    const conservativeCvx = applySlippageBuffer(estimatedCvx1, slippage);
-    expect(BigInt(conservativeCvx)).toBeLessThan(estimatedCvx1);
+    const conservativeCvx = applySlippageBuffer(estimatedCvx, slippage);
+    expect(BigInt(conservativeCvx)).toBeLessThan(estimatedCvx);
 
     // This conservative amount should be used for subsequent actions
     // to ensure we don't try to spend more than we received
-    const estimatedLpxCvx = 9900000000000000000n; // Simulated swap output
-    const conservativeLpxCvx = applySlippageBuffer(estimatedLpxCvx, slippage);
+    const estimatedCvxCrv = 9900000000000000000n; // Simulated swap output
+    const conservativeCvxCrv = applySlippageBuffer(estimatedCvxCrv, slippage);
 
     // Final amount should be ~98.01% of original (two 1% buffers)
-    const expectedMin = (estimatedCvx1 * 98n) / 100n;
-    expect(BigInt(conservativeLpxCvx)).toBeGreaterThanOrEqual(expectedMin);
+    const expectedMin = (estimatedCvx * 98n) / 100n;
+    expect(BigInt(conservativeCvxCrv)).toBeGreaterThanOrEqual(expectedMin);
   });
 });
