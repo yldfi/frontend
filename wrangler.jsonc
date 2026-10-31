@@ -12,11 +12,12 @@
   },
   "observability": {
     "enabled": true,
-    // 10% sampling: enough to debug, without emitting a log line for every request.
-    "head_sampling_rate": 0.1,
+    // Full sampling: traffic is low, and 10% sampling lost the [Simulate] events
+    // needed to diagnose a user-reported empty simulation preview (2026-10-31).
+    "head_sampling_rate": 1,
     "logs": {
       "enabled": true,
-      "head_sampling_rate": 0.1,
+      "head_sampling_rate": 1,
       "persist": true,
       "invocation_logs": true
     }
