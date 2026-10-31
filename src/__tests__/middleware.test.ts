@@ -347,3 +347,15 @@ describe("scanner 404 fast-path", () => {
     expect(NEVER_A_ROUTE.test(path)).toBe(false);
   });
 });
+
+describe("middleware framing headers (Safe App support)", () => {
+  it("allows framing only by the site itself and Safe{Wallet}", async () => {
+    const { NextRequest } = await import("next/server");
+    const { middleware } = await import("@/middleware");
+    const response = middleware(new NextRequest("https://yldfi.co/zap", { headers: { "cf-ipcountry": "DE" } }));
+
+    expect(response.headers.get("Content-Security-Policy")).toBe("frame-ancestors 'self' https://app.safe.global");
+    // X-Frame-Options can't express an allowlist; DENY would block Safe{Wallet}.
+    expect(response.headers.get("X-Frame-Options")).toBeNull();
+  });
+});

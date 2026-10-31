@@ -17,13 +17,15 @@ const SAFE_TX_HASH = "0x25bc99a3a5b83fb8f7e012607ddbfcd4b7b86cf167c15914459c8fea
 const CVX = "0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B" as const;
 const VAULT = "0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e" as const;
 
-function setup({ isSafe, atomic, sendCallsId = SAFE_TX_HASH }: { isSafe: boolean; atomic?: string; sendCallsId?: string }) {
+function setup({ isSafe, atomic, atomicBatch, sendCallsId = SAFE_TX_HASH }: { isSafe: boolean; atomic?: string; atomicBatch?: boolean; sendCallsId?: string }) {
   const sendCalls = vi.fn().mockResolvedValue({ id: sendCallsId });
   vi.mocked(useAccount).mockReturnValue({ address: SAFE, chainId: 1 } as unknown as ReturnType<typeof useAccount>);
   vi.mocked(useIsSafeWallet).mockReturnValue(isSafe);
   vi.mocked(useCapabilities).mockReturnValue({
     // Shape reported by the live Safe{Wallet} WalletConnect session on 31 Oct.
-    data: atomic ? { 1: { atomic: { status: atomic } } } : undefined,
+    data: atomic || atomicBatch !== undefined
+      ? { 1: { ...(atomic ? { atomic: { status: atomic } } : {}), ...(atomicBatch !== undefined ? { atomicBatch: { supported: atomicBatch } } : {}) } }
+      : undefined,
   } as unknown as ReturnType<typeof useCapabilities>);
   vi.mocked(useWalletClient).mockReturnValue({ data: { sendCalls } } as unknown as ReturnType<typeof useWalletClient>);
   return { sendCalls };
@@ -44,6 +46,15 @@ describe("useSafeBatch", () => {
     expect(renderHook(() => useSafeBatch()).result.current.canBatch).toBe(false);
 
     setup({ isSafe: true });
+    expect(renderHook(() => useSafeBatch()).result.current.canBatch).toBe(false);
+  });
+
+  it("accepts the legacy atomicBatch capability reported inside the Safe app", () => {
+    // @safe-global/safe-apps-provider wallet_getCapabilities: { "0x1": { atomicBatch: { supported: true } } }
+    setup({ isSafe: true, atomicBatch: true });
+    expect(renderHook(() => useSafeBatch()).result.current.canBatch).toBe(true);
+
+    setup({ isSafe: true, atomicBatch: false });
     expect(renderHook(() => useSafeBatch()).result.current.canBatch).toBe(false);
   });
 
