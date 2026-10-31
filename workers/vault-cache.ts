@@ -1,6 +1,7 @@
 // Cloudflare Worker for caching vault data
 // Runs on a cron schedule to fetch vault data from Kong/Yearn API
 import { historyResponse, isHistoryKey, maintainHistory } from "./vault-history";
+import { pruneLogs } from "./log-retention";
 
 const KONG_API_URL = "https://kong.yearn.farm/api/gql";
 
@@ -803,6 +804,9 @@ export default {
           return body.result;
         });
       } catch { logger.warn("history", "Archive sampling failed; stored history retained"); }
+      // Bounded per run to stay under the D1 Free plan's daily write cap.
+      // Console-only on failure: a D1 log row about D1 failing wouldn't land anyway.
+      ctx.waitUntil(pruneLogs(env.LOGS).catch((e) => console.error("Failed to prune D1 logs:", e)));
       ctx.waitUntil(logger.flush(env.LOGS));
       return;
     }
