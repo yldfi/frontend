@@ -25,9 +25,25 @@ export function isLendingTxPendingVisible(status: string): boolean {
   return status === "executing" || status === "waitingTx";
 }
 
-export function getPendingTxCopy(hasHash: boolean, actionLabel = "transaction"): { title: string; message: string } {
+export type SafePendingInfo = { confirmations: number; confirmationsRequired: number | null };
+
+export function getSafePendingMessage(safe: SafePendingInfo): string {
+  const signed = safe.confirmationsRequired
+    ? `${safe.confirmations} of ${safe.confirmationsRequired} signatures collected. `
+    : "";
+  return `${signed}Sign and execute it in your Safe. This page updates once it's on-chain.`;
+}
+
+export function getPendingTxCopy(
+  hasHash: boolean,
+  actionLabel = "transaction",
+  safe?: SafePendingInfo | null,
+): { title: string; message: string } {
   const action = (actionLabel || "transaction").toLowerCase();
   const actionSentence = `${action.charAt(0).toUpperCase()}${action.slice(1)}`;
+  if (safe) {
+    return { title: "Waiting for Safe", message: getSafePendingMessage(safe) };
+  }
   if (hasHash) {
     return {
       title: "Awaiting Confirmation",
