@@ -3,7 +3,8 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { useAccount, useReadContract, useReadContracts, useWaitForTransactionReceipt } from "wagmi";
+import { useAccount, useReadContract, useReadContracts } from "wagmi";
+import { useTxReceipt } from "@/hooks/useTxReceipt";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { formatUnits, hexToString } from "viem";
 import { AlertTriangle, CircleDot, ExternalLink, Gavel, Gift, Loader2, Zap } from "lucide-react";
@@ -426,7 +427,7 @@ export function VaultHarvestPanel({ vaultAddress }: { vaultAddress: string }) {
     query: { enabled: !!config?.auctionOutputToken, refetchInterval: 15_000 },
   });
   const { data: auctionAddress, refetch: refetchAuctionAddress } = auctionAddressRead;
-  const receipt = useWaitForTransactionReceipt({ hash: txHash });
+  const receipt = useTxReceipt({ hash: txHash });
 
   const rewards = config ? parseRewards(config, readData?.[0]?.status === "success" ? readData[0].result : undefined) : [];
   const triggerRead = readData?.[1];
