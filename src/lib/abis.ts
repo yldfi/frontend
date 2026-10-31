@@ -224,7 +224,7 @@ export const AMM_ABI = [
   },
 ] as const;
 
-// Curve pool get_dy (int128 for old-style pools like CVX1/cvgCVX)
+// Curve pool get_dy (int128 for old-style StableSwap pools)
 export const CURVE_GET_DY_ABI = [
   {
     name: "get_dy",

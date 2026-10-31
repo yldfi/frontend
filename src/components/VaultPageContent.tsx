@@ -42,7 +42,6 @@ import { useVaultData, formatFee } from "@/hooks/useVaultData";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { useCvxCrvPrice } from "@/hooks/useCvxCrvPrice";
 import { useCvxPrice } from "@/hooks/useCvxPrice";
-import { useCvgCvxPrice } from "@/hooks/useCvgCvxPrice";
 import { usePricePerShare } from "@/hooks/usePricePerShare";
 import { useVaultCache } from "@/hooks/useVaultCache";
 import { useVaultActions } from "@/hooks/useVaultActions";
@@ -660,17 +659,15 @@ export function VaultPageContent({ id }: { id: string }) {
   const rewardApr = rewardOpportunity?.apr;
   const isCampaignLive = rewardOpportunity?.status === "LIVE";
 
-  // Fetch cvxCRV/CVX/cvgCVX prices from on-chain oracles (cache is the fallback)
+  // Fetch cvxCRV/CVX prices from on-chain oracles (cache is the fallback)
   const { price: cvxCrvPriceOnChain } = useCvxCrvPrice();
   const { price: cvxPriceOnChain } = useCvxPrice();
-  const { price: cvgCvxPriceOnChain } = useCvgCvxPrice();
 
   // Fetch vault cache for all underlying prices and on-chain APYs
   const { data: vaultCache } = useVaultCache();
 
   const cvxCrvPrice = cvxCrvPriceOnChain || vaultCache?.cvxCrvPrice || 0;
   const cvxPrice = cvxPriceOnChain || vaultCache?.cvxPrice || 0;
-  const cvgCvxPrice = cvgCvxPriceOnChain || vaultCache?.cvgCvxPrice || 0;
 
   // On-chain APY from cache (convertToAssets now vs 24h ago), fallback to Kong
   const cachedApy = vault ? (vaultCache as Record<string, { apy?: number | null }> | undefined)?.[vault.id]?.apy : null;
@@ -687,8 +684,6 @@ export function VaultPageContent({ id }: { id: string }) {
   const getUnderlyingPrice = (): number => {
     if (!vault) return 0;
     switch (vault.assetSymbol) {
-      case "cvgCVX":
-        return cvgCvxPrice;
       case "pxCVX":
         return vaultCache?.pxCvxPrice ?? 0;
       case "CVX":
@@ -772,7 +767,7 @@ export function VaultPageContent({ id }: { id: string }) {
     vaultAddress: vault?.address ?? "",
     underlyingToken: vault?.assetAddress ?? "",
     slippage: zapSlippage,
-    underlyingTokenPrice: underlyingPrice, // For illiquid tokens like cvgCVX
+    underlyingTokenPrice: underlyingPrice, // For illiquid tokens without DEX quotes
     paused: showSimulationModal || pendingImpactAction !== null || explorerOpen || zapInProgress || (exitOnlyVault && zapDirection === "in"),
   });
 

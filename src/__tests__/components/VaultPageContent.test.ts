@@ -43,8 +43,6 @@ describe("VaultPageContent logic", () => {
       expect(getVaultFormBalanceAddresses(VAULTS.yscvx).depositTokenAddress).toBe(TOKENS.CVX);
       expect(getVaultFormBalanceAddresses(VAULTS.ycvxcrv).depositTokenAddress).toBe(TOKENS.CVXCRV);
       expect(getVaultFormBalanceAddresses(VAULTS.yscvxcrv).depositTokenAddress).toBe(TOKENS.CVXCRV);
-      expect(getVaultFormBalanceAddresses(VAULTS.ycvgcvx).depositTokenAddress).toBe(TOKENS.CVGCVX);
-      expect(getVaultFormBalanceAddresses(VAULTS.yscvgcvx).depositTokenAddress).toBe(TOKENS.CVGCVX);
       expect(getVaultFormBalanceAddresses(VAULTS.yspxcvx).depositTokenAddress).toBe(TOKENS.PXCVX);
     });
 

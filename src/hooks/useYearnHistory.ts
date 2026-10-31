@@ -25,7 +25,6 @@ const KONG_EXCLUDED_VAULTS = new Set([
 // Map excluded vault addresses → the key under which the cache worker samples
 // history into R2 (served via /api/history?key=<key>).
 const SELF_SAMPLED_KEYS: Record<string, string> = {
-  ["0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359".toLowerCase()]: "yscvgcvx",
   ["0xCa960E6DF1150100586c51382f619efCCcF72706".toLowerCase()]: "yscvxcrv",
   ["0xB246DB2A73EEE3ee026153660c74657C123f8E42".toLowerCase()]: "yspxcvx",
   ["0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e".toLowerCase()]: "yscvx",

@@ -294,7 +294,7 @@ export function SimulationModal({
           const borrowSymbols = new Set(borrows.map(c => c.symbol.toLowerCase()));
           const receiveSymbols = new Set(receives.map(c => c.symbol.toLowerCase()));
 
-          // Detect input swap: "send" token differs from "deposit" token (e.g. yscvgCVX → ycvxCRV)
+          // Detect input swap: "send" token differs from "deposit" token (e.g. yscvxCRV → ycvxCRV)
           const swapSends = sends.filter(c => !depositSymbols.has(c.symbol.toLowerCase()));
           const swapDeposits = deposits.filter(c => !sendSymbols.has(c.symbol.toLowerCase()));
           const hasSwapToDeposit = swapSends.length > 0 && swapDeposits.length > 0;
