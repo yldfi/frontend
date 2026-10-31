@@ -19,7 +19,6 @@ vi.mock("@/lib/enso", () => ({
   fetchRoute: mockFetchRoute,
   fetchBundle: mockEnsoFetchBundle,
   getLpxCvxToCvxSwapRate: mockGetLpxCvxToCvxSwapRate,
-  getCvgCvxReverseSwapRate: vi.fn(),
   ENSO_SHORTCUTS: "0x4Fe93ebC4Ce6Ae4f81601cC7Ce7139023919E003",
   ENSO_ROUTER_V2: "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf",
 }));
