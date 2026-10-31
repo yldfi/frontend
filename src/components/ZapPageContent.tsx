@@ -344,6 +344,7 @@ export function ZapPageContent() {
     isApproving,
     simulationResult,
     safePending,
+    batchesApproval,
   } = useZapActions(quote ?? null);
 
   const showApprovalCard = !!(
@@ -852,6 +853,7 @@ export function ZapPageContent() {
                   approvalProgress={approvalProgress}
                   decimals={inputToken.decimals ?? 18}
                   isApproving={isApproving}
+                  note={batchesApproval ? "Your Safe approves and zaps in one transaction. If it executes after the price moves past your slippage, it fails and nothing changes." : undefined}
                   onApprove={(exact) => guardHighImpact("Approve & zap", () => approve(exact))}
                 />
 
