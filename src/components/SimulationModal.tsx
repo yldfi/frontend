@@ -497,10 +497,13 @@ export function SimulationModal({
           );
         })()}
 
-        {/* No asset changes fallback */}
-        {simulationResult.success && simulationResult.assetChanges.length === 0 && (
-          <div className="text-sm text-[var(--muted-foreground)] text-center py-4">
-            No asset changes detected
+        {/* Tenderly reported success but returned no token movements for this wallet.
+            Treat it as an incomplete preview rather than "nothing moves": the
+            unavailable state already explains itself via its own banner above. */}
+        {simulationResult.success && !simulationResult.simulationUnavailable && simulationResult.assetChanges.length === 0 && (
+          <div className="text-sm text-yellow-500 bg-yellow-500/10 rounded-lg p-3 space-y-1">
+            <p>The simulation succeeded but returned no token movements, so this preview can&apos;t show what you&apos;ll send or receive.</p>
+            <p className="text-xs text-yellow-500/70">Cancel and try again, or check the trace before confirming.</p>
           </div>
         )}
 
