@@ -10,7 +10,6 @@ const TOKEN_LOGOS: Record<string, string> = {
   cvx: "/tokens/cvx.png",
   cvxcrv: "/tokens/cvxcrv.png",
   crv: "/tokens/crv.png",
-  cvgcvx: "/tokens/cvgcvx.png",
   pxcvx: "/tokens/pxcvx.png",
   lpxcvx: "/tokens/pxcvx.png",
   usdc: "/tokens/usdc.png",
@@ -141,7 +140,6 @@ describe("RouteDisplay", () => {
       expect(getTokenLogo("cvx")).toBe("/tokens/cvx.png");
       expect(getTokenLogo("cvxcrv")).toBe("/tokens/cvxcrv.png");
       expect(getTokenLogo("crv")).toBe("/tokens/crv.png");
-      expect(getTokenLogo("cvgcvx")).toBe("/tokens/cvgcvx.png");
       expect(getTokenLogo("pxcvx")).toBe("/tokens/pxcvx.png");
       expect(getTokenLogo("usdc")).toBe("/tokens/usdc.png");
       expect(getTokenLogo("usdt")).toBe("/tokens/usdt.png");

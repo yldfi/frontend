@@ -216,12 +216,12 @@ describe("External Vault Zap Integration", () => {
 
   describe("Concentrator - aCVX Zap In", () => {
     it(
-      "aCVX → yscvgCVX (CVX → cvgCVX route)",
+      "aCVX → ysCVX (direct CVX deposit)",
       async () => {
         try {
           const result = await fetchExternalVaultZapInRoute({
             fromAddress: TEST_WALLET,
-            vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+            vaultAddress: VAULT_ADDRESSES.YSCVX,
             externalVaultAddress: CONCENTRATOR.ACVX,
             amountIn: TEN_SHARES,
             slippage: TEST_SLIPPAGE,
@@ -229,8 +229,8 @@ describe("External Vault Zap Integration", () => {
 
           expect(result.amountsOut).toBeDefined();
           const vaultOutput =
-            result.amountsOut[VAULT_ADDRESSES.YSCVGCVX.toLowerCase()] ||
-            result.amountsOut[VAULT_ADDRESSES.YSCVGCVX];
+            result.amountsOut[VAULT_ADDRESSES.YSCVX.toLowerCase()] ||
+            result.amountsOut[VAULT_ADDRESSES.YSCVX];
           expect(vaultOutput).toBeDefined();
           expect(BigInt(vaultOutput)).toBeGreaterThan(0n);
           expect(result.tx).toBeDefined();
@@ -316,12 +316,12 @@ describe("External Vault Zap Integration", () => {
 
   describe("Beefy - mooCvxCVX Zap In", () => {
     it(
-      "mooCvxCVX → yscvgCVX (CVX → cvgCVX route)",
+      "mooCvxCVX → ysCVX (direct CVX deposit)",
       async () => {
         try {
           const result = await fetchExternalVaultZapInRoute({
             fromAddress: TEST_WALLET,
-            vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+            vaultAddress: VAULT_ADDRESSES.YSCVX,
             externalVaultAddress: BEEFY.MOO_CVX_CVX,
             amountIn: TEN_SHARES,
             slippage: TEST_SLIPPAGE,
@@ -329,8 +329,8 @@ describe("External Vault Zap Integration", () => {
 
           expect(result.amountsOut).toBeDefined();
           const vaultOutput =
-            result.amountsOut[VAULT_ADDRESSES.YSCVGCVX.toLowerCase()] ||
-            result.amountsOut[VAULT_ADDRESSES.YSCVGCVX];
+            result.amountsOut[VAULT_ADDRESSES.YSCVX.toLowerCase()] ||
+            result.amountsOut[VAULT_ADDRESSES.YSCVX];
           expect(vaultOutput).toBeDefined();
           expect(BigInt(vaultOutput)).toBeGreaterThan(0n);
           expect(result.tx).toBeDefined();
@@ -352,12 +352,12 @@ describe("External Vault Zap Integration", () => {
 
   describe("Asymmetry - afCVX Zap In", () => {
     it(
-      "afCVX → yscvgCVX (CVX → cvgCVX route)",
+      "afCVX → ysCVX (direct CVX deposit)",
       async () => {
         try {
           const result = await fetchExternalVaultZapInRoute({
             fromAddress: TEST_WALLET,
-            vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+            vaultAddress: VAULT_ADDRESSES.YSCVX,
             externalVaultAddress: ASYMMETRY.AFCVX,
             amountIn: TEN_SHARES,
             slippage: TEST_SLIPPAGE,
@@ -365,8 +365,8 @@ describe("External Vault Zap Integration", () => {
 
           expect(result.amountsOut).toBeDefined();
           const vaultOutput =
-            result.amountsOut[VAULT_ADDRESSES.YSCVGCVX.toLowerCase()] ||
-            result.amountsOut[VAULT_ADDRESSES.YSCVGCVX];
+            result.amountsOut[VAULT_ADDRESSES.YSCVX.toLowerCase()] ||
+            result.amountsOut[VAULT_ADDRESSES.YSCVX];
           expect(vaultOutput).toBeDefined();
           expect(BigInt(vaultOutput)).toBeGreaterThan(0n);
           expect(result.tx).toBeDefined();
@@ -507,20 +507,20 @@ describe("External Vault Zap Integration", () => {
     );
 
     it(
-      "pxCVX → yscvgCVX (wrap to lpxCVX, Curve swap to CVX, cvgCVX route)",
+      "pxCVX → ysCVX (wrap to lpxCVX, Curve swap to CVX, direct deposit)",
       async () => {
         try {
           const result = await fetchPxCvxTokenZapInRoute({
             fromAddress: TEST_WALLET,
-            vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+            vaultAddress: VAULT_ADDRESSES.YSCVX,
             amountIn: TEN_SHARES,
             slippage: TEST_SLIPPAGE,
           });
 
           expect(result.amountsOut).toBeDefined();
           const vaultOutput =
-            result.amountsOut[VAULT_ADDRESSES.YSCVGCVX.toLowerCase()] ||
-            result.amountsOut[VAULT_ADDRESSES.YSCVGCVX];
+            result.amountsOut[VAULT_ADDRESSES.YSCVX.toLowerCase()] ||
+            result.amountsOut[VAULT_ADDRESSES.YSCVX];
           expect(vaultOutput).toBeDefined();
           expect(BigInt(vaultOutput)).toBeGreaterThan(0n);
           expect(result.tx).toBeDefined();
@@ -572,7 +572,7 @@ describe("External Vault Zap Integration", () => {
         try {
           const result = await fetchExternalVaultZapInRoute({
             fromAddress: TEST_WALLET,
-            vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+            vaultAddress: VAULT_ADDRESSES.YSCVX,
             externalVaultAddress: CONCENTRATOR.ACVX,
             amountIn: TEN_SHARES,
             slippage: TEST_SLIPPAGE,
@@ -622,7 +622,7 @@ describe("External Vault Zap Integration", () => {
         try {
           const result = await fetchExternalVaultZapInRoute({
             fromAddress: TEST_WALLET,
-            vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
+            vaultAddress: VAULT_ADDRESSES.YSCVX,
             externalVaultAddress: ASYMMETRY.AFCVX,
             amountIn: TEN_SHARES,
             slippage: TEST_SLIPPAGE,

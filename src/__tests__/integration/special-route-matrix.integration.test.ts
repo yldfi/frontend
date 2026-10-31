@@ -55,7 +55,6 @@ afterAll(() => {
 });
 
 import {
-  fetchCvgCvxZapInRoute,
   fetchComposableZapInRoute,
   fetchExternalVaultZapInRoute,
   fetchLpxCvxZapInRoute,
@@ -175,7 +174,6 @@ const LIVE_YLD_VAULTS = Object.values(VAULTS)
 
 const ILLIQUID_TOKENS = [
   { address: TOKENS.PXCVX, decimals: 18, symbol: "pxCVX" },
-  { address: TOKENS.CVGCVX, decimals: 18, symbol: "cvgCVX" },
   { address: TOKENS.LPXCVX, decimals: 18, symbol: "lpxCVX" },
 ] as const;
 
@@ -205,9 +203,7 @@ async function buildSpecialInputToYldRoute(params: {
   const targetUnderlying = params.vault.underlying.toLowerCase();
   const inputAddress = params.inputToken.address.toLowerCase();
   const targetIsPx = targetUnderlying === TOKENS.PXCVX.toLowerCase();
-  const targetIsCvg = targetUnderlying === TOKENS.CVGCVX.toLowerCase();
   const inputIsPx = inputAddress === TOKENS.PXCVX.toLowerCase();
-  const inputIsCvg = inputAddress === TOKENS.CVGCVX.toLowerCase();
   const inputIsLpx = inputAddress === TOKENS.LPXCVX.toLowerCase();
   const amountIn = params.inputToken.amountIn;
 
@@ -244,26 +240,6 @@ async function buildSpecialInputToYldRoute(params: {
     return fetchPxCvxTokenZapInRoute({
       fromAddress: TEST_WALLET,
       vaultAddress: params.vault.address,
-      amountIn,
-      slippage: TEST_SLIPPAGE,
-    });
-  }
-
-  if (inputIsCvg && !targetIsCvg) {
-    return fetchComposableZapInRoute({
-      fromAddress: TEST_WALLET,
-      inputToken: params.inputToken.address,
-      vaultAddress: params.vault.address,
-      amountIn,
-      slippage: TEST_SLIPPAGE,
-    });
-  }
-
-  if (targetIsCvg) {
-    return fetchCvgCvxZapInRoute({
-      fromAddress: TEST_WALLET,
-      vaultAddress: params.vault.address,
-      inputToken: params.inputToken.address,
       amountIn,
       slippage: TEST_SLIPPAGE,
     });
@@ -375,7 +351,6 @@ describe("Special Route Matrix Integration", () => {
     expect(EXTERNAL_VAULTS.length).toBeGreaterThan(0);
     expect(ILLIQUID_TOKENS.map((t) => getTokenSymbol(t.address))).toEqual([
       "pxCVX",
-      "cvgCVX",
       "lpxCVX",
     ]);
   });

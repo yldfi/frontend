@@ -62,15 +62,12 @@ vi.mock("@/lib/curve", () => ({
 }));
 
 import {
-  fetchAnyToCvgCvxRoute,
   fetchAnyToExternalVaultRoute,
-  fetchCvgCvxZapInRoute,
   fetchPxCvxZapInRoute,
   fetchAnyFromPxCvxRoute,
   fetchPxCvxTokenZapInRoute,
   fetchAnyFromBeefyRoute,
   fetchAnyFromUCrvRoute,
-  fetchAnyFromCvgCvxRoute,
   fetchAnyFromLpxCvxRoute,
   fetchUCrvZapInRoute,
   fetchBeefyZapInRoute,
@@ -79,7 +76,6 @@ import {
   fetchAnyToPxCvxRoute,
   fetchAnyToLpxCvxRoute,
   fetchBundle,
-  fetchCvgCvxZapOutRoute,
   fetchDynamicInputEstimate,
   fetchComposableZapInRoute,
   fetchLpxCvxZapInRoute,
@@ -101,8 +97,8 @@ import {
   MORPHO_GENERAL_ADAPTER1_ADDRESS,
   MORPHO_TOKEN_ADDRESS,
 } from "@/lib/enso";
-import { batchRedeemAndEstimateSwap, cryptoswap, estimateCryptoSwapOffchain, findPegPoint, getCurveGetDy, getCurveGetDyFactory, getStableSwapParams, previewRedeem } from "@/lib/curve";
-import { BEEFY, CONCENTRATOR, LLAMA_AIRFORCE, PIREX, TANGENT, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
+import { cryptoswap, estimateCryptoSwapOffchain, findPegPoint, getCurveGetDy, getCurveGetDyFactory, getStableSwapParams, previewRedeem } from "@/lib/curve";
+import { BEEFY, CONCENTRATOR, LLAMA_AIRFORCE, PIREX, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 import { USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
 import type { EnsoBundleAction } from "@/types/enso";
 
@@ -217,22 +213,6 @@ function mockPxCvxHybridSplit(): void {
     return dx;
   });
   vi.mocked(cryptoswap.findPegPoint).mockReturnValue(ONE_ETHER);
-}
-
-function mockCvgCvxHybridSplit(): void {
-  vi.mocked(getStableSwapParams).mockResolvedValue({
-    balances: [0n, 0n],
-    A: 0n,
-    Ann: 0n,
-    fee: 0n,
-    offpegFeeMultiplier: 0n,
-  });
-  vi.mocked(findPegPoint).mockReturnValue(ONE_ETHER);
-  vi.mocked(getCurveGetDy).mockImplementation(async (_pool: string, i: number, j: number, amount: string) => {
-    const rawAmount = BigInt(amount);
-    if (i === 0 && j === 1) return rawAmount + (rawAmount / 10n);
-    return rawAmount;
-  });
 }
 
 describe("route step amounts", () => {
@@ -670,15 +650,6 @@ describe("route step amounts", () => {
   });
 
   it("uses runtime balances instead of amount-specific routeMulti calldata after void exits", async () => {
-    await fetchCvgCvxZapOutRoute({
-      fromAddress: TEST_WALLET,
-      vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
-      outputToken: USDC_ADDRESS,
-      amountIn: ONE_ETHER.toString(),
-      slippage: "100",
-    });
-    expectRuntimeBalanceRoute(lastBundleActions(), TOKENS.CVX, USDC_ADDRESS);
-
     await fetchAnyFromUCrvRoute({
       fromAddress: TEST_WALLET,
       outputToken: USDC_ADDRESS,
@@ -697,45 +668,6 @@ describe("route step amounts", () => {
       slippage: "100",
     });
     expectRuntimeBalanceRoute(lastBundleActions(), TOKENS.CVXCRV, USDC_ADDRESS);
-  });
-
-  it("uses the full runtime CVX balance through Curve for native ETH exits", async () => {
-    await fetchCvgCvxZapOutRoute({
-      fromAddress: TEST_WALLET,
-      vaultAddress: VAULT_ADDRESSES.YSCVGCVX,
-      outputToken: ETH_ADDRESS,
-      amountIn: ONE_ETHER.toString(),
-      slippage: "100",
-    });
-
-    const actions = lastBundleActions();
-    const runtimeBalanceIdx = balanceIndex(actions, TOKENS.CVX);
-    expect(runtimeBalanceIdx).toBe(4);
-    expect(actions[runtimeBalanceIdx + 1]).toEqual({
-      protocol: "erc20",
-      action: "approve",
-      args: expect.objectContaining({
-        token: TOKENS.CVX,
-        amount: { useOutputOfCallAt: runtimeBalanceIdx },
-      }),
-    });
-    expect(actions[runtimeBalanceIdx + 2]).toEqual({
-      protocol: "enso",
-      action: "call",
-      args: expect.objectContaining({
-        method: "exchange_multiple",
-        args: expect.arrayContaining([{ useOutputOfCallAt: runtimeBalanceIdx }]),
-      }),
-    });
-    expect(actions.at(-1)).toEqual({
-      protocol: "wrapped-native",
-      action: "redeem",
-      args: expect.objectContaining({ amountIn: { useOutputOfCallAt: runtimeBalanceIdx + 2 } }),
-    });
-    expect(actions).not.toContainEqual(
-      expect.objectContaining({ args: expect.objectContaining({ method: "routeMulti" }) }),
-    );
-    expect(mockGetAggregators).not.toHaveBeenCalled();
   });
 
   it("uses a runtime balance route between yld-vault redemption and external-vault deposit", async () => {
@@ -894,20 +826,6 @@ describe("route step amounts", () => {
     ]);
   });
 
-  it("populates amountsOut for lpxCVX -> cvgCVX vault zaps", async () => {
-    const result = await fetchLpxCvxZapInRoute({
-      fromAddress: TEST_WALLET,
-      vaultAddress: VAULT_ADDRESSES.YCVGCVX,
-      amountIn: "1000000000000000000",
-      slippage: "100",
-    });
-
-    expect(result.amountsOut[TOKENS.CVGCVX.toLowerCase()]).toBeDefined();
-    expect(result.amountsOut[VAULT_ADDRESSES.YCVGCVX.toLowerCase()]).toBeDefined();
-    expect(BigInt(result.amountsOut[TOKENS.CVGCVX.toLowerCase()])).toBeGreaterThan(0n);
-    expect(BigInt(result.amountsOut[VAULT_ADDRESSES.YCVGCVX.toLowerCase()])).toBeGreaterThan(0n);
-  });
-
   it("keeps yld vault -> pxCVX hybrid split without classifying intermediate CVX as wallet input", async () => {
     mockPxCvxHybridSplit();
 
@@ -992,35 +910,6 @@ describe("route step amounts", () => {
     expect(finalTransfer.action).toBe("transfer");
     expect(finalTransfer.args.token).toBe(PIREX.PXCVX);
     expect(finalTransfer.args.amount).toEqual({ useOutputOfCallAt: pxCvxBalanceIdx });
-  });
-
-  it("keeps any token -> cvgCVX hybrid split without fixed intermediate erc20 approvals", async () => {
-    mockCvgCvxHybridSplit();
-
-    await fetchAnyToCvgCvxRoute({
-      fromAddress: TEST_WALLET,
-      inputToken: USDC_ADDRESS,
-      amountIn: "10000000",
-      slippage: "100",
-    });
-
-    const actions = lastBundleActions();
-    expect(fixedErc20Approvals(actions, TOKENS.CVX)).toEqual([]);
-    expect(fixedErc20Approvals(actions, TOKENS.CVX1)).toEqual([]);
-
-    expect(rawApproveCalls(actions, TOKENS.CVX).map(rawApproveSpender)).toEqual(expect.arrayContaining([
-      TOKENS.CVX1,
-      TANGENT.CVGCVX_CONTRACT,
-    ]));
-    expect(rawApproveCalls(actions, TOKENS.CVX1).map(rawApproveSpender)).toContain(TANGENT.CVX1_CVGCVX_POOL);
-
-    const cvgCvxBalanceIdx = balanceIndex(actions, TOKENS.CVGCVX);
-    expect(cvgCvxBalanceIdx).toBeGreaterThan(-1);
-    const finalTransfer = actions[actions.length - 1];
-    expect(finalTransfer.protocol).toBe("erc20");
-    expect(finalTransfer.action).toBe("transfer");
-    expect(finalTransfer.args.token).toBe(TOKENS.CVGCVX);
-    expect(finalTransfer.args.amount).toEqual({ useOutputOfCallAt: cvgCvxBalanceIdx });
   });
 
   it("wraps produced pxCVX through a balance ref for any token -> lpxCVX hybrid routes", async () => {
@@ -1148,7 +1037,6 @@ describe("route step amounts", () => {
 
   it.each([
     ["lpxCVX", () => fetchAnyFromLpxCvxRoute({ fromAddress: TEST_WALLET, outputToken: ETH_ADDRESS, amountIn: (100n * ONE_ETHER).toString(), slippage: "100" })],
-    ["cvgCVX", () => fetchAnyFromCvgCvxRoute({ fromAddress: TEST_WALLET, outputToken: ETH_ADDRESS, amountIn: (100n * ONE_ETHER).toString(), slippage: "100" })],
   ])("reports a native-ETH output for %s -> ETH so the intent guard can bind it", async (_label, build) => {
     const bundle = await build() as { amountsOut: Record<string, string> };
     expect(BigInt(bundle.amountsOut[ETH_ADDRESS.toLowerCase()] ?? "0")).toBeGreaterThan(0n);
@@ -1223,24 +1111,13 @@ describe("route step amounts", () => {
     const builders: Array<[string, () => Promise<unknown>, string | null]> = [
       ["USDC -> pxCVX", () => fetchAnyToPxCvxRoute({ fromAddress: wallet, inputToken: USDC_ADDRESS, amountIn: "10000000", slippage: "100" }), PIREX.PIREX_CVX],
       ["USDC -> lpxCVX", () => fetchAnyToLpxCvxRoute({ fromAddress: wallet, inputToken: USDC_ADDRESS, amountIn: "10000000", slippage: "100" }), PIREX.PIREX_CVX],
-      ["USDC -> cvgCVX", () => fetchAnyToCvgCvxRoute({ fromAddress: wallet, inputToken: USDC_ADDRESS, amountIn: "10000000", slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
       ["USDC -> uCVX", () => fetchAnyToExternalVaultRoute({ fromAddress: wallet, inputToken: USDC_ADDRESS, externalVaultAddress: LLAMA_AIRFORCE.UCVX, amountIn: "10000000", slippage: "100" }), PIREX.PIREX_CVX],
-      // Percentage (fee-action) split of the actual CVX, so no remainder check; invariants only.
-      ["USDC -> ysCvgCVX", () => fetchCvgCvxZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, inputToken: USDC_ADDRESS, amountIn: "10000000", slippage: "100" }), null],
       ["USDC -> yspxCVX", () => fetchPxCvxZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSPXCVX, inputToken: USDC_ADDRESS, amountIn: "10000000", slippage: "100" }), PIREX.PIREX_CVX],
       ["ycvxCRV -> pxCVX", () => fetchYldVaultToIlliquidRoute({ fromAddress: wallet, sourceVault: VAULT_ADDRESSES.YCVXCRV, sourceUnderlying: TOKENS.CVXCRV, outputToken: TOKENS.PXCVX, amountIn: ONE_ETHER.toString(), slippage: "100" }), PIREX.PIREX_CVX],
-      ["ycvxCRV -> cvgCVX", () => fetchYldVaultToIlliquidRoute({ fromAddress: wallet, sourceVault: VAULT_ADDRESSES.YCVXCRV, sourceUnderlying: TOKENS.CVXCRV, outputToken: TOKENS.CVGCVX, amountIn: ONE_ETHER.toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
-      ["ysCvgCVX -> uCVX", () => fetchYldVaultToExternalVaultRoute({ fromAddress: wallet, sourceVault: VAULT_ADDRESSES.YSCVGCVX, sourceUnderlying: TOKENS.CVGCVX, targetVault: LLAMA_AIRFORCE.UCVX, targetUnderlying: TOKENS.PXCVX, targetInterface: "erc4626", targetSymbol: "uCVX", targetProtocol: "Llama Airforce", amountIn: ONE_ETHER.toString(), slippage: "100" }), PIREX.PIREX_CVX],
-      // cvgCVX hybrid helper callers: the helper's refs must be offset to the caller's bundle.
-      ["uCRV -> ysCvgCVX", () => fetchUCrvZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, amountIn: ONE_ETHER.toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
-      ["uCVX -> ysCvgCVX", () => fetchUCvxZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, amountIn: ONE_ETHER.toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
-      ["aCVX -> ysCvgCVX", () => fetchErc4626ExternalVaultZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, externalVaultAddress: CONCENTRATOR.ACVX, externalVaultUnderlying: TOKENS.CVX, externalVaultSymbol: "aCVX", externalVaultProtocol: "Concentrator", amountIn: ONE_ETHER.toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
-      ["mooCvxCVX -> ysCvgCVX", () => fetchBeefyZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, beefyVaultAddress: BEEFY.MOO_CVX_CVX, beefyVaultUnderlying: TOKENS.CVX, beefyVaultSymbol: "mooCvxCVX", amountIn: ONE_ETHER.toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
-      ["lpxCVX -> ysCvgCVX", () => fetchLpxCvxZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, amountIn: (5n * ONE_ETHER).toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
-      ["pxCVX -> ysCvgCVX", () => fetchPxCvxTokenZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, amountIn: (5n * ONE_ETHER).toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
-      ["yspxCVX -> ysCvgCVX", () => fetchVaultToVaultRoute({ fromAddress: wallet, sourceVault: VAULT_ADDRESSES.YSPXCVX, targetVault: VAULT_ADDRESSES.YSCVGCVX, amountIn: (5n * ONE_ETHER).toString(), sourceUnderlyingToken: TOKENS.PXCVX, targetUnderlyingToken: TOKENS.CVGCVX, slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
-      ["CVX -> ysCvgCVX", () => fetchCvgCvxZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, inputToken: TOKENS.CVX, amountIn: (5n * ONE_ETHER).toString(), slippage: "100" }), TANGENT.CVGCVX_CONTRACT],
-      ["ycvxCRV -> ysCvgCVX", () => fetchVaultToVaultRoute({ fromAddress: wallet, sourceVault: VAULT_ADDRESSES.YCVXCRV, targetVault: VAULT_ADDRESSES.YSCVGCVX, amountIn: ONE_ETHER.toString(), sourceUnderlyingToken: TOKENS.CVXCRV, targetUnderlyingToken: TOKENS.CVGCVX, slippage: "100" }), null],
+      // External-vault / lpxCVX zap-ins into non-pxCVX vaults: no mint leg, invariants only.
+      ["uCVX -> yscvxCRV", () => fetchUCvxZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVXCRV, amountIn: ONE_ETHER.toString(), slippage: "100" }), null],
+      ["aCVX -> yscvxCRV", () => fetchErc4626ExternalVaultZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVXCRV, externalVaultAddress: CONCENTRATOR.ACVX, externalVaultUnderlying: TOKENS.CVX, externalVaultSymbol: "aCVX", externalVaultProtocol: "Concentrator", amountIn: ONE_ETHER.toString(), slippage: "100" }), null],
+      ["lpxCVX -> ysCVX", () => fetchLpxCvxZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVX, amountIn: (5n * ONE_ETHER).toString(), slippage: "100" }), null],
     ];
 
     it.each(builders)("%s keeps references, booleans and transfers valid (swap-only split)", async (_label, build) => {
@@ -1248,22 +1125,8 @@ describe("route step amounts", () => {
       expectBundleInvariants(lastBundleActions());
     });
 
-    it("declares the CVX input exactly once on a CVX -> ysCvgCVX swap + mint split", async () => {
-      mockCvgCvxHybridSplit();
-      const amountIn = (5n * ONE_ETHER).toString();
-      await fetchCvgCvxZapInRoute({ fromAddress: wallet, vaultAddress: VAULT_ADDRESSES.YSCVGCVX, inputToken: TOKENS.CVX, amountIn, slippage: "100" });
-      const actions = lastBundleActions();
-      // Two fixed CVX approvals read as two wallet inputs, which Enso builds as routeMulti.
-      expect(fixedErc20Approvals(actions, TOKENS.CVX)).toEqual([
-        { protocol: "erc20", action: "approve", args: { token: TOKENS.CVX, spender: TOKENS.CVX1, amount: amountIn } },
-      ]);
-      expect(callActions(actions, TANGENT.CVGCVX_CONTRACT, "mint")).toHaveLength(1);
-      expect(actions).not.toContainEqual(expect.objectContaining({ args: expect.objectContaining({ args: expect.arrayContaining([ENSO_ROUTER_V2]) }) }));
-    });
-
     it.each(builders)("%s keeps invariants and mints the remaining runtime CVX under a swap + mint split", async (_label, build, mintTarget) => {
-      if (mintTarget === TANGENT.CVGCVX_CONTRACT) mockCvgCvxHybridSplit();
-      else mockPxCvxHybridSplit();
+      mockPxCvxHybridSplit();
       // Redeem enough underlying that the CVX estimate clears the mocked 1 CVX peg point.
       vi.mocked(previewRedeem).mockResolvedValue((5n * ONE_ETHER).toString());
       await build();
@@ -1273,20 +1136,15 @@ describe("route step amounts", () => {
     });
   });
 
-  it("quotes cvgCVX vault -> CVX vault bundles even in development, since the intent guard needs amountsOut", async () => {
-    vi.mocked(batchRedeemAndEstimateSwap).mockResolvedValue({
-      redeemAmount: ONE_ETHER,
-      swapOutput: ONE_ETHER,
-      rawSwapOutput: ONE_ETHER,
-    } as Awaited<ReturnType<typeof batchRedeemAndEstimateSwap>>);
+  it("quotes pxCVX vault -> CVX vault bundles even in development, since the intent guard needs amountsOut", async () => {
     vi.stubEnv("NODE_ENV", "development");
     try {
       await fetchVaultToVaultRoute({
         fromAddress: TEST_WALLET,
-        sourceVault: VAULT_ADDRESSES.YSCVGCVX,
+        sourceVault: VAULT_ADDRESSES.YSPXCVX,
         targetVault: VAULT_ADDRESSES.YSCVX,
         amountIn: ONE_ETHER.toString(),
-        sourceUnderlyingToken: TOKENS.CVGCVX,
+        sourceUnderlyingToken: TOKENS.PXCVX,
         targetUnderlyingToken: TOKENS.CVX,
         slippage: "100",
       });

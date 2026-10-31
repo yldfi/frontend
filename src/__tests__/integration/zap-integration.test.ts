@@ -11,8 +11,6 @@
  * - ENSO_API_KEY: Enso API key
  * - DEBUG_RPC_URL: RPC with debug_traceCall support (optional)
  * - DEBUG_RPC_AUTH: Basic auth for debug RPC (optional)
- * - TOKEN_HOLDER_API_URL: Token holder API endpoint (optional)
- * - TOKEN_HOLDER_API_KEY: Token holder API key (optional)
  */
 
 import { describe, it, expect, beforeAll, vi } from "vitest";
@@ -34,10 +32,6 @@ const ENSO_API_KEY = process.env.ENSO_API_KEY;
 const DEBUG_RPC_URL = process.env.DEBUG_RPC_URL;
 const DEBUG_RPC_AUTH = process.env.DEBUG_RPC_AUTH;
 
-// Token holder API configuration
-const TOKEN_HOLDER_API_URL = process.env.TOKEN_HOLDER_API_URL || "";
-const TOKEN_HOLDER_API_KEY = process.env.TOKEN_HOLDER_API_KEY || "";
-
 // Skip tests if no API key
 const describeWithApi = ENSO_API_KEY ? describe : describe.skip;
 
@@ -46,20 +40,18 @@ const TOKENS = {
   ETH: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" as const,
   CVX: "0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B" as const,
   USDC: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as const,
-  CVGCVX: "0x2191DF768ad71140F9F3E96c1e4407A4aA31d082" as const,
   PXCVX: "0xBCe0Cf87F513102F22232436CCa2ca49e815C3aC" as const,
   CVXCRV: "0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7" as const,
 };
 
 const VAULTS = {
   // Yearn vaults from config/vaults.ts - must match VAULT_ADDRESSES
-  YSCVGCVX: "0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359" as const, // cvgCVX vault
   YSPXCVX: "0xB246DB2A73EEE3ee026153660c74657C123f8E42" as const,  // pxCVX vault
   YCVXCRV: "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86" as const,  // cvxCRV vault
   YSCVXCRV: "0xE36e5C24F7a99f8a8fC3a5F96E4F906c4a129F2C" as const, // staked cvxCRV vault
 };
 
-// Fallback whales - used when token holder API is unavailable
+// Known token holders
 // Note: Don't use protocol treasuries (e.g., Circle) - DEXs refuse to quote for them
 const FALLBACK_WHALES: Record<string, Address> = {
   // Vitalik has ETH
@@ -68,72 +60,13 @@ const FALLBACK_WHALES: Record<string, Address> = {
   [TOKENS.CVX.toLowerCase()]: "0x1389388d01708118b497f59521f6943Be2541bb7" as Address,
   // Binance hot wallet - has USDC (not Circle treasury which DEXs block)
   [TOKENS.USDC.toLowerCase()]: "0x28C6c06298d514Db089934071355E5743bf21d60" as Address,
-  // cvgCVX contract is also a holder
-  [TOKENS.CVGCVX.toLowerCase()]: "0x2191DF768ad71140F9F3E96c1e4407A4aA31d082" as Address,
 };
 
-// Cache for dynamically fetched whales
-const whaleCache = new Map<string, Address>();
-
-/**
- * Fetch token holder from API or fall back to hardcoded addresses
- */
-async function getWhale(token: string): Promise<Address> {
-  const tokenLower = token.toLowerCase();
-
-  // Check cache first
-  if (whaleCache.has(tokenLower)) {
-    return whaleCache.get(tokenLower)!;
-  }
-
-  // Try token holder API
-  if (TOKEN_HOLDER_API_URL && TOKEN_HOLDER_API_KEY) {
-    try {
-      const response = await crossFetch(TOKEN_HOLDER_API_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": TOKEN_HOLDER_API_KEY,
-        },
-        body: JSON.stringify({
-          token: tokenLower,
-          minBalance: "1000000", // Minimum 1 token (adjust decimals as needed)
-          maxHolders: 1,
-        }),
-      });
-
-      const data = (await response.json()) as {
-        success?: boolean;
-        holders?: string[];
-      };
-
-      if (data.success && data.holders && data.holders.length > 0) {
-        const whale = data.holders[0] as Address;
-        whaleCache.set(tokenLower, whale);
-        return whale;
-      }
-    } catch (err) {
-      console.warn(`Token holder API failed for ${token}:`, err);
-    }
-  }
-
-  // Fall back to hardcoded whales
-  const fallback = FALLBACK_WHALES[tokenLower];
-  if (fallback) {
-    return fallback;
-  }
-
-  // Last resort: use Vitalik's address (works for ETH-based routes)
-  return "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" as Address;
-}
-
-// Legacy WHALES object for backwards compatibility
-// Tests should prefer getWhale() for dynamic fetching
+// Whale addresses used as the bundle sender
 const WHALES = {
   get ETH() { return FALLBACK_WHALES[TOKENS.ETH.toLowerCase()]; },
   get CVX() { return FALLBACK_WHALES[TOKENS.CVX.toLowerCase()]; },
   get USDC() { return FALLBACK_WHALES[TOKENS.USDC.toLowerCase()]; },
-  get CVGCVX() { return FALLBACK_WHALES[TOKENS.CVGCVX.toLowerCase()]; },
 };
 
 // Helper: Fetch bundle from Enso (kept for manual testing)
@@ -256,84 +189,6 @@ describeWithApi("Zap Integration Tests", () => {
     // Each test needs 30s timeout to account for multiple API calls + retries
 
     describe("ERC20 → Vault", () => {
-      it("ETH → yscvgCVX: creates bundle with correct value", { timeout: 60000 }, async () => {
-        const { fetchCvgCvxZapInRoute } = await import("@/lib/enso");
-
-        const route = await fetchCvgCvxZapInRoute({
-          fromAddress: WHALES.ETH,
-          inputToken: TOKENS.ETH,
-          amountIn: parseEther("1").toString(),
-          vaultAddress: VAULTS.YSCVGCVX,
-          slippage: "300",
-        });
-
-        expect(route.tx).toBeDefined();
-        expect(route.tx?.to).toBeDefined();
-        expect(BigInt(route.tx?.value ?? 0)).toBe(parseEther("1"));
-        expect(route.routeInfo?.tokens).toContain("ETH");
-        expect(route.routeInfo?.tokens).toContain("CVX");
-      });
-
-      it("CVX → yscvgCVX: creates bundle without ETH value", { timeout: 30000 }, async () => {
-        const { fetchCvgCvxZapInRoute } = await import("@/lib/enso");
-
-        const route = await fetchCvgCvxZapInRoute({
-          fromAddress: WHALES.CVX,
-          inputToken: TOKENS.CVX,
-          amountIn: parseEther("1000").toString(),
-          vaultAddress: VAULTS.YSCVGCVX,
-          slippage: "300",
-        });
-
-        expect(route.tx).toBeDefined();
-        expect(BigInt(route.tx?.value ?? 0)).toBe(0n);
-        expect(route.routeInfo?.hybrid).toBeDefined();
-      });
-
-      it("USDC → yscvgCVX: creates multi-hop route", { timeout: 60000 }, async () => {
-        const { fetchCvgCvxZapInRoute, fetchRoute } = await import("@/lib/enso");
-
-        // Get USDC whale dynamically (avoids issues with blocked addresses like Circle treasury)
-        const usdcWhale = await getWhale(TOKENS.USDC);
-
-        // Pre-check: Test if USDC → CVX route works via Enso's route endpoint.
-        // This verifies the whale address has sufficient balance and Enso can route from it.
-        try {
-          await fetchRoute({
-            fromAddress: usdcWhale,
-            tokenIn: TOKENS.USDC,
-            tokenOut: TOKENS.CVX,
-            amountIn: "10000000", // 10 USDC (smaller amount for better liquidity)
-          });
-        } catch (e) {
-          const errorMsg = e instanceof Error ? e.message : String(e);
-          const errorStr = JSON.stringify(e);
-          if (
-            errorMsg.includes("429") ||
-            errorStr.includes("429") ||
-            errorMsg.includes("RPC request failed") ||
-            errorMsg.includes("Could not simulate")
-          ) {
-            console.log("Note: USDC → CVX route check failed due to transient error:", errorMsg.slice(0, 100));
-            return; // Skip on transient errors
-          }
-          // Route failed - could be whale address issue or liquidity
-          console.log("Note: USDC → CVX route failed:", errorMsg.slice(0, 100));
-          return;
-        }
-
-        const route = await fetchCvgCvxZapInRoute({
-          fromAddress: usdcWhale,
-          inputToken: TOKENS.USDC,
-          amountIn: "10000000", // 10 USDC (6 decimals) - smaller amount
-          vaultAddress: VAULTS.YSCVGCVX,
-          slippage: "300",
-        });
-
-        expect(route.tx).toBeDefined();
-        expect(route.routeInfo?.tokens).toContain("USDC");
-      });
-
       it("ETH → yspxCVX: creates pxCVX route", { timeout: 30000 }, async () => {
         const { fetchPxCvxZapInRoute } = await import("@/lib/enso");
 
@@ -350,147 +205,9 @@ describeWithApi("Zap Integration Tests", () => {
       });
     });
 
-    // Note: Direct underlying → vault deposits (e.g., cvgCVX → yscvgCVX) don't use Enso.
+    // Note: Direct underlying → vault deposits (e.g., pxCVX → yspxCVX) don't use Enso.
     // They use direct ERC4626 vault.deposit() calls via useVaultActions hook.
     // See: src/__tests__/integration/erc4626-vault.integration.test.ts
-
-    describe("Vault → ERC20", () => {
-      it("yscvgCVX → ETH: creates zap out route", { timeout: 30000 }, async () => {
-        // Use cvgCVX-specific route function (not generic fetchZapOutRoute)
-        const { fetchCvgCvxZapOutRoute } = await import("@/lib/enso");
-
-        const route = await fetchCvgCvxZapOutRoute({
-          fromAddress: WHALES.ETH,
-          vaultAddress: VAULTS.YSCVGCVX,
-          outputToken: TOKENS.ETH,
-          amountIn: parseEther("10").toString(), // Use smaller amount for liquidity
-          slippage: "300",
-        });
-
-        expect(route.tx).toBeDefined();
-        // Note: fetchCvgCvxZapOutRoute doesn't return routeInfo yet (future enhancement)
-        expect(route.amountsOut).toBeDefined();
-      });
-
-      it("yscvgCVX → CVX: creates zap out to CVX", { timeout: 30000 }, async () => {
-        // Use cvgCVX-specific route function
-        const { fetchCvgCvxZapOutRoute } = await import("@/lib/enso");
-
-        const route = await fetchCvgCvxZapOutRoute({
-          fromAddress: WHALES.ETH,
-          vaultAddress: VAULTS.YSCVGCVX,
-          outputToken: TOKENS.CVX,
-          amountIn: parseEther("10").toString(), // Use smaller amount for liquidity
-          slippage: "300",
-        });
-
-        expect(route.tx).toBeDefined();
-        expect(route.amountsOut).toBeDefined();
-      });
-    });
-
-    describe("Vault → Vault", () => {
-      it("yscvgCVX → yspxCVX: cross-vault zap", { timeout: 30000 }, async () => {
-        const { fetchVaultToVaultRoute } = await import("@/lib/enso");
-
-        const route = await fetchVaultToVaultRoute({
-          fromAddress: WHALES.ETH,
-          sourceVault: VAULTS.YSCVGCVX,
-          targetVault: VAULTS.YSPXCVX,
-          amountIn: parseEther("10").toString(), // Smaller amount for liquidity
-          slippage: "300",
-        });
-
-        expect(route.tx).toBeDefined();
-        // Note: fetchCvgCvxVaultToVaultRoute doesn't return routeInfo yet
-        expect(route.amountsOut).toBeDefined();
-      });
-
-      it("yscvgCVX → ycvxCRV: different underlying vault", { timeout: 30000 }, async () => {
-        const { fetchVaultToVaultRoute } = await import("@/lib/enso");
-
-        const route = await fetchVaultToVaultRoute({
-          fromAddress: WHALES.ETH,
-          sourceVault: VAULTS.YSCVGCVX,
-          targetVault: VAULTS.YCVXCRV,
-          amountIn: parseEther("100").toString(),
-          slippage: "300",
-        });
-
-        expect(route.tx).toBeDefined();
-      });
-    });
-  });
-
-  describe("Hybrid Strategy Scenarios", () => {
-    it("detects current pool state (swap vs mint)", { timeout: 30000 }, async () => {
-      const { getOptimalSwapAmount, getCvgCvxSwapRate } = await import("@/lib/enso");
-
-      // Check swap rate for 1000 CVX
-      const swapOutput = await getCvgCvxSwapRate(parseEther("1000").toString());
-      const inputAmount = parseEther("1000");
-
-      if (swapOutput && swapOutput > inputAmount) {
-        console.log(`Pool ABOVE peg: ${formatEther(swapOutput)} cvgCVX for 1000 CVX (${((Number(swapOutput) / Number(inputAmount) - 1) * 100).toFixed(2)}% bonus)`);
-      } else {
-        console.log(`Pool AT/BELOW peg: ${swapOutput ? formatEther(swapOutput) : "N/A"} cvgCVX for 1000 CVX`);
-      }
-
-      // Get optimal split
-      const { swapAmount, mintAmount } = await getOptimalSwapAmount(parseEther("10000").toString());
-
-      console.log(`Optimal split for 10,000 CVX:`);
-      console.log(`  Swap: ${formatEther(swapAmount)} CVX`);
-      console.log(`  Mint: ${formatEther(mintAmount)} CVX`);
-
-      expect(swapAmount + mintAmount).toBe(parseEther("10000"));
-    });
-
-    it("pure swap: when pool is significantly above peg", { timeout: 30000 }, async () => {
-      const { getOptimalSwapAmount } = await import("@/lib/enso");
-
-      // Small amount should always be pure swap if pool has any bonus
-      const { swapAmount, mintAmount } = await getOptimalSwapAmount(parseEther("100").toString());
-
-      // For small amounts, expect either all swap or all mint
-      expect(swapAmount === parseEther("100") || mintAmount === parseEther("100")).toBe(true);
-    });
-
-    it("hybrid: when amount exceeds peg point", { timeout: 30000 }, async () => {
-      const { getOptimalSwapAmount, findMaxSwapBeforePeg, getCvgCvxSwapRate } = await import("@/lib/enso");
-
-      const pegPoint = await findMaxSwapBeforePeg();
-      console.log(`Current peg point: ${formatEther(pegPoint)} CVX`);
-
-      if (pegPoint > 0n) {
-        // Test realistic amount slightly above peg point (e.g., 15,000 CVX)
-        const testAmount = parseEther("15000");
-        const { swapAmount, mintAmount } = await getOptimalSwapAmount(testAmount.toString());
-
-        // Calculate swap output
-        const swapOutput = swapAmount > 0n ? await getCvgCvxSwapRate(swapAmount.toString()) : 0n;
-        const swapRatio = swapAmount > 0n ? Number(swapOutput) / Number(swapAmount) : 0;
-
-        console.log(`\nFor 15,000 CVX (peg point ~${formatEther(pegPoint).slice(0, 8)} CVX):`);
-        console.log(`  Swap: ${formatEther(swapAmount)} CVX → ${formatEther(swapOutput)} cvgCVX (${swapRatio.toFixed(4)} ratio)`);
-        console.log(`  Mint: ${formatEther(mintAmount)} CVX → ${formatEther(mintAmount)} cvgCVX (1:1)`);
-        console.log(`  Total: ${formatEther(swapOutput + mintAmount)} cvgCVX`);
-
-        // Should be hybrid (both > 0) when amount > peg point
-        if (testAmount > pegPoint) {
-          expect(swapAmount).toBeGreaterThan(0n);
-          expect(mintAmount).toBeGreaterThan(0n);
-          // Swap amount should equal peg point
-          expect(swapAmount).toBe(pegPoint);
-          // Mint amount should be remainder
-          expect(mintAmount).toBe(testAmount - pegPoint);
-        }
-      }
-    });
-
-    // Note: Pure mint scenario (pegPoint = 0) is tested in hybrid-swap.test.ts
-    // See: "handles reversed imbalance" and "should mint all when peg point is 0"
-    // We can't easily test this in integration since arbitrageurs keep the pool balanced.
   });
 
   describe("pxCVX Hybrid Strategy Scenarios", () => {
@@ -569,14 +286,14 @@ describeWithApi("Zap Integration Tests", () => {
     // the URL alone is what gates these.
     const hasDebugRpc = Boolean(DEBUG_RPC_URL);
 
-    it.skipIf(!hasDebugRpc)("ETH → yscvgCVX: simulates successfully", { timeout: 30000 }, async () => {
-      const { fetchCvgCvxZapInRoute } = await import("@/lib/enso");
+    it.skipIf(!hasDebugRpc)("ETH → yspxCVX: simulates successfully", { timeout: 30000 }, async () => {
+      const { fetchPxCvxZapInRoute } = await import("@/lib/enso");
 
-      const route = await fetchCvgCvxZapInRoute({
+      const route = await fetchPxCvxZapInRoute({
         fromAddress: WHALES.ETH,
         inputToken: TOKENS.ETH,
         amountIn: parseEther("1").toString(),
-        vaultAddress: VAULTS.YSCVGCVX,
+        vaultAddress: VAULTS.YSPXCVX,
         slippage: "300",
       });
 
@@ -597,8 +314,8 @@ describeWithApi("Zap Integration Tests", () => {
       console.log("Simulation result:", result);
     });
 
-    it.skipIf(!hasDebugRpc)("CVX → yscvgCVX with whale balance", { timeout: 30000 }, async () => {
-      const { fetchCvgCvxZapInRoute } = await import("@/lib/enso");
+    it.skipIf(!hasDebugRpc)("CVX → yspxCVX with whale balance", { timeout: 30000 }, async () => {
+      const { fetchPxCvxZapInRoute } = await import("@/lib/enso");
 
       // Check whale has CVX
       const cvxBalance = await getTokenBalance(TOKENS.CVX as Address, WHALES.CVX);
@@ -609,11 +326,11 @@ describeWithApi("Zap Integration Tests", () => {
         return;
       }
 
-      const route = await fetchCvgCvxZapInRoute({
+      const route = await fetchPxCvxZapInRoute({
         fromAddress: WHALES.CVX,
         inputToken: TOKENS.CVX,
         amountIn: parseEther("1000").toString(),
-        vaultAddress: VAULTS.YSCVGCVX,
+        vaultAddress: VAULTS.YSPXCVX,
         slippage: "300",
       });
 
@@ -637,44 +354,12 @@ describeWithApi("Zap Integration Tests", () => {
 
 describeWithApi("Route Matrix", () => {
   // Different vault types need different route functions:
-  // - cvgCVX vaults (YSCVGCVX): fetchCvgCvxZapInRoute
   // - pxCVX vaults (YSPXCVX): fetchPxCvxZapInRoute
   // - cvxCRV vaults (YCVXCRV, YSCVXCRV): fetchZapInRoute
   //
   // NOTE: These tests make live API calls with rate limiting delays.
   // The 30s timeout accounts for multiple Enso API calls (1.1s delay each)
   // plus RPC calls to Curve pools for price estimation.
-
-  describe("cvgCVX Vault Zap In Routes", () => {
-    const testCases = [
-      { from: "ETH", inputToken: TOKENS.ETH, amount: "1" },
-      { from: "CVX", inputToken: TOKENS.CVX, amount: "1000" },
-      { from: "USDC", inputToken: TOKENS.USDC, amount: "1000", decimals: 6 },
-    ];
-
-    testCases.forEach(({ from, inputToken, amount, decimals }) => {
-      it(`${from} → yscvgCVX: creates valid bundle`, { timeout: 60000 }, async () => {
-        const { fetchCvgCvxZapInRoute } = await import("@/lib/enso");
-
-        const amountIn = decimals
-          ? (BigInt(amount) * 10n ** BigInt(decimals)).toString()
-          : parseEther(amount).toString();
-
-        const route = await fetchCvgCvxZapInRoute({
-          fromAddress: WHALES.ETH,
-          inputToken,
-          amountIn,
-          vaultAddress: VAULTS.YSCVGCVX,
-          slippage: "300",
-        });
-
-        expect(route.tx).toBeDefined();
-        expect(route.tx?.to).toBeDefined();
-        expect(route.tx?.data).toBeDefined();
-        console.log(`✅ ${from} → yscvgCVX: Bundle created`);
-      });
-    });
-  });
 
   describe("pxCVX Vault Zap In Routes", () => {
     const testCases = [
