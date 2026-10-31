@@ -29,7 +29,7 @@ overrides:
   socket.io-parser@>=4.0.0 <4.2.7: ^4.2.7
   source-map-js@<1.2.2: ^1.2.2
   ua-parser-js@>=2.0.0 <2.0.10: ^2.0.10
-  undici@>=7.0.0 <7.29.1: ^7.29.1
+  undici@>=7.0.0 <7.30.1: ^7.30.1
   undici@>=8.0.0 <8.10.2: ^8.10.2
   ws@>=8.0.0 <8.21.0: ^8.21.0
   '@solana/rpc-subscriptions-channel-websocket>ws': ^8.21.0
@@ -5315,8 +5315,8 @@ packages:
     resolution: {integrity: sha512-EvRlUt/QqAEvXdQeRMYUfwOQsfzpDztykrG2owGEE/rBOBoYv9uF39ZzsNDh4lTFHhTr2XOZjKkYgueD12ZmGA==}
     engines: {node: '>=18.17'}
 
-  undici@7.29.1:
-    resolution: {integrity: sha512-RYONW2MeafgYlkVOKYKkA/Ag7BmXqgIWCa8t1m0JcxrQg9pI9lEqRhAOruOBCbAohOa/gkCF+iPi9hrgvTzu6Q==}
+  undici@7.30.1:
+    resolution: {integrity: sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==}
     engines: {node: '>=20.18.1'}
 
   undici@8.12.2:
@@ -11424,7 +11424,7 @@ snapshots:
     dependencies:
       '@cspotcode/source-map-support': 0.8.1
       sharp: 0.35.5(@types/node@26.6.5)
-      undici: 7.29.1
+      undici: 7.30.1
       workerd: 1.20261012.1
       ws: 8.21.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       youch: 4.1.0-beta.10
@@ -12567,7 +12567,7 @@ snapshots:
 
   undici@6.29.1: {}
 
-  undici@7.29.1: {}
+  undici@7.30.1: {}
 
   undici@8.12.2: {}
 
