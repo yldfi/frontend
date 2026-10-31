@@ -247,6 +247,7 @@ describe("ZapPageContent", () => {
       isFlashbotsEnabled: false,
       isFlashbotsSupported: false,
       toggleFlashbots,
+      safePending: null,
       simulationResult: null,
     } as ReturnType<typeof useZapActions>);
 
@@ -399,6 +400,7 @@ describe("ZapPageContent", () => {
       isFlashbotsEnabled: false,
       isFlashbotsSupported: false,
       toggleFlashbots,
+      safePending: null,
       simulationResult: null,
     } as ReturnType<typeof useZapActions>;
     mockUseZapActions.mockReturnValue(preparingZap);
@@ -460,6 +462,7 @@ describe("ZapPageContent", () => {
       isFlashbotsEnabled: false,
       isFlashbotsSupported: false,
       toggleFlashbots,
+      safePending: null,
       simulationResult: null,
     } as ReturnType<typeof useZapActions>);
 
@@ -659,6 +662,7 @@ describe("ZapPageContent", () => {
       isFlashbotsEnabled: false,
       isFlashbotsSupported: false,
       toggleFlashbots,
+      safePending: null,
       simulationResult: {
         simulationId: "test-simulation",
         success: true,
@@ -741,6 +745,7 @@ describe("ZapPageContent", () => {
         isFlashbotsEnabled: false,
         isFlashbotsSupported: false,
         toggleFlashbots,
+        safePending: null,
         simulationResult: null,
       } as unknown as ReturnType<typeof useZapActions>);
       renderWithQuote(highImpactQuote);

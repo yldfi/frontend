@@ -2,13 +2,8 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  useAccount,
-  useWaitForTransactionReceipt,
-  useReadContract,
-  usePublicClient,
-  useWalletClient,
-} from "wagmi";
+import { useAccount, useReadContract, usePublicClient, useWalletClient } from "wagmi";
+import { useTxReceipt } from "@/hooks/useTxReceipt";
 import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
 import { parseSignature, parseUnits, maxUint256 } from "viem";
 import type { Hash, Hex, ReplacementReturnType } from "viem";
@@ -171,8 +166,8 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   }, []);
 
   // Wait for approval - poll every 1 second until confirmed
-  const { isLoading: isApprovalPending, isSuccess: isApprovalSuccess, data: approvalReceipt } =
-    useWaitForTransactionReceipt({
+  const { isLoading: isApprovalPending, isSuccess: isApprovalSuccess, data: approvalReceipt, safe: approvalSafe } =
+    useTxReceipt({
       hash: approvalHash,
       checkReplacement: true,
       onReplaced: handleApprovalReplaced,
@@ -180,8 +175,8 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     });
 
   // Wait for zap - poll every 1 second until confirmed
-  const { isLoading: isZapPending, isSuccess: isZapSuccess, data: zapReceipt } =
-    useWaitForTransactionReceipt({
+  const { isLoading: isZapPending, isSuccess: isZapSuccess, data: zapReceipt, safe: zapSafe } =
+    useTxReceipt({
       hash: zapHash,
       checkReplacement: true,
       onReplaced: handleZapReplaced,
@@ -904,6 +899,8 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     isLoading: status !== "idle" && status !== "needsApproval" && status !== "success" && status !== "error" && status !== "reverted",
     isSuccess: status === "success",
     isReverted: status === "reverted",
+    /** Set while a Safe transaction (approval or zap) waits for signatures/execution. */
+    safePending: [zapSafe, approvalSafe].find((s) => s?.isAwaitingExecution) ?? null,
     // Prefer the mined receipt hash as a final guard against replacement races.
     // viem returns the replacement receipt when a repriced transaction wins.
     zapHash: zapReceipt?.transactionHash ?? zapHash,
