@@ -1,4 +1,4 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { decodeFunctionData, parseUnits } from "viem";
 import { useAccount, usePublicClient, useReadContract, useWaitForTransactionReceipt, useWalletClient } from "wagmi";
@@ -89,27 +89,24 @@ describe("useZapActions Safe batch", () => {
     mockSendBatch.mockResolvedValue(SAFE_TX_HASH);
   });
 
-  it("approve skips the separate approval tx: preview simulates both, confirm sends one batch", async () => {
+  it("zap goes straight to the preview with an exact approval, then confirm sends one batch", async () => {
     const { result } = renderHook(() => useZapActions(QUOTE));
 
-    // 1. Zap click: allowance is short, so the approval card appears.
+    // 1. Zap click: allowance is short, but there's no approval card or
+    //    exact/unlimited choice. The preview simulates approval + zap.
     await act(async () => {
-      await result.current.executeZap({ previewOnly: true });
+      const preview = await result.current.executeZap({ previewOnly: true });
+      expect(preview?.success).toBe(true);
     });
-    expect(result.current.status).toBe("needsApproval");
-
-    // 2. Approve (exact): no approval transaction, straight to the zap preview.
-    await act(async () => {
-      await result.current.approve(true);
-    });
+    expect(result.current.status).not.toBe("needsApproval");
+    expect(result.current.pendingApproval).toBeNull();
     expect(mockWriteApprove).not.toHaveBeenCalled();
-    await waitFor(() => expect(result.current.simulationResult?.success).toBe(true));
     const exact = parseUnits("1000", 6);
     const approvals = simulateBodies.at(-1)!.approvalTransactions as Array<{ to: string; data: `0x${string}` }>;
     expect(approvals.map((a) => a.to)).toEqual([USDC.address]);
     expect(decodeFunctionData({ abi: ERC20_APPROVAL_ABI, data: approvals[0].data }).args).toEqual([ENSO_ROUTER_V2, exact]);
 
-    // 3. Confirm in the preview: no second approval prompt, one atomic batch.
+    // 2. Confirm in the preview: one atomic batch, no approval prompt.
     await act(async () => {
       await result.current.executeZap({ skipSimulation: true });
     });

@@ -342,6 +342,28 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     pendingOptionsRef.current = undefined;
   }, []);
 
+  // Builds the approval call(s) for `amount` (approve(0) first when the token
+  // requires a reset) and records them for the bundled simulation.
+  const prepareApprovalTransactions = useCallback(async (amount: bigint): Promise<ApprovalSimulationTransaction[] | null> => {
+    if (!userAddress || !tokenAddress) return null;
+    const needsZeroReset = await shouldResetApprovalToZeroFirst({
+      publicClient,
+      owner: userAddress,
+      token: tokenAddress,
+      spender: approvalSpender,
+      amount,
+      currentAllowance: allowance as bigint | undefined,
+    });
+    const transactions = needsZeroReset
+      ? [
+          buildApprovalSimulationTransaction(tokenAddress, approvalSpender, 0n),
+          buildApprovalSimulationTransaction(tokenAddress, approvalSpender, amount),
+        ]
+      : [buildApprovalSimulationTransaction(tokenAddress, approvalSpender, amount)];
+    preparedApprovalSimulationRef.current = { owner: userAddress, token: tokenAddress, amount, transactions };
+    return transactions;
+  }, [userAddress, tokenAddress, publicClient, approvalSpender, allowance]);
+
   // Approve tokens — exact=true uses the quote amount, exact=false uses unlimited
   const approve = useCallback(async (exact: boolean) => {
     if (!userAddress || isEth || !tokenAddress || !quote) return;
@@ -377,27 +399,9 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       });
     }
 
-    const needsZeroReset = await shouldResetApprovalToZeroFirst({
-      publicClient,
-      owner: userAddress,
-      token: tokenAddress,
-      spender: approvalSpender,
-      amount,
-      currentAllowance: allowance as bigint | undefined,
-    });
-
-    const approvalTransactions = needsZeroReset
-      ? [
-          buildApprovalSimulationTransaction(tokenAddress, approvalSpender, 0n),
-          buildApprovalSimulationTransaction(tokenAddress, approvalSpender, amount),
-        ]
-      : [buildApprovalSimulationTransaction(tokenAddress, approvalSpender, amount)];
-    preparedApprovalSimulationRef.current = {
-      owner: userAddress,
-      token: tokenAddress,
-      amount,
-      transactions: approvalTransactions,
-    };
+    const approvalTransactions = await prepareApprovalTransactions(amount);
+    if (!approvalTransactions) return;
+    const needsZeroReset = approvalTransactions.length > 1;
 
     if (canBatch) {
       // Safe: no separate approval tx. Go straight to the zap; the approval
@@ -435,7 +439,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       functionName: "approve",
       args: [approvalSpender, amount],
     });
-  }, [userAddress, isEth, tokenAddress, quote, publicClient, allowance, approvalSpender, rejectForbiddenApproval, writeApprove, approvalScope, canBatch]);
+  }, [userAddress, isEth, tokenAddress, quote, approvalSpender, rejectForbiddenApproval, writeApprove, approvalScope, canBatch, prepareApprovalTransactions]);
 
   useEffect(() => {
     if (!isApprovalSuccess || approvalReceipt?.status !== "success" || replacementError || submittedApprovalScopeRef.current !== approvalScope || !approvalHash || !approvalResetFlow || handledApprovalHashRef.current === approvalHash) return;
@@ -857,6 +861,17 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
           return null;
         }
 
+        // Safe batch: the approval rides in the zap's transaction, so there's
+        // no separate approval step or exact/unlimited choice. Approve the
+        // exact amount: a fresh approval per batch costs nothing extra.
+        if (canBatch) {
+          const exactAmount = parseUnits(quote.inputAmount, quote.inputToken.decimals);
+          const approvals = await prepareApprovalTransactions(exactAmount);
+          if (controller.signal.aborted || !approvals) return null;
+          batchApprovalsRef.current = approvals;
+          return await executeZapInternal(options, controller.signal);
+        }
+
         // Store options so auto-execute after approval preserves intent (e.g. previewOnly)
         pendingOptionsRef.current = options;
         // Set pending approval state to show the approval card
@@ -890,7 +905,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     } finally {
       if (allowanceCheckRef.current === controller) allowanceCheckRef.current = null;
     }
-  }, [quote, userAddress, isEth, publicClient, tokenAddress, approvalSpender, approvalSpenderName, approvalScope, queryClient, allowanceQueryKey, executeZapInternal, rejectForbiddenApproval, resetApprove]);
+  }, [quote, userAddress, isEth, publicClient, tokenAddress, approvalSpender, approvalSpenderName, approvalScope, queryClient, allowanceQueryKey, executeZapInternal, rejectForbiddenApproval, resetApprove, canBatch, prepareApprovalTransactions]);
 
   useEffect(() => {
     executeZapRef.current = executeZap;

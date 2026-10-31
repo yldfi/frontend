@@ -853,8 +853,6 @@ export function ZapPageContent() {
                   approvalProgress={approvalProgress}
                   decimals={inputToken.decimals ?? 18}
                   isApproving={isApproving}
-                  title={batchesApproval ? "Approve & zap in one Safe transaction" : undefined}
-                  note={batchesApproval ? "If your Safe executes after the price moves past your slippage, the zap fails and nothing changes." : undefined}
                   onApprove={(exact) => guardHighImpact("Approve & zap", () => approve(exact))}
                 />
 
@@ -927,6 +925,12 @@ export function ZapPageContent() {
                   >
                     Connect Wallet
                   </button>
+                )}
+
+                {batchesApproval && amount && !hasInsufficientBalance && needsApproval() && (
+                  <p className="text-xs text-[var(--muted-foreground)]">
+                    Your Safe approves and zaps in one transaction. If your Safe executes after the price moves past your slippage, the zap fails and nothing changes.
+                  </p>
                 )}
 
                 {/* Attribution + settings */}
