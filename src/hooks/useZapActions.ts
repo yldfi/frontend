@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAccount, useReadContract, usePublicClient, useWalletClient } from "wagmi";
 import { useTxReceipt } from "@/hooks/useTxReceipt";
+import { useSafeBatch } from "@/hooks/useSafeBatch";
 import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
 import { parseSignature, parseUnits, maxUint256 } from "viem";
 import type { Hash, Hex, ReplacementReturnType } from "viem";
@@ -46,6 +47,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   const { testNetworkType } = useTestNetwork();
   const { isFlashbotsEnabled, isFlashbotsSupported, toggleFlashbots } = useFlashbotsProtect();
   const { sendTx } = useSendTx();
+  const { canBatch, sendBatch } = useSafeBatch();
   const [actionState, setActionState] = useState<"idle" | "needsApproval" | "approving" | "checkingApproval" | "simulating" | "zapping">("idle");
   const [simulationError, setSimulationError] = useState<string | null>(null);
   const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
@@ -73,6 +75,10 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     amount: bigint;
     transactions: ApprovalSimulationTransaction[];
   } | null>(null);
+  // Safe only: approval call(s) to send in the same atomic batch as the zap,
+  // set when the user approves on a Safe that supports wallet_sendCalls.
+  const batchApprovalsRef = useRef<ApprovalSimulationTransaction[] | null>(null);
+  const executeZapInternalRef = useRef<(options?: { skipSimulation?: boolean; previewOnly?: boolean }, signal?: AbortSignal) => Promise<SimulationResult | null>>(async () => null);
 
   const invalidateBalances = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["onchain-balances"] });
@@ -313,6 +319,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     if (status === "error" || approveError) {
       autoExecuteRef.current = false;
       preparedApprovalSimulationRef.current = null;
+      batchApprovalsRef.current = null;
     }
   }, [status, approveError]);
 
@@ -324,6 +331,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   const quoteInputAmount = quote?.inputAmount;
   useEffect(() => {
     preparedApprovalSimulationRef.current = null;
+    batchApprovalsRef.current = null;
   }, [quoteInputAddress, quoteInputAmount]);
 
   const rejectForbiddenApproval = useCallback(() => {
@@ -378,16 +386,33 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       currentAllowance: allowance as bigint | undefined,
     });
 
-    if (needsZeroReset) {
-      preparedApprovalSimulationRef.current = {
-        owner: userAddress,
-        token: tokenAddress,
-        amount,
-        transactions: [
+    const approvalTransactions = needsZeroReset
+      ? [
           buildApprovalSimulationTransaction(tokenAddress, approvalSpender, 0n),
           buildApprovalSimulationTransaction(tokenAddress, approvalSpender, amount),
-        ],
-      };
+        ]
+      : [buildApprovalSimulationTransaction(tokenAddress, approvalSpender, amount)];
+    preparedApprovalSimulationRef.current = {
+      owner: userAddress,
+      token: tokenAddress,
+      amount,
+      transactions: approvalTransactions,
+    };
+
+    if (canBatch) {
+      // Safe: no separate approval tx. Go straight to the zap; the approval
+      // call(s) are simulated with it and sent in the same atomic batch.
+      batchApprovalsRef.current = approvalTransactions;
+      autoExecuteRef.current = false;
+      setApprovalResetFlow(null);
+      setPendingApproval(null);
+      const options = pendingOptionsRef.current;
+      pendingOptionsRef.current = undefined;
+      void executeZapInternalRef.current(options);
+      return;
+    }
+
+    if (needsZeroReset) {
       setApprovalResetFlow({
         stage: "reset",
         token: tokenAddress,
@@ -403,14 +428,6 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       return;
     }
 
-    preparedApprovalSimulationRef.current = {
-      owner: userAddress,
-      token: tokenAddress,
-      amount,
-      transactions: [
-        buildApprovalSimulationTransaction(tokenAddress, approvalSpender, amount),
-      ],
-    };
     setApprovalResetFlow(null);
     writeApprove({
       address: tokenAddress,
@@ -418,7 +435,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       functionName: "approve",
       args: [approvalSpender, amount],
     });
-  }, [userAddress, isEth, tokenAddress, quote, publicClient, allowance, approvalSpender, rejectForbiddenApproval, writeApprove, approvalScope]);
+  }, [userAddress, isEth, tokenAddress, quote, publicClient, allowance, approvalSpender, rejectForbiddenApproval, writeApprove, approvalScope, canBatch]);
 
   useEffect(() => {
     if (!isApprovalSuccess || approvalReceipt?.status !== "success" || replacementError || submittedApprovalScopeRef.current !== approvalScope || !approvalHash || !approvalResetFlow || handledApprovalHashRef.current === approvalHash) return;
@@ -525,6 +542,16 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     return txParams;
   }, [quote, userAddress, publicClient, walletClient]);
 
+  // Sends the zap, prefixed with the approval call(s) as one atomic Safe batch
+  // when the user approved on a Safe; otherwise a normal transaction.
+  const sendZapTx = useCallback(async (txParams: { to: `0x${string}`; data: `0x${string}`; value: bigint }): Promise<Hash> => {
+    const approvals = batchApprovalsRef.current;
+    if (!approvals) return sendTx(txParams);
+    const id = await sendBatch([...approvals.map((t) => ({ to: t.to, data: t.data })), txParams]);
+    batchApprovalsRef.current = null;
+    return id;
+  }, [sendTx, sendBatch]);
+
   // Internal execute — skips approval check, used directly and after auto-approval
   // Options:
   //   - skipSimulation: skip simulation and send tx directly (used after preview confirmation)
@@ -584,7 +611,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     if (options?.skipSimulation && simulationResult?.success) {
       setActionState("zapping");
       try {
-        const hash = await sendTx(txParams);
+        const hash = await sendZapTx(txParams);
         setZapHash(hash);
       } catch (err) {
         setTxError(err instanceof Error ? err : new Error(String(err)));
@@ -765,14 +792,18 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     // Simulation passed - send the actual transaction (gas + Flashbots handled by useSendTx)
     setActionState("zapping");
     try {
-      const hash = await sendTx(txParams);
+      const hash = await sendZapTx(txParams);
       setZapHash(hash);
     } catch (err) {
       setTxError(err instanceof Error ? err : new Error(String(err)));
       setActionState("idle");
     }
     return null;
-  }, [quote, userAddress, publicClient, prepareTxParams, sendTx, chainId, testNetworkType, simulationResult, approvalSpender]);
+  }, [quote, userAddress, publicClient, prepareTxParams, sendZapTx, chainId, testNetworkType, simulationResult, approvalSpender]);
+
+  useEffect(() => {
+    executeZapInternalRef.current = executeZapInternal;
+  }, [executeZapInternal]);
 
   // Public executeZap — checks approval before executing.
   // If approval is needed, sets pendingApproval and shows the approval card.
@@ -791,6 +822,17 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     setPendingApproval(null);
 
     setSimulationError(null);
+
+    // Safe batch armed: the approval rides in the same transaction, so the
+    // on-chain allowance is expected to be short. Don't re-ask for approval.
+    if (batchApprovalsRef.current) {
+      try {
+        return await executeZapInternal(options, controller.signal);
+      } finally {
+        if (allowanceCheckRef.current === controller) allowanceCheckRef.current = null;
+      }
+    }
+
     setActionState("checkingApproval");
     try {
       const requiresAllowance = !isEth && !quote.legacyMorphoPermit && quote.directVault?.action !== "withdraw";
@@ -869,6 +911,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
 
   // Reset state
   const reset = useCallback(() => {
+    batchApprovalsRef.current = null;
     allowanceCheckRef.current?.abort();
     allowanceCheckRef.current = null;
     confirmedApprovalRef.current = null;
@@ -901,6 +944,8 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     isReverted: status === "reverted",
     /** Set while a Safe transaction (approval or zap) waits for signatures/execution. */
     safePending: [zapSafe, approvalSafe].find((s) => s?.isAwaitingExecution) ?? null,
+    /** Approval and zap go out as one Safe transaction. */
+    batchesApproval: canBatch,
     // Prefer the mined receipt hash as a final guard against replacement races.
     // viem returns the replacement receipt when a repriced transaction wins.
     zapHash: zapReceipt?.transactionHash ?? zapHash,
