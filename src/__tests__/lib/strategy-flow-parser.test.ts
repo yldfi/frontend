@@ -41,35 +41,6 @@ contract AuctionSwapper is BaseSwapper {
 }
 `;
 
-const STKCVGCVX_SNIPPET = `
-contract StkCVGCVXStrategy is BaseStrategy {
-    using SafeERC20 for ERC20;
-
-    ICvgCvxStaking public constant STAKING = ICvgCvxStaking(0x2c1D293c50C6d1a4370ebb442A02c5956bbAb119);
-
-    constructor(address _asset, string memory _name) BaseStrategy(_asset, _name) {
-        asset.forceApprove(address(STAKING), type(uint256).max);
-    }
-
-    function _deployFunds(uint256 _amount) internal override {
-        STAKING.deposit(_amount, ICvgCvxStaking.IN_TOKEN_TYPE.cvgCVX, 0, 0, false);
-    }
-
-    function _freeFunds(uint256 _amount) internal override {
-        STAKING.withdraw(_amount, ICvgCvxStaking.OUT_TOKEN_TYPE.cvgCVX, 0);
-    }
-
-    function _harvestAndReport() internal virtual override returns (uint256 _totalAssets) {
-        STAKING.claimCvgCvxRewards(address(this), 0, false);
-        uint256 idleBalance = asset.balanceOf(address(this));
-        if (idleBalance > 0 && !TokenizedStrategy.isShutdown()) {
-            _deployFunds(idleBalance);
-        }
-        return asset.balanceOf(address(this)) + STAKING.balanceOf(address(this));
-    }
-}
-`;
-
 const PXCVX_COMPOUNDER_SNIPPET = `
 contract PxCVXCompounder is BaseStrategy {
     using SafeERC20 for IERC20;
@@ -216,49 +187,6 @@ describe("Strategy Flow Parser", () => {
       expect(flow.cycleSteps).toContain("auction");
       expect(flow.cycleSteps).toContain("receive");
       expect(flow.cycleSteps).toContain("claim");
-    });
-  });
-
-  describe("StkCVGCVXStrategy (direct compound)", () => {
-    it("should parse correctly", () => {
-      const result = parseStrategySource(
-        STKCVGCVX_SNIPPET,
-        "0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359",
-        "StkCVGCVXStrategy",
-        "v0.8.23"
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.config).not.toBeNull();
-      expect(result.config!.name).toBe("StkCVGCVXStrategy");
-      expect(result.config!.inherits.baseStrategy).toBe(true);
-      expect(result.config!.inherits.auctionSwapper).toBe(false);
-    });
-
-    it("should detect direct compounding", () => {
-      const result = parseStrategySource(
-        STKCVGCVX_SNIPPET,
-        "0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359",
-        "StkCVGCVXStrategy",
-        "v0.8.23"
-      );
-
-      // This strategy rewards cvgCVX which is the same as asset - direct compound
-      expect(result.config!.compounding.mechanism).toBe("direct");
-    });
-
-    it("should generate flow without auction steps", () => {
-      const result = parseStrategySource(
-        STKCVGCVX_SNIPPET,
-        "0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359",
-        "StkCVGCVXStrategy",
-        "v0.8.23"
-      );
-
-      const flow = generateFlowSteps(result.config!);
-
-      expect(flow.cycleSteps).not.toContain("auction");
-      expect(flow.cycleSteps).not.toContain("receive");
     });
   });
 

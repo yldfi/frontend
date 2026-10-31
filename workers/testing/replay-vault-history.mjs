@@ -1,5 +1,5 @@
-// Actual worker/R2 replay. No live network; archive fixture is captured from
-// Muupe at the last block of 2025-10-19 for yscvgCVX.
+// Actual worker/R2 replay. No live network; the single-day archive fixture is a
+// synthetic ysCVX day shaped like a Muupe archive capture (see its `source`).
 import { createRequire } from 'node:module';
 import { readFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,7 +15,7 @@ const pad=n=>BigInt(n).toString(16).padStart(64,'0');
 const HISTORY_CRON='2,17,32,47 * * * *';
 const rpc=async(method,params)=>{const r=fixture.rpc[JSON.stringify([method,params])];if(!r)throw new Error('Unexpected archive request');return r;};
 const point=await h.sampleDay(rpc,fixture.key,fixture.point.time,fixture.point.block);
-assert.deepEqual(point,fixture.point);console.log('PASS real archive balance, PPS and USD valuation reproduced');
+assert.deepEqual(point,fixture.point);console.log('PASS archive balance, PPS and USD valuation reproduced');
 const withCall = mutate => async(method,params)=>mutate(params[0],await rpc(method,params));
 const zero=await h.sampleDay(withCall((call,value)=>call.data==='0x01e1d114'?'0x'+pad(0):value),fixture.key,point.time,point.block);
 assert.equal(zero.tvl,0);console.log('PASS on-chain zero assets remain zero');
@@ -59,14 +59,14 @@ const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script:bundle.out
 try {
  const env=await mf.getBindings();
  await env.LOGS.exec('CREATE TABLE logs (id INTEGER PRIMARY KEY AUTOINCREMENT,timestamp TEXT,level TEXT,source TEXT,message TEXT,meta TEXT)');
- let response=await mf.dispatchFetch('http://localhost/api/history?key=yscvgcvx&metric=tvl');assert.equal(response.status,503);
+ let response=await mf.dispatchFetch(`http://localhost/api/history?key=${fixture.key}&metric=tvl`);assert.equal(response.status,503);
  await h.savePoints(env.HISTORY,fixture.key,[noPrice]);
  await h.savePoints(env.HISTORY,fixture.key,[point]);
  assert.equal((await h.loadHistory(env.HISTORY,fixture.key)).doc.points[0].tvl,point.tvl);
  await h.savePoints(env.HISTORY,fixture.key,[noPrice]);
  assert.equal((await h.loadHistory(env.HISTORY,fixture.key)).doc.points[0].tvl,point.tvl);
  console.log('PASS R2 repairs unknown pricing without overwriting valid points');
- response=await mf.dispatchFetch('http://localhost/api/history?key=yscvgcvx&metric=tvl');
+ response=await mf.dispatchFetch(`http://localhost/api/history?key=${fixture.key}&metric=tvl`);
  const body=await response.json();assert.equal(body.version,2);assert.equal(body.data.timeseries[0].value,point.tvl);assert.equal(body.data.timeseries[1].value,null);
  console.log('PASS public worker history preserves missing dates as null');
  await (await mf.getWorker()).scheduled({cron:'*/5 * * * *'});
@@ -77,7 +77,7 @@ try {
   const doc=(await h.loadHistory(env.HISTORY,key)).doc;
   assert(doc.points.some(p=>p.time===h.dayBucket(now)-86400&&p.tvl>0),key);
  }
- console.log('PASS cron samples all three vaults despite Kong outage');
+ console.log('PASS cron samples all tracked vaults despite Kong outage');
  const before=await(await env.HISTORY.get(h.historyPath('yscvx'))).text();archiveFail=true;
  await(await mf.getWorker()).scheduled({cron:HISTORY_CRON});
  assert.equal(await(await env.HISTORY.get(h.historyPath('yscvx'))).text(),before);

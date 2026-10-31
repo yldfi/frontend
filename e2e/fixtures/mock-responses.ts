@@ -12,31 +12,23 @@ export const mockZapInBundleResponse = {
     from: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
   },
   gas: "567239",
-  amountOut: "1489846100000000000000", // ~1489 yscvgCVX
+  amountOut: "15214846100000000000000", // ~15214 yscvxCRV
   route: [
     {
       action: "route",
       protocol: "enso",
       tokenIn: ["0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"],
-      tokenOut: ["0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B"],
+      tokenOut: ["0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7"],
       amountIn: ["1000000000000000000"],
-      amountOut: ["1538757500000000000000"],
-    },
-    {
-      action: "call",
-      protocol: "curve",
-      tokenIn: ["0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B"],
-      tokenOut: ["0x2191DF768ad71140F9F3E96c1e4407A4aA31d082"],
-      amountIn: ["1538757500000000000000"],
-      amountOut: ["1543714500000000000000"],
+      amountOut: ["17202117000000000000000"],
     },
     {
       action: "deposit",
       protocol: "erc4626",
-      tokenIn: ["0x2191DF768ad71140F9F3E96c1e4407A4aA31d082"],
-      tokenOut: ["0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359"],
-      amountIn: ["1543714500000000000000"],
-      amountOut: ["1489846100000000000000"],
+      tokenIn: ["0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7"],
+      tokenOut: ["0xCa960E6DF1150100586c51382f619efCCcF72706"],
+      amountIn: ["17202117000000000000000"],
+      amountOut: ["15214846100000000000000"],
     },
   ],
 };
@@ -50,23 +42,23 @@ export const mockZapOutBundleResponse = {
     from: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
   },
   gas: "450000",
-  amountOut: "950000000000000000", // ~0.95 ETH
+  amountOut: "65000000000000000", // ~0.065 ETH
   route: [
     {
       action: "redeem",
       protocol: "erc4626",
-      tokenIn: ["0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359"],
-      tokenOut: ["0x2191DF768ad71140F9F3E96c1e4407A4aA31d082"],
+      tokenIn: ["0xCa960E6DF1150100586c51382f619efCCcF72706"],
+      tokenOut: ["0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7"],
       amountIn: ["1000000000000000000000"],
-      amountOut: ["1036200000000000000000"],
+      amountOut: ["1130608313488681672000"],
     },
     {
       action: "route",
       protocol: "enso",
-      tokenIn: ["0x2191DF768ad71140F9F3E96c1e4407A4aA31d082"],
+      tokenIn: ["0x62B9c7356A2Dc64a1969e19C23e4f579F9810Aa7"],
       tokenOut: ["0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"],
-      amountIn: ["1036200000000000000000"],
-      amountOut: ["950000000000000000"],
+      amountIn: ["1130608313488681672000"],
+      amountOut: ["65000000000000000"],
     },
   ],
 };
@@ -77,7 +69,6 @@ export const mockTokenPrices: Record<string, { symbol: string; decimals: number;
   "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": { symbol: "ETH", decimals: 18, price: 2450 },
   "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": { symbol: "WETH", decimals: 18, price: 2450 },
   "0x4e3fbd56cd56c3e72c1403e103b45db9da5b9d2b": { symbol: "CVX", decimals: 18, price: 2.015 },
-  "0x2191df768ad71140f9f3e96c1e4407a4aa31d082": { symbol: "cvgCVX", decimals: 18, price: 1.5 },
   "0x62b9c7356a2dc64a1969e19c23e4f579f9810aa7": { symbol: "cvxCRV", decimals: 18, price: 0.1417 },
   "0xbce0cf87f513102f22232436cca2ca49e815c3ac": { symbol: "pxCVX", decimals: 18, price: 1.8775 },
   "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": { symbol: "USDC", decimals: 6, price: 1 },
@@ -103,24 +94,6 @@ export const mockVaultsResponse = {
     "tvlUsd": 20676.04105,
     "apy": 9.220867
   },
-  "ycvgcvx": {
-    "address": "0x0849b046292293f78dF3002F8461f8A7e2eC2b82",
-    "totalAssets": "47202843283564594936937",
-    "pricePerShare": "1175961228149476052",
-    "tvl": 47202.843284,
-    "pps": 1.175961,
-    "tvlUsd": 69467.8107,
-    "apy": null
-  },
-  "yscvgcvx": {
-    "address": "0x8ED5AB1BA2b2E434361858cBD3CA9f374e8b0359",
-    "totalAssets": "47463792047238039411412",
-    "pricePerShare": "1184658919985428900",
-    "tvl": 47463.792047,
-    "pps": 1.184659,
-    "tvlUsd": 69851.845657,
-    "apy": 15.52011
-  },
   "yscvx": {
     "address": "0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e",
     "totalAssets": "4717893846936776322024",
@@ -140,7 +113,6 @@ export const mockVaultsResponse = {
     "apy": null
   },
   "cvxCrvPrice": 0.141746,
-  "cvgCvxPrice": 1.500342,
   "cvxPrice": 2.015274,
   "pxCvxPrice": 1.877506,
   "lastUpdated": "2026-10-13T00:00:00.000Z"

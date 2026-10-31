@@ -15,12 +15,9 @@ export interface VaultCacheData {
 export interface VaultCacheResponse {
   ycvxcrv: VaultCacheData;
   yscvxcrv: VaultCacheData;
-  ycvgcvx: VaultCacheData;
-  yscvgcvx: VaultCacheData;
   yscvx: VaultCacheData;
   yspxcvx: VaultCacheData;
   cvxCrvPrice: number;
-  cvgCvxPrice: number;
   pxCvxPrice: number;
   cvxPrice: number;
   lastUpdated: string;

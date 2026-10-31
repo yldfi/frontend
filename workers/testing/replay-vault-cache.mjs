@@ -19,7 +19,7 @@ async function outbound(req) {
   if (url.hostname === 'kong.yearn.farm') {
     if (mode === 'kong-error') return response({ errors: [{ message: 'Unavailable' }] });
     const data = {};
-    for (const key of ['ycvxcrv','yscvxcrv','ycvgcvx','yscvgcvx']) {
+    for (const key of ['ycvxcrv','yscvxcrv']) {
       const v = fixture[key];
       data[key] = { totalAssets: v.totalAssets, pricePerShare: v.pricePerShare, decimals: '18', tvl: { close: v.tvlUsd } };
     }

@@ -17,7 +17,6 @@ import { useMultiplePricePerShare } from "@/hooks/usePricePerShare";
 import { useVaultCache } from "@/hooks/useVaultCache";
 import { useCvxCrvPrice } from "@/hooks/useCvxCrvPrice";
 import { useCvxPrice } from "@/hooks/useCvxPrice";
-import { useCvgCvxPrice } from "@/hooks/useCvgCvxPrice";
 import { useCurveLendingPosition, formatHealth } from "@/hooks/useCurveLendingPosition";
 import {
   VAULTS,
@@ -144,22 +143,18 @@ export function HomePageContent() {
   // Fetch Yearn vault data (for APY from Kong API)
   const { data: ycvxcrvData, isLoading: ycvxcrvLoading } = useYearnVault(VAULT_ADDRESSES.YCVXCRV);
   const { data: yscvxcrvData } = useYearnVault(VAULT_ADDRESSES.YSCVXCRV);
-  const { data: yscvgcvxData } = useYearnVault(VAULT_ADDRESSES.YSCVGCVX);
   const { data: yspxcvxData } = useYearnVault(VAULT_ADDRESSES.YSPXCVX);
 
   const ycvxcrvVault = formatYearnVaultData(ycvxcrvData?.vault, ycvxcrvData?.vaultStrategies);
   const yscvxcrvVault = formatYearnVaultData(yscvxcrvData?.vault, yscvxcrvData?.vaultStrategies);
-  const yscvgcvxVault = formatYearnVaultData(yscvgcvxData?.vault, yscvgcvxData?.vaultStrategies);
   const yspxcvxVault = formatYearnVaultData(yspxcvxData?.vault, yspxcvxData?.vaultStrategies);
 
   // Use on-chain prices (avoids $0 on cache miss), falling back to cache only
   // if the on-chain read isn't available yet
   const { price: cvxCrvPriceOnChain } = useCvxCrvPrice();
   const { price: cvxPriceOnChain } = useCvxPrice();
-  const { price: cvgCvxPriceOnChain } = useCvgCvxPrice();
   const cvxCrvPrice = cvxCrvPriceOnChain || cacheData?.cvxCrvPrice || 0;
   const cvxPrice = cvxPriceOnChain || cacheData?.cvxPrice || 0;
-  const cvgCvxPrice = cvgCvxPriceOnChain || cacheData?.cvgCvxPrice || 0;
   // pxCVX still has no on-chain oracle hook
   const pxCvxPrice = 0; // TODO: uncomment when yspxcvx is live — cacheData?.pxCvxPrice ?? 0
 
@@ -193,16 +188,14 @@ export function HomePageContent() {
   const { prices: pricePerShareData } = useMultiplePricePerShare([
     VAULT_ADDRESSES.YCVXCRV,
     VAULT_ADDRESSES.YSCVXCRV,
-    VAULT_ADDRESSES.YSCVGCVX,
     VAULT_ADDRESSES.YSPXCVX,
     VAULT_ADDRESSES.YSCVX,
   ]);
 
   const ycvxcrvPricePerShare = pricePerShareData[0]?.pricePerShare ?? 1;
   const yscvxcrvPricePerShare = pricePerShareData[1]?.pricePerShare ?? 1;
-  const yscvgcvxPricePerShare = pricePerShareData[2]?.pricePerShare ?? 1;
-  const yspxcvxPricePerShare = pricePerShareData[3]?.pricePerShare ?? 1;
-  const yscvxPricePerShare = pricePerShareData[4]?.pricePerShare ?? 1;
+  const yspxcvxPricePerShare = pricePerShareData[2]?.pricePerShare ?? 1;
+  const yscvxPricePerShare = pricePerShareData[3]?.pricePerShare ?? 1;
 
   // Fetch user vault balances
   const { balances } = useMultipleVaultBalances([
@@ -215,11 +208,6 @@ export function HomePageContent() {
       address: VAULT_ADDRESSES.YSCVXCRV,
       pricePerShare: yscvxcrvPricePerShare,
       assetPriceUsd: cvxCrvPrice,
-    },
-    {
-      address: VAULT_ADDRESSES.YSCVGCVX,
-      pricePerShare: yscvgcvxPricePerShare,
-      assetPriceUsd: cvgCvxPrice,
     },
     {
       address: VAULT_ADDRESSES.YSPXCVX,
@@ -240,14 +228,12 @@ export function HomePageContent() {
   // On-chain APY from cache (convertToAssets now vs 24h ago), fallback to Kong
   const ycvxcrvNetApy = cacheData?.ycvxcrv?.apy ?? ycvxcrvVault?.apy ?? 0;
   const yscvxcrvNetApy = cacheData?.yscvxcrv?.apy ?? yscvxcrvVault?.apy ?? 0;
-  const yscvgcvxNetApy = cacheData?.yscvgcvx?.apy ?? yscvgcvxVault?.apy ?? 0;
   const yspxcvxNetApy = yspxcvxVault?.apy ?? 0;
   const yscvxNetApy = cacheData?.yscvx?.apy ?? 0;
 
   // Use cached TVL (fast) or fall back to Yearn API TVL
   const ycvxcrvTvl = cacheData?.ycvxcrv?.tvlUsd ?? ycvxcrvVault?.tvl ?? 0;
   const yscvxcrvTvl = cacheData?.yscvxcrv?.tvlUsd ?? yscvxcrvVault?.tvl ?? 0;
-  const yscvgcvxTvl = cacheData?.yscvgcvx?.tvlUsd ?? yscvgcvxVault?.tvl ?? 0;
   const yspxcvxTvl = yspxcvxVault?.tvl ?? 0; // TODO: uncomment when yspxcvx is live — cacheData?.yspxcvx?.tvlUsd ?? ...
   const yscvxTvl = cacheData?.yscvx?.tvlUsd ?? 0;
 
@@ -256,7 +242,6 @@ export function HomePageContent() {
     switch (id) {
       case "ycvxcrv": return ycvxcrvTvl;
       case "yscvxcrv": return yscvxcrvTvl;
-      case "yscvgcvx": return yscvgcvxTvl;
       case "yspxcvx": return yspxcvxTvl;
       case "yscvx": return yscvxTvl;
       default: return 0;
@@ -268,7 +253,6 @@ export function HomePageContent() {
     switch (id) {
       case "ycvxcrv": return ycvxcrvNetApy;
       case "yscvxcrv": return yscvxcrvNetApy;
-      case "yscvgcvx": return yscvgcvxNetApy;
       case "yspxcvx": return yspxcvxNetApy;
       case "yscvx": return yscvxNetApy;
       default: return 0;
@@ -279,9 +263,8 @@ export function HomePageContent() {
   const balanceByAddress = {
     [VAULT_ADDRESSES.YCVXCRV.toLowerCase()]: balances[0],
     [VAULT_ADDRESSES.YSCVXCRV.toLowerCase()]: balances[1],
-    [VAULT_ADDRESSES.YSCVGCVX.toLowerCase()]: balances[2],
-    [VAULT_ADDRESSES.YSPXCVX.toLowerCase()]: balances[3],
-    [VAULT_ADDRESSES.YSCVX.toLowerCase()]: balances[4],
+    [VAULT_ADDRESSES.YSPXCVX.toLowerCase()]: balances[2],
+    [VAULT_ADDRESSES.YSCVX.toLowerCase()]: balances[3],
   };
 
   // Lending position lookup by vault ID
@@ -321,7 +304,7 @@ export function HomePageContent() {
   });
 
   // Total TVL across all vaults
-  const totalTvl = yscvxcrvTvl + yscvgcvxTvl + yspxcvxTvl + yscvxTvl;
+  const totalTvl = yscvxcrvTvl + yspxcvxTvl + yscvxTvl;
   const totalTvlFormatted = totalTvl >= 1_000_000
     ? `$${(totalTvl / 1_000_000).toFixed(2)}M`
     : totalTvl >= 1_000
