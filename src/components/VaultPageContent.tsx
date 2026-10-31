@@ -74,6 +74,7 @@ import { VaultInfoCard } from "@/components/VaultInfoCard";
 import type { EnsoToken, ZapDirection, SimulationAssetChange } from "@/types/enso";
 import {
   getPendingTxCopy,
+  getSafePendingMessage,
   getRevertedTxCopy,
   getSuccessTxCopy,
   isVaultTxPendingVisible,
@@ -760,6 +761,7 @@ export function VaultPageContent({ id }: { id: string }) {
     depositHash,
     withdrawHash,
     simulationResult: vaultSimulationResult,
+    safePending: vaultSafePending,
   } = useVaultActions(vaultAddressTyped, vault?.assetAddress ?? TOKENS.CVXCRV, vault?.assetDecimals ?? 18);
 
   // Zap quote - fetch route from Enso (debounced to prevent rate limiting)
@@ -802,6 +804,7 @@ export function VaultPageContent({ id }: { id: string }) {
     isFlashbotsSupported: _isFlashbotsSupported,
     toggleFlashbots: _toggleFlashbots,
     simulationResult,
+    safePending: zapSafePending,
   } = useZapActions(zapQuote);
 
   const vaultCompletionResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -871,8 +874,8 @@ export function VaultPageContent({ id }: { id: string }) {
   const currentVaultAction = txStatus === "withdrawing" || (!!withdrawHash && !depositHash) || activeTab === "withdraw" ? "withdraw" : "deposit";
   const currentVaultActionKind = currentVaultAction as "deposit" | "withdraw";
   const currentVaultActionLabel = currentVaultAction === "withdraw" ? "withdrawal" : "deposit";
-  const currentVaultPendingCopy = getPendingTxCopy(Boolean(currentVaultHash), currentVaultActionLabel);
-  const currentZapPendingCopy = getPendingTxCopy(Boolean(zapHash), "zap");
+  const currentVaultPendingCopy = getPendingTxCopy(Boolean(currentVaultHash), currentVaultActionLabel, vaultSafePending);
+  const currentZapPendingCopy = getPendingTxCopy(Boolean(zapHash), "zap", zapSafePending);
   const currentVaultSuccessCopy = getSuccessTxCopy(currentVaultActionKind);
   const currentVaultRevertedCopy = getRevertedTxCopy(currentVaultActionKind);
   const currentZapSuccessCopy = getSuccessTxCopy("zap");
@@ -1924,7 +1927,9 @@ export function VaultPageContent({ id }: { id: string }) {
                         </div>
                       </div>
                       <p className="text-sm text-[var(--muted-foreground)] max-w-xs">
-                        Confirm the approval in your wallet. The deposit will start automatically once approved.
+                        {vaultSafePending
+                          ? getSafePendingMessage(vaultSafePending)
+                          : "Confirm the approval in your wallet. The deposit will start automatically once approved."}
                       </p>
                     </div>
                   )}

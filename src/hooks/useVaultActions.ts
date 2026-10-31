@@ -1,6 +1,7 @@
 "use client";
 
-import { useReadContract, useWaitForTransactionReceipt, useAccount, usePublicClient } from "wagmi";
+import { useReadContract, useAccount, usePublicClient } from "wagmi";
+import { useTxReceipt } from "@/hooks/useTxReceipt";
 import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
 import { parseUnits, maxUint256, encodeFunctionData } from "viem";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
@@ -65,17 +66,17 @@ export function useVaultActions(
   const handledApprovalHashRef = useRef<`0x${string}` | undefined>(undefined);
 
   // Wait for transactions - poll every 1 second until confirmed
-  const { isLoading: isApprovalPending, isSuccess: isApprovalSuccess, data: approvalReceipt } = useWaitForTransactionReceipt({
+  const { isLoading: isApprovalPending, isSuccess: isApprovalSuccess, data: approvalReceipt, safe: approvalSafe } = useTxReceipt({
     hash: approveHash,
     pollingInterval: 1_000,
   });
 
-  const { isLoading: isDepositPending, isSuccess: isDepositSuccess, data: depositReceipt } = useWaitForTransactionReceipt({
+  const { isLoading: isDepositPending, isSuccess: isDepositSuccess, data: depositReceipt, safe: depositSafe } = useTxReceipt({
     hash: depositHash,
     pollingInterval: 1_000,
   });
 
-  const { isLoading: isWithdrawPending, isSuccess: isWithdrawSuccess, data: withdrawReceipt } = useWaitForTransactionReceipt({
+  const { isLoading: isWithdrawPending, isSuccess: isWithdrawSuccess, data: withdrawReceipt, safe: withdrawSafe } = useTxReceipt({
     hash: withdrawHash,
     pollingInterval: 1_000,
   });
@@ -577,6 +578,8 @@ export function useVaultActions(
     isLoading: status !== "idle" && status !== "success" && status !== "error" && status !== "reverted",
     isSuccess: status === "success",
     isReverted: status === "reverted",
+    /** Set while a Safe transaction (approve/deposit/withdraw) waits for signatures/execution. */
+    safePending: [depositSafe, withdrawSafe, approvalSafe].find((s) => s?.isAwaitingExecution) ?? null,
     refetchAllowance,
     // Transaction hashes for tracking
     depositHash,

@@ -343,6 +343,7 @@ export function ZapPageContent() {
     approvalProgress,
     isApproving,
     simulationResult,
+    safePending,
   } = useZapActions(quote ?? null);
 
   const showApprovalCard = !!(
@@ -886,6 +887,14 @@ export function ZapPageContent() {
                   >
                     {isSimulatingPreview || showSimulationModal ? (
                       <>Simulating<LoadingDots /></>
+                    ) : safePending ? (
+                      <>
+                        Waiting for Safe
+                        {safePending.confirmationsRequired
+                          ? ` (${safePending.confirmations}/${safePending.confirmationsRequired} signed)`
+                          : ""}
+                        <LoadingDots />
+                      </>
                     ) : status === "checkingApproval" ? (
                       <>Checking approval<LoadingDots /></>
                     ) : status === "waitingApproval" ? (

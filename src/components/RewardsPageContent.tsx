@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useAccount, useWriteContract } from "wagmi";
+import { useTxReceipt } from "@/hooks/useTxReceipt";
 import { formatUnits } from "viem";
 import Link from "next/link";
 import Image from "next/image";
@@ -90,7 +91,7 @@ function RewardRow({ reward, claimReward = reward }: { reward: MerklReward; clai
   const claimableUsd = formattedClaimable * price;
 
   const { writeContract, data: txHash, isPending: isClaiming, error: writeError } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess: isConfirmed, error: receiptError } = useWaitForTransactionReceipt({ hash: txHash });
+  const { isLoading: isConfirming, isSuccess: isConfirmed, error: receiptError } = useTxReceipt({ hash: txHash });
 
   useEffect(() => {
     if (isConfirmed) {
