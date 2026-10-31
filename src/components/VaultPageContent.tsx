@@ -2187,13 +2187,8 @@ export function VaultPageContent({ id }: { id: string }) {
                           /* Approval choice: Exact or Unlimited */
                           <div className="space-y-2">
                             <div className="text-sm text-[var(--muted-foreground)]">
-                              Approve {vault.assetSymbol} for{" "}<span className="whitespace-nowrap">{vault.symbol} vault <a href={`https://etherscan.io/address/${vault.address}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={12} className="!inline -mt-0.5" /></a></span>
+                              {vaultBatchesApproval ? <>Approve {vault.assetSymbol} &amp; deposit in one Safe transaction, for{" "}</> : <>Approve {vault.assetSymbol} for{" "}</>}<span className="whitespace-nowrap">{vault.symbol} vault <a href={`https://etherscan.io/address/${vault.address}`} target="_blank" rel="noopener noreferrer" className="inline hover:text-[var(--foreground)] transition-colors"><ExternalLink size={12} className="!inline -mt-0.5" /></a></span>
                             </div>
-                            {vaultBatchesApproval && (
-                              <div className="text-xs text-[var(--muted-foreground)]">
-                                Your Safe approves and deposits in one transaction.
-                              </div>
-                            )}
                             <div className="flex gap-2">
                               <button
                                 onClick={() => {
@@ -2599,7 +2594,8 @@ export function VaultPageContent({ id }: { id: string }) {
                         approvalProgress={zapApprovalProgress}
                         decimals={zapDirection === "in" ? (zapInputToken?.decimals ?? 18) : 18}
                         isApproving={zapIsApproving}
-                        note={zapBatchesApproval ? "Your Safe approves and zaps in one transaction. If it executes after the price moves past your slippage, it fails and nothing changes." : undefined}
+                        title={zapBatchesApproval ? "Approve & zap in one Safe transaction" : undefined}
+                  note={zapBatchesApproval ? "If your Safe executes after the price moves past your slippage, the zap fails and nothing changes." : undefined}
                         onApprove={(exact) => guardHighImpact("Approve & zap", () => zapApprove(exact))}
                       />
 
