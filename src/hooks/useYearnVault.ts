@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { formatUsd } from "@/lib/utils";
 import { QUERY_CONFIG } from "@/config/query";
+import { formatApy } from "@/lib/apy";
 
 interface YearnVaultAsset {
   address: string;
@@ -148,11 +149,11 @@ export function formatYearnVaultData(
     tvlFormatted: formatUsd(vault.tvl?.close ?? 0),
     // Kong returns APY as decimal (0.26 = 26%), multiply by 100 for display
     apy: (vault.apy?.close ?? 0) * 100,
-    apyFormatted: `${((vault.apy?.close ?? 0) * 100).toFixed(2)}%`,
+    apyFormatted: formatApy((vault.apy?.close ?? 0) * 100),
     grossApr: (vault.apy?.grossApr ?? 0) * 100,
-    grossAprFormatted: `${((vault.apy?.grossApr ?? 0) * 100).toFixed(2)}%`,
+    grossAprFormatted: formatApy((vault.apy?.grossApr ?? 0) * 100),
     weeklyApy: (vault.apy?.weeklyNet ?? 0) * 100,
-    weeklyApyFormatted: `${((vault.apy?.weeklyNet ?? 0) * 100).toFixed(2)}%`,
+    weeklyApyFormatted: formatApy((vault.apy?.weeklyNet ?? 0) * 100),
     weeklyApr: (() => {
       const perfFeeRate = (vault.fees?.performanceFee ?? 0) / 10000;
       return perfFeeRate < 1
@@ -167,9 +168,9 @@ export function formatYearnVaultData(
       return `${apr.toFixed(2)}%`;
     })(),
     monthlyApy: (vault.apy?.monthlyNet ?? 0) * 100,
-    monthlyApyFormatted: `${((vault.apy?.monthlyNet ?? 0) * 100).toFixed(2)}%`,
+    monthlyApyFormatted: formatApy((vault.apy?.monthlyNet ?? 0) * 100),
     inceptionApy: (vault.apy?.inceptionNet ?? 0) * 100,
-    inceptionApyFormatted: `${((vault.apy?.inceptionNet ?? 0) * 100).toFixed(2)}%`,
+    inceptionApyFormatted: formatApy((vault.apy?.inceptionNet ?? 0) * 100),
     pricePerShare,
     pricePerShareFormatted: pricePerShare.toFixed(4),
     managementFee: vault.fees?.managementFee ?? 0,
