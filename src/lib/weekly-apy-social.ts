@@ -57,6 +57,16 @@ const WEEKLY_APY_VAULTS = [
     symbolSuffix: "cvxCRV",
     underlying: "cvxCRV",
   },
+  {
+    address: VAULT_ADDRESSES.YSCVX,
+    icon: "/yscvx-128.png",
+    label: "Convex Finance",
+    protocolLogo: "/tokens/convex.png",
+    symbol: "ysCVX",
+    symbolPrefix: "ys",
+    symbolSuffix: "CVX",
+    underlying: "CVX",
+  },
 ] as const;
 
 async function fetchVaultWeeklyApy(
