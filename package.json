@@ -44,21 +44,21 @@
   "dependencies": {
     "@ensofinance/sdk": "2.6.0",
     "@rainbow-me/rainbowkit": "2.2.11",
-    "@tanstack/react-query": "5.104.5",
+    "@tanstack/react-query": "5.105.0",
     "@xyflow/react": "12.12.0",
     "@yldfi/curve-amm-math": "1.9.0",
     "clsx": "2.1.1",
     "lightweight-charts": "5.2.1",
-    "lucide-react": "1.61.0",
+    "lucide-react": "1.64.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "sonner": "2.0.8",
     "tailwind-merge": "3.7.0",
-    "viem": "2.57.11",
+    "viem": "2.57.13",
     "wagmi": "2.19.5"
   },
   "devDependencies": {
-    "@opennextjs/cloudflare": "1.20.13",
+    "@opennextjs/cloudflare": "1.20.14",
     "@openzeppelin/contracts": "5.6.1",
     "@playwright/test": "1.64.1",
     "@tailwindcss/postcss": "4.3.3",
@@ -82,7 +82,7 @@
     "typescript": "6.0.3",
     "vite": "8.3.5",
     "vitest": "5.0.5",
-    "wrangler": "4.152.0"
+    "wrangler": "4.155.0"
   },
   "pnpm": {
     "overrides": {
