@@ -32,6 +32,7 @@ import { useTokenBalances } from "@/hooks/useTokenBalances";
 import { ETH_ADDRESS, applyKnownTokenMetadata, getCustomTokenMetadata } from "@/lib/enso";
 import { cn, formatDisplayAmount } from "@/lib/utils";
 import { parseQuoteError } from "@/lib/quote-errors";
+import { QUOTE_IDLE_MS, isQuoteOlderThan } from "@/lib/quote-freshness";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { fillMissingSimulationUsd } from "@/lib/simulation-pricing";
 import { getMaxEthAmount } from "@/lib/eth-gas";
@@ -51,10 +52,7 @@ import {
 import type { EnsoToken } from "@/types/enso";
 
 const STORAGE_PREFIX = "yldfi-universal-zap";
-/** Stop auto re-quoting after this long without user activity. */
-const QUOTE_IDLE_MS = 3 * 60 * 1000;
-/** Refuse to execute a quote older than this (the refresh interval is 60 s). */
-const QUOTE_MAX_AGE_MS = 90 * 1000;
+
 
 const ENTRY_DISABLED_VAULT_ADDRESSES = Object.values(VAULTS)
   .filter(isVaultEntryDisabled)
@@ -286,7 +284,7 @@ export function ZapPageContent() {
     autoRefresh: !isIdle,
   });
   const isQuoteTooOld = useCallback(
-    () => quoteUpdatedAt > 0 && Date.now() - quoteUpdatedAt > QUOTE_MAX_AGE_MS,
+    () => isQuoteOlderThan(quoteUpdatedAt),
     [quoteUpdatedAt],
   );
   // Back from idle: re-quote right away if the one on screen has aged.

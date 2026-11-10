@@ -19,6 +19,8 @@ interface UseZapQuoteParams {
   slippage?: string;
   underlyingTokenPrice?: number;
   paused?: boolean;
+  /** See useUniversalZap: re-quote every 60 s while true (default). */
+  autoRefresh?: boolean;
 }
 
 function buildVaultToken(vaultAddress: string): EnsoToken | null {
@@ -57,6 +59,7 @@ export function useZapQuote({
   slippage = "50",
   underlyingTokenPrice: _underlyingTokenPrice,
   paused = false,
+  autoRefresh = true,
 }: UseZapQuoteParams) {
   const { address: userAddress } = useAccount();
   const publicClient = usePublicClient();
@@ -70,6 +73,7 @@ export function useZapQuote({
   // one side is always the current vault token, the other is user-selected.
   const {
     quote,
+    quoteUpdatedAt,
     isLoading,
     error,
     refetch,
@@ -79,6 +83,7 @@ export function useZapQuote({
     inputAmount,
     slippage,
     paused,
+    autoRefresh,
   });
 
   // Validate quote with eth_call on quote refresh (dev only)
@@ -171,6 +176,7 @@ export function useZapQuote({
 
   return {
     quote,
+    quoteUpdatedAt,
     isLoading,
     error,
     refetch,
