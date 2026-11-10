@@ -98,4 +98,50 @@ describe("CVX → ysCVX direct vault deposit", () => {
     expect(quote!.route).toEqual([]);
     expect(result.current.error).toBeNull();
   });
+
+  // Regression (6 Nov): the /zap "Value" row showed shares × CVX price, so
+  // 13.01 CVX → 10.03 ysCVX read ~$18.75 while the simulation showed ~$24.32.
+  describe("USD values use assets-per-share", () => {
+    const PPS = 1.3;
+    beforeEach(() => {
+      vi.mocked(usePublicClient).mockReturnValue({
+        readContract: vi.fn(async ({ functionName, args }: { functionName: string; args: [bigint] }) => {
+          const amount = Number(args[0]) / 1e18;
+          if (functionName === "previewDeposit") return BigInt(Math.round((amount / PPS) * 1e18));
+          if (functionName === "previewRedeem") return BigInt(Math.round(amount * PPS * 1e18));
+          if (functionName === "convertToAssets") return BigInt(Math.round(PPS * 1e18));
+          return 0n;
+        }),
+      } as unknown as ReturnType<typeof usePublicClient>);
+    });
+
+    async function quoteFor(inputToken: EnsoToken, outputToken: EnsoToken, inputAmount: string) {
+      const { result } = renderHook(
+        () => useUniversalZap({ inputToken, outputToken, inputAmount, slippage: "50" }),
+        { wrapper },
+      );
+      await waitFor(
+        () => expect(result.current.quote || result.current.error).toBeTruthy(),
+        { timeout: 4000 },
+      );
+      expect(result.current.error).toBeNull();
+      return result.current.quote!;
+    }
+
+    it("deposit: output shares are valued at NAV, matching the input", async () => {
+      const quote = await quoteFor(CVX_TOKEN, YSCVX_TOKEN, "13");
+      expect(quote.directVault?.action).toBe("deposit");
+      expect(quote.inputUsdValue).toBeCloseTo(26, 6);
+      expect(quote.outputUsdValue).toBeCloseTo(26, 6);
+      expect(quote.priceImpact).toBeNull();
+    });
+
+    it("withdraw: input shares are valued at NAV, matching the output", async () => {
+      const quote = await quoteFor(YSCVX_TOKEN, CVX_TOKEN, "10");
+      expect(quote.directVault?.action).toBe("withdraw");
+      expect(quote.inputUsdValue).toBeCloseTo(26, 6);
+      expect(quote.outputUsdValue).toBeCloseTo(26, 6);
+      expect(quote.priceImpact).toBeNull();
+    });
+  });
 });

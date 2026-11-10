@@ -52,6 +52,7 @@ import { PUBLIC_RPC_URLS } from "@/config/rpc";
 import { ERC4626_ABI, VAULT_ABI } from "@/lib/abis";
 import {
   annotateEnsoStepSlippage,
+  assertBundleMatchesRouteEstimate,
   calculateCvxLegPriceImpact,
   calculateRoutePriceImpact,
   calculateValueDeltaImpact,
@@ -314,10 +315,28 @@ export function useUniversalZap({
 
         const outFmt = formatUnits(outputRaw, outputDecimals);
         const outNum = Number(outFmt);
-        const priceMap = await getPrices([underlying]);
+        const vaultCachePps =
+          (vaultCache as Record<string, { pps?: number }> | undefined)?.[vault.id]?.pps;
+        const [priceMap, aps] = await Promise.all([
+          getPrices([underlying]),
+          getAssetsPerShare(publicClient, vaultAddress, vaultCachePps),
+        ]);
         const underPx = priceMap.get(underlying.toLowerCase()) ?? null;
-        const inUsd = underPx !== null ? inNum * underPx : null;
-        const outUsd = underPx !== null ? outNum * underPx : null;
+        // The share side is worth shares × assets-per-share × underlying price,
+        // not shares × underlying price. Without aps, value the shares at NAV
+        // (equal to the underlying side): deposit/redeem has no swap, so that
+        // is the honest fallback, rather than a 1:1 share-to-underlying guess.
+        const underlyingNum = isDirectDeposit ? inNum : outNum;
+        const shareNum = isDirectDeposit ? outNum : inNum;
+        const underlyingUsd = underPx !== null ? underlyingNum * underPx : null;
+        const shareUsd =
+          underPx !== null
+            ? aps !== null && aps > 0
+              ? shareNum * aps * underPx
+              : underlyingUsd
+            : null;
+        const inUsd = isDirectDeposit ? underlyingUsd : shareUsd;
+        const outUsd = isDirectDeposit ? shareUsd : underlyingUsd;
 
         const routeInfo: RouteInfo = isDirectDeposit
           ? {
@@ -435,6 +454,12 @@ export function useUniversalZap({
                 { tokenSymbol: outputToken.symbol, action: "Receive", description: `${outputToken.symbol} shares`, protocol: "yld" },
               ],
         };
+        assertBundleMatchesRouteEstimate({
+          routeInfo,
+          underlyingSymbol: getTokenSymbol(targetUnderlying),
+          bundleUnderlying: targetAps !== null ? outNum * targetAps : null,
+          slippageBps: slippage,
+        });
 
         return {
           inputToken,
@@ -892,6 +917,12 @@ export function useUniversalZap({
           ],
         };
         const routeInfo = (bundle as { routeInfo?: RouteInfo }).routeInfo ?? fallbackRouteInfo;
+        assertBundleMatchesRouteEstimate({
+          routeInfo,
+          underlyingSymbol: getTokenSymbol(underlying),
+          bundleUnderlying: aps !== null ? outNum * aps : null,
+          slippageBps: slippage,
+        });
         const priceImpact = underlyingNeedsCvxFallback
           ? calculateCvxLegPriceImpact({
               inputUsd: inUsd,
