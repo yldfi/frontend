@@ -121,7 +121,7 @@ describe("useTxReceipt", () => {
   });
 
   /** Safe service by URL: the pending tx is nonce 5; the Safe is now at `safeNonce`. */
-  function mockSafeService(safeNonce: number, executedAtNonce5?: { to: string; value: string; data: string | null }) {
+  function mockSafeService(safeNonce: number, executedAtNonce5?: { safeTxHash?: string; to: string; value: string; data: string | null }) {
     fetchMock.mockImplementation(async (url: string) => {
       if (url.includes("/multisig-transactions/" + SAFE_TX_HASH)) {
         return serviceResponse(200, {
@@ -158,6 +158,28 @@ describe("useTxReceipt", () => {
 
     await waitFor(() => expect(result.current.safe?.outcome).toBe("replaced"));
     expect(result.current.error?.message).toMatch(/replaced in your Safe/);
+  });
+
+  it("doesn't call our own just-executed tx 'replaced' while the service catches up", async () => {
+    mockUseIsSafeWallet.mockReturnValue(true);
+    // Nonce moved past, and the executed tx at that nonce is ours (no transactionHash on ours yet).
+    mockSafeService(6, { safeTxHash: SAFE_TX_HASH, to: "0x1111111111111111111111111111111111111111", value: "0", data: "0xa9059cbb" } as never);
+
+    const { result } = renderHook(() => useTxReceipt({ hash: SAFE_TX_HASH }), { wrapper });
+
+    await waitFor(() => expect(result.current.safe).not.toBeNull());
+    expect(result.current.safe).toMatchObject({ isAwaitingExecution: true, outcome: null });
+    expect(result.current.isError).toBe(false);
+  });
+
+  it("keeps waiting when no executed tx is listed at the nonce yet", async () => {
+    mockUseIsSafeWallet.mockReturnValue(true);
+    mockSafeService(6);
+
+    const { result } = renderHook(() => useTxReceipt({ hash: SAFE_TX_HASH }), { wrapper });
+
+    await waitFor(() => expect(result.current.safe).not.toBeNull());
+    expect(result.current.safe).toMatchObject({ isAwaitingExecution: true, outcome: null });
   });
 
   it("keeps waiting while the Safe's nonce hasn't moved past the tx", async () => {

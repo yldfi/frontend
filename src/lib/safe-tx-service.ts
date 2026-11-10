@@ -75,7 +75,7 @@ export async function fetchSafeMultisigTx(
   let outcome: SafeTxOutcome = null;
   if (!isExecuted && body.safe && ADDRESS_RE.test(body.safe) && body.nonce !== undefined) {
     // Best effort: a failed check just means "still pending" for another poll.
-    outcome = await fetchNonceOutcome(base, body.safe, Number(body.nonce), signal).catch(() => null);
+    outcome = await fetchNonceOutcome(base, body.safe, Number(body.nonce), safeTxHash, signal).catch(() => null);
   }
 
   return {
@@ -99,6 +99,7 @@ export async function fetchNonceOutcome(
   base: string,
   safe: string,
   nonce: number,
+  ownSafeTxHash: string,
   signal?: AbortSignal,
 ): Promise<SafeTxOutcome> {
   if (!Number.isInteger(nonce) || nonce < 0) return null;
@@ -111,10 +112,14 @@ export async function fetchNonceOutcome(
     `${base}/api/v1/safes/${safe}/multisig-transactions/?nonce=${nonce}&executed=true&limit=1`,
     { signal },
   );
-  if (!execRes.ok) return "replaced";
+  // Not "replaced" on uncertainty: right after our own tx executes, the Safe's
+  // nonce can move before the service lists the tx as executed.
+  if (!execRes.ok) return null;
   const executed = ((await execRes.json()) as {
-    results?: Array<{ to?: string; value?: string; data?: string | null }>;
+    results?: Array<{ safeTxHash?: string; to?: string; value?: string; data?: string | null }>;
   }).results?.[0];
+  if (!executed) return null;
+  if (executed.safeTxHash?.toLowerCase() === ownSafeTxHash.toLowerCase()) return null;
   const isRejection = Boolean(
     executed &&
       executed.to?.toLowerCase() === safe.toLowerCase() &&
