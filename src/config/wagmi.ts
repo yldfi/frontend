@@ -8,6 +8,7 @@ import {
 import { PUBLIC_RPC_URLS } from "./rpc";
 import { installActiveConnectorGuard } from "@/lib/wallet-connection-guard";
 import { installLateReconnect } from "@/lib/wallet-late-reconnect";
+import { installSingleConnectionPolicy } from "@/lib/wallet-single-connection";
 
 // Anvil fork RPC for local testing (set NEXT_PUBLIC_ANVIL_RPC=http://127.0.0.1:8545)
 // NOTE: use process.env.X (not process.env?.X) so Next.js DefinePlugin inlines it in the browser bundle
@@ -72,6 +73,7 @@ export const config = createConfig({
 });
 
 installActiveConnectorGuard(config);
+installSingleConnectionPolicy(config);
 installLateReconnect(config);
 
 export const supportedChains = [mainnet] as const;
