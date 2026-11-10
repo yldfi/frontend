@@ -1,3 +1,4 @@
+import { ROUTE_QUOTE_SHORTFALL_MESSAGE_PREFIX } from "@/lib/price-impact";
 /** Turn a zap quote error (Enso API, intent guard or proxy) into a short user-facing message. */
 export function parseQuoteError(error: Error | null | undefined): string {
   if (!error) return "Failed to get quote";
@@ -6,6 +7,10 @@ export function parseQuoteError(error: Error | null | undefined): string {
 
   // Route deliberately disabled (message names the pair and the workaround)
   if (normalizedMsg.includes("temporarily unavailable")) {
+    return msg;
+  }
+  // Bundle quote far below the route's standalone estimate (price-impact.ts)
+  if (msg.startsWith(ROUTE_QUOTE_SHORTFALL_MESSAGE_PREFIX)) {
     return msg;
   }
   // Already user-facing from the /api/enso proxy (getFriendlyEnsoError)

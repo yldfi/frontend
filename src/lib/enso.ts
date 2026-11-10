@@ -4574,9 +4574,9 @@ export async function fetchUCrvZapInRoute(params: {
   ];
 
   if (targetIsCvxCrv) {
-    steps.push({ tokenSymbol: "cvxCRV", amount: conservativeCvxCrv, action: "Deposit", description: `cvxCRV into ${vaultSymbol}`, protocol: "yld" });
+    steps.push({ tokenSymbol: "cvxCRV", amount: formatRouteAmount(conservativeCvxCrv, CVXCRV_ADDRESS), rawAmount: conservativeCvxCrv, action: "Deposit", description: `cvxCRV into ${vaultSymbol}`, protocol: "yld" });
   } else {
-    steps.push({ tokenSymbol: "cvxCRV", amount: conservativeCvxCrv, action: "Swap", description: `cvxCRV for ${targetUnderlyingSymbol}`, protocol: "Enso" });
+    steps.push({ tokenSymbol: "cvxCRV", amount: formatRouteAmount(conservativeCvxCrv, CVXCRV_ADDRESS), rawAmount: conservativeCvxCrv, action: "Swap", description: `cvxCRV for ${targetUnderlyingSymbol}`, protocol: "Enso" });
     steps.push({ tokenSymbol: targetUnderlyingSymbol, amount: formatRouteAmount(expectedTargetUnderlyingOutput, targetUnderlying), action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld" });
   }
 
@@ -5125,9 +5125,9 @@ export async function fetchBeefyZapInRoute(params: {
   ];
 
   if (sameUnderlying) {
-    steps.push({ tokenSymbol: beefyUnderlyingSymbol, amount: conservativeUnderlying, action: "Deposit", description: `${beefyUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld" });
+    steps.push({ tokenSymbol: beefyUnderlyingSymbol, amount: formatRouteAmount(conservativeUnderlying, params.beefyVaultUnderlying), rawAmount: conservativeUnderlying, action: "Deposit", description: `${beefyUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld" });
   } else {
-    steps.push({ tokenSymbol: beefyUnderlyingSymbol, amount: conservativeUnderlying, action: "Swap", description: `${beefyUnderlyingSymbol} for ${targetUnderlyingSymbol}`, protocol: "Enso" });
+    steps.push({ tokenSymbol: beefyUnderlyingSymbol, amount: formatRouteAmount(conservativeUnderlying, params.beefyVaultUnderlying), rawAmount: conservativeUnderlying, action: "Swap", description: `${beefyUnderlyingSymbol} for ${targetUnderlyingSymbol}`, protocol: "Enso" });
     steps.push({ tokenSymbol: targetUnderlyingSymbol, amount: formatRouteAmount(expectedTargetUnderlyingOutput, targetUnderlying), action: "Deposit", description: `${targetUnderlyingSymbol} into ${vaultSymbol}`, protocol: "yld" });
   }
 

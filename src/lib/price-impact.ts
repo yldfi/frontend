@@ -129,3 +129,81 @@ export function annotateEnsoStepSlippage(
     ),
   };
 }
+
+// A bundle quote this far below the route's own standalone estimate is a bad
+// Enso quote, not market impact: the standalone leg and the bundle are priced
+// in the same request, so honest quotes agree to within a few tenths of a
+// percent. 5 Nov 2026: yvUSDC-1 → yscvxCRV bundled 1,095.65 shares while every
+// on-chain path (and the standalone leg, 2,028 cvxCRV) gave ~1,777 shares. The
+// bundle's slippage floor is derived from its own quote, so executing it would
+// have locked in the ~38% loss.
+export const ROUTE_QUOTE_SHORTFALL_LIMIT_PCT = 5;
+
+export const ROUTE_QUOTE_SHORTFALL_MESSAGE_PREFIX = "Enso returned a bad quote";
+
+function parseDisplayAmount(value: string | undefined): number | null {
+  if (!value) return null;
+  const parsed = Number(value.replace(/,/g, ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+/**
+ * Amount of the vault's underlying that the route's standalone estimate says
+ * will be deposited (the "Deposit" step that feeds the target vault).
+ */
+export function routeDepositEstimate(
+  routeInfo: RouteInfo | null | undefined,
+  underlyingSymbol: string,
+): number | null {
+  const symbol = underlyingSymbol.toLowerCase();
+  const steps = routeInfo?.steps ?? [];
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const step = steps[i];
+    if (step.action?.toLowerCase() !== "deposit") continue;
+    if (step.tokenSymbol?.toLowerCase() !== symbol) continue;
+    return parseDisplayAmount(step.amount);
+  }
+  return null;
+}
+
+/** Percent by which the bundle delivers less than the estimate (negative = more). */
+export function routeQuoteShortfallPct(
+  estimatedUnderlying: number | null,
+  bundleUnderlying: number | null,
+): number | null {
+  if (estimatedUnderlying === null || bundleUnderlying === null) return null;
+  // A real 0 is a 100% shortfall. Callers pass null when the bundle has no
+  // amountsOut entry for the output (Enso omits some vault outputs).
+  if (!(estimatedUnderlying > 0) || !Number.isFinite(bundleUnderlying) || bundleUnderlying < 0) {
+    return null;
+  }
+  return ((estimatedUnderlying - bundleUnderlying) / estimatedUnderlying) * 100;
+}
+
+/**
+ * Throws when a zap into a vault would deposit far less of the underlying than
+ * the route's standalone estimate. `bundleUnderlying` is the bundle's share
+ * output × assets-per-share. Skips silently when either side is unknown.
+ */
+export function assertBundleMatchesRouteEstimate(params: {
+  routeInfo: RouteInfo | null | undefined;
+  underlyingSymbol: string;
+  bundleUnderlying: number | null;
+  /** User slippage in bps. Some builders size bundle legs with this buffer, so the limit never drops below it. */
+  slippageBps?: string | number;
+}): void {
+  const estimate = routeDepositEstimate(params.routeInfo, params.underlyingSymbol);
+  const shortfall = routeQuoteShortfallPct(estimate, params.bundleUnderlying);
+  const slippagePct = Number(params.slippageBps ?? 0) / 100;
+  const limit = Math.max(
+    ROUTE_QUOTE_SHORTFALL_LIMIT_PCT,
+    Number.isFinite(slippagePct) ? slippagePct + 1 : 0,
+  );
+  if (shortfall === null || shortfall <= limit) return;
+  const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  throw new Error(
+    `${ROUTE_QUOTE_SHORTFALL_MESSAGE_PREFIX}: the zap would deposit ~${fmt(params.bundleUnderlying!)} ` +
+      `${params.underlyingSymbol}, ${shortfall.toFixed(1)}% below the ~${fmt(estimate!)} ` +
+      `${params.underlyingSymbol} the market route gives. Try again in a moment or change the amount.`,
+  );
+}
