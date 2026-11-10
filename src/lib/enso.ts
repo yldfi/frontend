@@ -318,28 +318,6 @@ const isNativeETH = (token: string) =>
  * append a wrapped-native/redeem action to unwrap WETH → ETH.
  * This avoids the weiroll slippage check failure for native ETH output.
  */
-/**
- * skipQuote bundles that end CVX → WETH → unwrap report no native-ETH output, so the intent guard
- * rejects them. Estimate the WETH leg the bundle actually executes for display / the minimum.
- */
-async function ethOutputEstimate(params: {
-  outputToken: string;
-  amountsOut: Record<string, string> | undefined;
-  fromAddress: string;
-  cvxAmount: bigint;
-  slippage?: string;
-}): Promise<Record<string, string>> {
-  if (!isNativeETH(params.outputToken) || params.amountsOut?.[ETH_ADDRESS.toLowerCase()]) return {};
-  const quote = await fetchDynamicInputEstimate({
-    fromAddress: params.fromAddress,
-    tokenIn: TOKENS.CVX,
-    tokenOut: WETH_ADDRESS,
-    amountIn: params.cvxAmount.toString(),
-    slippage: params.slippage ?? "100",
-  });
-  return { [ETH_ADDRESS.toLowerCase()]: String(quote.amountOut) };
-}
-
 function appendETHUnwrapIfNeeded(actions: EnsoBundleAction[], outputToken: string): EnsoBundleAction[] {
   if (!isNativeETH(outputToken)) return actions;
 
@@ -387,6 +365,52 @@ function appendTerminalSlippageGuard(
     args: {
       amountOut: { useOutputOfCallAt: outputIndex },
       bps: slippageBps,
+    },
+  });
+}
+
+/**
+ * skipQuote bundles never quote their dynamic-input `route` leg, which Enso
+ * restricts to grapher/openocean (fetchBundle's ignoreAggregators). The leg's
+ * own minimum is derived from that restricted quote, so a bad restricted route
+ * (5 Nov 2026: ~38% below market) would execute short while the UI showed the
+ * unrestricted standalone estimate. Add an absolute floor from that estimate.
+ * Tolerance is max(5%, slippage + 1%): the restricted route normally prices a
+ * little worse (~1.5% on uCRV -> USDC on 10 Nov), so a tight floor would revert
+ * healthy zaps. Below the floor the tx reverts (gas only) instead of filling.
+ */
+export function appendDynamicRouteFloor(
+  actions: EnsoBundleAction[],
+  routeIndex: number,
+  standaloneEstimate: bigint | string,
+  slippage?: string,
+): void {
+  const route = actions[routeIndex];
+  if (!route || route.protocol !== "enso" || route.action !== "route") {
+    throw new Error("appendDynamicRouteFloor: routeIndex must point at an Enso route action");
+  }
+  const estimate = BigInt(standaloneEstimate);
+  if (estimate <= 0n) return;
+  const slippageBps = Number(slippage ?? "100");
+  const toleranceBps = BigInt(
+    Math.min(9000, Math.max(500, (Number.isFinite(slippageBps) ? slippageBps : 100) + 100)),
+  );
+  const floor = (estimate * (10000n - toleranceBps)) / 10000n;
+  if (floor <= 0n) return;
+  // Insert directly after the route so a trailing ETH unwrap stays the final
+  // (delivery) action. Splicing shifts later actions, so refuse if any of them
+  // references an index past the route.
+  const later = actions.slice(routeIndex + 1);
+  const refs = [...JSON.stringify(later).matchAll(/"useOutputOfCallAt":(\d+)/g)].map((m) => Number(m[1]));
+  if (refs.some((ref) => ref > routeIndex)) {
+    throw new Error("appendDynamicRouteFloor: actions after the route reference later outputs");
+  }
+  actions.splice(routeIndex + 1, 0, {
+    protocol: "enso",
+    action: "minamountout",
+    args: {
+      amountOut: { useOutputOfCallAt: routeIndex },
+      minAmountOut: floor.toString(),
     },
   });
 }
@@ -6316,6 +6340,7 @@ export async function fetchAnyFromLpxCvxRoute(params: {
     },
   ];
 
+  let cvxLegEstimate = "0";
   if (outputIsCvx) {
     actions.push({
       protocol: "erc20",
@@ -6327,6 +6352,15 @@ export async function fetchAnyFromLpxCvxRoute(params: {
       },
     });
   } else {
+    // Standalone estimate of the CVX leg (unrestricted aggregators): the floor
+    // below, and the ETH output figure. Execution routes to WETH for ETH.
+    cvxLegEstimate = (await fetchDynamicInputEstimate({
+      fromAddress: params.fromAddress,
+      tokenIn: TOKENS.CVX,
+      tokenOut: isNativeETH(params.outputToken) ? WETH_ADDRESS : params.outputToken,
+      amountIn: expectedCvx.toString(),
+      slippage: params.slippage ?? "100",
+    })).amountOut;
     actions.push({
       protocol: "enso",
       action: "route",
@@ -6337,7 +6371,9 @@ export async function fetchAnyFromLpxCvxRoute(params: {
         slippage: params.slippage ?? "100",
       },
     });
+    const routeIdx = actions.length - 1;
     appendETHUnwrapIfNeeded(actions, params.outputToken);
+    appendDynamicRouteFloor(actions, routeIdx, cvxLegEstimate, params.slippage);
   }
 
   const bundleResult = await fetchBundle({
@@ -6387,7 +6423,10 @@ export async function fetchAnyFromLpxCvxRoute(params: {
     amountsOut: {
       ...bundleResult.amountsOut,
       ...(outputIsCvx ? { [TOKENS.CVX.toLowerCase()]: expectedCvx.toString() } : {}),
-      ...(await ethOutputEstimate({ outputToken: params.outputToken, amountsOut: bundleResult.amountsOut, fromAddress: params.fromAddress, cvxAmount: expectedCvx, slippage: params.slippage })),
+      // The CVX leg was already quoted above (WETH for ETH outputs); reuse it.
+      ...(isNativeETH(params.outputToken) && !bundleResult.amountsOut?.[ETH_ADDRESS.toLowerCase()] && cvxLegEstimate !== "0"
+        ? { [ETH_ADDRESS.toLowerCase()]: String(cvxLegEstimate) }
+        : {}),
     },
     routeInfo: {
       steps,
@@ -6468,6 +6507,7 @@ export async function fetchAnyFromPxCvxRoute(params: {
     },
   ];
 
+  let cvxLegEstimate = "0";
   if (outputIsCvx) {
     actions.push({
       protocol: "erc20",
@@ -6479,6 +6519,15 @@ export async function fetchAnyFromPxCvxRoute(params: {
       },
     });
   } else {
+    // Standalone estimate of the CVX leg (unrestricted aggregators): the floor
+    // below, and the ETH output figure. Execution routes to WETH for ETH.
+    cvxLegEstimate = (await fetchDynamicInputEstimate({
+      fromAddress: params.fromAddress,
+      tokenIn: TOKENS.CVX,
+      tokenOut: isNativeETH(params.outputToken) ? WETH_ADDRESS : params.outputToken,
+      amountIn: expectedCvx.toString(),
+      slippage: params.slippage ?? "100",
+    })).amountOut;
     actions.push({
       protocol: "enso",
       action: "route",
@@ -6489,7 +6538,9 @@ export async function fetchAnyFromPxCvxRoute(params: {
         slippage: params.slippage ?? "100",
       },
     });
+    const routeIdx = actions.length - 1;
     appendETHUnwrapIfNeeded(actions, params.outputToken);
+    appendDynamicRouteFloor(actions, routeIdx, cvxLegEstimate, params.slippage);
   }
 
   const bundleResult = await fetchBundle({
@@ -6545,7 +6596,10 @@ export async function fetchAnyFromPxCvxRoute(params: {
     amountsOut: {
       ...bundleResult.amountsOut,
       ...(outputIsCvx ? { [TOKENS.CVX.toLowerCase()]: expectedCvx.toString() } : {}),
-      ...(await ethOutputEstimate({ outputToken: params.outputToken, amountsOut: bundleResult.amountsOut, fromAddress: params.fromAddress, cvxAmount: expectedCvx, slippage: params.slippage })),
+      // The CVX leg was already quoted above (WETH for ETH outputs); reuse it.
+      ...(isNativeETH(params.outputToken) && !bundleResult.amountsOut?.[ETH_ADDRESS.toLowerCase()] && cvxLegEstimate !== "0"
+        ? { [ETH_ADDRESS.toLowerCase()]: String(cvxLegEstimate) }
+        : {}),
     },
     routeInfo: {
       steps,
@@ -6659,6 +6713,7 @@ export async function fetchAnyFromUCvxRoute(params: {
   ];
 
   // 5: CVX → output token. CVX itself is just sent on (Enso has no CVX → CVX route).
+  let cvxLegEstimate = "0";
   if (outputIsCvx) {
     actions.push({
       protocol: "erc20",
@@ -6666,6 +6721,15 @@ export async function fetchAnyFromUCvxRoute(params: {
       args: { token: TOKENS.CVX, amount: { useOutputOfCallAt: 4 }, receiver: params.fromAddress },
     });
   } else {
+    // Standalone estimate of the CVX leg (unrestricted aggregators): the floor
+    // below, and the ETH output figure. Execution routes to WETH for ETH.
+    cvxLegEstimate = (await fetchDynamicInputEstimate({
+      fromAddress: params.fromAddress,
+      tokenIn: TOKENS.CVX,
+      tokenOut: isNativeETH(params.outputToken) ? WETH_ADDRESS : params.outputToken,
+      amountIn: expectedCvx.toString(),
+      slippage: params.slippage ?? "100",
+    })).amountOut;
     actions.push({
       protocol: "enso",
       action: "route",
@@ -6676,7 +6740,9 @@ export async function fetchAnyFromUCvxRoute(params: {
         slippage: params.slippage ?? "100",
       },
     });
+    const routeIdx = actions.length - 1;
     appendETHUnwrapIfNeeded(actions, params.outputToken);
+    appendDynamicRouteFloor(actions, routeIdx, cvxLegEstimate, params.slippage);
   }
 
   const bundleResult = await fetchBundle({
@@ -6694,7 +6760,10 @@ export async function fetchAnyFromUCvxRoute(params: {
   } else {
     bundleResult.amountsOut = {
       ...bundleResult.amountsOut,
-      ...(await ethOutputEstimate({ outputToken: params.outputToken, amountsOut: bundleResult.amountsOut, fromAddress: params.fromAddress, cvxAmount: expectedCvx, slippage: params.slippage })),
+      // The CVX leg was already quoted above (WETH for ETH outputs); reuse it.
+      ...(isNativeETH(params.outputToken) && !bundleResult.amountsOut?.[ETH_ADDRESS.toLowerCase()] && cvxLegEstimate !== "0"
+        ? { [ETH_ADDRESS.toLowerCase()]: String(cvxLegEstimate) }
+        : {}),
     };
   }
 
@@ -6949,7 +7018,9 @@ export async function fetchAnyFromUCrvRoute(params: {
         slippage: params.slippage ?? "100",
       },
     });
+    const routeIdx = actions.length - 1;
     appendETHUnwrapIfNeeded(actions, params.outputToken);
+    appendDynamicRouteFloor(actions, routeIdx, expectedOutput, params.slippage);
   }
 
   const bundleResult = await fetchBundle({
@@ -7035,6 +7106,7 @@ export async function fetchAnyFromBeefyRoute(params: {
   ];
 
   let expectedOutput = "0";
+  let beefyRouteIdx = -1;
   if (!sameAsOutput) {
     // Execution routes to WETH and unwraps (appendETHUnwrapIfNeeded), so quote that leg: a native-ETH
     // quote can pick a different, worse route and understated ETH exits by ~40%.
@@ -7062,6 +7134,7 @@ export async function fetchAnyFromBeefyRoute(params: {
         slippage: params.slippage ?? "100",
       },
     });
+    beefyRouteIdx = actions.length - 1;
   }
 
   if (sameAsOutput) {
@@ -7076,6 +7149,7 @@ export async function fetchAnyFromBeefyRoute(params: {
   }
 
   appendETHUnwrapIfNeeded(actions, params.outputToken);
+  if (beefyRouteIdx >= 0) appendDynamicRouteFloor(actions, beefyRouteIdx, expectedOutput, params.slippage);
 
   const bundleResult = await fetchBundle({
     fromAddress: params.fromAddress,
@@ -8316,6 +8390,7 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
         slippage: params.slippage ?? "100",
       },
     });
+    appendDynamicRouteFloor(actions, actions.length - 1, totalExpectedTargetUnderlying, params.slippage);
   }
 
   // ── Step 5: Read target-underlying balance at ENSO_SHORTCUTS.
