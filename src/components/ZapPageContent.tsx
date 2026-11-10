@@ -29,7 +29,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
 
 import { ETH_ADDRESS, applyKnownTokenMetadata, getCustomTokenMetadata } from "@/lib/enso";
-import { cn } from "@/lib/utils";
+import { cn, formatDisplayAmount } from "@/lib/utils";
 import { parseQuoteError } from "@/lib/quote-errors";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { fillMissingSimulationUsd } from "@/lib/simulation-pricing";
@@ -462,10 +462,10 @@ export function ZapPageContent() {
     if (!quote) return null;
 
     return {
-      fromAmount: amount ? Number(amount).toFixed(4) : "0.0000",
+      fromAmount: amount ? formatDisplayAmount(amount) : "0.0000",
       fromSymbol: inputToken.symbol,
       fromLogo: inputToken.logoURI,
-      toAmount: Number(quote.outputAmountFormatted).toFixed(4),
+      toAmount: formatDisplayAmount(quote.outputAmountFormatted),
       toSymbol: outputToken.symbol,
       toLogo: outputToken.logoURI,
     };
@@ -651,7 +651,7 @@ export function ZapPageContent() {
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm text-[var(--muted-foreground)]">From</span>
                     <span className="text-xs mono text-[var(--muted-foreground)]">
-                      {inputBalanceNum.toFixed(4)}
+                      {formatDisplayAmount(inputBalanceNum)}
                     </span>
                   </div>
                   <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2 focus-within:ring-2 focus-within:ring-[var(--accent)] transition-shadow">
@@ -694,7 +694,7 @@ export function ZapPageContent() {
                       {quoteSettling
                         ? requestedOutputAmount || "—"
                         : quote
-                        ? Number(quote.outputAmountFormatted).toFixed(4)
+                        ? formatDisplayAmount(quote.outputAmountFormatted)
                         : requestedOutputAmount || "0.00"}
                     </span>
                     <TokenSelector
@@ -717,8 +717,8 @@ export function ZapPageContent() {
                         className="flex items-center gap-1 mono hover:text-[var(--accent)] transition-colors"
                       >
                         {rateInverted
-                          ? <>1 {outputToken.symbol} = {(1 / quote.exchangeRate).toFixed(4)} {inputToken.symbol}</>
-                          : <>1 {inputToken.symbol} = {quote.exchangeRate.toFixed(4)} {outputToken.symbol}</>
+                          ? <>1 {outputToken.symbol} = {formatDisplayAmount(1 / quote.exchangeRate)} {inputToken.symbol}</>
+                          : <>1 {inputToken.symbol} = {formatDisplayAmount(quote.exchangeRate)} {outputToken.symbol}</>
                         }
                         <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
                       </button>
@@ -995,10 +995,10 @@ export function ZapPageContent() {
                         routeInfo={quote?.routeInfo}
                         inputSymbol={inputToken.symbol}
                         outputSymbol={outputToken.symbol}
-                        inputAmount={amount ? Number(amount).toFixed(4) : undefined}
+                        inputAmount={amount ? formatDisplayAmount(amount) : undefined}
                         outputAmount={
                           quote?.outputAmountFormatted
-                            ? Number(quote.outputAmountFormatted).toFixed(4)
+                            ? formatDisplayAmount(quote.outputAmountFormatted)
                             : undefined
                         }
                         isLoading={quoteSettling}
@@ -1031,10 +1031,10 @@ export function ZapPageContent() {
                 routeInfo={quote?.routeInfo}
                 inputSymbol={inputToken.symbol}
                 outputSymbol={outputToken.symbol}
-                inputAmount={amount ? Number(amount).toFixed(4) : undefined}
+                inputAmount={amount ? formatDisplayAmount(amount) : undefined}
                 outputAmount={
                   quote?.outputAmountFormatted
-                    ? Number(quote.outputAmountFormatted).toFixed(4)
+                    ? formatDisplayAmount(quote.outputAmountFormatted)
                     : undefined
                 }
                 isLoading={quoteSettling}
