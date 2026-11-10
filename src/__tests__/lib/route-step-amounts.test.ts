@@ -1,3 +1,4 @@
+import * as ensoModule from "@/lib/enso";
 // @vitest-environment node
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -217,6 +218,7 @@ function mockPxCvxHybridSplit(): void {
 
 describe("route step amounts", () => {
   beforeEach(() => {
+    ensoModule.resetEnsoAggregatorCache();
     vi.clearAllMocks();
 
     vi.mocked(cryptoswap.getDy).mockImplementation((_params: unknown, i: number, j: number, dx: bigint) => {
