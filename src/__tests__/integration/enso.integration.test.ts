@@ -1,3 +1,4 @@
+import * as ensoModule from "@/lib/enso";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock the Enso SDK module - must be hoisted before imports
@@ -51,6 +52,7 @@ const mockFetch = vi.mocked(globalThis.fetch);
 
 describe("enso.ts integration", () => {
   beforeEach(() => {
+    ensoModule.resetEnsoAggregatorCache();
     vi.clearAllMocks();
   });
 

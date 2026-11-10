@@ -51,7 +51,7 @@ const ensoClient = new EnsoClient({
 // Rate limit disabled - testing shows Enso API handles rapid requests fine
 // Keep env var override in case we need to throttle in the future
 const ENSO_RATE_LIMIT_MS = Number(process.env.ENSO_RATE_LIMIT_MS ?? "0");
-const ENSO_MAX_RETRIES = Number(process.env.ENSO_MAX_RETRIES ?? "4");
+const ENSO_MAX_RETRIES = Number(process.env.ENSO_MAX_RETRIES ?? "3");
 let lastEnsoCallAt = 0;
 let ensoQueue: Promise<void> = Promise.resolve();
 
@@ -83,8 +83,13 @@ const enqueueEnsoCall = async <T>(fn: () => Promise<T>): Promise<T> => {
         if (!isEnsoRateLimit(error) || attempt === ENSO_MAX_RETRIES) {
           throw error;
         }
-        const backoffBase = ENSO_RATE_LIMIT_MS > 0 ? ENSO_RATE_LIMIT_MS : 1000;
-        const backoffMs = backoffBase * (attempt + 1);
+        // Enso's limit is per second (10 RPS on our plan), so a 429 clears
+        // within about a second. The old 1 s / 2 s / 3 s / 4 s ladder held this
+        // serial queue (and every quote behind it) for ~10 s; quote timings
+        // on 10 Nov clustered at exactly that. Back off 250 ms, 500 ms, 1 s.
+        const backoffMs = ENSO_RATE_LIMIT_MS > 0
+          ? ENSO_RATE_LIMIT_MS * (attempt + 1)
+          : 250 * 2 ** attempt;
         await sleep(backoffMs);
       }
     }
@@ -429,8 +434,31 @@ interface DynamicInputAggregatorPolicy {
   ignoreAggregators: string[];
 }
 
+// The aggregator list changes rarely but was fetched (through the serial Enso
+// queue) for every dynamic-input bundle. Cache it per isolate.
+const AGGREGATOR_CACHE_MS = 10 * 60 * 1000;
+let aggregatorCache: { at: number; list: Promise<string[]> } | null = null;
+
+/** Test hook: forget the cached aggregator list. */
+export function resetEnsoAggregatorCache(): void {
+  aggregatorCache = null;
+}
+
+function getCachedAggregators(): Promise<string[]> {
+  const now = Date.now();
+  if (aggregatorCache && now - aggregatorCache.at < AGGREGATOR_CACHE_MS) return aggregatorCache.list;
+  const list = enqueueEnsoCall(() => ensoClient.getAggregators(CHAIN_ID));
+  aggregatorCache = { at: now, list };
+  // Never keep a failure or an empty list.
+  list.then(
+    (value) => { if (value.length === 0 && aggregatorCache?.list === list) aggregatorCache = null; },
+    () => { if (aggregatorCache?.list === list) aggregatorCache = null; },
+  );
+  return list;
+}
+
 async function getDynamicInputAggregatorPolicy(): Promise<DynamicInputAggregatorPolicy> {
-  const aggregators = await enqueueEnsoCall(() => ensoClient.getAggregators(CHAIN_ID));
+  const aggregators = await getCachedAggregators();
   if (aggregators.length === 0) {
     throw new Error("Enso returned no aggregator policy for a dynamic-input route");
   }
