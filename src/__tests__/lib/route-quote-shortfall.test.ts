@@ -65,6 +65,10 @@ describe("bundle vs route-estimate guard", () => {
     expect(() =>
       assertBundleMatchesRouteEstimate({ routeInfo: ROUTE_5_NOV, underlyingSymbol: "cvxCRV", bundleUnderlying: 2500 }),
     ).not.toThrow();
+    // Enso omits amountsOut for some vault outputs → outRaw "0" is "unknown", not a 100% loss
+    expect(() =>
+      assertBundleMatchesRouteEstimate({ routeInfo: ROUTE_5_NOV, underlyingSymbol: "cvxCRV", bundleUnderlying: 0 }),
+    ).not.toThrow();
   });
 
   it("shows the guard message to the user unchanged", () => {

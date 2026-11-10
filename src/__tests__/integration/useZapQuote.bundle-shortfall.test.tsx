@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { useAccount, usePublicClient } from "wagmi";
 
 import { useUniversalZap } from "@/hooks/useUniversalZap";
-import { fetchExternalVaultZapInRoute } from "@/lib/enso";
+import { fetchExternalVaultZapInRoute, fetchVaultToVaultRoute } from "@/lib/enso";
 import { ROUTE_QUOTE_SHORTFALL_MESSAGE_PREFIX } from "@/lib/price-impact";
 import type { EnsoToken } from "@/types/enso";
 
@@ -26,6 +26,7 @@ vi.mock("@/lib/enso", async (importOriginal) => {
       addresses.map((address) => ({ address, price: 1 })),
     ),
     fetchExternalVaultZapInRoute: vi.fn(),
+    fetchVaultToVaultRoute: vi.fn(),
   };
 });
 
@@ -95,5 +96,60 @@ describe("external vault → yld vault zap: bundle shortfall guard", () => {
     const { quote, error } = await runQuote();
     expect(error).toBeNull();
     expect(Number(quote!.outputAmountFormatted)).toBeCloseTo(1777, 6);
+  });
+});
+
+describe("yld vault → yld vault zap: bundle shortfall guard", () => {
+  const YSCVX = "0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e";
+  const YSCVX_TOKEN: EnsoToken = { address: YSCVX, chainId: 1, symbol: "ysCVX", name: "ysCVX", decimals: 18, type: "defi" };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(useAccount).mockReturnValue({ address: USER, isConnected: true } as unknown as ReturnType<typeof useAccount>);
+    vi.mocked(usePublicClient).mockReturnValue({
+      readContract: vi.fn(async ({ functionName }: { functionName: string }) =>
+        functionName === "convertToAssets" ? BigInt(Math.round(PPS * 1e18)) : 0n,
+      ),
+    } as unknown as ReturnType<typeof usePublicClient>);
+  });
+
+  function vaultBundle(shares: string, depositEstimate: string) {
+    return {
+      tx: { to: "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf", data: "0x", value: "0", from: USER },
+      gas: "1000000",
+      amountsOut: { [YSCVX.toLowerCase()]: shares },
+      routeInfo: {
+        steps: [
+          { tokenSymbol: "yscvxCRV", amount: "1000", action: "Redeem", description: "yscvxCRV for cvxCRV", protocol: "yld" },
+          { tokenSymbol: "cvxCRV", amount: "1,137.65", action: "Swap", description: "cvxCRV for CVX", protocol: "Enso" },
+          { tokenSymbol: "CVX", amount: depositEstimate, action: "Deposit", description: "CVX into ysCVX", protocol: "yld" },
+          { tokenSymbol: "ysCVX", action: "Receive", description: "vault shares", protocol: "yld" },
+        ],
+      },
+    };
+  }
+
+  async function runVaultQuote() {
+    const { result } = renderHook(
+      () => useUniversalZap({ inputToken: YSCVXCRV_TOKEN, outputToken: YSCVX_TOKEN, inputAmount: "1000", slippage: "50" }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.quote || result.current.error).toBeTruthy(), { timeout: 8000 });
+    return result.current;
+  }
+
+  it("refuses a bundle depositing 30% less CVX than the route estimate", async () => {
+    // estimate 100 CVX; bundle 61.53 shares × pps 1.1377 ≈ 70 CVX
+    vi.mocked(fetchVaultToVaultRoute).mockResolvedValue(vaultBundle("61530000000000000000", "100") as never);
+    const { quote, error } = await runVaultQuote();
+    expect(quote).toBeFalsy();
+    expect(error?.message).toContain(ROUTE_QUOTE_SHORTFALL_MESSAGE_PREFIX);
+  });
+
+  it("accepts a bundle matching the route estimate", async () => {
+    vi.mocked(fetchVaultToVaultRoute).mockResolvedValue(vaultBundle("87800000000000000000", "100") as never);
+    const { quote, error } = await runVaultQuote();
+    expect(error).toBeNull();
+    expect(quote).toBeTruthy();
   });
 });
