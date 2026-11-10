@@ -26,6 +26,16 @@ describe("VaultPageContent logic", () => {
       expect(source).toMatch(/High price impact was already confirmed before the simulation ran\.\n\s+setZapPendingDetails\(\);\n\s+executeZap\(\{ skipSimulation: true \}\)/);
       expect(sends).toHaveLength(3);
     });
+
+    it("refuses to send a zap quote older than the freshness limit on every send path", () => {
+      // guardHighImpact covers the button and approve -> auto-execute.
+      expect(source).toMatch(/const guardHighImpact = \(label: string, run: \(\) => void\) => \{\n\s+if \(refreshIfZapQuoteTooOld\(\)\) return;/);
+      // Price-impact confirm and simulation confirm run after a pause.
+      expect(source).toMatch(/setPendingImpactAction\(null\);\n\s+if \(refreshIfZapQuoteTooOld\(\)\) return;\n\s+run\(\);/);
+      expect(source).toMatch(/setShowSimulationModal\(false\);\n\s+if \(refreshIfZapQuoteTooOld\(\)\) return;\n\s+\/\/ High price impact/);
+      // The 60 s re-quote stops while idle.
+      expect(source).toContain("autoRefresh: !isZapIdle,");
+    });
   });
 
   describe("form balance contract selection", () => {

@@ -29,7 +29,7 @@ import {
   useMerklRewards,
   useMerklOpportunities,
 } from "@/hooks/useMerklRewards";
-import { formatUsd } from "@/lib/utils";
+import { formatDisplayAmount, formatUsd } from "@/lib/utils";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { useCurveLendingVault, formatCurveVaultData } from "@/hooks/useCurveLendingData";
@@ -48,6 +48,8 @@ import { useVaultActions } from "@/hooks/useVaultActions";
 import { useZapQuote } from "@/hooks/useZapQuote";
 import { useZapActions } from "@/hooks/useZapActions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useIdle } from "@/hooks/useIdle";
+import { QUOTE_IDLE_MS, isQuoteOlderThan } from "@/lib/quote-freshness";
 import { useClearOnNavigation } from "@/hooks/useClearOnNavigation";
 import { useAutoContinueAfterApproval } from "@/hooks/useAutoContinueAfterApproval";
 import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
@@ -585,19 +587,19 @@ export function VaultPageContent({ id }: { id: string }) {
     if (!zapQuote || !vault) return;
     if (zapDirection === "in") {
       setPendingTxDetails({
-        fromAmount: zapAmount ? Number(zapAmount).toFixed(4) : "0",
+        fromAmount: zapAmount ? formatDisplayAmount(zapAmount) : "0",
         fromSymbol: zapInputToken?.symbol ?? "Token",
         fromLogo: zapInputToken?.logoURI ?? "/tokens/unknown.png",
-        toAmount: Number(zapQuote.outputAmountFormatted).toFixed(4),
+        toAmount: formatDisplayAmount(zapQuote.outputAmountFormatted),
         toSymbol: vault.symbol,
         toLogo: vault.logo,
       });
     } else {
       setPendingTxDetails({
-        fromAmount: zapAmount ? Number(zapAmount).toFixed(4) : "0",
+        fromAmount: zapAmount ? formatDisplayAmount(zapAmount) : "0",
         fromSymbol: vault.symbol,
         fromLogo: vault.logo,
-        toAmount: Number(zapQuote.outputAmountFormatted).toFixed(4),
+        toAmount: formatDisplayAmount(zapQuote.outputAmountFormatted),
         toSymbol: zapOutputToken?.symbol ?? "Token",
         toLogo: zapOutputToken?.logoURI ?? "/tokens/unknown.png",
       });
@@ -764,7 +766,16 @@ export function VaultPageContent({ id }: { id: string }) {
 
   // Zap quote - fetch route from Enso (debounced to prevent rate limiting)
   // Pause quote fetching when simulation/price impact modals are open, or when contract explorer is open
-  const { quote: zapQuote, isLoading: zapQuoteLoading, error: zapQuoteError } = useZapQuote({
+  // Same idle rule as /zap (src/lib/quote-freshness.ts): stop the 60 s
+  // re-quote after 3 idle minutes; hidden tabs are already paused.
+  const isZapIdle = useIdle(QUOTE_IDLE_MS);
+  const {
+    quote: zapQuote,
+    quoteUpdatedAt: zapQuoteUpdatedAt,
+    isLoading: zapQuoteLoading,
+    error: zapQuoteError,
+    refetch: refetchZapQuote,
+  } = useZapQuote({
     inputToken: zapDirection === "in" ? zapInputToken : null,
     outputToken: zapDirection === "out" ? zapOutputToken : null,
     inputAmount: debouncedZapAmount,
@@ -774,11 +785,27 @@ export function VaultPageContent({ id }: { id: string }) {
     slippage: zapSlippage,
     underlyingTokenPrice: underlyingPrice, // For illiquid tokens without DEX quotes
     paused: showSimulationModal || pendingImpactAction !== null || explorerOpen || zapInProgress || (exitOnlyVault && zapDirection === "in"),
+    autoRefresh: !isZapIdle,
   });
+  const isZapQuoteTooOld = useCallback(() => isQuoteOlderThan(zapQuoteUpdatedAt), [zapQuoteUpdatedAt]);
+  // Back from idle: re-quote right away if the one on screen has aged.
+  const wasZapIdleRef = useRef(false);
+  useEffect(() => {
+    if (wasZapIdleRef.current && !isZapIdle && isZapQuoteTooOld()) void refetchZapQuote();
+    wasZapIdleRef.current = isZapIdle;
+  }, [isZapIdle, isZapQuoteTooOld, refetchZapQuote]);
+  // Zap sends the on-screen quote's calldata as-is: never send an old one.
+  const refreshIfZapQuoteTooOld = (): boolean => {
+    if (!isZapQuoteTooOld()) return false;
+    void refetchZapQuote();
+    toast.info("Quote refreshed. Check the new amounts, then try again.");
+    return true;
+  };
 
   // Every zap entry point (button, simulation preview fall-through, approve -> auto-execute)
   // runs through this, so a high-impact zap cannot start without the typed confirmation.
   const guardHighImpact = (label: string, run: () => void) => {
+    if (refreshIfZapQuoteTooOld()) return;
     if (needsPriceImpactConfirm(zapQuote?.priceImpact)) setPendingImpactAction({ label, run });
     else run();
   };
@@ -2480,7 +2507,7 @@ export function VaultPageContent({ id }: { id: string }) {
                             </div>
                             <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2">
                               <span className="mono text-base text-[var(--foreground)] flex-1">
-                                {zapQuoteLoading ? "—" : zapQuote ? Number(zapQuote.outputAmountFormatted).toFixed(4) : "0.00"}
+                                {zapQuoteLoading ? "—" : zapQuote ? formatDisplayAmount(zapQuote.outputAmountFormatted) : "0.00"}
                               </span>
                               <span className="mono text-sm font-medium shrink-0">{vault.symbol}</span>
                             </div>
@@ -2530,7 +2557,7 @@ export function VaultPageContent({ id }: { id: string }) {
                             </div>
                             <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2">
                               <span className="mono text-base text-[var(--foreground)] flex-1">
-                                {zapQuoteLoading ? "—" : zapQuote ? Number(zapQuote.outputAmountFormatted).toFixed(4) : "0.00"}
+                                {zapQuoteLoading ? "—" : zapQuote ? formatDisplayAmount(zapQuote.outputAmountFormatted) : "0.00"}
                               </span>
                               <TokenSelector
                                 selectedToken={zapOutputToken}
@@ -2556,8 +2583,8 @@ export function VaultPageContent({ id }: { id: string }) {
                               className="flex items-center gap-1 mono hover:text-[var(--accent)] transition-colors"
                             >
                               {rateInverted
-                                ? <>1 {zapDirection === "in" ? vault.symbol : zapOutputToken?.symbol} = {(1 / zapQuote.exchangeRate).toFixed(4)} {zapDirection === "in" ? zapInputToken?.symbol : vault.symbol}</>
-                                : <>1 {zapDirection === "in" ? zapInputToken?.symbol : vault.symbol} = {zapQuote.exchangeRate.toFixed(4)} {zapDirection === "in" ? vault.symbol : zapOutputToken?.symbol}</>
+                                ? <>1 {zapDirection === "in" ? vault.symbol : zapOutputToken?.symbol} = {formatDisplayAmount(1 / zapQuote.exchangeRate)} {zapDirection === "in" ? zapInputToken?.symbol : vault.symbol}</>
+                                : <>1 {zapDirection === "in" ? zapInputToken?.symbol : vault.symbol} = {formatDisplayAmount(zapQuote.exchangeRate)} {zapDirection === "in" ? vault.symbol : zapOutputToken?.symbol}</>
                               }
                               <ArrowRightLeft size={12} className="text-[var(--muted-foreground)]" />
                             </button>
@@ -2606,6 +2633,19 @@ export function VaultPageContent({ id }: { id: string }) {
                         isApproving={zapIsApproving}
                         onApprove={(exact) => guardHighImpact("Approve & zap", () => zapApprove(exact))}
                       />
+
+                      {isZapIdle && zapQuote && !zapQuoteLoading && !isZapTxPending && (
+                        <div className="mb-3 flex items-center justify-between text-xs text-[var(--muted-foreground)]">
+                          <span>Quote may be out of date</span>
+                          <button
+                            type="button"
+                            onClick={() => void refetchZapQuote()}
+                            className="text-[var(--foreground)] hover:text-[var(--accent)] transition-colors"
+                          >
+                            Refresh
+                          </button>
+                        </div>
+                      )}
 
                       {/* Zap Action Button */}
                       {isConnected ? (
@@ -2760,6 +2800,7 @@ export function VaultPageContent({ id }: { id: string }) {
           onConfirm={() => {
             const { run } = pendingImpactAction;
             setPendingImpactAction(null);
+            if (refreshIfZapQuoteTooOld()) return;
             run();
           }}
         />
@@ -2772,6 +2813,7 @@ export function VaultPageContent({ id }: { id: string }) {
           onClose={() => setShowSimulationModal(false)}
           onConfirm={() => {
             setShowSimulationModal(false);
+            if (refreshIfZapQuoteTooOld()) return;
             // High price impact was already confirmed before the simulation ran.
             setZapPendingDetails();
             executeZap({ skipSimulation: true });
