@@ -1,8 +1,31 @@
 /_next/static/*
   Cache-Control: public,max-age=31536000,immutable
 
+# Token, vault and site images under public/. Unversioned filenames, so cache
+# for a day and revalidate in the background. Without this every refresh
+# re-requested ~10 images, each counted by the yldfi.co per-IP rate limit.
+# /_next/static/media holds only fonts today; an imported image there would
+# match both rules and get two Cache-Control values.
+/*.png
+  Cache-Control: public,max-age=86400,stale-while-revalidate=604800
+/*.svg
+  Cache-Control: public,max-age=86400,stale-while-revalidate=604800
+/*.ico
+  Cache-Control: public,max-age=86400,stale-while-revalidate=604800
+/*.webp
+  Cache-Control: public,max-age=86400,stale-while-revalidate=604800
+/*.jpg
+  Cache-Control: public,max-age=86400,stale-while-revalidate=604800
+
 # Safe{Wallet} fetches the Safe App manifest cross-origin.
 /manifest.json
   Access-Control-Allow-Origin: *
   Access-Control-Allow-Methods: GET
   Access-Control-Allow-Headers: X-Requested-With, content-type, Authorization
+
+# Regenerated in place (weekly APY promo automation, link previews): keep
+# them uncached by the image rules above.
+/social/*
+  ! Cache-Control
+/og-image.png
+  ! Cache-Control

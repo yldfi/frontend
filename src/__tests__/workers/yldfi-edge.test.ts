@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { MockInstance } from "vitest";
 
-import edgeWorker, { withCountryVary } from "../../../workers/yldfi-edge";
+import edgeWorker, { isMissingStaticAsset, withCountryVary } from "../../../workers/yldfi-edge";
 import openNext from "../../../.open-next/worker.js";
 
 class FakeStatement {
@@ -127,5 +127,37 @@ describe("withCountryVary", () => {
     );
     expect(res.status).toBe(200);
     await expect(res.text()).resolves.toBe("hello");
+  });
+});
+
+describe("missing static assets", () => {
+  it.each([
+    "https://yldfi.co/tokens/nope.png",
+    "https://yldfi.co/wp-content/x.jpg",
+    "https://yldfi.co/favicon-99.ico",
+    "https://yldfi.co/fonts/x.woff2",
+  ])("answers %s with a bare 404 without rendering Next", async (url) => {
+    const { env } = makeEnv();
+    const res = await edgeWorker.fetch(new Request(url), env, captureWaitUntil().ctx);
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("Not Found");
+    expect(openNextFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "https://yldfi.co/api/avatar/vitalik.eth.png",
+    "https://yldfi.co/zap",
+    "https://yldfi.co/vaults/yscvx",
+    "https://yldfi.co/sitemap.xml",
+  ])("passes %s through to OpenNext", async (url) => {
+    openNextFetch.mockResolvedValue(new Response("ok", { status: 200 }));
+    const { env } = makeEnv();
+    const res = await edgeWorker.fetch(new Request(url), env, captureWaitUntil().ctx);
+    expect(res.status).toBe(200);
+    expect(openNextFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores non-GET methods", () => {
+    expect(isMissingStaticAsset(new Request("https://yldfi.co/x.png", { method: "POST" }))).toBe(false);
   });
 });

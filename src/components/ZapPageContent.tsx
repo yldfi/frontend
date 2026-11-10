@@ -218,6 +218,8 @@ export function ZapPageContent() {
     refetchOnchain: refetchZapTokenBalancesOnchain,
   } = useTokenBalances([inputToken, outputToken], {
     preferOnchain: true,
+    // Only balanceMap is used here; the quote fetches its own prices.
+    fetchPrices: false,
   });
   const { data: ethBalance, refetch: refetchEthBalance } = useBalance({
     address: userAddress,

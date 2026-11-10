@@ -291,6 +291,9 @@ export function TokenSelector({
     preferOnchain: preferOnchainBalances,
     includeWalletTokens: !searchQuery.trim() && !excludeDefiTokens,
     walletTokenAllowlist,
+    // Prices are only rendered in the open dropdown; a closed selector (two
+    // per /zap page) would otherwise fetch them on every load.
+    fetchPrices: isOpen,
   });
 
   const selectableVaultTokens = useMemo(

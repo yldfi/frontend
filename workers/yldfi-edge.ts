@@ -55,8 +55,27 @@ export function withCountryVary(request: Request, response: Response): Response 
   });
 }
 
+// Static images and fonts are served by Workers static assets before the
+// Worker runs, so one that reaches the Worker does not exist. Answer it with a
+// bare 404 instead of rendering the Next.js not-found page: scanner bursts of
+// asset-shaped probes otherwise cost a full render each (Workers Free 10 ms CPU).
+// /api/ is excluded because API routes may legitimately serve images.
+const MISSING_ASSET_PATH = /\.(?:png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|otf)$/i;
+
+export function isMissingStaticAsset(request: Request): boolean {
+  if (request.method !== "GET" && request.method !== "HEAD") return false;
+  const { pathname } = new URL(request.url);
+  return !pathname.startsWith("/api/") && MISSING_ASSET_PATH.test(pathname);
+}
+
 export default {
   async fetch(request: Request, env: YldfiEdgeEnv, ctx: ExecutionContext): Promise<Response> {
+    if (isMissingStaticAsset(request)) {
+      return new Response("Not Found", {
+        status: 404,
+        headers: { "Content-Type": "text/plain", "Cache-Control": "public, max-age=300" },
+      });
+    }
     try {
       const openNext = openNextWorker as OpenNextWorker;
       return withCountryVary(request, await openNext.fetch(request, env, ctx));

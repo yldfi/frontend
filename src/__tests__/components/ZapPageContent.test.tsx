@@ -278,7 +278,7 @@ describe("ZapPageContent", () => {
         expect.objectContaining({ symbol: "ETH" }),
         expect.objectContaining({ address: TOKENS.CVX, symbol: "CVX" }),
       ],
-      { preferOnchain: true },
+      { preferOnchain: true, fetchPrices: false },
     );
     expect((screen.getByPlaceholderText("0.00") as HTMLInputElement).value).toBe("1");
     expect(screen.getByText("150")).toBeTruthy();
@@ -366,7 +366,7 @@ describe("ZapPageContent", () => {
         expect.objectContaining({ symbol: "ETH" }),
         expect.objectContaining({ symbol: "yscvxCRV" }),
       ],
-      { preferOnchain: true },
+      { preferOnchain: true, fetchPrices: false },
     );
 
     fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "0.1" } });
@@ -621,7 +621,7 @@ describe("ZapPageContent", () => {
         }),
         expect.objectContaining({ symbol: "yscvxCRV" }),
       ],
-      { preferOnchain: true },
+      { preferOnchain: true, fetchPrices: false },
     );
   });
 
