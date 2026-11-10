@@ -32,7 +32,7 @@ export const URLS = {
   website: "https://yldfi.co",
 
   /** Documentation */
-  docs: "https://yldfi.gitbook.io/docs",
+  docs: "https://docs.yldfi.co",
 
   /** GitHub organization */
   github: "https://github.com/yldfi",
