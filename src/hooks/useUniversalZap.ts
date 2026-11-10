@@ -65,6 +65,11 @@ interface UseUniversalZapParams {
   inputAmount: string;
   slippage?: string;
   paused?: boolean;
+  /**
+   * Re-quote every 60 s while true (default). Each quote costs ~30-45 Enso
+   * credits, so the zap page turns this off when the user is idle.
+   */
+  autoRefresh?: boolean;
 }
 
 function buildSimpleRouteInfo(
@@ -213,6 +218,7 @@ export function useUniversalZap({
   inputAmount,
   slippage = "50",
   paused = false,
+  autoRefresh = true,
 }: UseUniversalZapParams) {
   const { address: userAddress } = useAccount();
   const publicClient = usePublicClient({ chainId: 1 });
@@ -235,7 +241,7 @@ export function useUniversalZap({
     amountInWei !== "0" &&
     inputToken.address.toLowerCase() !== outputToken.address.toLowerCase();
 
-  const { data, isLoading, error, refetch, isFetching } = useQuery({
+  const { data, isLoading, error, refetch, isFetching, dataUpdatedAt } = useQuery({
     queryKey: [
       "universal-zap",
       inputToken?.address,
@@ -1585,7 +1591,7 @@ export function useUniversalZap({
     },
     enabled,
     staleTime: 15 * 1000,
-    refetchInterval: enabled ? 60 * 1000 : false,
+    refetchInterval: enabled && autoRefresh ? 60 * 1000 : false,
     // Route discovery depends on several upstream RPC/API reads. A single
     // transient failure should not become a sticky "No route found" state
     // that only a full page refresh can clear.
@@ -1595,6 +1601,8 @@ export function useUniversalZap({
 
   return {
     quote: data,
+    /** When the current quote was fetched (ms epoch; 0 before the first). */
+    quoteUpdatedAt: dataUpdatedAt,
     isLoading: isLoading || isFetching,
     error: error as Error | null,
     refetch,
