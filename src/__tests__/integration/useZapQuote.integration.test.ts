@@ -51,6 +51,7 @@ describe("useZapQuote integration", () => {
       quote: null,
       isLoading: false,
       error: null,
+      quoteUpdatedAt: 0,
       refetch: vi.fn(),
     });
   });
@@ -78,6 +79,7 @@ describe("useZapQuote integration", () => {
       quote,
       isLoading: false,
       error: null,
+      quoteUpdatedAt: 0,
       refetch: vi.fn(),
     });
 
@@ -140,6 +142,7 @@ describe("useZapQuote integration", () => {
       quote,
       isLoading: false,
       error: null,
+      quoteUpdatedAt: 0,
       refetch: vi.fn(),
     });
 
@@ -175,6 +178,7 @@ describe("useZapQuote integration", () => {
       quote: null,
       isLoading: true,
       error,
+      quoteUpdatedAt: 0,
       refetch: vi.fn(),
     });
 
@@ -198,6 +202,7 @@ describe("useZapQuote integration", () => {
       quote: null,
       isLoading: false,
       error: null,
+      quoteUpdatedAt: 0,
       refetch: vi.fn(),
     });
 

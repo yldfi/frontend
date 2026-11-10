@@ -24,6 +24,7 @@ import { TxAssetDetailsPill } from "@/components/TxAssetDetailsPill";
 import { useUniversalZap } from "@/hooks/useUniversalZap";
 import { useZapActions } from "@/hooks/useZapActions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useIdle } from "@/hooks/useIdle";
 import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { useSettings } from "@/hooks/useSettings";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
@@ -50,6 +51,10 @@ import {
 import type { EnsoToken } from "@/types/enso";
 
 const STORAGE_PREFIX = "yldfi-universal-zap";
+/** Stop auto re-quoting after this long without user activity. */
+const QUOTE_IDLE_MS = 3 * 60 * 1000;
+/** Refuse to execute a quote older than this (the refresh interval is 60 s). */
+const QUOTE_MAX_AGE_MS = 90 * 1000;
 
 const ENTRY_DISABLED_VAULT_ADDRESSES = Object.values(VAULTS)
   .filter(isVaultEntryDisabled)
@@ -262,13 +267,34 @@ export function ZapPageContent() {
   const debouncedAmount = useDebouncedValue(amount, 500);
   const sameToken =
     inputToken.address.toLowerCase() === outputToken.address.toLowerCase();
-  const { quote: rawQuote, isLoading: quoteLoading, error: quoteError, refetch: refetchQuote } = useUniversalZap({
+  // Stop the 60 s re-quote loop after 3 idle minutes: an open tab otherwise
+  // spends ~2,000+ Enso credits an hour. Hidden tabs are already paused by
+  // React Query (refetchIntervalInBackground is off).
+  const isIdle = useIdle(QUOTE_IDLE_MS);
+  const {
+    quote: rawQuote,
+    quoteUpdatedAt,
+    isLoading: quoteLoading,
+    error: quoteError,
+    refetch: refetchQuote,
+  } = useUniversalZap({
     inputToken,
     outputToken,
     inputAmount: debouncedAmount,
     slippage,
     paused: sameToken || showSimulationModal || pendingImpactAction !== null,
+    autoRefresh: !isIdle,
   });
+  const isQuoteTooOld = useCallback(
+    () => quoteUpdatedAt > 0 && Date.now() - quoteUpdatedAt > QUOTE_MAX_AGE_MS,
+    [quoteUpdatedAt],
+  );
+  // Back from idle: re-quote right away if the one on screen has aged.
+  const wasIdleRef = useRef(false);
+  useEffect(() => {
+    if (wasIdleRef.current && !isIdle && isQuoteTooOld()) void refetchQuote();
+    wasIdleRef.current = isIdle;
+  }, [isIdle, isQuoteTooOld, refetchQuote]);
   const quoteIsCurrent = !!(
     rawQuote &&
     amount &&
@@ -525,7 +551,16 @@ export function ZapPageContent() {
   }, [quote, executeZap, setShowSimulationModal]);
 
   // Approving also auto-executes the zap once the approval mines, so both entry points are gated.
+  // Never send a transaction built from an old quote (auto-refresh pauses while
+  // idle): refresh it and let the user check the new numbers first.
+  const refreshIfQuoteTooOld = (): boolean => {
+    if (!isQuoteTooOld()) return false;
+    void refetchQuote();
+    toast.info("Quote refreshed. Check the new amounts, then try again.");
+    return true;
+  };
   const guardHighImpact = (label: string, run: () => void) => {
+    if (refreshIfQuoteTooOld()) return;
     if (needsPriceImpactConfirm(quote?.priceImpact)) setPendingImpactAction({ label, run });
     else run();
   };
@@ -858,6 +893,19 @@ export function ZapPageContent() {
                   onApprove={(exact) => guardHighImpact("Approve & zap", () => approve(exact))}
                 />
 
+                {isIdle && quote && !quoteSettling && !isPendingTx && (
+                  <div className="mb-3 flex items-center justify-between text-xs text-[var(--muted-foreground)]">
+                    <span>Quote may be out of date</span>
+                    <button
+                      type="button"
+                      onClick={() => void refetchQuote()}
+                      className="text-[var(--foreground)] hover:text-[var(--accent)] transition-colors"
+                    >
+                      Refresh
+                    </button>
+                  </div>
+                )}
+
                 {/* Execute button */}
                 {isConnected ? (
                   <button
@@ -1070,6 +1118,7 @@ export function ZapPageContent() {
           onConfirm={() => {
             const { run } = pendingImpactAction;
             setPendingImpactAction(null);
+            if (refreshIfQuoteTooOld()) return;
             run();
           }}
         />
@@ -1081,6 +1130,7 @@ export function ZapPageContent() {
           onClose={() => setShowSimulationModal(false)}
           onConfirm={() => {
             setShowSimulationModal(false);
+            if (refreshIfQuoteTooOld()) return;
             stagePendingTxDetails();
             executeZap({ skipSimulation: true });
           }}

@@ -55,6 +55,7 @@ vi.mock("sonner", () => ({
   toast: {
     error: vi.fn(),
     success: vi.fn(),
+    info: vi.fn(),
   },
 }));
 
@@ -375,6 +376,45 @@ describe("ZapPageContent", () => {
     await waitFor(() => {
       expect(executeZap).toHaveBeenCalledWith();
     });
+  });
+
+  it("refreshes instead of sending when the quote is older than 90 s", async () => {
+    mockUseUniversalZap.mockReturnValue({
+      quote,
+      quoteUpdatedAt: Date.now() - 120_000,
+      isLoading: false,
+      error: null,
+      refetch: refetchQuote,
+    } as unknown as ReturnType<typeof useUniversalZap>);
+    render(<ZapPageContent />);
+
+    fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "0.1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Zap" }));
+
+    await waitFor(() => expect(refetchQuote).toHaveBeenCalled());
+    expect(executeZap).not.toHaveBeenCalled();
+    expect(toast.info).toHaveBeenCalled();
+  });
+
+  it("sends a quote fetched within 90 s", async () => {
+    mockUseUniversalZap.mockReturnValue({
+      quote,
+      quoteUpdatedAt: Date.now() - 30_000,
+      isLoading: false,
+      error: null,
+      refetch: refetchQuote,
+    } as unknown as ReturnType<typeof useUniversalZap>);
+    render(<ZapPageContent />);
+
+    fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "0.1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Zap" }));
+
+    await waitFor(() => expect(executeZap).toHaveBeenCalledWith());
+  });
+
+  it("passes autoRefresh to the quote hook (on while active)", () => {
+    render(<ZapPageContent />);
+    expect(mockUseUniversalZap).toHaveBeenLastCalledWith(expect.objectContaining({ autoRefresh: true }));
   });
 
   it("shows the pending tx card while preparing and awaiting on-chain confirmation", () => {
