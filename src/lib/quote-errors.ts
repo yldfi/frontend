@@ -1,4 +1,5 @@
 import { ROUTE_QUOTE_SHORTFALL_MESSAGE_PREFIX } from "@/lib/price-impact";
+import { DYNAMIC_ROUTE_UNAVAILABLE_MESSAGE } from "@/lib/enso";
 /** Turn a zap quote error (Enso API, intent guard or proxy) into a short user-facing message. */
 export function parseQuoteError(error: Error | null | undefined): string {
   if (!error) return "Failed to get quote";
@@ -8,6 +9,12 @@ export function parseQuoteError(error: Error | null | undefined): string {
   // Route deliberately disabled (message names the pair and the workaround)
   if (normalizedMsg.includes("temporarily unavailable")) {
     return msg;
+  }
+  // Dynamic swap step temporarily unroutable (fetchBundle, after one retry).
+  // Checked before the "swap not found" mapping below: liquidity exists, the
+  // restricted aggregator set just can't route it at the moment.
+  if (msg.startsWith(DYNAMIC_ROUTE_UNAVAILABLE_MESSAGE)) {
+    return "Enso can't route this swap right now. It usually recovers within a minute; the quote retries automatically.";
   }
   // Bundle quote far below the route's standalone estimate (price-impact.ts)
   if (msg.startsWith(ROUTE_QUOTE_SHORTFALL_MESSAGE_PREFIX)) {

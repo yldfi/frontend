@@ -1,5 +1,5 @@
-import * as ensoModule from "@/lib/enso";
 // @vitest-environment node
+import * as ensoModule from "@/lib/enso";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
