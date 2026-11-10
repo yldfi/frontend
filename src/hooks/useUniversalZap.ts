@@ -619,18 +619,10 @@ export function useUniversalZap({
                 routeInfo: bundle.routeInfo,
               }) ?? calculateRoutePriceImpact(inUsd, outUsd, bundle.routeInfo, bundle.priceImpact ?? null)
             : calculateRoutePriceImpact(inUsd, outUsd, bundle.routeInfo, bundle.priceImpact ?? null);
-          // Compare in the target vault's underlying (Enso can't quote the vault token).
-          await assertDynamicLegNotFarBelowMarket({
-            fromAddress: userAddress,
-            priceImpact,
-            tokenIn: underlying,
-            tokenOut: outputExternalConfig.underlying,
-            amountIn: sourceAps !== null ? inNum * sourceAps : null,
-            bundleAmountOut: targetSharePrice !== null ? outNum * targetSharePrice : null,
-            tokenOutDecimals: getTokenDecimals(outputExternalConfig.underlying),
-            tokenOutSymbol: getTokenSymbol(outputExternalConfig.underlying),
-            slippage,
-          });
+          // No standalone check here: fetchYldVaultToExternalVaultRoute uses
+          // skipQuote and fills amountsOut from the same unrestricted estimate,
+          // so it would compare a quote with itself (see the builder for the
+          // executed route's protection).
 
           return {
             inputToken,
@@ -1463,7 +1455,10 @@ export function useUniversalZap({
           bundle.routeInfo,
           bundle.priceImpact ?? null,
         );
-        await assertDynamicLegNotFarBelowMarket({
+        // Only the ERC-4626 builder returns a real bundle quote; the uCRV,
+        // Beefy and uCVX builders use skipQuote and display the unrestricted
+        // standalone estimate, so a check there would compare it with itself.
+        if (!isUcvx && inputExternalConfig.interface === "erc4626") await assertDynamicLegNotFarBelowMarket({
           fromAddress: userAddress,
           priceImpact,
           tokenIn: inputExternalConfig.underlying,

@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { useAccount, usePublicClient } from "wagmi";
 
 import { useUniversalZap } from "@/hooks/useUniversalZap";
-import { fetchAnyFromErc4626ExternalVaultRoute, fetchQuote, fetchZapOutRoute } from "@/lib/enso";
+import { fetchAnyFromErc4626ExternalVaultRoute, fetchAnyFromUCrvRoute, fetchQuote, fetchZapOutRoute } from "@/lib/enso";
 import { ROUTE_QUOTE_SHORTFALL_MESSAGE_PREFIX } from "@/lib/price-impact";
 import type { EnsoToken } from "@/types/enso";
 
@@ -25,6 +25,8 @@ vi.mock("@/lib/enso", async (importOriginal) => {
     fetchTokenPrices: vi.fn(async (addresses: string[]) => addresses.map((address) => ({ address, price: 1 }))),
     fetchZapOutRoute: vi.fn(),
     fetchAnyFromErc4626ExternalVaultRoute: vi.fn(),
+    fetchAnyFromUCrvRoute: vi.fn(),
+    previewUCrvWithdraw: vi.fn(async (amount: string) => amount),
     fetchQuote: vi.fn(),
   };
 });
@@ -91,6 +93,7 @@ describe("zap-out: high-impact bundles are checked against a standalone quote", 
     const { quote, error } = await runZapOut();
     expect(error).toBeNull();
     expect(quote!.priceImpact).toBeCloseTo(40, 6);
+    expect(vi.mocked(fetchQuote)).toHaveBeenCalledTimes(1);
   });
 
   it("makes no extra Enso call when the impact is below the CONFIRM threshold", async () => {
@@ -147,5 +150,24 @@ describe("outside vault → token: same check on the redeem → route leg", () =
       tokenIn: expect.stringMatching(/^0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48$/i), // USDC
       amountIn: "100000000", // 100 USDC at 6 decimals
     }));
+  });
+
+  it("skips the check for uCRV (skipQuote builder: its output already is the standalone estimate)", async () => {
+    const UCRV = "0xde2bEF0A01845257b4aEf2A2EAa48f6EAeAfa8B7";
+    const UCRV_TOKEN: EnsoToken = { address: UCRV, chainId: 1, symbol: "uCRV", name: "uCRV", decimals: 18, type: "defi" };
+    vi.mocked(fetchAnyFromUCrvRoute).mockResolvedValue({
+      tx: { to: "0xF75584eF6673aD213a685a1B58Cc0330B8eA22Cf", data: "0x", value: "0", from: USER },
+      gas: "500000",
+      amountsOut: { [CVXCRV.toLowerCase()]: (60n * 10n ** 18n).toString() },
+    } as never);
+
+    const { result } = renderHook(
+      () => useUniversalZap({ inputToken: UCRV_TOKEN, outputToken: CVXCRV_TOKEN, inputAmount: "100", slippage: "50" }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.quote || result.current.error).toBeTruthy(), { timeout: 8000 });
+    expect(vi.mocked(fetchAnyFromUCrvRoute)).toHaveBeenCalled();
+    expect(result.current.quote).toBeTruthy();
+    expect(vi.mocked(fetchQuote)).not.toHaveBeenCalled();
   });
 });
