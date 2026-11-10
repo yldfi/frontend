@@ -4,7 +4,7 @@ import { useAccount, useWaitForTransactionReceipt } from "wagmi";
 import { useQuery } from "@tanstack/react-query";
 import type { TransactionReceipt } from "viem";
 import { useIsSafeWallet } from "@/hooks/useIsSafeWallet";
-import { fetchSafeMultisigTx, safeTxServiceUrl, type SafeTxLookup } from "@/lib/safe-tx-service";
+import { fetchSafeMultisigTx, safeOutcomeMessage, safeTxServiceUrl, type SafeTxLookup, type SafeTxOutcome } from "@/lib/safe-tx-service";
 
 type ReceiptParams = Parameters<typeof useWaitForTransactionReceipt>[0];
 type ReceiptResult = Omit<ReturnType<typeof useWaitForTransactionReceipt>, "data"> & {
@@ -18,6 +18,8 @@ export type SafeTxStatus = {
   confirmationsRequired: number | null;
   /** On-chain hash once the Safe executed the transaction. */
   executedHash: `0x${string}` | null;
+  /** Rejected / replaced in the Safe: it will never execute. */
+  outcome: SafeTxOutcome;
 };
 
 const SAFE_POLL_MS = 5_000;
@@ -52,7 +54,7 @@ export function useTxReceipt(params: ReceiptParams = {}): ReceiptResult & { safe
     queryFn: ({ signal }) => fetchSafeMultisigTx(chainId!, hash!, signal),
     refetchInterval: (query) => {
       const data = query.state.data;
-      if (data?.kind === "safe") return data.transactionHash ? false : SAFE_POLL_MS;
+      if (data?.kind === "safe") return data.transactionHash || data.outcome ? false : SAFE_POLL_MS;
       // The query key includes the hash, so this counts fetches for this hash only.
       if (data?.kind === "not-found" && query.state.dataUpdateCount >= NOT_FOUND_POLLS_BEFORE_GIVING_UP) return false;
       return SAFE_POLL_MS;
@@ -82,12 +84,29 @@ export function useTxReceipt(params: ReceiptParams = {}): ReceiptResult & { safe
 
   if (!safeTx) return { ...(direct as ReceiptResult), safe: null };
 
+  const outcome = executedHash ? null : safeTx.outcome;
   const safe: SafeTxStatus = {
-    isAwaitingExecution: !executedHash,
+    isAwaitingExecution: !executedHash && !outcome,
     confirmations: safeTx.confirmations,
     confirmationsRequired: safeTx.confirmationsRequired,
     executedHash,
+    outcome,
   };
+
+  if (outcome) {
+    // It will never execute: stop "Waiting for Safe" and surface why.
+    return {
+      ...(executed as ReceiptResult),
+      data: undefined,
+      isLoading: false,
+      isPending: false,
+      isFetching: false,
+      isSuccess: false,
+      isError: true,
+      error: new Error(safeOutcomeMessage(outcome)),
+      safe,
+    } as unknown as ReceiptResult & { safe: SafeTxStatus };
+  }
 
   if (!executedHash) {
     // Still collecting signatures / waiting for someone to execute.

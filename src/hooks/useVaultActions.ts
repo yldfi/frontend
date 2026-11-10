@@ -2,6 +2,7 @@
 
 import { useReadContract, useAccount, usePublicClient } from "wagmi";
 import { useTxReceipt } from "@/hooks/useTxReceipt";
+import { safeOutcomeMessage } from "@/lib/safe-tx-service";
 import { useSafeBatch } from "@/hooks/useSafeBatch";
 import { buildApprovalSimulationTransaction, type ApprovalSimulationTransaction } from "@/lib/tenderly-simulation-bundle";
 import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
@@ -110,12 +111,27 @@ export function useVaultActions(
     }
   }, [withdrawReceipt, withdrawHash]);
 
+  // A Safe tx the owners rejected, or that another tx replaced (same nonce),
+  // never executes; without this the card stayed on "Waiting for Safe".
+  const safeOutcomeError = useMemo(() => {
+    const labelled = [
+      [depositSafe, "Deposit"],
+      [withdrawSafe, "Withdrawal"],
+      [approvalSafe, "Approval"],
+    ] as const;
+    for (const [safe, label] of labelled) {
+      if (safe?.outcome) return safeOutcomeMessage(safe.outcome, label);
+    }
+    return null;
+  }, [depositSafe, withdrawSafe, approvalSafe]);
+
   // Derive status from state (avoids setState in effects)
   const status: TransactionStatus = useMemo(() => {
     // On-chain state takes priority - if we have a receipt, respect its status
     // This handles the case where a tx is mined but reverts on-chain
     if (isApprovalReverted || isDepositReverted || isWithdrawReverted) return "reverted";
     if (isDepositSuccess || isWithdrawSuccess) return "success";
+    if (safeOutcomeError) return "error";
     // Error states for pre-send failures (wallet rejection, simulation failure, RPC errors)
     if (approveError || txError || simulationError) return "error";
     // A confirmed approval remains in wagmi while the deposit is prepared and sent.
@@ -130,7 +146,7 @@ export function useVaultActions(
     if (actionState === "approving") return "approving";
     return "idle";
   }, [
-    approveError, txError, simulationError,
+    approveError, txError, simulationError, safeOutcomeError,
     isApprovalReverted, isDepositReverted, isWithdrawReverted,
     isDepositSuccess, isWithdrawSuccess, isApprovalSuccess, approvalResetFlow,
     isApprovalPending, isDepositPending, isWithdrawPending,
@@ -139,6 +155,7 @@ export function useVaultActions(
 
   // Derive error message from errors or reverts
   const error = useMemo(() => {
+    if (safeOutcomeError) return safeOutcomeError;
     if (simulationError) return simulationError;
     if (approveError) return parseErrorMessage(approveError, "Approval failed");
     if (txError) return parseErrorMessage(txError, "Transaction failed");
@@ -146,7 +163,7 @@ export function useVaultActions(
     if (isDepositReverted) return "Deposit transaction reverted";
     if (isWithdrawReverted) return "Withdraw transaction reverted";
     return null;
-  }, [simulationError, approveError, txError, isApprovalReverted, isDepositReverted, isWithdrawReverted]);
+  }, [safeOutcomeError, simulationError, approveError, txError, isApprovalReverted, isDepositReverted, isWithdrawReverted]);
 
   // Refetch allowance after approval success (external side effect only)
   useEffect(() => {

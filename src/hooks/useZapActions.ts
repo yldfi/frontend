@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAccount, useReadContract, usePublicClient, useWalletClient } from "wagmi";
 import { useTxReceipt } from "@/hooks/useTxReceipt";
+import { safeOutcomeMessage } from "@/lib/safe-tx-service";
 import { useSafeBatch } from "@/hooks/useSafeBatch";
 import { useDirectWriteContract as useWriteContract } from "@/hooks/useDirectWriteContract";
 import { parseSignature, parseUnits, maxUint256 } from "viem";
@@ -244,10 +245,17 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     }
   }, [isEth, quote, allowance]);
 
+  // A Safe tx rejected/replaced in the Safe never executes (see useTxReceipt).
+  const safeOutcomeError = useMemo(() => {
+    if (zapSafe?.outcome) return safeOutcomeMessage(zapSafe.outcome, "Zap");
+    if (approvalSafe?.outcome) return safeOutcomeMessage(approvalSafe.outcome, "Approval");
+    return null;
+  }, [zapSafe, approvalSafe]);
+
   // Derive status from state (avoids setState in effects)
   const status: ZapStatus = useMemo(() => {
     // Terminal on-chain states (receipt exists and shows final result)
-    if (replacementError) return "error";
+    if (replacementError || safeOutcomeError) return "error";
     if (isZapReverted || isApprovalReverted) return "reverted";
     if (isZapSuccess) return "success";
     // Error states for pre-send failures (wallet rejection, simulation failure, RPC errors)
@@ -265,10 +273,11 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     if (actionState === "simulating") return "zapping";
     if (actionState === "zapping") return "zapping";
     return "idle";
-  }, [approveError, txError, simulationError, replacementError, isZapReverted, isApprovalReverted, isZapSuccess, isApprovalPending, isApprovalSuccess, isZapPending, actionState, approvalResetFlow, needsApproval]);
+  }, [approveError, txError, simulationError, replacementError, safeOutcomeError, isZapReverted, isApprovalReverted, isZapSuccess, isApprovalPending, isApprovalSuccess, isZapPending, actionState, approvalResetFlow, needsApproval]);
 
   // Derive error message from errors or reverts
   const error = useMemo(() => {
+    if (safeOutcomeError) return safeOutcomeError;
     if (simulationError) return simulationError;
     if (replacementError) return replacementError.message;
     if (approveError) return parseErrorMessage(approveError, "Approval failed");
@@ -276,7 +285,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     if (isApprovalReverted) return "Approval transaction reverted";
     if (isZapReverted) return "Zap transaction reverted";
     return null;
-  }, [simulationError, replacementError, approveError, txError, isApprovalReverted, isZapReverted]);
+  }, [safeOutcomeError, simulationError, replacementError, approveError, txError, isApprovalReverted, isZapReverted]);
 
   useEffect(() => {
     if (actionState === "needsApproval" && !needsApproval()) {
