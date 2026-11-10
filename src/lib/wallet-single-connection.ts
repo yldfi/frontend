@@ -1,8 +1,6 @@
 import type { Config, Connector } from "wagmi";
-import { disconnect as wagmiDisconnect } from "wagmi/actions";
 
 type Deps = {
-  disconnect: (config: Config, parameters: { connector: Connector }) => Promise<void>;
   defer: (fn: () => void) => void;
 };
 
@@ -15,36 +13,63 @@ type Deps = {
  * user who "disconnected" was silently still connected with another wallet.
  * Reported 10 Nov 2026; supersedes tracker item 42.
  *
- * Whenever the state is connected with more than one connection, disconnect
- * every connection except the current one. Runs after the active-connector
- * guard (installed first), which reverts unsolicited injected takeovers before
- * this sees them, and is deferred so the guard's state update settles first.
- * Disconnecting an injected wallet this way sets its `.disconnected` shim, so
- * it isn't silently restored on the next load either.
+ * Whenever the state is connected with more than one connection, drop every
+ * connection except the current one. Runs after the active-connector guard
+ * (installed first), which reverts unsolicited injected takeovers
+ * synchronously, and is deferred a microtask so that update settles first.
+ *
+ * Deliberately not wagmi's `disconnect` action (Fable review of #198):
+ * - it throws before removing the connection when the wallet's disconnect
+ *   fails (WalletConnect relay errors), and nothing would retry, leaving two;
+ * - it snapshots `connections` before awaiting the wallet and writes that back
+ *   afterwards, losing any change to the current wallet in between.
+ * Instead: ask the wallet to disconnect (best effort), detach wagmi's listeners
+ * like the action does, and always remove the uid from the latest state.
+ * If the dropped connector shares its provider with the current one (RainbowKit
+ * reuses one WalletConnect provider across several wallet tiles), skip the
+ * wallet-side disconnect: it would end the session the current wallet uses.
  */
 export function installSingleConnectionPolicy(
   config: Config,
   deps: Partial<Deps> = {},
 ): () => void {
   if (typeof window === "undefined" && !deps.defer) return () => undefined;
-
-  const d: Deps = {
-    disconnect: wagmiDisconnect as Deps["disconnect"],
-    defer: (fn) => queueMicrotask(fn),
-    ...deps,
-  };
+  const d: Deps = { defer: (fn) => queueMicrotask(fn), ...deps };
 
   const pending = new Set<string>();
+
+  const drop = async (uid: string, connector: Connector, currentConnector: Connector | undefined) => {
+    try {
+      const [provider, currentProvider] = await Promise.all([
+        connector.getProvider().catch(() => undefined),
+        currentConnector?.getProvider().catch(() => undefined),
+      ]);
+      const sharesProvider = provider !== undefined && provider === currentProvider;
+      if (!sharesProvider) await connector.disconnect();
+    } catch {
+      // Best effort: the connection is removed from state regardless.
+    } finally {
+      connector.emitter.off("change", config._internal.events.change);
+      connector.emitter.off("disconnect", config._internal.events.disconnect);
+      connector.emitter.on("connect", config._internal.events.connect);
+      config.setState((x) => {
+        if (x.current === uid || !x.connections.has(uid)) return x;
+        const connections = new Map(x.connections);
+        connections.delete(uid);
+        return { ...x, connections };
+      });
+      pending.delete(uid);
+    }
+  };
 
   const enforce = () => {
     const { status, current, connections } = config.state;
     if (status !== "connected" || !current || connections.size <= 1) return;
+    const currentConnector = connections.get(current)?.connector;
     for (const [uid, connection] of connections) {
       if (uid === current || pending.has(uid)) continue;
       pending.add(uid);
-      d.disconnect(config, { connector: connection.connector })
-        .catch(() => undefined)
-        .finally(() => pending.delete(uid));
+      void drop(uid, connection.connector, currentConnector);
     }
   };
 
