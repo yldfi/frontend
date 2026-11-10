@@ -19,7 +19,7 @@ import { RouteDisplay } from "@/components/RouteDisplay";
 import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
 import { PriceImpactConfirmModal, needsPriceImpactConfirm } from "@/components/PriceImpactConfirmModal";
-import { TxAssetDetailsPill } from "@/components/TxAssetDetailsPill";
+import { TxPendingCard } from "@/components/TxPendingCard";
 
 import { useUniversalZap } from "@/hooks/useUniversalZap";
 import { useZapActions } from "@/hooks/useZapActions";
@@ -791,29 +791,13 @@ export function ZapPageContent() {
             {isTxStateVisible ? (
               <>
                 {isPendingTx && (
-                  <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
-                    <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
-                      <LoadingDots />
-                    </div>
-                    <h3 className="text-lg font-medium mb-2">{pendingCopy.title}</h3>
-                    {effectivePendingDetails && (
-                      <TxAssetDetailsPill details={effectivePendingDetails} actionLabel={actionKind === "zap" ? "Zap" : actionKind === "deposit" ? "Deposit" : "Withdraw"} />
-                    )}
-                    <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
-                      {pendingCopy.message}
-                    </p>
-                    {effectiveHash && (
-                      <a
-                        href={`https://etherscan.io/tx/${effectiveHash}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
-                      >
-                        View on Etherscan
-                        <ExternalLink size={14} />
-                      </a>
-                    )}
-                  </div>
+                  <TxPendingCard
+                    title={pendingCopy.title}
+                    message={pendingCopy.message}
+                    details={effectivePendingDetails}
+                    actionLabel={actionKind === "zap" ? "Zap" : actionKind === "deposit" ? "Deposit" : "Withdraw"}
+                    hash={effectiveHash}
+                  />
                 )}
 
                 {isZapSuccessVisible && (

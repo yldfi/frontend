@@ -36,6 +36,14 @@ describe("VaultPageContent logic", () => {
       for (const form of forms) expect(form).toContain("!showVaultApprovalStepCard");
     });
 
+    it("uses the shared pending card and copy for the approve step (item 41)", () => {
+      expect(source).toMatch(/getPendingTxCopy\(txStatus === "waitingApproval", "approval", vaultSafePending\)/);
+      expect(source).toMatch(/stepLabel=\{`Step 1 of 2 · Approve \$\{pendingMultiStep!\.approvalToken\}, then deposit`\}/);
+      expect(source).not.toContain("Transaction in Progress");
+      expect(source).not.toContain("The deposit will start automatically once approved.");
+      expect((source.match(/<TxPendingCard/g) ?? []).length).toBe(3);
+    });
+
     it("clears the approve-then-deposit state when the approval reverts", () => {
       expect(source).toMatch(/const approvalReverted = txStatus === "reverted" && !depositHash && !withdrawHash;/);
       expect(source).toMatch(/txStatus === "error" \|\| txError \|\| approvalReverted/);

@@ -13,7 +13,7 @@ import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
 import { ApprovalCard } from "@/components/ApprovalCard";
 import { LoadingDots } from "@/components/LoadingDots";
-import { TxAssetDetailsPill } from "@/components/TxAssetDetailsPill";
+import { TxPendingCard } from "@/components/TxPendingCard";
 
 import { ContractExplorer, useContractExplorer, type ExplorerContract } from "@/components/ContractExplorer";
 import Image from "next/image";
@@ -76,7 +76,6 @@ import { VaultInfoCard } from "@/components/VaultInfoCard";
 import type { EnsoToken, ZapDirection, SimulationAssetChange } from "@/types/enso";
 import {
   getPendingTxCopy,
-  getSafePendingMessage,
   getRevertedTxCopy,
   getSuccessTxCopy,
   isVaultTxPendingVisible,
@@ -1931,131 +1930,36 @@ export function VaultPageContent({ id }: { id: string }) {
                   )}
 
                   {/* Multi-Step Transaction Pending State - Approval + Deposit */}
-                  {isVaultDeployed && showVaultApprovalStepCard && (
-                    <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
-                      <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
-                        <LoadingDots />
-                      </div>
-                      <h3 className="text-lg font-medium mb-4">Transaction in Progress</h3>
-                      {/* Multi-Step List */}
-                      <div className="flex flex-col gap-3 mb-4 w-full max-w-xs">
-                        {/* Step 1: Approval */}
-                        <div className={cn(
-                          "flex items-center gap-3 px-4 py-3 rounded-lg transition-colors",
-                          pendingMultiStep.step === 1
-                            ? "bg-[var(--accent)]/10 border border-[var(--accent)]/30"
-                            : "bg-[var(--muted)]"
-                        )}>
-                          <div className={cn(
-                            "w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold",
-                            pendingMultiStep.step === 1
-                              ? "bg-[var(--accent)] text-[var(--background)]"
-                              : "bg-green-500 text-white"
-                          )}>
-                            {pendingMultiStep.step === 1 ? (
-                              <LoadingDots />
-                            ) : (
-                              <Check className="w-4 h-4" />
-                            )}
-                          </div>
-                          <span className={cn(
-                            "text-sm",
-                            pendingMultiStep.step === 1 ? "text-[var(--foreground)]" : "text-[var(--muted-foreground)]"
-                          )}>
-                            Approve {pendingMultiStep.approvalToken} for {pendingMultiStep.spenderName}
-                          </span>
-                        </div>
-                        {/* Step 2: Deposit */}
-                        <div className={cn(
-                          "flex items-center gap-3 px-4 py-3 rounded-lg",
-                          "bg-[var(--muted)] opacity-60"
-                        )}>
-                          <div className="w-6 h-6 flex-shrink-0 rounded-full bg-[var(--border)] flex items-center justify-center text-[var(--muted-foreground)]">
-                            <Clock className="w-3.5 h-3.5" />
-                          </div>
-                          {pendingTxDetails && (
-                            <TxAssetDetailsPill
-                              details={pendingTxDetails}
-                              actionLabel="Deposit"
-                              className="mb-0 bg-transparent px-0 py-0 text-[var(--muted-foreground)]"
-                              iconClassName="w-4 h-4"
-                              textClassName="text-sm"
-                            />
-                          )}
-                        </div>
-                      </div>
-                      <p className="text-sm text-[var(--muted-foreground)] max-w-xs">
-                        {vaultSafePending
-                          ? getSafePendingMessage(vaultSafePending)
-                          : "Confirm the approval in your wallet. The deposit will start automatically once approved."}
-                      </p>
-                    </div>
-                  )}
+                  {isVaultDeployed && showVaultApprovalStepCard && (() => {
+                    const copy = getPendingTxCopy(txStatus === "waitingApproval", "approval", vaultSafePending);
+                    return (
+                      <TxPendingCard
+                        title={copy.title}
+                        message={copy.message}
+                        details={pendingTxDetails}
+                        actionLabel="Deposit"
+                        stepLabel={`Step 1 of 2 · Approve ${pendingMultiStep!.approvalToken}, then deposit`}
+                      />
+                    );
+                  })()}
 
                   {/* Transaction Pending State - Deposit/Withdraw */}
-                  {isVaultDeployed && (((isDebugDeposit || isDebugWithdraw) && isDebugPending) || isVaultTxPending) && (
-                    <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
-                      <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
-                        <LoadingDots />
-                      </div>
-                      <h3 className="text-lg font-medium mb-2">
-                        {(isDebugDeposit || isDebugWithdraw) ? "Awaiting Confirmation" : currentVaultPendingCopy.title}
-                      </h3>
-                      {/* Multi-Step List (when in multi-step mode) */}
-                      {pendingMultiStep?.type === "deposit" && pendingMultiStep.step === 2 && pendingTxDetails && (
-                        <div className="flex flex-col gap-3 mb-4 w-full max-w-xs">
-                          {/* Step 1: Approval (completed) */}
-                          <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-[var(--muted)]">
-                            <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center">
-                              <Check className="w-4 h-4 text-white" />
-                            </div>
-                            <span className="text-sm text-[var(--muted-foreground)]">
-                              Approve {pendingMultiStep.approvalToken} for {pendingMultiStep.spenderName}
-                            </span>
-                          </div>
-                          {/* Step 2: Deposit (active) */}
-                          <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/30">
-                            <div className="w-6 h-6 flex-shrink-0 rounded-full bg-[var(--accent)] flex items-center justify-center text-[var(--background)]">
-                              <LoadingDots />
-                            </div>
-                            <TxAssetDetailsPill
-                              details={pendingTxDetails}
-                              actionLabel="Deposit"
-                              className="mb-0 bg-transparent px-0 py-0"
-                              iconClassName="w-4 h-4"
-                              textClassName="text-sm"
-                            />
-                          </div>
-                        </div>
-                      )}
-                      {/* Single Transaction Details (when not in multi-step mode) */}
-                      {!pendingMultiStep && (() => {
-                        const details = (isDebugDeposit || isDebugWithdraw) ? debugTxDetails : pendingTxDetails;
-                        return details && (
-                          <TxAssetDetailsPill
-                            details={details}
-                            actionLabel={isDebugDeposit || (!isDebugWithdraw && currentVaultAction === "deposit") ? "Deposit" : "Withdraw"}
-                          />
-                        );
-                      })()}
-                      <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
-                        {(isDebugDeposit || isDebugWithdraw)
+                  {isVaultDeployed && (((isDebugDeposit || isDebugWithdraw) && isDebugPending) || isVaultTxPending) && (() => {
+                    const isDebug = isDebugDeposit || isDebugWithdraw;
+                    const isDepositStep2 = pendingMultiStep?.type === "deposit" && pendingMultiStep.step === 2;
+                    return (
+                      <TxPendingCard
+                        title={isDebug ? "Awaiting Confirmation" : currentVaultPendingCopy.title}
+                        message={isDebug
                           ? `Your ${isDebugDeposit ? "deposit" : "withdrawal"} transaction is being confirmed on-chain.`
                           : currentVaultPendingCopy.message}
-                      </p>
-                      {(depositHash || withdrawHash || isDebugDeposit || isDebugWithdraw) && (
-                        <a
-                          href={`https://etherscan.io/tx/${depositHash || withdrawHash || debugHash}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
-                        >
-                          View on Etherscan
-                          <ExternalLink size={14} />
-                        </a>
-                      )}
-                    </div>
-                  )}
+                        details={isDebug ? debugTxDetails : pendingTxDetails}
+                        actionLabel={isDebugDeposit || (!isDebugWithdraw && currentVaultAction === "deposit") ? "Deposit" : "Withdraw"}
+                        stepLabel={isDepositStep2 ? "Step 2 of 2 · Deposit" : undefined}
+                        hash={depositHash || withdrawHash || (isDebug ? debugHash : null)}
+                      />
+                    );
+                  })()}
 
                   {/* Transaction Success State - Deposit/Withdraw */}
                   {isVaultDeployed && (((isDebugDeposit || isDebugWithdraw) && isDebugSuccess) || (showTxSuccess?.show && (showTxSuccess.type === "deposit" || showTxSuccess.type === "withdraw"))) && (
@@ -2339,37 +2243,15 @@ export function VaultPageContent({ id }: { id: string }) {
 
                   {/* Transaction Pending State - Zap */}
                   {isVaultDeployed && ((isDebugZap && isDebugPending) || isZapTxPending) && (
-                    <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
-                      <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
-                        <LoadingDots />
-                      </div>
-                      <h3 className="text-lg font-medium mb-2">
-                        {isDebugZap ? "Awaiting Confirmation" : currentZapPendingCopy.title}
-                      </h3>
-                      {/* Transaction Details */}
-                      {(() => {
-                        const details = isDebugZap ? debugTxDetails : pendingTxDetails;
-                        return details && (
-                          <TxAssetDetailsPill details={details} actionLabel="Zap" />
-                        );
-                      })()}
-                      <p className="text-sm text-[var(--muted-foreground)] max-w-xs mb-4">
-                        {isDebugZap
-                          ? `Zap ${isDebugZapIn ? "in" : isDebugZapOut ? "out" : (zapDirection === "in" ? "in" : "out")} confirming on-chain.`
-                          : currentZapPendingCopy.message}
-                      </p>
-                      {(zapHash || isDebugZap) && (
-                        <a
-                          href={`https://etherscan.io/tx/${zapHash || debugHash}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 text-sm text-[var(--foreground)] hover:text-[var(--accent)] transition-colors mono"
-                        >
-                          View on Etherscan
-                          <ExternalLink size={14} />
-                        </a>
-                      )}
-                    </div>
+                    <TxPendingCard
+                      title={isDebugZap ? "Awaiting Confirmation" : currentZapPendingCopy.title}
+                      message={isDebugZap
+                        ? `Zap ${isDebugZapIn ? "in" : isDebugZapOut ? "out" : (zapDirection === "in" ? "in" : "out")} confirming on-chain.`
+                        : currentZapPendingCopy.message}
+                      details={isDebugZap ? debugTxDetails : pendingTxDetails}
+                      actionLabel="Zap"
+                      hash={zapHash || (isDebugZap ? debugHash : null)}
+                    />
                   )}
 
                   {/* Transaction Success State - Zap */}
