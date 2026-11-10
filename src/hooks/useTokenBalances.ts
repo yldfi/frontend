@@ -132,6 +132,13 @@ interface UseTokenBalancesOptions {
    * just because a balance API reports them with a nonzero price.
    */
   walletTokenAllowlist?: readonly string[];
+  /**
+   * Fetch Enso prices for the token list (default true). Pass false where only
+   * balances are shown: every price query is a POST to /api/enso/prices, which
+   * counts against the Cloudflare per-IP rate limit and Enso's shared 10 RPS.
+   * Enso wallet balances still carry their own prices either way.
+   */
+  fetchPrices?: boolean;
 }
 
 export function useTokenBalances(tokens: EnsoToken[], options: UseTokenBalancesOptions = {}) {
@@ -218,7 +225,7 @@ export function useTokenBalances(tokens: EnsoToken[], options: UseTokenBalancesO
   const { data: tokenPrices, isLoading: pricesLoading } = useQuery({
     queryKey: ["enso-token-prices", tokenPriceAddresses],
     queryFn: () => fetchTokenPrices(tokenPriceAddresses),
-    enabled: tokenPriceAddresses.length > 0,
+    enabled: (options.fetchPrices ?? true) && tokenPriceAddresses.length > 0,
     staleTime: 2 * 60 * 1000,
     retry: false,
   });

@@ -113,6 +113,21 @@ describe("TokenSelector balance refresh", () => {
     ]));
   });
 
+  it("fetches prices only while the dropdown is open", async () => {
+    render(<TokenSelector selectedToken={tokens[0]} onSelect={vi.fn()} />);
+    expect(mockUseTokenBalances.mock.calls.at(-1)?.[1]).toEqual(
+      expect.objectContaining({ fetchPrices: false }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /AAA/ }));
+
+    await waitFor(() => {
+      expect(mockUseTokenBalances.mock.calls.at(-1)?.[1]).toEqual(
+        expect.objectContaining({ fetchPrices: true }),
+      );
+    });
+  });
+
   it("refetches Enso balances when opened and only on-chain balances on new blocks", async () => {
     const { rerender } = render(
       <TokenSelector
