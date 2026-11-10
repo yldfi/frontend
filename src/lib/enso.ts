@@ -800,7 +800,7 @@ const COMMON_TOKEN_DECIMALS: Record<string, number> = {
   "0xd533a949740bb3306d119cc777fa900ba034cd52": 18, // CRV
 };
 
-function getTokenDecimals(address: string): number {
+export function getTokenDecimals(address: string): number {
   const lower = address.toLowerCase();
 
   const customToken = CUSTOM_TOKENS.find((token) => token.address.toLowerCase() === lower);

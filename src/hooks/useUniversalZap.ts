@@ -31,6 +31,8 @@ import {
   previewUCrvWithdraw,
   previewBeefyWithdraw,
   fetchTokenPrices,
+  fetchQuote,
+  getTokenDecimals,
   getPxCvxSwapRate,
   getLpxCvxToCvxSwapRate,
   isYldfiVault,
@@ -50,9 +52,11 @@ import {
 import { useVaultCache } from "@/hooks/useVaultCache";
 import { PUBLIC_RPC_URLS } from "@/config/rpc";
 import { ERC4626_ABI, VAULT_ABI } from "@/lib/abis";
+import { needsPriceImpactConfirm } from "@/components/PriceImpactConfirmModal";
 import {
   annotateEnsoStepSlippage,
   assertBundleMatchesRouteEstimate,
+  assertBundleOutputMatchesEstimate,
   calculateCvxLegPriceImpact,
   calculateRoutePriceImpact,
   calculateValueDeltaImpact,
@@ -203,6 +207,59 @@ async function getPrices(addresses: string[]): Promise<Map<string, number | null
 function bundleHasOutput(amountsOut: Record<string, string> | undefined, token: string): boolean {
   if (!amountsOut) return false;
   return amountsOut[token.toLowerCase()] != null || amountsOut[token] != null;
+}
+
+const ILLIQUID_TOKENS = new Set([TOKENS.PXCVX.toLowerCase(), TOKENS.LPXCVX.toLowerCase()]);
+
+/**
+ * Bundles whose swap leg takes a runtime amount (redeem → route) are routed by
+ * Enso with only the grapher/openocean aggregators (fetchBundle's
+ * ignoreAggregators), and on 5 Nov 2026 such a bundle quoted ~38% below every
+ * on-chain path. When a quote already shows a price impact high enough to
+ * need typed CONFIRM, fetch one standalone quote for that leg (full
+ * aggregator set, ~16 credits) and refuse the bundle if it is far below it,
+ * so the user retries instead of confirming a bad quote as "market impact".
+ * Fails open: if the standalone quote errors, the CONFIRM gate still applies.
+ * pxCVX/lpxCVX have no Enso market to compare against, so they are skipped.
+ */
+async function assertDynamicLegNotFarBelowMarket(params: {
+  fromAddress: string;
+  priceImpact: number | null;
+  tokenIn: string;
+  tokenOut: string;
+  amountIn: number | null;
+  bundleAmountOut: number | null;
+  tokenOutDecimals: number;
+  tokenOutSymbol: string;
+  slippage: string;
+}): Promise<void> {
+  if (!needsPriceImpactConfirm(params.priceImpact)) return;
+  const tokenIn = params.tokenIn.toLowerCase();
+  const tokenOut = params.tokenOut.toLowerCase();
+  if (tokenIn === tokenOut || ILLIQUID_TOKENS.has(tokenIn) || ILLIQUID_TOKENS.has(tokenOut)) return;
+  if (params.amountIn === null || !(params.amountIn > 0) || params.bundleAmountOut === null) return;
+
+  const inDecimals = getTokenDecimals(params.tokenIn);
+  let estimate: number;
+  try {
+    const amountInWei = parseUnits(params.amountIn.toFixed(Math.min(inDecimals, 18)), inDecimals);
+    const standalone = await fetchQuote({
+      fromAddress: params.fromAddress,
+      tokenIn: params.tokenIn,
+      tokenOut: params.tokenOut,
+      amountIn: amountInWei.toString(),
+    });
+    estimate = Number(formatUnits(BigInt(standalone.amountOut), params.tokenOutDecimals));
+  } catch {
+    return;
+  }
+  assertBundleOutputMatchesEstimate({
+    estimate,
+    bundleAmount: params.bundleAmountOut,
+    symbol: params.tokenOutSymbol,
+    verb: "deliver",
+    slippageBps: params.slippage,
+  });
 }
 
 /**
@@ -562,6 +619,10 @@ export function useUniversalZap({
                 routeInfo: bundle.routeInfo,
               }) ?? calculateRoutePriceImpact(inUsd, outUsd, bundle.routeInfo, bundle.priceImpact ?? null)
             : calculateRoutePriceImpact(inUsd, outUsd, bundle.routeInfo, bundle.priceImpact ?? null);
+          // No standalone check here: fetchYldVaultToExternalVaultRoute uses
+          // skipQuote and fills amountsOut from the same unrestricted estimate,
+          // so it would compare a quote with itself (see the builder for the
+          // executed route's protection).
 
           return {
             inputToken,
@@ -793,6 +854,18 @@ export function useUniversalZap({
           };
         }
         const routeInfo = (bundle as { routeInfo?: RouteInfo }).routeInfo ?? fallbackRouteInfo;
+        const priceImpact = calculateRoutePriceImpact(inUsd, outUsd, routeInfo, bundle.priceImpact ?? null);
+        await assertDynamicLegNotFarBelowMarket({
+          fromAddress: userAddress,
+          priceImpact,
+          tokenIn: underlying,
+          tokenOut: outputToken.address,
+          amountIn: aps !== null ? inNum * aps : null,
+          bundleAmountOut: outNum,
+          tokenOutDecimals: outputDecimals,
+          tokenOutSymbol: outputToken.symbol,
+          slippage,
+        });
 
         return {
           inputToken,
@@ -802,7 +875,7 @@ export function useUniversalZap({
           exchangeRate: inNum > 0 ? outNum / inNum : 0,
           inputUsdValue: inUsd,
           outputUsdValue: outUsd,
-          priceImpact: calculateRoutePriceImpact(inUsd, outUsd, routeInfo, bundle.priceImpact ?? null),
+          priceImpact,
           gasEstimate: bundle.gas,
           tx: { to: bundle.tx.to, data: bundle.tx.data, value: bundle.tx.value },
           route: [],
@@ -1382,6 +1455,20 @@ export function useUniversalZap({
           bundle.routeInfo,
           bundle.priceImpact ?? null,
         );
+        // Only the ERC-4626 builder returns a real bundle quote; the uCRV,
+        // Beefy and uCVX builders use skipQuote and display the unrestricted
+        // standalone estimate, so a check there would compare it with itself.
+        if (!isUcvx && inputExternalConfig.interface === "erc4626") await assertDynamicLegNotFarBelowMarket({
+          fromAddress: userAddress,
+          priceImpact,
+          tokenIn: inputExternalConfig.underlying,
+          tokenOut: outputToken.address,
+          amountIn: underlyingAmount > 0 ? underlyingAmount : null,
+          bundleAmountOut: outNum,
+          tokenOutDecimals: outputDecimals,
+          tokenOutSymbol: outputToken.symbol,
+          slippage,
+        });
 
         return {
           inputToken,
