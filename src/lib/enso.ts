@@ -65,6 +65,16 @@ const isEnsoRateLimit = (error: unknown): boolean => {
   return false;
 };
 
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String((error as { message?: unknown })?.message ?? error);
+
+const isSwapNotFound = (error: unknown): boolean =>
+  /swap not found/i.test(errorMessage(error));
+
+/** Shown (via parseQuoteError) when a dynamic swap step can't be routed even after a retry. */
+export const DYNAMIC_ROUTE_UNAVAILABLE_MESSAGE =
+  "Enso can't route this swap step right now";
+
 const enqueueEnsoCall = async <T>(fn: () => Promise<T>): Promise<T> => {
   const run = async (): Promise<T> => {
     const now = Date.now();
@@ -2612,19 +2622,38 @@ export async function fetchBundle(params: {
   }
 
   // Server-side: use SDK directly
+  const requestBundle = () => enqueueEnsoCall(() => ensoClient.getBundleData(
+    {
+      chainId: CHAIN_ID,
+      fromAddress: params.fromAddress as `0x${string}`,
+      routingStrategy: params.routingStrategy ?? "router",
+      referralCode: ENSO_REFERRAL_CODE,
+      receiver: params.receiver as `0x${string}` | undefined,
+      skipQuote: params.skipQuote ?? isDev,
+    },
+    actions as unknown as Parameters<typeof ensoClient.getBundleData>[1]
+  ));
   let bundleData: Awaited<ReturnType<typeof ensoClient.getBundleData>>;
   try {
-    bundleData = await enqueueEnsoCall(() => ensoClient.getBundleData(
-      {
-        chainId: CHAIN_ID,
-        fromAddress: params.fromAddress as `0x${string}`,
-        routingStrategy: params.routingStrategy ?? "router",
-        referralCode: ENSO_REFERRAL_CODE,
-        receiver: params.receiver as `0x${string}` | undefined,
-        skipQuote: params.skipQuote ?? isDev,
-      },
-      actions as unknown as Parameters<typeof ensoClient.getBundleData>[1]
-    ));
+    try {
+      bundleData = await requestBundle();
+    } catch (error: unknown) {
+      // A dynamic-input route step may only use grapher/openocean, and Enso
+      // intermittently can't route a pair with them ("Swap not found") while
+      // the full aggregator set can: 10 Nov 2026, USDC -> cvxCRV failed for
+      // ~1 min, then recovered. Retry once, then report it as temporary
+      // rather than as missing liquidity.
+      if (dynamicRouteActions.length === 0 || !isSwapNotFound(error)) throw error;
+      await sleep(1500);
+      try {
+        bundleData = await requestBundle();
+      } catch (retryError: unknown) {
+        if (!isSwapNotFound(retryError)) throw retryError;
+        throw new Error(
+          `${DYNAMIC_ROUTE_UNAVAILABLE_MESSAGE} (${errorMessage(retryError)})`,
+        );
+      }
+    }
   } catch (error: unknown) {
     if (isDev) {
       const errData = (error as { response?: { data?: unknown } })?.response?.data;
