@@ -69,10 +69,10 @@ export function Footer() {
               />
             </a>
             <a
-              href="https://yldfi.gitbook.io/docs"
+              href="https://docs.yldfi.co"
               target="_blank"
               rel="noopener noreferrer"
-              onClick={() => trackExternalLinkClick("https://yldfi.gitbook.io/docs", "docs")}
+              onClick={() => trackExternalLinkClick("https://docs.yldfi.co", "docs")}
               className={footerIconLinkClassName}
               aria-label="Documentation"
             >

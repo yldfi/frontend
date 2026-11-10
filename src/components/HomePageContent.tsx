@@ -372,10 +372,10 @@ export function HomePageContent() {
                     View Vaults
                   </a>
                   <a
-                    href="https://yldfi.gitbook.io/docs"
+                    href="https://docs.yldfi.co"
                     target="_blank"
                     rel="noopener noreferrer"
-                    onClick={() => trackExternalLinkClick("https://yldfi.gitbook.io/docs", "docs")}
+                    onClick={() => trackExternalLinkClick("https://docs.yldfi.co", "docs")}
                     className="inline-flex items-center gap-2 px-5 py-2.5 border border-[var(--border)] text-sm font-medium rounded-md hover:bg-[var(--muted)] transition-colors"
                   >
                     Read Docs <ArrowUpRight size={14} />

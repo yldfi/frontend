@@ -41,7 +41,7 @@ describe("brand", () => {
     });
 
     it("has correct docs URL", () => {
-      expect(URLS.docs).toBe("https://yldfi.gitbook.io/docs");
+      expect(URLS.docs).toBe("https://docs.yldfi.co");
     });
 
     it("has correct GitHub URL", () => {

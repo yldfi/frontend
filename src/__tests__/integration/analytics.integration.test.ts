@@ -415,9 +415,9 @@ describe("analytics.ts integration", () => {
     });
 
     it("tracks external link click", () => {
-      trackExternalLinkClick("https://yldfi.gitbook.io/docs", "docs");
+      trackExternalLinkClick("https://docs.yldfi.co", "docs");
       expect(mockGtag).toHaveBeenCalledWith("event", "external_link_click", {
-        url: "https://yldfi.gitbook.io/docs",
+        url: "https://docs.yldfi.co",
         link_name: "docs",
       });
     });
