@@ -192,8 +192,29 @@ export function assertBundleMatchesRouteEstimate(params: {
   /** User slippage in bps. Some builders size bundle legs with this buffer, so the limit never drops below it. */
   slippageBps?: string | number;
 }): void {
-  const estimate = routeDepositEstimate(params.routeInfo, params.underlyingSymbol);
-  const shortfall = routeQuoteShortfallPct(estimate, params.bundleUnderlying);
+  assertBundleOutputMatchesEstimate({
+    estimate: routeDepositEstimate(params.routeInfo, params.underlyingSymbol),
+    bundleAmount: params.bundleUnderlying,
+    symbol: params.underlyingSymbol,
+    verb: "deposit",
+    slippageBps: params.slippageBps,
+  });
+}
+
+/**
+ * Throws the bad-quote error when the bundle delivers more than
+ * max(5%, slippage + 1%) less `symbol` than an independent estimate of the
+ * same leg. Skips when either side is unknown.
+ */
+export function assertBundleOutputMatchesEstimate(params: {
+  estimate: number | null;
+  bundleAmount: number | null;
+  symbol: string;
+  /** "deposit" (into a vault) or "deliver" (to the wallet). */
+  verb: "deposit" | "deliver";
+  slippageBps?: string | number;
+}): void {
+  const shortfall = routeQuoteShortfallPct(params.estimate, params.bundleAmount);
   const slippagePct = Number(params.slippageBps ?? 0) / 100;
   const limit = Math.max(
     ROUTE_QUOTE_SHORTFALL_LIMIT_PCT,
@@ -202,9 +223,9 @@ export function assertBundleMatchesRouteEstimate(params: {
   if (shortfall === null || shortfall <= limit) return;
   const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
   throw new Error(
-    `${ROUTE_QUOTE_SHORTFALL_MESSAGE_PREFIX}: the zap would deposit ~${fmt(params.bundleUnderlying!)} ` +
-      `${params.underlyingSymbol}, ${shortfall.toFixed(1)}% below the ~${fmt(estimate!)} ` +
-      `${params.underlyingSymbol} the market route gives. Try again in a moment or change the amount.`,
+    `${ROUTE_QUOTE_SHORTFALL_MESSAGE_PREFIX}: the zap would ${params.verb} ~${fmt(params.bundleAmount!)} ` +
+      `${params.symbol}, ${shortfall.toFixed(1)}% below the ~${fmt(params.estimate!)} ` +
+      `${params.symbol} the market route gives. Try again in a moment or change the amount.`,
   );
 }
 
