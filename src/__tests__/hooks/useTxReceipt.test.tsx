@@ -120,6 +120,58 @@ describe("useTxReceipt", () => {
     expect(result.current.data?.status).toBe("reverted");
   });
 
+  /** Safe service by URL: the pending tx is nonce 5; the Safe is now at `safeNonce`. */
+  function mockSafeService(safeNonce: number, executedAtNonce5?: { to: string; value: string; data: string | null }) {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("/multisig-transactions/" + SAFE_TX_HASH)) {
+        return serviceResponse(200, {
+          safe: SAFE, nonce: 5, transactionHash: null, isExecuted: false, isSuccessful: null,
+          confirmations: [{}], confirmationsRequired: 2,
+        });
+      }
+      if (url.endsWith(`/safes/${SAFE}/`)) return serviceResponse(200, { nonce: safeNonce });
+      if (url.includes(`/safes/${SAFE}/multisig-transactions/?nonce=5&executed=true`)) {
+        return serviceResponse(200, { results: executedAtNonce5 ? [executedAtNonce5] : [] });
+      }
+      return serviceResponse(404);
+    });
+  }
+
+  it("stops waiting and reports an error when the owners rejected the tx (same nonce)", async () => {
+    mockUseIsSafeWallet.mockReturnValue(true);
+    mockSafeService(6, { to: SAFE.toLowerCase(), value: "0", data: null });
+
+    const { result } = renderHook(() => useTxReceipt({ hash: SAFE_TX_HASH }), { wrapper });
+
+    await waitFor(() => expect(result.current.safe?.outcome).toBe("rejected"));
+    expect(result.current.safe?.isAwaitingExecution).toBe(false);
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.isError).toBe(true);
+    expect(result.current.error?.message).toMatch(/rejected in your Safe/);
+  });
+
+  it("reports 'replaced' when another tx executed at its nonce", async () => {
+    mockUseIsSafeWallet.mockReturnValue(true);
+    mockSafeService(6, { to: "0x1111111111111111111111111111111111111111", value: "0", data: "0xa9059cbb" });
+
+    const { result } = renderHook(() => useTxReceipt({ hash: SAFE_TX_HASH }), { wrapper });
+
+    await waitFor(() => expect(result.current.safe?.outcome).toBe("replaced"));
+    expect(result.current.error?.message).toMatch(/replaced in your Safe/);
+  });
+
+  it("keeps waiting while the Safe's nonce hasn't moved past the tx", async () => {
+    mockUseIsSafeWallet.mockReturnValue(true);
+    mockSafeService(5);
+
+    const { result } = renderHook(() => useTxReceipt({ hash: SAFE_TX_HASH }), { wrapper });
+
+    await waitFor(() => expect(result.current.safe).not.toBeNull());
+    expect(result.current.safe).toMatchObject({ isAwaitingExecution: true, outcome: null });
+    expect(result.current.isLoading).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("executed=true"))).toBe(false);
+  });
+
   it("falls back to the plain receipt when the Safe service doesn't know the hash", async () => {
     mockUseIsSafeWallet.mockReturnValue(true);
     fetchMock.mockResolvedValue(serviceResponse(404));
