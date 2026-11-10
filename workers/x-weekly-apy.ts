@@ -1,3 +1,5 @@
+import { notifyTelegram } from "./telegram-alert";
+
 const BROWSER_RENDERING_ENDPOINT =
   "https://api.cloudflare.com/client/v4/accounts";
 const DEFAULT_SITE_URL = "https://yldfi.co";
@@ -23,6 +25,9 @@ interface Env extends XWeeklyApyEnv {
   X_CLIENT_SECRET?: string;
   X_REDIRECT_URI?: string;
   X_REFRESH_TOKEN?: string;
+  /** Failure alerts (tracker 386). Optional: without them a failure only reaches KV and the logs. */
+  TELEGRAM_BOT_TOKEN?: string;
+  TELEGRAM_CHAT_ID?: string;
 }
 
 interface BrowserImage {
@@ -105,6 +110,10 @@ export default {
         source: "cron",
       });
       console.error("weekly APY X post failed", error);
+      await notifyTelegram(
+        env,
+        `⚠️ yld weekly APY X post failed (${toDateKey(scheduledAt)}, cron)\n${getErrorMessage(error).slice(0, 500)}\n\nStatus: GET /status on the yldfi-x-weekly-apy worker. Rerun: POST /run?date=${toDateKey(scheduledAt)}.`,
+      );
       throw error;
     }
   },
