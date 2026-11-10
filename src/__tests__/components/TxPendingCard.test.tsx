@@ -30,4 +30,9 @@ describe("TxPendingCard", () => {
     expect(screen.queryByRole("link")).toBeNull();
     expect(screen.queryByText(/Step/)).toBeNull();
   });
+
+  it("uses the same vertical padding as the success and reverted cards (py-16)", () => {
+    const { container } = render(<TxPendingCard title="Awaiting Confirmation" message="x" />);
+    expect((container.firstChild as HTMLElement).className).toContain("py-16");
+  });
 });
