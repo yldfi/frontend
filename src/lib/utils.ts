@@ -75,3 +75,29 @@ export function formatTokenAmount(
 
   return `${integerPart.toLocaleString()}.${truncatedFractional}`;
 }
+
+/**
+ * Display a token amount with `minDecimals` places (default 4, the zap page's
+ * usual precision), widening for small amounts so at least `sigDigits`
+ * significant digits show. Trailing zeros past `minDecimals` are trimmed.
+ *   1234.5      → "1234.5000"
+ *   0.0265      → "0.0265"
+ *   0.00000531  → "0.000005310" → "0.00000531"
+ * Without this, dust such as 0.0265 CRV → ETH rendered as "0.0000 ETH".
+ */
+export function formatDisplayAmount(
+  value: number | string,
+  minDecimals = 4,
+  sigDigits = 4,
+): string {
+  const num = typeof value === "string" ? Number(value) : value;
+  if (!Number.isFinite(num)) return "—";
+  if (num === 0) return (0).toFixed(minDecimals);
+  const leadingDigit = Math.floor(Math.log10(Math.abs(num)));
+  const decimals = Math.min(18, Math.max(minDecimals, sigDigits - 1 - leadingDigit));
+  const fixed = num.toFixed(decimals);
+  if (decimals === minDecimals) return fixed;
+  const [whole, fraction = ""] = fixed.split(".");
+  const trimmed = fraction.replace(/0+$/, "").padEnd(minDecimals, "0");
+  return `${whole}.${trimmed}`;
+}
