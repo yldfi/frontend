@@ -412,6 +412,23 @@ describe("ZapPageContent", () => {
     await waitFor(() => expect(executeZap).toHaveBeenCalledWith());
   });
 
+  it("warns instead of showing green when the quote is far above market", () => {
+    mockUseUniversalZap.mockReturnValue({
+      quote: { ...quote, priceImpact: -25.69 },
+      quoteUpdatedAt: Date.now(),
+      isLoading: false,
+      error: null,
+      refetch: refetchQuote,
+    } as unknown as ReturnType<typeof useUniversalZap>);
+    render(<ZapPageContent />);
+    fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "0.1" } });
+
+    const impact = screen.getByText("-25.69%");
+    expect(impact.className).toContain("text-[var(--warning)]");
+    expect(impact.className).not.toContain("text-green-500");
+    expect(screen.getByRole("status").textContent).toContain("25.7% above market");
+  });
+
   it("passes autoRefresh to the quote hook (on while active)", () => {
     render(<ZapPageContent />);
     expect(mockUseUniversalZap).toHaveBeenLastCalledWith(expect.objectContaining({ autoRefresh: true }));
