@@ -195,6 +195,11 @@ async function getPrices(addresses: string[]): Promise<Map<string, number | null
   return out;
 }
 
+function bundleHasOutput(amountsOut: Record<string, string> | undefined, token: string): boolean {
+  if (!amountsOut) return false;
+  return amountsOut[token.toLowerCase()] != null || amountsOut[token] != null;
+}
+
 /**
  * Universal zap dispatcher — works for any (input, output) pair:
  *   - yld vault → yld vault          (vault-to-vault)
@@ -457,7 +462,10 @@ export function useUniversalZap({
         assertBundleMatchesRouteEstimate({
           routeInfo,
           underlyingSymbol: getTokenSymbol(targetUnderlying),
-          bundleUnderlying: targetAps !== null ? outNum * targetAps : null,
+          bundleUnderlying:
+            targetAps !== null && bundleHasOutput(bundle.amountsOut, outputToken.address)
+              ? outNum * targetAps
+              : null,
           slippageBps: slippage,
         });
 
@@ -920,7 +928,10 @@ export function useUniversalZap({
         assertBundleMatchesRouteEstimate({
           routeInfo,
           underlyingSymbol: getTokenSymbol(underlying),
-          bundleUnderlying: aps !== null ? outNum * aps : null,
+          bundleUnderlying:
+            aps !== null && bundleHasOutput(bundle.amountsOut, outputToken.address)
+              ? outNum * aps
+              : null,
           slippageBps: slippage,
         });
         const priceImpact = underlyingNeedsCvxFallback

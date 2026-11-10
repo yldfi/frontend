@@ -172,9 +172,9 @@ export function routeQuoteShortfallPct(
   bundleUnderlying: number | null,
 ): number | null {
   if (estimatedUnderlying === null || bundleUnderlying === null) return null;
-  // A zero bundle amount means "no amountsOut for this token" (Enso omits some
-  // vault outputs), not a 100% shortfall.
-  if (!(estimatedUnderlying > 0) || !(bundleUnderlying > 0) || !Number.isFinite(bundleUnderlying)) {
+  // A real 0 is a 100% shortfall. Callers pass null when the bundle has no
+  // amountsOut entry for the output (Enso omits some vault outputs).
+  if (!(estimatedUnderlying > 0) || !Number.isFinite(bundleUnderlying) || bundleUnderlying < 0) {
     return null;
   }
   return ((estimatedUnderlying - bundleUnderlying) / estimatedUnderlying) * 100;

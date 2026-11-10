@@ -89,6 +89,22 @@ describe("external vault → yld vault zap: bundle shortfall guard", () => {
     expect(error?.message).toContain(ROUTE_QUOTE_SHORTFALL_MESSAGE_PREFIX);
   });
 
+  it("refuses an explicit zero share output", async () => {
+    vi.mocked(fetchExternalVaultZapInRoute).mockResolvedValue(bundleWithShares("0", "2,028.2231") as never);
+    const { quote, error } = await runQuote();
+    expect(quote).toBeFalsy();
+    expect(error?.message).toContain(ROUTE_QUOTE_SHORTFALL_MESSAGE_PREFIX);
+  });
+
+  it("skips the check when the bundle has no amountsOut entry for the vault", async () => {
+    vi.mocked(fetchExternalVaultZapInRoute).mockResolvedValue({
+      ...bundleWithShares("0", "2,028.2231"),
+      amountsOut: {},
+    } as never);
+    const { error } = await runQuote();
+    expect(error?.message ?? "").not.toContain(ROUTE_QUOTE_SHORTFALL_MESSAGE_PREFIX);
+  });
+
   it("returns a quote that matches its route estimate", async () => {
     vi.mocked(fetchExternalVaultZapInRoute).mockResolvedValue(
       bundleWithShares("1777000000000000000000", "2,028.2231") as never,
