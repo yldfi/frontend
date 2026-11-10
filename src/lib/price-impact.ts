@@ -207,3 +207,31 @@ export function assertBundleMatchesRouteEstimate(params: {
       `${params.underlyingSymbol} the market route gives. Try again in a moment or change the amount.`,
   );
 }
+
+// A negative impact means the quote returns more USD than it takes. Small
+// negatives are noise or positive slippage; a large one means the quote beats
+// every real pool and will most likely revert on-chain (min-out above what
+// the market can fill), costing gas. 10 Nov 2026: 0.0265 CRV → ETH quoted
+// 0.00000417 ETH vs 0.00000331 on Curve TriCRV, shown as a green "-25.69%".
+// Warn rather than block: for illiquid tokens (pxCVX etc.) our USD prices are
+// approximations, so a large negative can also mean our price is off.
+export const ABOVE_MARKET_WARN_PCT = 5;
+
+export function isQuoteAboveMarket(priceImpact: number | null | undefined): boolean {
+  return priceImpact != null && Number.isFinite(priceImpact) && priceImpact < -ABOVE_MARKET_WARN_PCT;
+}
+
+/** Text colour for the Price Impact value on the zap UIs. */
+export function priceImpactClassName(priceImpact: number | null | undefined): string {
+  if (priceImpact == null) return "";
+  if (isQuoteAboveMarket(priceImpact)) return "text-[var(--warning)]";
+  if (priceImpact < 0) return "text-green-500";
+  if (priceImpact > 2) return "text-[var(--destructive)]";
+  if (priceImpact > 1) return "text-[var(--warning)]";
+  return "";
+}
+
+export function aboveMarketWarning(priceImpact: number | null | undefined): string | null {
+  if (!isQuoteAboveMarket(priceImpact)) return null;
+  return `This quote is ${Math.abs(priceImpact!).toFixed(1)}% above market and will likely fail on-chain (gas is still spent). Try again or change the amount.`;
+}

@@ -33,6 +33,7 @@ import { ETH_ADDRESS, applyKnownTokenMetadata, getCustomTokenMetadata } from "@/
 import { cn, formatDisplayAmount } from "@/lib/utils";
 import { parseQuoteError } from "@/lib/quote-errors";
 import { QUOTE_IDLE_MS, isQuoteOlderThan } from "@/lib/quote-freshness";
+import { aboveMarketWarning, priceImpactClassName } from "@/lib/price-impact";
 import { sanitizeAmount } from "@/lib/sanitize";
 import { fillMissingSimulationUsd } from "@/lib/simulation-pricing";
 import { getMaxEthAmount } from "@/lib/eth-gas";
@@ -763,21 +764,15 @@ export function ZapPageContent() {
                   </div>
                   <div className="flex items-center justify-between py-1">
                     <span className="text-[var(--muted-foreground)]">Price Impact</span>
-                    <span
-                      className={cn(
-                        "mono",
-                        quote && (quote.priceImpact ?? 0) < 0
-                          ? "text-green-500"
-                          : quote && (quote.priceImpact ?? 0) > 2
-                          ? "text-[var(--destructive)]"
-                          : quote && (quote.priceImpact ?? 0) > 1
-                          ? "text-[var(--warning)]"
-                          : "",
-                      )}
-                    >
+                    <span className={cn("mono", priceImpactClassName(quote?.priceImpact))}>
                       {quote?.priceImpact != null ? `${quote.priceImpact.toFixed(2)}%` : "—"}
                     </span>
                   </div>
+                  {aboveMarketWarning(quote?.priceImpact) && (
+                    <p role="status" className="py-1 text-xs text-[var(--warning)]">
+                      {aboveMarketWarning(quote?.priceImpact)}
+                    </p>
+                  )}
                   <div className="flex items-center justify-between py-1">
                     <span className="text-[var(--muted-foreground)]">Value</span>
                     <span className="mono">

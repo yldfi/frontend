@@ -50,6 +50,7 @@ import { useZapActions } from "@/hooks/useZapActions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useIdle } from "@/hooks/useIdle";
 import { QUOTE_IDLE_MS, isQuoteOlderThan } from "@/lib/quote-freshness";
+import { aboveMarketWarning, priceImpactClassName } from "@/lib/price-impact";
 import { useClearOnNavigation } from "@/hooks/useClearOnNavigation";
 import { useAutoContinueAfterApproval } from "@/hooks/useAutoContinueAfterApproval";
 import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
@@ -2594,19 +2595,15 @@ export function VaultPageContent({ id }: { id: string }) {
                         </div>
                         <div className="flex items-center justify-between py-1">
                           <span className="text-[var(--muted-foreground)]">Price Impact</span>
-                          <span className={cn(
-                            "mono",
-                            zapQuote && (zapQuote.priceImpact ?? 0) < 0
-                              ? "text-green-500"
-                              : zapQuote && (zapQuote.priceImpact ?? 0) > 2
-                                ? "text-[var(--destructive)]"
-                                : zapQuote && (zapQuote.priceImpact ?? 0) > 1
-                                  ? "text-[var(--warning)]"
-                                  : ""
-                          )}>
+                          <span className={cn("mono", priceImpactClassName(zapQuote?.priceImpact))}>
                             {zapQuote?.priceImpact != null ? `${zapQuote.priceImpact.toFixed(2)}%` : "—"}
                           </span>
                         </div>
+                        {aboveMarketWarning(zapQuote?.priceImpact) && (
+                          <p role="status" className="py-1 text-xs text-[var(--warning)]">
+                            {aboveMarketWarning(zapQuote?.priceImpact)}
+                          </p>
+                        )}
                         {/* Show value - for zap in, use output (vault shares) × underlying price */}
                         <div className="flex items-center justify-between py-1">
                           <span className="text-[var(--muted-foreground)]">Value</span>
