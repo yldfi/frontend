@@ -896,6 +896,13 @@ export function VaultPageContent({ id }: { id: string }) {
 
   const showZapApprovalCard = !!(zapPendingApproval && (zapStatus === "needsApproval" || zapStatus === "approving" || zapStatus === "waitingApproval"));
   const isVaultTxPending = isVaultTxPendingVisible(txStatus) && !isSimulatingPreview && !showSimulationModal;
+  // The approve-then-deposit card. The forms below hide only while this card
+  // actually renders: they used to hide whenever pendingMultiStep was set, so
+  // any other status with it still set (e.g. a reverted approval) left the
+  // right column blank (tracker item 40).
+  const showVaultApprovalStepCard =
+    pendingMultiStep?.type === "deposit" &&
+    (txStatus === "approving" || txStatus === "waitingApproval" || (txStatus === "idle" && pendingMultiStep.step === 1));
   const isZapTxPending = isZapTxPendingVisible(zapStatus) && !isSimulatingPreview && !showSimulationModal;
   const currentVaultHash = depositHash || withdrawHash;
   const currentVaultAction = txStatus === "withdrawing" || (!!withdrawHash && !depositHash) || activeTab === "withdraw" ? "withdraw" : "deposit";
@@ -1289,15 +1296,17 @@ export function VaultPageContent({ id }: { id: string }) {
     },
   );
 
-  // Clear multi-step state on error or user cancellation (vault actions)
+  // Clear multi-step state on error, user cancellation, or a reverted approval
+  // (no deposit hash yet, so the completion effect above never shows a card).
   useEffect(() => {
-    if (pendingMultiStep?.type === "deposit" && (txStatus === "error" || txError)) {
+    const approvalReverted = txStatus === "reverted" && !depositHash && !withdrawHash;
+    if (pendingMultiStep?.type === "deposit" && (txStatus === "error" || txError || approvalReverted)) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setPendingMultiStep(null);
        
       setPendingTxDetails(null);
     }
-  }, [txStatus, txError, pendingMultiStep, activeTab]);
+  }, [txStatus, txError, pendingMultiStep, activeTab, depositHash, withdrawHash]);
 
   // Handle zap completion (success or revert) - refetch balances and reset form
   useEffect(() => {
@@ -1922,7 +1931,7 @@ export function VaultPageContent({ id }: { id: string }) {
                   )}
 
                   {/* Multi-Step Transaction Pending State - Approval + Deposit */}
-                  {isVaultDeployed && pendingMultiStep?.type === "deposit" && (txStatus === "approving" || txStatus === "waitingApproval" || (txStatus === "idle" && pendingMultiStep.step === 1)) && (
+                  {isVaultDeployed && showVaultApprovalStepCard && (
                     <div className="flex flex-col items-center justify-center py-12 text-center animate-in fade-in duration-300">
                       <div className="w-16 h-16 rounded-full bg-[var(--muted)] flex items-center justify-center mb-4">
                         <LoadingDots />
@@ -2113,7 +2122,7 @@ export function VaultPageContent({ id }: { id: string }) {
                   )}
 
                   {/* Deposit/Withdraw Form - hidden during pending/success/reverted states and multi-step approval */}
-                  {isVaultDeployed && activeTab !== "zap" && !isDebugDeposit && !isDebugWithdraw && !isDebugZap && !isVaultTxPending && !pendingMultiStep?.type && !(showTxSuccess?.show && (showTxSuccess.type === "deposit" || showTxSuccess.type === "withdraw")) && !(showTxReverted?.show && (showTxReverted.type === "deposit" || showTxReverted.type === "withdraw")) && (
+                  {isVaultDeployed && activeTab !== "zap" && !isDebugDeposit && !isDebugWithdraw && !isDebugZap && !isVaultTxPending && !showVaultApprovalStepCard && !(showTxSuccess?.show && (showTxSuccess.type === "deposit" || showTxSuccess.type === "withdraw")) && !(showTxReverted?.show && (showTxReverted.type === "deposit" || showTxReverted.type === "withdraw")) && (
                     <>
                       {/* Input */}
                       <div>
@@ -2424,7 +2433,7 @@ export function VaultPageContent({ id }: { id: string }) {
                   )}
 
                   {/* Zap Form - hidden during pending/success/reverted states and multi-step approval */}
-                  {isVaultDeployed && activeTab === "zap" && !isDebugZap && !isDebugDeposit && !isDebugWithdraw && !isZapTxPending && !pendingMultiStep?.type && !(showTxSuccess?.show && showTxSuccess.type === "zap") && !(showTxReverted?.show && showTxReverted.type === "zap") && (
+                  {isVaultDeployed && activeTab === "zap" && !isDebugZap && !isDebugDeposit && !isDebugWithdraw && !isZapTxPending && !showVaultApprovalStepCard && !(showTxSuccess?.show && showTxSuccess.type === "zap") && !(showTxReverted?.show && showTxReverted.type === "zap") && (
                     <>
                       {/* Direction Toggle + Settings */}
                       <div className="flex items-center gap-1 p-1 rounded-lg bg-[var(--muted)] border border-[var(--border)]">

@@ -27,6 +27,20 @@ describe("VaultPageContent logic", () => {
       expect(sends).toHaveLength(3);
     });
 
+    it("never leaves the right column blank: the forms hide only while another card renders (item 40)", () => {
+      // The forms used to hide whenever pendingMultiStep was set; a reverted approval left it set.
+      expect(source).not.toMatch(/!pendingMultiStep\?\.type/);
+      expect(source).toContain("{isVaultDeployed && showVaultApprovalStepCard && (");
+      const forms = source.match(/\{isVaultDeployed && activeTab (?:!==|===) "zap" && [^\n]*/g) ?? [];
+      expect(forms).toHaveLength(2);
+      for (const form of forms) expect(form).toContain("!showVaultApprovalStepCard");
+    });
+
+    it("clears the approve-then-deposit state when the approval reverts", () => {
+      expect(source).toMatch(/const approvalReverted = txStatus === "reverted" && !depositHash && !withdrawHash;/);
+      expect(source).toMatch(/txStatus === "error" \|\| txError \|\| approvalReverted/);
+    });
+
     it("refuses to send a zap quote older than the freshness limit on every send path", () => {
       // guardHighImpact covers the button and approve -> auto-execute.
       expect(source).toMatch(/const guardHighImpact = \(label: string, run: \(\) => void\) => \{\n\s+if \(refreshIfZapQuoteTooOld\(\)\) return;/);
