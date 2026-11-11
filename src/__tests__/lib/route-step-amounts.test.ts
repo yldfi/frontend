@@ -64,6 +64,8 @@ vi.mock("@/lib/curve", () => ({
 
 import {
   fetchAnyToExternalVaultRoute,
+  fetchAnyToBeefyRoute,
+  fetchAnyToUCrvRoute,
   fetchPxCvxZapInRoute,
   fetchAnyFromPxCvxRoute,
   fetchPxCvxTokenZapInRoute,
@@ -957,6 +959,14 @@ describe("route step amounts", () => {
     expect(actions.some((action) => action.action === "route" && String(action.args.tokenOut).toLowerCase() === TOKENS.CVX.toLowerCase())).toBe(false);
     expect(actions[actions.length - 1]).toMatchObject({ protocol: "erc20", action: "transfer", args: { token: TOKENS.CVX, receiver: TEST_WALLET } });
     expect(BigInt(bundle.amountsOut[TOKENS.CVX.toLowerCase()])).toBeGreaterThan(0n);
+
+    // The Curve leg spends the full redeem output, so both the reported CVX and min_dy
+    // come from the unbuffered amount: slippage must only be applied once, by min_dy.
+    const redeemed = BigInt(await previewRedeem(LLAMA_AIRFORCE.UCVX, ONE_ETHER.toString()));
+    const fullQuote = redeemed - redeemed / 10n; // mocked lpxCVX → CVX rate on the FULL redeem output
+    expect(BigInt(bundle.amountsOut[TOKENS.CVX.toLowerCase()])).toBe(fullQuote);
+    const exchange = actions.find((action) => action.action === "call" && action.args.method === "exchange")!;
+    expect((exchange.args.args as unknown[])[3]).toBe(fullQuote.toString()); // min_dy (calculateMinDy is mocked to identity)
   });
 
   it("quotes native ETH for uCVX -> ETH so the intent guard can bind the final output", async () => {
@@ -1217,6 +1227,25 @@ describe("route step amounts", () => {
         args: { token: TOKENS.CVX, amount: { useOutputOfCallAt: 4 }, receiver: TEST_WALLET },
       });
       expect(BigInt(result.amountsOut[TOKENS.CVX.toLowerCase()] ?? "0")).toBeGreaterThan(0n);
+
+      // Same rule as the uCVX exit: the exchange spends the full redeem output.
+      const redeemed = BigInt(await previewRedeem(VAULT_ADDRESSES.YSPXCVX, ONE_ETHER.toString()));
+      const fullQuote = redeemed - redeemed / 10n; // mocked lpxCVX → CVX rate on the FULL redeem output
+      expect(BigInt(result.amountsOut[TOKENS.CVX.toLowerCase()])).toBe(fullQuote);
+      expect((actions[4].args.args as unknown[])[3]).toBe(fullQuote.toString()); // min_dy
+    });
+
+    it("quotes the uCVX -> CVX leg of a zap-in on the unbuffered redeem output", async () => {
+      await fetchUCvxZapInRoute({
+        fromAddress: TEST_WALLET,
+        vaultAddress: VAULT_ADDRESSES.YSCVX,
+        amountIn: ONE_ETHER.toString(),
+        slippage: "100",
+      });
+      const redeemed = BigInt(await previewRedeem(LLAMA_AIRFORCE.UCVX, ONE_ETHER.toString()));
+      const fullQuote = redeemed - redeemed / 10n; // mocked lpxCVX → CVX rate on the FULL redeem output
+      const exchange = lastBundleActions().find((action) => action.action === "call" && action.args.method === "exchange")!;
+      expect((exchange.args.args as unknown[])[3]).toBe(fullQuote.toString()); // min_dy
     });
 
     it("deposits redeemed pxCVX straight into a pxCVX-backed target (yspxCVX -> uCVX)", async () => {
@@ -1333,5 +1362,173 @@ describe("route step amounts", () => {
     const actions = lastBundleActions();
     expect(fixedErc20Approvals(actions, PIREX.LPXCVX)).toEqual([]);
     expect(rawApproveCalls(actions, PIREX.LPXCVX).map(rawApproveSpender)).toEqual([PIREX.LPXCVX_CVX_POOL]);
+  });
+
+  describe("output estimates fail closed", () => {
+    // A failed quote or RPC read must fail the zap quote instead of reporting a
+    // made-up output amount (which becomes both the shown amount and the intent guard's minimum).
+    function failQuotesFor(tokenIn: string, tokenOut: string): void {
+      mockGetRouteData.mockImplementation(async (request: { tokenIn: string[]; tokenOut: string[] }) => {
+        const input = request.tokenIn[0]?.toLowerCase();
+        const output = request.tokenOut[0]?.toLowerCase();
+        if (input === tokenIn.toLowerCase() && output === tokenOut.toLowerCase()) {
+          throw new Error("quote unavailable");
+        }
+        return { amountOut: "1000000000000000000", tx: { to: "0xroute", data: "0x4", value: "0" }, route: [] };
+      });
+    }
+
+    function mockRpcReplies(reply: (id: number, data?: string) => Record<string, unknown>): void {
+      globalThis.fetch = vi.fn(async (_url, init) => {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (Array.isArray(body)) {
+          return {
+            ok: true,
+            json: async () => body.map((request: { id: number; params?: Array<{ data?: string }> }) =>
+              reply(request.id, request.params?.[0]?.data)),
+          } as unknown as Response;
+        }
+        return { ok: true, json: async () => reply(body.id, body.params?.[0]?.data) } as unknown as Response;
+      }) as unknown as typeof fetch;
+    }
+
+    const rpcErrorReply = (id: number) => ({ id, error: { code: -32000, message: "x" } });
+    const rpcEmptyReply = (id: number) => ({ id, result: "0x" });
+
+    it("fails the uCRV zap when the cvxCRV pre-quote fails", async () => {
+      failQuotesFor(USDC_ADDRESS, LLAMA_AIRFORCE.UCRV_UNDERLYING);
+
+      // The quote has no message of its own: the router error for that pair surfaces as-is.
+      await expect(fetchAnyToUCrvRoute({
+        fromAddress: TEST_WALLET,
+        inputToken: USDC_ADDRESS,
+        amountIn: "1000000000",
+        slippage: "100",
+      })).rejects.toThrow(/quote unavailable/);
+    });
+
+    it("fails the uCRV zap when the share RPC reads return an error", async () => {
+      mockRpcReplies(rpcErrorReply);
+
+      await expect(fetchAnyToUCrvRoute({
+        fromAddress: TEST_WALLET,
+        inputToken: USDC_ADDRESS,
+        amountIn: "1000000000",
+        slippage: "100",
+      })).rejects.toThrow(/Failed to estimate uCRV shares/);
+    });
+
+    it("fails the Beefy zap when the underlying pre-quote fails", async () => {
+      failQuotesFor(USDC_ADDRESS, TOKENS.CVXCRV);
+
+      await expect(fetchAnyToBeefyRoute({
+        fromAddress: TEST_WALLET,
+        inputToken: USDC_ADDRESS,
+        beefyVault: BEEFY.MOO_CVX_CRV,
+        beefyVaultUnderlying: TOKENS.CVXCRV,
+        beefyVaultSymbol: "mooCvxCRV",
+        amountIn: "1000000000",
+        slippage: "100",
+      })).rejects.toThrow(/quote unavailable/);
+    });
+
+    it("fails the Beefy zap when the pricePerFullShare read returns an error", async () => {
+      mockRpcReplies(rpcErrorReply);
+
+      await expect(fetchAnyToBeefyRoute({
+        fromAddress: TEST_WALLET,
+        inputToken: USDC_ADDRESS,
+        beefyVault: BEEFY.MOO_CVX_CRV,
+        beefyVaultUnderlying: TOKENS.CVXCRV,
+        beefyVaultSymbol: "mooCvxCRV",
+        amountIn: "1000000000",
+        slippage: "100",
+      })).rejects.toThrow(/Failed to estimate Beefy vault shares/);
+    });
+
+    it("fails the Beefy zap with its estimate message when pricePerFullShare returns 0x", async () => {
+      mockRpcReplies(rpcEmptyReply);
+
+      const error = await fetchAnyToBeefyRoute({
+        fromAddress: TEST_WALLET,
+        inputToken: USDC_ADDRESS,
+        beefyVault: BEEFY.MOO_CVX_CRV,
+        beefyVaultUnderlying: TOKENS.CVXCRV,
+        beefyVaultSymbol: "mooCvxCRV",
+        amountIn: "1000000000",
+        slippage: "100",
+      }).catch((thrown: unknown) => thrown);
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/Failed to estimate Beefy vault shares/);
+      expect((error as Error).message).not.toMatch(/Cannot convert 0x to a BigInt/);
+    });
+
+    it("fails the external vault zap when previewDeposit returns no result", async () => {
+      // Only the previewDeposit read fails; every other read answers healthily.
+      mockRpcReplies((id, data) =>
+        data && data.startsWith("0xef8b30f7")
+          ? rpcEmptyReply(id)
+          : { id, result: `0x${ONE_ETHER.toString(16)}` });
+
+      await expect(fetchComposableZapInRoute({
+        fromAddress: TEST_WALLET,
+        inputToken: YVUSDC1_ADDRESS,
+        vaultAddress: VAULT_ADDRESSES.YSPXCVX,
+        amountIn: "10000000",
+        slippage: "100",
+      })).rejects.toThrow(/previewDeposit returned no result/);
+    });
+
+    it("reports uCRV shares and the cvxCRV amount when every read succeeds", async () => {
+      const cvxCrvFromQuote = 1_000_000_000_000_000_000n;
+      const totalUnderlying = 2_000_000_000_000_000_000n;
+      const totalSupply = 1_000_000_000_000_000_000n;
+      mockGetRouteData.mockImplementation(async () => ({
+        amountOut: cvxCrvFromQuote.toString(),
+        tx: { to: "0xroute", data: "0x4", value: "0" },
+        route: [],
+      }));
+      mockRpcReplies((id) => ({
+        id,
+        result: `0x${(id === 0 ? totalUnderlying : totalSupply).toString(16)}`,
+      }));
+
+      const result = await fetchAnyToUCrvRoute({
+        fromAddress: TEST_WALLET,
+        inputToken: USDC_ADDRESS,
+        amountIn: "1000000000",
+        slippage: "100",
+      });
+
+      const expectedShares = (cvxCrvFromQuote * totalSupply) / totalUnderlying;
+      expect(result.amountsOut[LLAMA_AIRFORCE.UCRV.toLowerCase()]).toBe(expectedShares.toString());
+      expect(result.amountsOut[LLAMA_AIRFORCE.UCRV_UNDERLYING.toLowerCase()]).toBe(cvxCrvFromQuote.toString());
+    });
+
+    it("fails the uCRV -> yld zap when the withdraw preview has no RPC result", async () => {
+      mockRpcReplies(rpcErrorReply);
+
+      await expect(fetchUCrvZapInRoute({
+        fromAddress: TEST_WALLET,
+        vaultAddress: VAULT_ADDRESSES.YSCVX,
+        amountIn: ONE_ETHER.toString(),
+        slippage: "100",
+      })).rejects.toThrow(/Failed to preview uCRV withdraw/);
+    });
+
+    it("fails the Beefy -> yld zap when the withdraw preview has no RPC result", async () => {
+      mockRpcReplies(rpcErrorReply);
+
+      await expect(fetchBeefyZapInRoute({
+        fromAddress: TEST_WALLET,
+        vaultAddress: VAULT_ADDRESSES.YSCVX,
+        beefyVaultAddress: BEEFY.MOO_CVX_CRV,
+        beefyVaultUnderlying: TOKENS.CVXCRV,
+        beefyVaultSymbol: "mooCvxCRV",
+        amountIn: ONE_ETHER.toString(),
+        slippage: "100",
+      })).rejects.toThrow(/Failed to preview Beefy withdraw/);
+    });
   });
 });

@@ -1,13 +1,9 @@
 /**
- * Unit tests for slippage buffer calculations
+ * Unit tests for the slippage buffer that lib/enso uses between chained steps
  */
 import { describe, it, expect } from 'vitest';
 
-// Re-implement the function for testing (since it's private in enso.ts)
-function applySlippageBuffer(estimatedAmount: bigint, slippageBps: number): string {
-  const conservativeAmount = (estimatedAmount * BigInt(10000 - slippageBps)) / BigInt(10000);
-  return conservativeAmount.toString();
-}
+import { applySlippageBuffer } from '@/lib/enso';
 
 describe('applySlippageBuffer', () => {
   it('should reduce amount by slippage percentage', () => {
@@ -49,6 +45,13 @@ describe('applySlippageBuffer', () => {
     expect(result).toBe('99');
   });
 
+  it('rounds the result down instead of up', () => {
+    // 101 * 0.99 = 99.99 → 99; rounding up would give 100
+    expect(applySlippageBuffer(101n, 100)).toBe('99');
+    // 1 * 0.99 = 0.99 → 0
+    expect(applySlippageBuffer(1n, 100)).toBe('0');
+  });
+
   it('should handle large amounts', () => {
     const amount = 1000000000000000000000000n; // 1 million tokens (1e24)
     const slippage = 100; // 1%
@@ -86,15 +89,14 @@ describe('slippage buffer integration scenarios', () => {
 
     // After first Curve swap, we conservatively expect 99% of estimated output
     const conservativeCvx = applySlippageBuffer(estimatedCvx, slippage);
-    expect(BigInt(conservativeCvx)).toBeLessThan(estimatedCvx);
+    expect(conservativeCvx).toBe('9900000000000000000');
 
     // This conservative amount should be used for subsequent actions
     // to ensure we don't try to spend more than we received
     const estimatedCvxCrv = 9900000000000000000n; // Simulated swap output
     const conservativeCvxCrv = applySlippageBuffer(estimatedCvxCrv, slippage);
 
-    // Final amount should be ~98.01% of original (two 1% buffers)
-    const expectedMin = (estimatedCvx * 98n) / 100n;
-    expect(BigInt(conservativeCvxCrv)).toBeGreaterThanOrEqual(expectedMin);
+    // Final amount should be 98.01% of original (two 1% buffers)
+    expect(conservativeCvxCrv).toBe('9801000000000000000');
   });
 });

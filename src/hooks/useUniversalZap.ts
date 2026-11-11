@@ -52,6 +52,7 @@ import {
 import { useVaultCache } from "@/hooks/useVaultCache";
 import { PUBLIC_RPC_URLS } from "@/config/rpc";
 import { ERC4626_ABI, VAULT_ABI } from "@/lib/abis";
+import { isRetryableQuoteError } from "@/lib/quote-errors";
 import { needsPriceImpactConfirm } from "@/components/PriceImpactConfirmModal";
 import {
   annotateEnsoStepSlippage,
@@ -279,7 +280,16 @@ export function useUniversalZap({
 }: UseUniversalZapParams) {
   const { address: userAddress } = useAccount();
   const publicClient = usePublicClient({ chainId: 1 });
-  const { data: vaultCache } = useVaultCache();
+  const vaultCacheQuery = useVaultCache();
+  const vaultCache = vaultCacheQuery.data;
+  // Wait only for the first attempt: the vault cache retries with backoff and
+  // has no timeout of its own, so a slow /api/vaults must not hold up the quote.
+  // The cache is an optimisation — the hook falls back to RPC for pps.
+  const vaultCacheFirstLoad =
+    vaultCacheQuery.isPending &&
+    vaultCacheQuery.failureCount === 0 &&
+    vaultCacheQuery.dataUpdatedAt === 0 &&
+    vaultCacheQuery.errorUpdatedAt === 0;
 
   let amountInWei = "0";
   try {
@@ -291,6 +301,7 @@ export function useUniversalZap({
   }
 
   const enabled =
+    !vaultCacheFirstLoad &&
     !paused &&
     !!userAddress &&
     !!inputToken &&
@@ -306,7 +317,8 @@ export function useUniversalZap({
       amountInWei,
       slippage,
       userAddress,
-      // Include vault cache availability so the query re-runs once pps data
+      // The query now waits for the first vault-cache answer, so this flag only
+      // flips after a failed first load — it re-runs the query once pps data
       // arrives (otherwise the closure captures undefined vaultCache forever).
       !!vaultCache,
     ],
@@ -1682,7 +1694,10 @@ export function useUniversalZap({
     // Route discovery depends on several upstream RPC/API reads. A single
     // transient failure should not become a sticky "No route found" state
     // that only a full page refresh can clear.
-    retry: 2,
+    // …transient failures only: every attempt re-spends Enso credits, and the
+    // server already retries "Swap not found" on dynamic routes and backs off 429s.
+    retry: (failureCount, error) =>
+      failureCount < 2 && isRetryableQuoteError(error, failureCount),
     retryDelay: (attemptIndex) => Math.min(500 * 2 ** attemptIndex, 2_000),
   });
 

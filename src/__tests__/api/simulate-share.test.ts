@@ -1,185 +1,134 @@
-import { describe, it, expect } from "vitest";
+// @vitest-environment node
+import { createHmac } from "node:crypto";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
 
-// Re-implement logic from src/app/api/simulate/share/[simulationId]/route.ts
+import { GET } from "@/app/api/simulate/share/[simulationId]/route";
+import { shareLinkPayload } from "@/lib/simulation-nonce";
 
-function base64UrlEncode(bytes: Uint8Array): string {
-  return Buffer.from(bytes)
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
+const SECRET = "share-secret-key-test";
+const ACCOUNT = "acct";
+const PROJECT = "proj";
+const SIMULATION_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+
+function sign(simulationId: string, secret = SECRET): string {
+  return createHmac("sha256", secret).update(shareLinkPayload(simulationId)).digest("base64url");
 }
 
-function base64UrlDecode(value: string): Uint8Array {
-  const padded =
-    value.replace(/-/g, "+").replace(/_/g, "/") +
-    "===".slice((value.length + 3) % 4);
-  const bytes = Buffer.from(padded, "base64");
-  return new Uint8Array(bytes);
+function request(simulationId: string, signature?: string) {
+  const url = new URL(`https://yldfi.co/api/simulate/share/${simulationId}`);
+  if (signature !== undefined) url.searchParams.set("sig", signature);
+  return new NextRequest(url);
 }
 
-function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  let result = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    result |= a[i] ^ b[i];
-  }
-  return result === 0;
+function get(simulationId: string, signature?: string) {
+  return GET(request(simulationId, signature), { params: Promise.resolve({ simulationId }) });
 }
 
-async function signPayload(secret: string, payload: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
-  const signature = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    encoder.encode(payload)
-  );
-  return base64UrlEncode(new Uint8Array(signature));
-}
+beforeEach(() => {
+  vi.stubEnv("TENDERLY_ACCOUNT_SLUG", ACCOUNT);
+  vi.stubEnv("TENDERLY_PROJECT_SLUG", PROJECT);
+  vi.stubEnv("TENDERLY_ACCESS_KEY", "fixture-only");
+  vi.stubEnv("SIMULATION_NONCE_SECRET", SECRET);
+});
 
-async function verifySignature(
-  secret: string,
-  payload: string,
-  signature: string
-): Promise<boolean> {
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
-  const expected = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    encoder.encode(payload)
-  );
-  const expectedBytes = new Uint8Array(expected);
-  const providedBytes = base64UrlDecode(signature);
-  return timingSafeEqual(expectedBytes, providedBytes);
-}
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.clearAllMocks(); });
 
-// Simulation ID validation regex from route.ts
-const SIMULATION_ID_REGEX = /^[a-f0-9-]+$/i;
+describe("GET /api/simulate/share/[simulationId]", () => {
+  it("refuses to run without Tenderly credentials", async () => {
+    vi.stubEnv("TENDERLY_ACCESS_KEY", "");
 
-function isValidSimulationId(id: string): boolean {
-  return !!id && SIMULATION_ID_REGEX.test(id);
-}
+    const response = await get(SIMULATION_ID, sign(SIMULATION_ID));
 
-describe("Simulate Share API", () => {
-  describe("base64UrlDecode", () => {
-    it("round-trips with base64UrlEncode", () => {
-      const original = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
-      const encoded = base64UrlEncode(original);
-      const decoded = base64UrlDecode(encoded);
-      expect(decoded).toEqual(original);
-    });
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({ error: "Tenderly not configured" });
+  });
 
-    it("handles URL-safe characters (- and _)", () => {
-      // Base64 with + and / should be decoded after conversion to - and _
-      const bytes = new Uint8Array(Array.from({ length: 32 }, (_, i) => i * 8));
-      const encoded = base64UrlEncode(bytes);
-      // Verify no standard base64 chars
-      expect(encoded).not.toMatch(/[+/=]/);
-      const decoded = base64UrlDecode(encoded);
-      expect(decoded).toEqual(bytes);
-    });
+  it.each([
+    ["an empty id", ""],
+    ["an underscore", "abc_def"],
+    ["a slash", "abc/def"],
+    ["markup", "abc<script>"],
+    ["spaces", "abc def"],
+  ])("rejects %s before verifying the signature", async (_label, simulationId) => {
+    const response = await get(simulationId, sign(simulationId));
 
-    it("restores padding correctly", () => {
-      // 1 byte → 4 chars in base64 but 2 needed + 2 padding
-      const one = base64UrlEncode(new Uint8Array([255]));
-      expect(one).not.toContain("=");
-      const decoded = base64UrlDecode(one);
-      expect(decoded).toEqual(new Uint8Array([255]));
-    });
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "Invalid simulation ID" });
+  });
 
-    it("handles empty input", () => {
-      const encoded = base64UrlEncode(new Uint8Array([]));
-      const decoded = base64UrlDecode(encoded);
-      expect(decoded).toEqual(new Uint8Array([]));
-    });
+  it("accepts uppercase and dash-free hex ids", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({})));
 
-    it("handles 32-byte HMAC output", () => {
-      const hmacLike = new Uint8Array(32);
-      for (let i = 0; i < 32; i++) hmacLike[i] = i;
-      const encoded = base64UrlEncode(hmacLike);
-      const decoded = base64UrlDecode(encoded);
-      expect(decoded).toEqual(hmacLike);
+    for (const simulationId of [SIMULATION_ID.toUpperCase(), SIMULATION_ID.replace(/-/g, "")]) {
+      const response = await get(simulationId, sign(simulationId));
+      expect(response.status).toBe(200);
+    }
+  });
+
+  it("rejects a request without a signature", async () => {
+    const response = await get(SIMULATION_ID);
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+  });
+
+  it("rejects a signature that was made for another simulation id", async () => {
+    const response = await get(SIMULATION_ID, sign("a1b2c3d4-e5f6-7890-abcd-ef0000000000"));
+
+    expect(response.status).toBe(403);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects a signature made with another secret", async () => {
+    const response = await get(SIMULATION_ID, sign(SIMULATION_ID, "wrong-secret"));
+
+    expect(response.status).toBe(403);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects a request when the nonce secret is not configured", async () => {
+    vi.stubEnv("SIMULATION_NONCE_SECRET", "");
+
+    const response = await get(SIMULATION_ID, sign(SIMULATION_ID));
+
+    expect(response.status).toBe(403);
+  });
+
+  it("shares the simulation through Tenderly and returns the public url", async () => {
+    const fetchMock = vi.fn(async () => Response.json({}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await get(SIMULATION_ID, sign(SIMULATION_ID));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `https://api.tenderly.co/api/v1/account/${ACCOUNT}/project/${PROJECT}/simulations/${SIMULATION_ID}/share`,
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      url: `https://dashboard.tenderly.co/shared/simulation/${SIMULATION_ID}`,
     });
   });
 
-  describe("simulation ID validation", () => {
-    it("accepts valid UUIDs", () => {
-      expect(
-        isValidSimulationId("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
-      ).toBe(true);
-    });
+  it("falls back to the dashboard url when Tenderly refuses to share", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 500 })));
 
-    it("accepts hex strings without dashes", () => {
-      expect(isValidSimulationId("a1b2c3d4e5f67890abcdef1234567890")).toBe(
-        true
-      );
-    });
+    const response = await get(SIMULATION_ID, sign(SIMULATION_ID));
 
-    it("accepts uppercase hex", () => {
-      expect(isValidSimulationId("A1B2C3D4-E5F6-7890-ABCD-EF1234567890")).toBe(
-        true
-      );
-    });
-
-    it("rejects empty string", () => {
-      expect(isValidSimulationId("")).toBe(false);
-    });
-
-    it("rejects strings with invalid characters", () => {
-      expect(isValidSimulationId("abc-xyz-123")).toBe(false); // x, y, z not hex
-      expect(isValidSimulationId("abc!def")).toBe(false);
-      expect(isValidSimulationId("abc def")).toBe(false);
-      expect(isValidSimulationId("abc/def")).toBe(false);
-    });
-
-    it("rejects strings with special characters", () => {
-      expect(isValidSimulationId("abc<script>")).toBe(false);
-      expect(isValidSimulationId("abc;DROP TABLE")).toBe(false);
+    await expect(response.json()).resolves.toEqual({
+      url: `https://dashboard.tenderly.co/${ACCOUNT}/${PROJECT}/simulator/${SIMULATION_ID}`,
     });
   });
 
-  describe("verifySignature (share endpoint)", () => {
-    const SECRET = "share-secret-key-test";
+  it("falls back to the dashboard url when the share request fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new Error("network down"))));
 
-    it("verifies valid signature", async () => {
-      const simId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
-      const sig = await signPayload(SECRET, simId);
-      const valid = await verifySignature(SECRET, simId, sig);
-      expect(valid).toBe(true);
-    });
+    const response = await get(SIMULATION_ID, sign(SIMULATION_ID));
 
-    it("rejects forged signature", async () => {
-      const simId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
-      const sig = await signPayload(SECRET, "different-id");
-      const valid = await verifySignature(SECRET, simId, sig);
-      expect(valid).toBe(false);
-    });
-
-    it("rejects wrong secret", async () => {
-      const simId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
-      const sig = await signPayload(SECRET, simId);
-      const valid = await verifySignature("wrong-secret", simId, sig);
-      expect(valid).toBe(false);
-    });
-
-    it("is payload-specific (different IDs produce different sigs)", async () => {
-      const sig1 = await signPayload(SECRET, "id-1");
-      const sig2 = await signPayload(SECRET, "id-2");
-      expect(sig1).not.toBe(sig2);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      url: `https://dashboard.tenderly.co/${ACCOUNT}/${PROJECT}/simulator/${SIMULATION_ID}`,
     });
   });
 });

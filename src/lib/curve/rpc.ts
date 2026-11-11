@@ -363,32 +363,18 @@ export async function getCurveGetDyFactory(
 // Index 0: WETH, Index 1: CVX
 const CURVE_ETH_CVX_POOL = CURVE_CVX_ETH_POOL;
 
-// Cache for ETH→CVX rate (valid for 30 seconds to reduce RPC calls)
-let ethToCvxRateCache: {
-  rate: bigint; // CVX per ETH (in wei units, e.g., 1500e18 means 1 ETH = 1500 CVX)
-  timestamp: number;
-} | null = null;
-const ETH_CVX_CACHE_TTL = 30 * 1000; // 30 seconds
-
 /**
  * Get estimated CVX output for ETH input using on-chain Curve pool pricing.
  * This avoids making a separate Enso route call for price discovery.
  * Uses RPC calls which don't count against Enso's API rate limit.
+ * Always quoted for the exact amount: an AMM rate is size-dependent, so a rate
+ * cached from one request must not be scaled to another.
  *
  * @param ethAmount - Amount of ETH in wei
  * @returns Estimated CVX output in wei
  * @throws Error if RPC call fails after retries
  */
 export async function getEthToCvxEstimate(ethAmount: string): Promise<string> {
-  const now = Date.now();
-  const ethBigInt = BigInt(ethAmount);
-
-  // Check cache first
-  if (ethToCvxRateCache && now - ethToCvxRateCache.timestamp < ETH_CVX_CACHE_TTL) {
-    const cvxEstimate = (ethBigInt * ethToCvxRateCache.rate) / (10n ** 18n);
-    return cvxEstimate.toString();
-  }
-
   // Fetch real-time price from Curve V2 ETH/CVX pool via RPC
   // Index 0: WETH, Index 1: CVX (V2 pools use uint256 indices)
   // Retry up to 3 times with exponential backoff
@@ -412,12 +398,6 @@ export async function getEthToCvxEstimate(ethAmount: string): Promise<string> {
 
   if (!cvxOutput || cvxOutput === 0n) {
     throw new Error(`Failed to fetch ETH/CVX price from Curve pool after 3 attempts: ${lastError?.message}`);
-  }
-
-  // Update cache with implied rate
-  if (ethBigInt > 0n) {
-    const rate = (cvxOutput * (10n ** 18n)) / ethBigInt;
-    ethToCvxRateCache = { rate, timestamp: now };
   }
 
   return cvxOutput.toString();

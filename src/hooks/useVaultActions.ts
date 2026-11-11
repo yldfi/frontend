@@ -13,8 +13,8 @@ import { shouldResetApprovalToZeroFirst } from "@/lib/approval-reset";
 import type { SimulationResult } from "@/types/enso";
 import { useTestNetwork } from "@/contexts/TestNetworkContext";
 import { useSendTx } from "@/hooks/useSendTx";
-import { runVNetSimulation } from "@/lib/vnet-simulation";
-import { parseErrorMessage, anvilCall } from "@/lib/tx-utils";
+import { parseErrorMessage } from "@/lib/tx-utils";
+import { buildUnavailableSimulationResult, getSimulationErrorText, runTxPreflight } from "@/lib/tx-preflight";
 
 export type TransactionStatus = "idle" | "approving" | "waitingApproval" | "depositing" | "withdrawing" | "waitingTx" | "success" | "reverted" | "error";
 
@@ -132,11 +132,11 @@ export function useVaultActions(
     if (isApprovalReverted || isDepositReverted || isWithdrawReverted) return "reverted";
     if (isDepositSuccess || isWithdrawSuccess) return "success";
     if (safeOutcomeError) return "error";
+    // A sent deposit/withdrawal is live: it outranks any earlier pre-send error
+    // (e.g. a rejected approval) and an earlier confirmed approval receipt.
+    if (isDepositPending || isWithdrawPending) return "waitingTx";
     // Error states for pre-send failures (wallet rejection, simulation failure, RPC errors)
     if (approveError || txError || simulationError) return "error";
-    // A confirmed approval remains in wagmi while the deposit is prepared and sent.
-    // The active deposit must take priority over that earlier receipt.
-    if (isDepositPending || isWithdrawPending) return "waitingTx";
     if (actionState === "simulating") return "depositing"; // Show as depositing/withdrawing to user
     if (actionState === "depositing") return "depositing";
     if (actionState === "withdrawing") return "withdrawing";
@@ -182,6 +182,15 @@ export function useVaultActions(
       return true;
     }
   }, [allowance, decimals]);
+
+  // A rejected/failed approval leaves its error in the write hook, and one that
+  // reverted on-chain leaves its hash and reverted receipt there. Starting a
+  // deposit or withdrawal is a new attempt, so that failed approval no longer
+  // applies. Only an errored write or a reverted receipt is reset: a confirmed
+  // or still-pending approval's hash must survive.
+  const clearFailedApproval = useCallback(() => {
+    if (approveError || isApprovalReverted) resetApprove();
+  }, [approveError, isApprovalReverted, resetApprove]);
 
   // Approve (exact or unlimited)
   const approve = useCallback(async (exactAmount?: bigint) => {
@@ -263,101 +272,21 @@ export function useVaultActions(
   ): Promise<SimulationResult | null> => {
     if (!userAddress || !publicClient) return null;
 
-    // Build simulation promise based on network type
-    const simPromise = (testNetworkType === null && chainId !== 1337)
-      ? (async () => {
-          try {
-            const nonceResponse = await fetch("/api/simulate/nonce", {
-              signal: AbortSignal.timeout(5_000), // 5s timeout
-            });
-            const nonceResult = (await nonceResponse.json()) as {
-              success: boolean;
-              nonce?: string;
-              expires?: number;
-              sig?: string;
-            };
-
-            if (!nonceResult.success || !nonceResult.nonce || !nonceResult.expires || !nonceResult.sig) {
-              return { ok: false as const, errorMessage: "Failed to obtain simulation nonce", retryable: true };
-            }
-
-            const response = await fetch("/api/simulate", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                from: userAddress,
-                to: vaultAddress,
-                data: calldata,
-                value: value.toString(),
-                // Safe batch: simulate the approval call(s) right before the
-                // deposit, exactly as the batch will execute them.
-                ...(approvals?.length
-                  ? { inputToken: tokenAddress, spender: vaultAddress, approvalTransactions: approvals }
-                  : {}),
-                nonce: nonceResult.nonce,
-                expires: nonceResult.expires,
-                sig: nonceResult.sig,
-              }),
-              signal: AbortSignal.timeout(20_000), // 20s timeout
-            });
-
-            const result = (await response.json()) as SimulationResult & { retryable?: boolean };
-
-            if (process.env.NODE_ENV === "development") {
-              console.log("[Tenderly Vault Simulation]", {
-                success: result.success,
-                simulationId: result.simulationId,
-                gasUsed: result.gasUsed,
-                errorMessage: result.errorMessage,
-                assetChanges: result.assetChanges?.length ?? 0,
-              });
-            }
-
-            if (result.success) return { ok: true as const, result };
-            return {
-              ok: false as const,
-              result,
-              errorMessage: result.errorMessage ?? "Tenderly simulation failed",
-              retryable: Boolean(result.retryable),
-            };
-          } catch (err) {
-            return {
-              ok: false as const,
-              result: null,
-              errorMessage: err instanceof Error ? err.message : "Tenderly simulation failed",
-              retryable: true,
-            };
-          }
-        })()
-      : (testNetworkType === "tenderly")
-        ? runVNetSimulation(
-            publicClient.transport,
-            { from: userAddress, to: vaultAddress, data: calldata, value: `0x${value.toString(16)}` },
-            userAddress,
-          )
-        : Promise.resolve({ ok: true as const, result: null });
-
-    const ethCallPromise = (async () => {
-      try {
-        await anvilCall(publicClient, {
-          account: userAddress,
-          to: vaultAddress,
-          data: calldata,
-          value,
-        });
-        if (process.env.NODE_ENV === "development") console.log("[eth_call]", { ok: true, to: vaultAddress });
-        return { ok: true as const };
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        if (process.env.NODE_ENV === "development") console.log("[eth_call]", { ok: false, to: vaultAddress, error: msg });
-        return {
-          ok: false as const,
-          errorMessage: err instanceof Error ? err.message : "Unknown error",
-        };
-      }
-    })();
-
-    const [simResult, ethCallResult] = await Promise.all([simPromise, ethCallPromise]);
+    const { simResult, ethCallResult } = await runTxPreflight({
+      publicClient,
+      userAddress,
+      tx: { to: vaultAddress, data: calldata, value },
+      ethCall: { account: userAddress, to: vaultAddress, data: calldata, value },
+      // Safe batch: simulate the approval call(s) right before the deposit,
+      // exactly as the batch will execute them.
+      simulateBodyExtra: approvals?.length
+        ? { inputToken: tokenAddress, spender: vaultAddress, approvalTransactions: approvals }
+        : undefined,
+      vnetValue: `0x${value.toString(16)}`,
+      testNetworkType,
+      chainId,
+      logTag: "[Tenderly Vault Simulation]",
+    });
 
     // Store the simulation result
     if (simResult.result) {
@@ -368,7 +297,7 @@ export function useVaultActions(
       const rawMsg = (simResult as { retryable?: boolean }).retryable
         ? ethCallResult.errorMessage ?? simResult.errorMessage
         : simResult.errorMessage;
-      const errorMsg = typeof rawMsg === "string" ? rawMsg : (rawMsg as { message?: string })?.message ?? "Simulation failed";
+      const errorMsg = getSimulationErrorText(rawMsg) ?? "Simulation failed";
       setSimulationError(parseErrorMessage(new Error(errorMsg), "Transaction would fail"));
       setActionState("idle");
       return simResult.result ?? null;
@@ -380,30 +309,8 @@ export function useVaultActions(
     // falling through to a real wallet signature with no preview at all.
     // Mirrors the same fallback in useZapActions.
     if (!simResult.ok && ethCallResult.ok) {
-      const rawMsg = simResult.errorMessage;
-      const unavailableReason = typeof rawMsg === "string"
-        ? rawMsg
-        : (rawMsg as { message?: string; slug?: string } | null)?.message
-          ?? (rawMsg as { message?: string; slug?: string } | null)?.slug
-          ?? "Simulation temporarily unavailable";
-      const unavailableResult: SimulationResult = simResult.result
-        ? {
-            ...simResult.result,
-            success: true,
-            simulationUnavailable: true,
-            simulationUnavailableReason: unavailableReason,
-            errorMessage: null,
-          }
-        : {
-            success: true,
-            gasUsed: null,
-            simulationId: null,
-            tenderlyUrl: null,
-            assetChanges: [],
-            errorMessage: null,
-            simulationUnavailable: true,
-            simulationUnavailableReason: unavailableReason,
-          };
+      const unavailableReason = getSimulationErrorText(simResult.errorMessage) ?? "Simulation temporarily unavailable";
+      const unavailableResult = buildUnavailableSimulationResult(simResult.result, unavailableReason);
       setSimulationResult(unavailableResult);
       setActionState("idle");
       return unavailableResult;
@@ -440,6 +347,7 @@ export function useVaultActions(
   const deposit = useCallback(async (amount: string, options?: { previewOnly?: boolean; batchApproval?: bigint }): Promise<SimulationResult | null> => {
     if (!userAddress || !amount || !publicClient) return null;
 
+    clearFailedApproval();
     setSimulationError(null);
     setSimulationResult(null);
     setTxError(null);
@@ -524,13 +432,14 @@ export function useVaultActions(
       setActionState("idle");
     }
     return null;
-  }, [userAddress, vaultAddress, decimals, publicClient, sendTx, runSimulation, canBatch, buildBatchApprovals, sendDeposit]);
+  }, [userAddress, vaultAddress, decimals, publicClient, sendTx, runSimulation, canBatch, buildBatchApprovals, sendDeposit, clearFailedApproval]);
 
   // Withdraw with pre-flight simulation (using redeem for shares)
   // Options: previewOnly — when true, run Tenderly simulation and return result without sending tx
   const withdraw = useCallback(async (shares: string, options?: { previewOnly?: boolean }): Promise<SimulationResult | null> => {
     if (!userAddress || !shares || !publicClient) return null;
 
+    clearFailedApproval();
     setSimulationError(null);
     setSimulationResult(null);
     setTxError(null);
@@ -590,12 +499,27 @@ export function useVaultActions(
       setActionState("idle");
     }
     return null;
-  }, [userAddress, vaultAddress, decimals, publicClient, sendTx, runSimulation]);
+  }, [userAddress, vaultAddress, decimals, publicClient, sendTx, runSimulation, clearFailedApproval]);
 
-  // Execute stored pending tx after user confirms simulation preview
-  const executeAfterPreview = useCallback(async () => {
-    if (!pendingTx.current) return;
+  /** True when the stored preview was simulated for exactly this action and amount. */
+  const isPreviewFor = useCallback((type: "deposit" | "withdraw", amount: string): boolean => {
+    const pending = pendingTx.current;
+    if (!pending || pending.type !== type || !amount) return false;
+    try {
+      return parseUnits(amount, decimals) === pending.args[0];
+    } catch {
+      return false;
+    }
+  }, [decimals]);
 
+  // Execute stored pending tx after user confirms simulation preview.
+  // Refuses (returns false, sends nothing) when the stored preview was
+  // simulated for a different action or amount than the one being confirmed.
+  const executeAfterPreview = useCallback(async (expected?: { type: "deposit" | "withdraw"; amount: string }): Promise<boolean> => {
+    if (!pendingTx.current) return false;
+    if (expected && !isPreviewFor(expected.type, expected.amount)) return false;
+
+    clearFailedApproval();
     const { type, args, approvals } = pendingTx.current;
     pendingTx.current = null;
 
@@ -623,7 +547,8 @@ export function useVaultActions(
       setTxError(err instanceof Error ? err : new Error(String(err)));
       setActionState("idle");
     }
-  }, [vaultAddress, sendTx, sendDeposit]);
+    return true;
+  }, [vaultAddress, sendTx, sendDeposit, isPreviewFor, clearFailedApproval]);
 
   // Reset state
   const reset = useCallback(() => {
@@ -646,6 +571,7 @@ export function useVaultActions(
     deposit,
     withdraw,
     executeAfterPreview,
+    isPreviewFor,
     reset,
     status,
     error,

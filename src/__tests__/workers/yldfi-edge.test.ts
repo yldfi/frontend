@@ -82,6 +82,25 @@ describe("yldfi-edge wrapper", () => {
     expect(Number.isNaN(Date.parse(String(timestamp)))).toBe(false);
   });
 
+  it("stores the path and referer without query strings", async () => {
+    openNextFetch.mockRejectedValue(new Error("boom in handler"));
+    const { env, fakeD1 } = makeEnv();
+    const { ctx, pending } = captureWaitUntil();
+
+    const res = await edgeWorker.fetch(new Request("https://yldfi.co/api/simulate/share/abc?sig=SECRETISH&x=1", {
+      headers: { referer: "https://yldfi.co/zap?input=0xabc", "cf-ipcountry": "US" },
+    }), env, ctx);
+
+    expect(res.status).toBe(500);
+    await pending();
+    expect(fakeD1.rows).toHaveLength(1);
+    const meta = JSON.parse(String(fakeD1.rows[0].args[4]));
+    expect(meta.pathname).toBe("/api/simulate/share/abc");
+    expect(meta.referer).toBe("https://yldfi.co/zap");
+    expect(JSON.stringify(meta)).not.toContain("SECRETISH");
+    expect(JSON.stringify(meta)).not.toContain("input=");
+  });
+
   it("still returns 500 when the D1 write itself fails", async () => {
     openNextFetch.mockRejectedValue(new Error("boom"));
     const { env, fakeD1 } = makeEnv();

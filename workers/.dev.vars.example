@@ -3,3 +3,8 @@
 # Generate with: openssl rand -base64 32
 
 REFRESH_SECRET=
+
+# Optional extra RPC endpoints for the cache worker. Tried after the managed
+# RPC and before the public RPC list.
+# ALCHEMY_RPC_URL=
+# INFURA_RPC_URL=

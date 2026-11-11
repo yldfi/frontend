@@ -109,4 +109,166 @@ describe("RouteDisplay rendering", () => {
 
     expect(screen.queryByText("No route available right now.")).toBeNull();
   });
+
+  it("shows the token logo for a known symbol, case-insensitively", () => {
+    render(
+      <RouteDisplay
+        routeInfo={{ steps: [{ tokenSymbol: "Eth", action: "Swap", description: "ETH for CVX", protocol: "Curve" }] }}
+      />,
+    );
+
+    expect(screen.getByAltText("Eth").getAttribute("src")).toBe("/tokens/eth.png");
+  });
+
+  it("maps lpxCVX to the pxCVX logo and the Union tokens to the Llama Airforce logo", () => {
+    render(
+      <RouteDisplay
+        routeInfo={{
+          steps: [
+            { tokenSymbol: "lpxCVX", action: "Wrap", protocol: "Pirex" },
+            { tokenSymbol: "uCVX", action: "Redeem", protocol: "Llama Airforce" },
+            { tokenSymbol: "uCRV", action: "Redeem", protocol: "Llama Airforce" },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByAltText("lpxCVX").getAttribute("src")).toBe("/tokens/pxcvx.png");
+    expect(screen.getByAltText("uCVX").getAttribute("src")).toBe("/tokens/llama-airforce.png");
+    expect(screen.getByAltText("uCRV").getAttribute("src")).toBe("/tokens/llama-airforce.png");
+  });
+
+  it("maps Yearn v3 symbols to their logo and falls back to the vault config logo", () => {
+    render(
+      <RouteDisplay
+        routeInfo={{
+          steps: [
+            { tokenSymbol: "yvusdc-1", action: "Redeem", protocol: "Yearn" },
+            { tokenSymbol: "yCVX", action: "Deposit", protocol: "yld" },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByAltText("yvusdc-1").getAttribute("src")).toBe("/tokens/yearn-v3.svg");
+    expect(screen.getByAltText("yCVX").getAttribute("src")).toBe("/ycvx-64.png");
+  });
+
+  it("falls back to the symbol initials when a token has no logo", () => {
+    render(
+      <RouteDisplay
+        routeInfo={{ steps: [{ tokenSymbol: "UNKNOWN_TOKEN", action: "Swap", protocol: "Curve" }] }}
+      />,
+    );
+
+    expect(screen.queryByAltText("UNKNOWN_TOKEN")).toBeNull();
+    expect(screen.getByText("UN")).toBeTruthy();
+  });
+
+  it("links a known protocol with its display name", () => {
+    render(
+      <RouteDisplay
+        routeInfo={{
+          steps: [
+            { tokenSymbol: "ETH", action: "Swap", description: "ETH for CVX", protocol: "enso" },
+            { tokenSymbol: "CVX", action: "Swap", description: "CVX for pxCVX", protocol: "uniswap_v3" },
+          ],
+        }}
+      />,
+    );
+
+    const enso = screen.getByRole("link", { name: /Enso/ });
+    expect(enso.getAttribute("href")).toBe("https://enso.build");
+    expect(enso.getAttribute("target")).toBe("_blank");
+
+    const uniswap = screen.getByRole("link", { name: /Uniswap V3/ });
+    expect(uniswap.getAttribute("href")).toBe("https://uniswap.org");
+  });
+
+  it("handles compound protocol names and their links", () => {
+    render(
+      <RouteDisplay
+        routeInfo={{
+          steps: [
+            { tokenSymbol: "crvUSD", action: "Repay", description: "loan", protocol: "curve llamalend" },
+            { tokenSymbol: "crvUSD", action: "Swap", description: "crvUSD for CVX", protocol: "cow swap" },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: /Curve LlamaLend/ }).getAttribute("href")).toBe("https://www.curve.finance/lend");
+    expect(screen.getByRole("link", { name: /CoW Swap/ }).getAttribute("href")).toBe("https://cow.fi");
+  });
+
+  it("resolves a protocol name by partial match", () => {
+    render(
+      <RouteDisplay
+        routeInfo={{ steps: [{ tokenSymbol: "ETH", action: "Swap", protocol: "uniswap_v3_pool" }] }}
+      />,
+    );
+
+    const link = screen.getByRole("link", { name: "Uniswap" });
+    expect(link.getAttribute("href")).toBe("https://uniswap.org");
+  });
+
+  it("resolves a protocol link by reverse partial match", () => {
+    render(
+      <RouteDisplay
+        routeInfo={{ steps: [{ tokenSymbol: "ETH", action: "Swap", protocol: "uni" }] }}
+      />,
+    );
+
+    const link = screen.getByRole("link", { name: "Uni" });
+    expect(link.getAttribute("href")).toBe("https://uniswap.org");
+  });
+
+  it("handles ether.fi, Rocket Pool and sushi name and link variants", () => {
+    render(
+      <RouteDisplay
+        routeInfo={{
+          steps: [
+            { tokenSymbol: "ETH", action: "Stake", protocol: "ether.fi" },
+            { tokenSymbol: "ETH", action: "Stake", protocol: "etherfi" },
+            { tokenSymbol: "ETH", action: "Stake", protocol: "rocket pool" },
+            { tokenSymbol: "ETH", action: "Stake", protocol: "rocketpool" },
+            { tokenSymbol: "ETH", action: "Swap", protocol: "sushi" },
+            { tokenSymbol: "ETH", action: "Swap", protocol: "sushiswap" },
+          ],
+        }}
+      />,
+    );
+
+    const etherFi = screen.getAllByRole("link", { name: "Ether.fi" });
+    expect(etherFi).toHaveLength(2);
+    expect(etherFi.every((link) => link.getAttribute("href") === "https://ether.fi")).toBe(true);
+
+    const rocketPool = screen.getAllByRole("link", { name: "Rocket Pool" });
+    expect(rocketPool).toHaveLength(2);
+    expect(rocketPool.every((link) => link.getAttribute("href") === "https://rocketpool.net")).toBe(true);
+
+    expect(screen.getByRole("link", { name: "Sushi" }).getAttribute("href")).toBe("https://sushi.com");
+    expect(screen.getByRole("link", { name: "SushiSwap" }).getAttribute("href")).toBe("https://sushi.com");
+  });
+
+  it("capitalizes an unknown protocol and renders it without a link", () => {
+    render(
+      <RouteDisplay
+        routeInfo={{ steps: [{ tokenSymbol: "ETH", action: "Swap", description: "ETH for CVX", protocol: "newprotocol" }] }}
+      />,
+    );
+
+    expect(screen.getByText("Newprotocol")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /Newprotocol/ })).toBeNull();
+  });
+
+  it("labels a plain yld deposit as a yld vault", () => {
+    const { container } = render(
+      <RouteDisplay
+        routeInfo={{ steps: [{ tokenSymbol: "CVX", action: "Deposit", protocol: "yld" }] }}
+      />,
+    );
+
+    expect(container.textContent).toContain("Deposit into yld vault");
+  });
 });

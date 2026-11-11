@@ -2,6 +2,7 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 import evmAddressChecksum from "./eslint-rules/evm-address-checksum.js";
+import testImportsSource from "./eslint-rules/test-imports-source.js";
 
 const eslintConfig = defineConfig([
   ...nextVitals,
@@ -18,7 +19,9 @@ const eslintConfig = defineConfig([
     // Build output directories:
     ".open-next/**",
     ".wrangler/**",
-    "workers/**",
+    // Generated Worker types and Node replay scripts/fixtures (not app code):
+    "workers/*.d.ts",
+    "workers/testing/**",
     // Test output:
     "coverage/**",
     // Custom ESLint rules (CJS, not part of the app):
@@ -45,6 +48,26 @@ const eslintConfig = defineConfig([
     rules: {
       "evm-address/checksum": "error",
     },
+  },
+  // Cloudflare Workers are not React/Next code. A default-exported
+  // `{ scheduled, fetch }` handler object is the idiomatic Worker shape, and
+  // the Next.js preset's no-anonymous-default-export rule does not apply.
+  {
+    files: ["workers/**/*.ts"],
+    rules: {
+      "import/no-anonymous-default-export": "off",
+    },
+  },
+  // Unit tests must exercise real source code, not a copy of it.
+  {
+    files: ["src/**/*.{test,spec}.ts", "src/**/*.{test,spec}.tsx"],
+    // Deprecated lending tests are exempt; they are deleted with the lending code.
+    ignores: [
+      "src/__tests__/hooks/useCurveLendingData.test.ts",
+      "src/__tests__/components/LendingInterface.test.ts",
+    ],
+    plugins: { "yld-tests": { rules: { "imports-source": testImportsSource } } },
+    rules: { "yld-tests/imports-source": "error" },
   },
 ]);
 

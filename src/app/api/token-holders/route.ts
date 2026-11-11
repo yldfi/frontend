@@ -150,6 +150,12 @@ export async function POST(request: NextRequest) {
   }
 
   const token = body.token.toLowerCase();
+  if (body.minBalance !== undefined && !(typeof body.minBalance === "string" && /^\d{1,78}$/.test(body.minBalance))) {
+    return NextResponse.json(
+      { success: false, error: "Invalid minBalance" },
+      { status: 400 }
+    );
+  }
   const minBalance = BigInt(body.minBalance || "0");
   const maxHolders = Math.min(body.maxHolders || 5, 20); // Cap at 20
 
@@ -194,6 +200,5 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json({
     status: "ok",
-    configured: Boolean(TOKEN_HOLDER_API_KEY),
   });
 }

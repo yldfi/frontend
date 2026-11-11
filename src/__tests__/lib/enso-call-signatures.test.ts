@@ -1,5 +1,5 @@
-import { readFileSync } from "fs";
-import { join } from "path";
+import { readdirSync, readFileSync } from "fs";
+import { basename, join } from "path";
 import { describe, expect, it } from "vitest";
 import { toFunctionSelector } from "viem";
 
@@ -27,13 +27,30 @@ const DYNAMIC_FAMILIES: Record<string, string[]> = {
   beefy: [BEEFY.MOO_CVX_CRV, BEEFY.MOO_CVX_CVX],
 };
 
-function rawCalls(): Array<{ target: string; signature: string; abi: string; line: number }> {
-  const source = readFileSync(join(process.cwd(), "src/lib/enso.ts"), "utf-8");
-  const calls: Array<{ target: string; signature: string; abi: string; line: number }> = [];
+// enso.ts plus the modules it was split into; the call literals now live in any of them.
+function ensoSourceFiles(): string[] {
+  const entry = join(process.cwd(), "src/lib/enso.ts");
+  let modules: string[] = [];
+  try {
+    modules = readdirSync(join(process.cwd(), "src/lib/enso"))
+      .filter((name) => name.endsWith(".ts"))
+      .map((name) => join(process.cwd(), "src/lib/enso", name));
+  } catch {
+    modules = []; // the directory does not exist (older checkouts): scan enso.ts alone
+  }
+  return [entry, ...modules.sort()];
+}
+
+function rawCalls(): Array<{ target: string; signature: string; abi: string; line: number; file: string }> {
+  const calls: Array<{ target: string; signature: string; abi: string; line: number; file: string }> = [];
   // Any { address, method, abi } literal: inline call actions and those built via helpers.
   const pattern = /address: ([^,\n]+),\s*method: "\w+",\s*(?:\/\/[^\n]*\n\s*)*abi: "function (([^"]+?)\)[^"]*)"/g;
-  for (const match of source.matchAll(pattern)) {
-    calls.push({ target: match[1].trim(), signature: `${match[3]})`, abi: match[2], line: source.slice(0, match.index).split("\n").length });
+  for (const path of ensoSourceFiles()) {
+    const source = readFileSync(path, "utf-8");
+    const file = basename(path);
+    for (const match of source.matchAll(pattern)) {
+      calls.push({ target: match[1].trim(), signature: `${match[3]})`, abi: match[2], line: source.slice(0, match.index).split("\n").length, file });
+    }
   }
   return calls;
 }
@@ -41,11 +58,11 @@ function rawCalls(): Array<{ target: string; signature: string; abi: string; lin
 describe("raw Enso call signatures", () => {
   const calls = rawCalls();
 
-  it("finds the raw calls in enso.ts", () => {
+  it("finds the raw calls in the Enso modules", () => {
     expect(calls.length).toBeGreaterThan(20);
   });
 
-  it.each(calls.map((call) => [`${call.target} ${call.signature} (enso.ts:${call.line})`, call] as const))(
+  it.each(calls.map((call) => [`${call.target} ${call.signature} (${call.file}:${call.line})`, call] as const))(
     "%s exists on the target contract",
     (_label, call) => {
       const selector = toFunctionSelector(`function ${call.signature}`);
@@ -64,7 +81,7 @@ describe("raw Enso call signatures", () => {
 
   // Declaring a return value the contract doesn't produce makes any later useOutputOfCallAt read
   // fail in Enso's VM ("Only one return value permitted") — e.g. lpxCVX.unwrap returns nothing.
-  it.each(calls.map((call) => [`${call.target} ${call.signature} (enso.ts:${call.line})`, call] as const))(
+  it.each(calls.map((call) => [`${call.target} ${call.signature} (${call.file}:${call.line})`, call] as const))(
     "%s declares the return values the contract really has",
     (_label, call) => {
       const staticTarget = STATIC_TARGETS[call.target] ?? (call.target.startsWith("params.beefyVault") ? BEEFY.MOO_CVX_CRV : undefined);

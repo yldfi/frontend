@@ -34,10 +34,10 @@ import { cn, formatDisplayAmount } from "@/lib/utils";
 import { parseQuoteError } from "@/lib/quote-errors";
 import { QUOTE_IDLE_MS, isQuoteOlderThan } from "@/lib/quote-freshness";
 import { aboveMarketWarning, priceImpactClassName } from "@/lib/price-impact";
-import { sanitizeAmount } from "@/lib/sanitize";
+import { isSameAmount, sanitizeAmount } from "@/lib/sanitize";
 import { fillMissingSimulationUsd } from "@/lib/simulation-pricing";
 import { getMaxEthAmount } from "@/lib/eth-gas";
-import { VAULTS, isVaultEntryDisabled } from "@/config/vaults";
+import { TOKENS, VAULTS, isVaultEntryDisabled } from "@/config/vaults";
 import {
   getPendingTxCopy,
   getRevertedTxCopy,
@@ -52,7 +52,9 @@ import {
 
 import type { EnsoToken } from "@/types/enso";
 
-const STORAGE_PREFIX = "yldfi-universal-zap";
+// Versioned: entries written by an older build trusted token metadata from a
+// URL, so nothing under the previous prefix is ever read again.
+const STORAGE_PREFIX = "yldfi-universal-zap-v2";
 
 
 const ENTRY_DISABLED_VAULT_ADDRESSES = Object.values(VAULTS)
@@ -74,37 +76,123 @@ const DEFAULT_OUTPUT_TOKEN: EnsoToken = {
   type: "defi",
 };
 
-function loadToken(key: string, fallback: EnsoToken): EnsoToken {
-  if (typeof window === "undefined") return applyKnownTokenMetadata(fallback);
+const IMPORTED_TOKENS_STORAGE_KEY = "yldfi-imported-tokens";
+
+// Tokens a /zap deep link may select even though they are not in the
+// built-in custom token list. Metadata lives here, never in the URL: a link
+// must not be able to choose the symbol, decimals or logo shown for an address.
+const DEEP_LINK_TOKENS: Record<string, EnsoToken> = {
+  [TOKENS.CVX.toLowerCase()]: {
+    address: TOKENS.CVX,
+    chainId: 1,
+    name: "Convex Token",
+    symbol: "CVX",
+    decimals: 18,
+    logoURI: "/tokens/cvx.png",
+    type: "base",
+  },
+};
+
+// Read the same storage the imported-token hook uses without calling the hook:
+// loadToken runs outside React as part of the initial state.
+function loadImportedToken(address: string): EnsoToken | undefined {
+  if (typeof window === "undefined") return undefined;
   try {
-    const saved = sessionStorage.getItem(`${STORAGE_PREFIX}-${key}`);
-    return saved ? applyKnownTokenMetadata(JSON.parse(saved) as EnsoToken) : applyKnownTokenMetadata(fallback);
+    const stored = localStorage.getItem(IMPORTED_TOKENS_STORAGE_KEY);
+    if (!stored) return undefined;
+    const parsed: unknown = JSON.parse(stored);
+    if (!Array.isArray(parsed)) return undefined;
+    const lower = address.toLowerCase();
+    return parsed.find(
+      (token: unknown): token is EnsoToken =>
+        typeof token === "object" &&
+        token !== null &&
+        typeof (token as { address?: unknown }).address === "string" &&
+        (token as { address: string }).address.toLowerCase() === lower,
+    );
   } catch {
-    return applyKnownTokenMetadata(fallback);
+    return undefined;
   }
 }
 
-function loadRequestedToken(key: "input" | "output", fallback: EnsoToken): EnsoToken {
-  if (typeof window === "undefined") return fallback;
-  const searchParams = new URLSearchParams(window.location.search);
-  const requestedAddress = searchParams.get(key);
-  const knownToken = getCustomTokenMetadata(requestedAddress ?? undefined);
-  if (knownToken) return knownToken;
-  if (!requestedAddress || !isAddress(requestedAddress)) return fallback;
-
-  const symbol = searchParams.get(`${key}Symbol`)?.trim();
-  const decimals = Number(searchParams.get(`${key}Decimals`));
-  if (!symbol || !Number.isInteger(decimals) || decimals < 0 || decimals > 255) return fallback;
-
-  return applyKnownTokenMetadata({
-    address: requestedAddress,
+// Shape check only: an entry under the versioned prefix was written by this
+// build from a token the user picked, so its metadata can be shown. A URL
+// never writes here.
+function toStoredToken(parsed: unknown): EnsoToken | undefined {
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  const candidate = parsed as Record<string, unknown>;
+  if (typeof candidate.address !== "string" || !isAddress(candidate.address)) return undefined;
+  if (
+    typeof candidate.symbol !== "string" ||
+    candidate.symbol.length === 0 ||
+    candidate.symbol.length > 32
+  ) {
+    return undefined;
+  }
+  const decimals = candidate.decimals;
+  if (typeof decimals !== "number" || !Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+    return undefined;
+  }
+  if (candidate.chainId !== undefined && candidate.chainId !== 1) return undefined;
+  return {
+    address: candidate.address,
     chainId: 1,
-    name: symbol,
-    symbol,
+    name: typeof candidate.name === "string" && candidate.name ? candidate.name : candidate.symbol,
+    symbol: candidate.symbol,
     decimals,
-    logoURI: searchParams.get(`${key}Logo`) || undefined,
-    type: "base",
-  });
+    logoURI: typeof candidate.logoURI === "string" ? candidate.logoURI : undefined,
+    type: candidate.type === "defi" ? "defi" : "base",
+  };
+}
+
+// A rejected entry must not leave an amount behind: applying a stored amount to
+// a different token would quote a number the user never typed for it.
+function clearStoredAmount() {
+  try {
+    sessionStorage.removeItem(`${STORAGE_PREFIX}-amount`);
+  } catch {
+    // ignore
+  }
+}
+
+function loadToken(key: string, fallback: EnsoToken): EnsoToken {
+  const normalizedFallback = applyKnownTokenMetadata(fallback);
+  if (typeof window === "undefined") return normalizedFallback;
+  try {
+    const saved = sessionStorage.getItem(`${STORAGE_PREFIX}-${key}`);
+    if (!saved) return normalizedFallback;
+    const stored = toStoredToken(JSON.parse(saved));
+    if (!stored) {
+      clearStoredAmount();
+      return normalizedFallback;
+    }
+    // The user's imported entry keeps describing the token, as before.
+    const imported = loadImportedToken(stored.address);
+    return applyKnownTokenMetadata(imported ?? stored);
+  } catch {
+    clearStoredAmount();
+    return normalizedFallback;
+  }
+}
+
+type RequestedToken = {
+  token: EnsoToken;
+  unresolved: boolean;
+};
+
+function loadRequestedToken(key: "input" | "output", fallback: EnsoToken): RequestedToken {
+  if (typeof window === "undefined") return { token: fallback, unresolved: false };
+  const searchParams = new URLSearchParams(window.location.search);
+  if (!searchParams.has(key)) return { token: fallback, unresolved: false };
+  const requestedAddress = searchParams.get(key) ?? "";
+  if (!isAddress(requestedAddress)) return { token: fallback, unresolved: true };
+  const knownToken =
+    getCustomTokenMetadata(requestedAddress) ?? DEEP_LINK_TOKENS[requestedAddress.toLowerCase()];
+  // Unknown address: keep the fallback. The user can still add the token
+  // through the selector, which asks for confirmation first.
+  return knownToken
+    ? { token: applyKnownTokenMetadata(knownToken), unresolved: false }
+    : { token: fallback, unresolved: true };
 }
 
 function hasRequestedPair(): boolean {
@@ -155,26 +243,40 @@ export function ZapPageContent() {
   } = useSettings();
   const [isSimulatingPreview, setIsSimulatingPreview] = useState(false);
   const [rateInverted, setRateInverted] = useState(false);
-  const [requestedOutputAmount] = useState(loadRequestedOutputAmount);
+  const [requestedInput] = useState(() =>
+    loadRequestedToken("input", loadToken("input", DEFAULT_ETH_TOKEN)),
+  );
+  const [requestedOutput] = useState(() =>
+    loadRequestedToken("output", loadToken("output", DEFAULT_OUTPUT_TOKEN)),
+  );
+  // An address the link names but the app cannot resolve makes the whole pair
+  // inapplicable: do not force an amount or apply its requested output amount.
+  const requestedPairUnresolved = requestedInput.unresolved || requestedOutput.unresolved;
+  const [requestedOutputAmount] = useState(() =>
+    requestedPairUnresolved ? "" : loadRequestedOutputAmount(),
+  );
   const [targetQuoteAdjustments, setTargetQuoteAdjustments] = useState(0);
 
   // Token state
-  const [inputToken, setInputTokenState] = useState<EnsoToken>(() =>
-    loadRequestedToken("input", loadToken("input", DEFAULT_ETH_TOKEN)),
-  );
-  const [outputToken, setOutputTokenState] = useState<EnsoToken>(() =>
-    loadRequestedToken("output", loadToken("output", DEFAULT_OUTPUT_TOKEN)),
-  );
+  const [inputToken, setInputTokenState] = useState<EnsoToken>(requestedInput.token);
+  const [outputToken, setOutputTokenState] = useState<EnsoToken>(requestedOutput.token);
   const [amount, setAmountState] = useState(() => {
     if (typeof window === "undefined") return "";
     if (requestedOutputAmount) return "1";
-    if (hasRequestedPair()) return "1";
+    if (!requestedPairUnresolved && hasRequestedPair()) return "1";
     try {
       return sanitizeAmount(sessionStorage.getItem(`${STORAGE_PREFIX}-amount`) ?? "");
     } catch {
       return "";
     }
   });
+
+  const unresolvedLinkToastShown = useRef(false);
+  useEffect(() => {
+    if (!requestedPairUnresolved || unresolvedLinkToastShown.current) return;
+    unresolvedLinkToastShown.current = true;
+    toast.info("This link names a token the app doesn't recognise. Pick it in the token selector.");
+  }, [requestedPairUnresolved]);
 
   const setInputToken = useCallback((t: EnsoToken) => {
     const token = applyKnownTokenMetadata(t);
@@ -281,13 +383,18 @@ export function ZapPageContent() {
     outputToken,
     inputAmount: debouncedAmount,
     slippage,
-    paused: sameToken || showSimulationModal || pendingImpactAction !== null,
+    paused: sameToken || showSimulationModal || isSimulatingPreview || pendingImpactAction !== null,
     autoRefresh: !isIdle,
   });
   const isQuoteTooOld = useCallback(
     () => isQuoteOlderThan(quoteUpdatedAt),
     [quoteUpdatedAt],
   );
+  // The hook refuses to execute an old quote (e.g. when an approval took minutes to mine).
+  const handleStaleQuote = useCallback(() => {
+    void refetchQuote();
+    toast.info("Quote refreshed. Check the new amounts, then try again.");
+  }, [refetchQuote]);
   // Back from idle: re-quote right away if the one on screen has aged.
   const wasIdleRef = useRef(false);
   useEffect(() => {
@@ -298,7 +405,7 @@ export function ZapPageContent() {
     rawQuote &&
     amount &&
     amount === debouncedAmount &&
-    rawQuote.inputAmount === debouncedAmount &&
+    isSameAmount(rawQuote.inputAmount, debouncedAmount, inputToken.decimals) &&
     rawQuote.inputToken.address.toLowerCase() === inputToken.address.toLowerCase()
   );
   const currentQuote = quoteIsCurrent ? rawQuote : null;
@@ -370,9 +477,10 @@ export function ZapPageContent() {
     approvalProgress,
     isApproving,
     simulationResult,
+    isSimulationForCurrentQuote,
     safePending,
     batchesApproval,
-  } = useZapActions(quote ?? null);
+  } = useZapActions(quote ?? null, { quoteUpdatedAt, onStaleQuote: handleStaleQuote });
 
   const showApprovalCard = !!(
     pendingApproval &&
@@ -1105,11 +1213,26 @@ export function ZapPageContent() {
         <SimulationModal
           isOpen={showSimulationModal}
           onClose={() => setShowSimulationModal(false)}
-          onConfirm={() => {
+          onConfirm={async () => {
+            if (!isSimulationForCurrentQuote()) {
+              // The quote changed under the preview: never send a transaction the
+              // user never saw. Re-preview through the page (it re-runs the price
+              // impact gate and hides the pending card while simulating).
+              setShowSimulationModal(false);
+              toast.info("The quote changed since the preview. Check the new preview, then confirm.");
+              guardHighImpact("Zap", () => void runSimulationPreview());
+              return;
+            }
             setShowSimulationModal(false);
             if (refreshIfQuoteTooOld()) return;
+            // The preview belongs to this quote, so its impact confirmation still covers it.
             stagePendingTxDetails();
-            executeZap({ skipSimulation: true });
+            const rePreview = await executeZap({ skipSimulation: true });
+            if (rePreview) {
+              setPendingTxDetails(null);
+              setShowSimulationModal(true);
+              toast.info("The quote changed since the preview. Check the new preview, then confirm.");
+            }
           }}
           simulationResult={{
             success: simulationResult.success,

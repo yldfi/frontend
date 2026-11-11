@@ -553,20 +553,31 @@ export function VaultHarvestPanel({ vaultAddress }: { vaultAddress: string }) {
     return { active, available, startsAt, endsAt, likelySettlesAt, auctionRate, marketRate, takeAmount, takePayment, requiredPayment: amountNeeded, paymentBalance, paymentAllowance };
   };
 
+  const receiptStatus = receipt.data?.status;
   useEffect(() => {
     if (!receipt.isSuccess) return;
-    toast.success(
-      action === "auction" ? "Strategy rewards sent to auction"
-        : action === "approve-take" ? "Auction payment approved"
-          : action === "take" ? "Auction take completed"
-            : "Harvest report submitted",
-    );
+    if (receiptStatus === "reverted") {
+      // Mined but failed on-chain (e.g. another taker emptied the lot first).
+      toast.error(
+        action === "auction" ? "Sending rewards to auction failed: the transaction reverted"
+          : action === "approve-take" ? "Approval failed: the transaction reverted"
+            : action === "take" ? "Auction take failed: the transaction reverted"
+              : "Harvest report failed: the transaction reverted",
+      );
+    } else {
+      toast.success(
+        action === "auction" ? "Strategy rewards sent to auction"
+          : action === "approve-take" ? "Auction payment approved"
+            : action === "take" ? "Auction take completed"
+              : "Harvest report submitted",
+      );
+    }
     void refetchReads();
     void refetchThreshold();
     void refetchAuctionAddress();
     void refetchAuctionState();
     reset();
-  }, [action, receipt.isSuccess, refetchAuctionAddress, refetchAuctionState, refetchReads, refetchThreshold, reset]);
+  }, [action, receipt.isSuccess, receiptStatus, refetchAuctionAddress, refetchAuctionState, refetchReads, refetchThreshold, reset]);
 
   useEffect(() => {
     if (writeError) toast.error(writeError.message.split("\n")[0]);
@@ -765,9 +776,6 @@ export function VaultHarvestPanel({ vaultAddress }: { vaultAddress: string }) {
                       href={`/zap?${new URLSearchParams({
                         input: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
                         output: config.auctionOutputToken,
-                        outputSymbol: toToken?.symbol ?? "token",
-                        outputDecimals: String(toToken?.decimals ?? 18),
-                        ...(toToken?.logo ? { outputLogo: toToken.logo } : {}),
                         ...(auctionState.requiredPayment > 0n
                           ? { outputAmount: formatUnits(auctionState.requiredPayment, toToken?.decimals ?? 18) }
                           : {}),

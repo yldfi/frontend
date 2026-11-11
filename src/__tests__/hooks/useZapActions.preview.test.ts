@@ -20,7 +20,8 @@ import {
 } from "@/lib/enso";
 import { TOKENS, VAULTS } from "@/config/vaults";
 import { buildApprovalSimulationTransaction } from "@/lib/tenderly-simulation-bundle";
-import type { EnsoToken, ZapQuote } from "@/types/enso";
+import { simulationNonceBinding } from "@/lib/simulation-nonce";
+import type { EnsoToken, SimulationResult, ZapQuote } from "@/types/enso";
 
 const {
   mockAnvilCall,
@@ -357,6 +358,86 @@ describe("useZapActions preview fallback", () => {
     expect(mockSendTx).not.toHaveBeenCalled();
   });
 
+  it("blocks the send when the simulation and the eth_call both fail", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/api/simulate/nonce")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            nonce: "test-nonce",
+            expires: Date.now() + 60_000,
+            sig: "test-sig",
+          }),
+        });
+      }
+
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          success: false,
+          gasUsed: null,
+          errorMessage: "execution reverted: insufficient output",
+          simulationId: null,
+          tenderlyUrl: null,
+          assetChanges: [],
+        }),
+      });
+    }));
+    mockAnvilCall.mockRejectedValue(new Error("execution reverted"));
+
+    const { result } = renderHook(() => useZapActions(mockEthQuote));
+
+    await act(async () => {
+      await result.current.executeZap();
+    });
+
+    expect(mockSendTx).not.toHaveBeenCalled();
+    expect(result.current.error).toBe("Transaction would fail: execution reverted: insufficient output");
+    // The failed preflight ends the action (not stuck simulating/zapping).
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.status).toBe("error");
+  });
+
+  it("uses a slug-only simulation error as the failure text", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/api/simulate/nonce")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            nonce: "test-nonce",
+            expires: Date.now() + 60_000,
+            sig: "test-sig",
+          }),
+        });
+      }
+
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          success: false,
+          gasUsed: null,
+          errorMessage: { slug: "simulation_reverted" },
+          simulationId: null,
+          tenderlyUrl: null,
+          assetChanges: [],
+        }),
+      });
+    }));
+    mockAnvilCall.mockRejectedValue(new Error("execution reverted"));
+
+    const { result } = renderHook(() => useZapActions(mockEthQuote));
+
+    await act(async () => {
+      await result.current.executeZap();
+    });
+
+    expect(mockSendTx).not.toHaveBeenCalled();
+    expect(result.current.error).toBe("Transaction would fail: simulation_reverted");
+    expect(result.current.status).toBe("error");
+  });
+
   it("still sends on confirm after an unavailable preview result", async () => {
     const { result } = renderHook(() => useZapActions(mockEthQuote));
 
@@ -373,6 +454,97 @@ describe("useZapActions preview fallback", () => {
       data: mockEthQuote.tx.data,
       value: BigInt(mockEthQuote.tx.value),
     });
+  });
+
+  it("does not send a different quote than the one previewed", async () => {
+    const { result, rerender } = renderHook(({ q }: { q: ZapQuote }) => useZapActions(q), {
+      initialProps: { q: mockEthQuote },
+    });
+
+    await act(async () => {
+      await result.current.executeZap({ previewOnly: true });
+    });
+    expect(mockSendTx).not.toHaveBeenCalled();
+
+    rerender({ q: { ...mockEthQuote, tx: { ...mockEthQuote.tx, data: "0x123456" } } });
+
+    let confirmResult: SimulationResult | null = null;
+    await act(async () => {
+      confirmResult = await result.current.executeZap({ skipSimulation: true });
+    });
+
+    expect(mockSendTx).not.toHaveBeenCalled();
+    expect(confirmResult).not.toBeNull();
+    expect(result.current.status).toBe("idle");
+  });
+
+  it("sends on a second confirm once the new quote has been previewed", async () => {
+    const { result, rerender } = renderHook(({ q }: { q: ZapQuote }) => useZapActions(q), {
+      initialProps: { q: mockEthQuote },
+    });
+
+    await act(async () => {
+      await result.current.executeZap({ previewOnly: true });
+    });
+
+    rerender({ q: { ...mockEthQuote, tx: { ...mockEthQuote.tx, data: "0x123456" } } });
+
+    await act(async () => {
+      await result.current.executeZap({ skipSimulation: true });
+    });
+    expect(mockSendTx).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await result.current.executeZap({ skipSimulation: true });
+    });
+
+    expect(mockSendTx).toHaveBeenCalledTimes(1);
+    expect(mockSendTx).toHaveBeenCalledWith(expect.objectContaining({ data: "0x123456" }));
+  });
+
+  it("isSimulationForCurrentQuote follows the quote", async () => {
+    const { result, rerender } = renderHook(({ q }: { q: ZapQuote }) => useZapActions(q), {
+      initialProps: { q: mockEthQuote },
+    });
+    expect(result.current.isSimulationForCurrentQuote()).toBe(false);
+
+    await act(async () => {
+      await result.current.executeZap({ previewOnly: true });
+    });
+    expect(result.current.isSimulationForCurrentQuote()).toBe(true);
+
+    rerender({ q: { ...mockEthQuote, tx: { ...mockEthQuote.tx, data: "0x123456" } } });
+    expect(result.current.isSimulationForCurrentQuote()).toBe(false);
+  });
+
+  it("isSimulationForCurrentQuote compares the value too", async () => {
+    const { result, rerender } = renderHook(({ q }: { q: ZapQuote }) => useZapActions(q), {
+      initialProps: { q: mockEthQuote },
+    });
+
+    await act(async () => {
+      await result.current.executeZap({ previewOnly: true });
+    });
+    expect(result.current.isSimulationForCurrentQuote()).toBe(true);
+
+    // Same to and data, different value: the preview is for another transaction.
+    rerender({ q: { ...mockEthQuote, tx: { ...mockEthQuote.tx, value: "2" } } });
+    expect(result.current.isSimulationForCurrentQuote()).toBe(false);
+  });
+
+  it("treats a malformed value as not the simulated transaction instead of throwing", async () => {
+    const { result, rerender } = renderHook(({ q }: { q: ZapQuote }) => useZapActions(q), {
+      initialProps: { q: mockEthQuote },
+    });
+
+    await act(async () => {
+      await result.current.executeZap({ previewOnly: true });
+    });
+    expect(result.current.isSimulationForCurrentQuote()).toBe(true);
+
+    rerender({ q: { ...mockEthQuote, tx: { ...mockEthQuote.tx, value: "1.5" } } });
+    expect(() => result.current.isSimulationForCurrentQuote()).not.toThrow();
+    expect(result.current.isSimulationForCurrentQuote()).toBe(false);
   });
 
   it("follows a sped-up zap to its replacement hash and success receipt", async () => {
@@ -747,6 +919,61 @@ describe("useZapActions preview fallback", () => {
     }
   });
 
+  it("does not apply a simulation that resolves after reset aborts the zap", async () => {
+    let resolveSimulate!: (value: { ok: boolean; json: () => Promise<unknown> }) => void;
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/api/simulate/nonce")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            nonce: "test-nonce",
+            expires: Date.now() + 60_000,
+            sig: "test-sig",
+          }),
+        });
+      }
+
+      return new Promise((resolve) => {
+        resolveSimulate = resolve;
+      });
+    }));
+
+    const hook = renderHook(() => useZapActions(mockEthQuote));
+    let execution!: Promise<SimulationResult | null>;
+    await act(async () => {
+      execution = hook.result.current.executeZap();
+    });
+    // The simulate POST is in flight and has not answered yet.
+    expect(resolveSimulate).toBeTypeOf("function");
+
+    await act(async () => {
+      hook.result.current.reset();
+    });
+
+    await act(async () => {
+      resolveSimulate({
+        ok: true,
+        json: () => Promise.resolve({
+          success: true,
+          gasUsed: "21000",
+          simulationId: "sim-late",
+          tenderlyUrl: null,
+          assetChanges: [],
+          errorMessage: null,
+        }),
+      });
+      await execution;
+    });
+
+    expect(hook.result.current.simulationResult).toBeNull();
+    expect(hook.result.current.error).toBeNull();
+    expect(hook.result.current.status).toBe("idle");
+    expect(hook.result.current.isLoading).toBe(false);
+    expect(mockSendTx).not.toHaveBeenCalled();
+    hook.unmount();
+  });
+
   it("replays a just-confirmed approval before the zap simulation", async () => {
     let currentAllowance = 0n;
     const simulateBodyRef: { current?: Record<string, unknown> } = {};
@@ -1063,5 +1290,180 @@ describe("useZapActions preview fallback", () => {
     expect(simulateBodyRef.current?.approvalTransactions).toEqual([
       buildApprovalSimulationTransaction(mockCvxToken.address as `0x${string}`, directVaultAddress, 1000n * 10n ** 18n),
     ]);
+  });
+
+  it("refuses to execute a quote older than 90 s and asks for a refresh", async () => {
+    const onStaleQuote = vi.fn();
+    const { result } = renderHook(() => useZapActions(mockEthQuote, {
+      quoteUpdatedAt: Date.now() - 120_000,
+      onStaleQuote,
+    }));
+
+    await act(async () => {
+      await result.current.executeZap();
+    });
+
+    expect(mockSendTx).not.toHaveBeenCalled();
+    const simulateCalls = vi.mocked(fetch).mock.calls.filter(([input]) => String(input).includes("/api/simulate"));
+    expect(simulateCalls).toHaveLength(0);
+    expect(onStaleQuote).toHaveBeenCalledTimes(1);
+    expect(result.current.status).toBe("idle");
+  });
+
+  it("executes a quote fetched within 90 s", async () => {
+    const { result } = renderHook(() => useZapActions(mockEthQuote, {
+      quoteUpdatedAt: Date.now() - 30_000,
+    }));
+
+    await act(async () => {
+      await result.current.executeZap();
+    });
+
+    expect(mockSendTx).toHaveBeenCalledTimes(1);
+    expect(mockSendTx).toHaveBeenCalledWith({
+      to: mockEthQuote.tx.to,
+      data: mockEthQuote.tx.data,
+      value: BigInt(mockEthQuote.tx.value),
+    });
+  });
+
+  it("treats an unknown quote time as not stale", async () => {
+    const { result } = renderHook(() => useZapActions(mockEthQuote));
+
+    await act(async () => {
+      await result.current.executeZap();
+    });
+
+    expect(mockSendTx).toHaveBeenCalledTimes(1);
+  });
+
+  it("can execute again after a stale refusal once the quote is fresh", async () => {
+    const onStaleQuote = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ at }: { at: number }) => useZapActions(mockEthQuote, { quoteUpdatedAt: at, onStaleQuote }),
+      { initialProps: { at: Date.now() - 120_000 } },
+    );
+
+    await act(async () => {
+      await result.current.executeZap();
+    });
+    expect(onStaleQuote).toHaveBeenCalledTimes(1);
+    expect(mockSendTx).not.toHaveBeenCalled();
+
+    rerender({ at: Date.now() });
+
+    await act(async () => {
+      await result.current.executeZap();
+    });
+
+    expect(mockSendTx).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not auto-execute a stale quote when the approval mines", async () => {
+    vi.useFakeTimers();
+    const approvalHash = `0x${"ab".repeat(32)}` as `0x${string}`;
+    let receiptState = "idle";
+    const onStaleQuote = vi.fn();
+    const readContract = vi.fn(async () => receiptState === "mined" ? 10804821n : 0n);
+    mockUsePublicClient.mockReturnValue({ getBlockNumber: vi.fn().mockResolvedValue(25967620n), readContract } as unknown as ReturnType<typeof usePublicClient>);
+    const refetch = vi.fn().mockResolvedValue({ data: 0n });
+    mockUseReadContract.mockImplementation(() => ({ data: 0n, refetch }) as unknown as ReturnType<typeof useReadContract>);
+    const writer = vi.mocked(useDirectWriteContract);
+    const originalWriter = writer.getMockImplementation()!;
+    writer.mockImplementation(() => ({
+      ...originalWriter(),
+      data: receiptState === "idle" ? undefined : approvalHash,
+    }));
+    mockUseWaitForTransactionReceipt.mockImplementation((options) => ({
+      isLoading: options?.hash === approvalHash && receiptState === "pending",
+      isSuccess: options?.hash === approvalHash && receiptState === "mined",
+      data: options?.hash === approvalHash && receiptState === "mined"
+        ? { status: "success", transactionHash: approvalHash, blockNumber: 25967619n, gasUsed: 48549n }
+        : undefined,
+    }) as unknown as ReturnType<typeof useWaitForTransactionReceipt>);
+    const quote = { ...mockUsdcQuote, inputAmount: "10.804821" };
+    const observedStatuses: string[] = [];
+    const hook = renderHook(
+      ({ at }: { at: number }) => {
+        const state = useZapActions(quote, { quoteUpdatedAt: at, onStaleQuote });
+        observedStatuses.push(state.status);
+        return state;
+      },
+      { initialProps: { at: Date.now() } },
+    );
+    try {
+      await act(async () => { await hook.result.current.executeZap(); });
+      expect(hook.result.current.status).toBe("needsApproval");
+
+      await act(async () => { await hook.result.current.approve(true); });
+      receiptState = "pending";
+      hook.rerender({ at: Date.now() });
+      expect(hook.result.current.status).toBe("waitingApproval");
+
+      // The approval took longer than 90 s to mine: the on-screen quote is old.
+      receiptState = "mined";
+      hook.rerender({ at: Date.now() - 120_000 });
+      await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+
+      expect(onStaleQuote).toHaveBeenCalledTimes(1);
+      expect(mockSendTx).not.toHaveBeenCalled();
+      const simulateCalls = vi.mocked(fetch).mock.calls.filter(([input]) => String(input).includes("/api/simulate"));
+      expect(simulateCalls).toHaveLength(0);
+      expect(hook.result.current.status).toBe("idle");
+      expect(mockWriteApprove).toHaveBeenCalledTimes(1);
+
+      // The refusal must leave the confirmed approval usable: a fresh click
+      // proceeds without asking for approval again.
+      observedStatuses.length = 0;
+      hook.rerender({ at: Date.now() });
+      await act(async () => { await hook.result.current.executeZap(); });
+
+      expect(mockSendTx).toHaveBeenCalledTimes(1);
+      expect(mockWriteApprove).toHaveBeenCalledTimes(1);
+      expect(observedStatuses).not.toContain("needsApproval");
+      expect(readContract).toHaveBeenLastCalledWith(expect.objectContaining({ blockNumber: 25967620n }));
+    } finally {
+      hook.unmount();
+      writer.mockImplementation(originalWriter);
+      vi.useRealTimers();
+    }
+  });
+
+  it("binds the nonce to the request it sends", async () => {
+    // Sufficient allowance so the zap reaches simulation rather than the
+    // approval card.
+    mockUseReadContract.mockReturnValue({
+      data: maxUint256,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useReadContract>);
+
+    const { result } = renderHook(() => useZapActions(mockUsdcQuote));
+
+    await act(async () => {
+      await result.current.executeZap({ previewOnly: true });
+    });
+
+    const calls = vi.mocked(fetch).mock.calls;
+    const nonceUrl = calls
+      .map(([url]) => String(url))
+      .find((url) => url.includes("/api/simulate/nonce"));
+    expect(nonceUrl).toBeDefined();
+    const bind = new URL(nonceUrl as string, "http://localhost:3000").searchParams.get("bind");
+
+    const simulateCall = calls.find(([url]) => String(url) === "/api/simulate");
+    expect(simulateCall).toBeDefined();
+    const body = JSON.parse(String(simulateCall![1]?.body)) as {
+      from: string;
+      to: string;
+      data: string;
+      value?: string;
+    };
+
+    expect(bind).toBe(simulationNonceBinding({
+      from: body.from,
+      to: body.to,
+      data: body.data,
+      value: body.value,
+    }));
   });
 });

@@ -1,5 +1,6 @@
 import type { Chain } from "viem";
 import { ERC20_APPROVAL_ABI } from "@/lib/abis";
+import { simulationNonceBinding } from "@/lib/simulation-nonce";
 import type { SimulationResult } from "@/types/enso";
 
 // ---------------------------------------------------------------------------
@@ -119,20 +120,30 @@ export function parseErrorMessage(error: unknown, defaultMsg?: string): string {
     return "Token approval is missing or too low. Approve the token for Enso Router and try again.";
   }
 
-  // Insufficient balance / funds
+  // Specific "insufficient ..." cases first: the generic check below would swallow them.
   if (lower.includes("transfer amount exceeds balance")) {
     return "Transaction would fail: swap conditions changed, try refreshing the quote";
   }
-  if (lower.includes("insufficient") || lower.includes("exceeds balance")) {
-    return "Insufficient balance";
-  }
-  if (lower.includes("insufficient funds")) {
+  // Not enough ETH to pay for gas (the token balance may be fine).
+  // viem words a gas shortfall as "The total cost (gas * gas fee + value) of
+  // executing this transaction exceeds the balance of the account", so that
+  // wording must be matched here before the generic "exceeds balance" check.
+  if (lower.includes("insufficient funds") || lower.includes("gas * gas fee + value")) {
     return "Insufficient funds for gas";
   }
 
   // Slippage
-  if (lower.includes("slippage") || lower.includes("insufficient_output")) {
+  if (
+    lower.includes("slippage") ||
+    lower.includes("insufficient_output") ||
+    lower.includes("insufficient output")
+  ) {
     return SWAP_OUTPUT_BELOW_MINIMUM_MESSAGE;
+  }
+
+  // Insufficient token balance
+  if (lower.includes("insufficient") || lower.includes("exceeds balance")) {
+    return "Insufficient balance";
   }
 
   // Health check (Curve lending)
@@ -245,7 +256,7 @@ export async function runTenderlySimulation(
 ): Promise<{ ok: boolean; result: SimulationResult | null; errorMessage?: string }> {
   const tag = label ? `[Tenderly Simulation - ${label}]` : "[Tenderly Simulation]";
   try {
-    const nonceResponse = await fetch("/api/simulate/nonce", {
+    const nonceResponse = await fetch(`/api/simulate/nonce?bind=${simulationNonceBinding({ from: userAddress, to: txTo, data: txData, value: txValue })}`, {
       method: "GET",
       headers: { "Content-Type": "application/json" },
       signal: AbortSignal.timeout(5_000),

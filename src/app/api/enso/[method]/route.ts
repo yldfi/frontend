@@ -6,7 +6,7 @@ import {
   protectEnsoIntentResponse,
   type EnsoIntentResponse,
 } from "@/lib/enso-intents";
-import { assertAddress, assertPositiveAmount, assertSlippage, assertTokenAddress, failValidation, isHexAddress } from "@/lib/enso-intent-validation";
+import { assertAddress, assertPositiveAmount, assertTokenAddress, failValidation, isHexAddress } from "@/lib/enso-intent-validation";
 import { ENSO_PRICE_MAX_ADDRESSES, fetchPricesInBatches } from "@/lib/enso-price-batches";
 import {
   dedupeEnsoPrices,
@@ -14,12 +14,12 @@ import {
   readCachedEnsoPrices,
   writeCachedEnsoPrices,
 } from "@/lib/enso-prices-cache";
+import { redactUrlsInText } from "@/lib/rpc-redact";
 import { getExternalVaultConfig, LLAMA_AIRFORCE, TOKENS } from "@/config/vaults";
 
 export const dynamic = "force-dynamic";
 
 const CHAIN_ID = 1;
-const REFERRAL_CODE = "yldfi";
 
 // Server-side Enso client — API key is never exposed to the browser
 const ensoClient = new EnsoClient({
@@ -464,41 +464,10 @@ export async function POST(
       }
 
       case "route": {
-        const slippage = (body.slippage as string | undefined) ?? "100";
-        assertSlippage(slippage);
-        const routeData = await ensoClient.getRouteData({
-          chainId: CHAIN_ID,
-          fromAddress: body.fromAddress as `0x${string}`,
-          tokenIn: body.tokenIn as [`0x${string}`],
-          tokenOut: body.tokenOut as [`0x${string}`],
-          amountIn: body.amountIn as [string],
-          slippage,
-          routingStrategy: "router",
-          referralCode: REFERRAL_CODE,
-          receiver: body.receiver as `0x${string}` | undefined,
-        });
-        // Serialize BigInts to strings for JSON transport
-        return NextResponse.json({
-          tx: {
-            to: routeData.tx.to,
-            data: routeData.tx.data,
-            value: String(routeData.tx.value),
-          },
-          gas: String(routeData.gas),
-          amountOut: String(routeData.amountOut),
-          minAmountOut: routeData.minAmountOut == null
-            ? undefined
-            : String(Array.isArray(routeData.minAmountOut) ? routeData.minAmountOut[0] : routeData.minAmountOut),
-          priceImpact: routeData.priceImpact != null ? Number(routeData.priceImpact) : undefined,
-          route: routeData.route.map((hop) => ({
-            action: hop.action,
-            protocol: hop.protocol,
-            tokenIn: hop.tokenIn as string[],
-            tokenOut: hop.tokenOut as string[],
-            amountIn: [],
-            amountOut: [],
-          })),
-        }, { headers: cors });
+        return NextResponse.json(
+          { error: "Raw Enso routes are disabled; use /api/enso/intent" },
+          { status: 410, headers: cors }
+        );
       }
 
       case "quote": {
@@ -547,10 +516,23 @@ export async function POST(
       }
 
       case "tokens": {
+        if (body.chainId !== undefined && body.chainId !== CHAIN_ID) {
+          failValidation("chainId must be 1");
+        }
+        if (body.type !== undefined && body.type !== "base" && body.type !== "defi") {
+          failValidation("type must be \"base\" or \"defi\"");
+        }
+        const page = body.page;
+        if (page !== undefined && !(typeof page === "number" && Number.isInteger(page) && page >= 1 && page <= 100)) {
+          failValidation("page must be an integer between 1 and 100");
+        }
+        if (body.includeMetadata !== undefined && typeof body.includeMetadata !== "boolean") {
+          failValidation("includeMetadata must be a boolean");
+        }
         const tokenData = await ensoClient.getTokenData({
-          chainId: body.chainId as number ?? CHAIN_ID,
+          chainId: CHAIN_ID,
           type: body.type as "base" | "defi" | undefined,
-          page: body.page as number | undefined,
+          page: page as number | undefined,
           includeMetadata: body.includeMetadata as boolean | undefined,
         });
         return NextResponse.json(tokenData, { headers: cors });
@@ -588,9 +570,10 @@ export async function POST(
       }
 
       case "balances": {
+        assertAddress(body.eoaAddress, "eoaAddress");
         const balances = await ensoClient.getBalances({
           chainId: CHAIN_ID,
-          eoaAddress: body.eoaAddress as `0x${string}`,
+          eoaAddress: body.eoaAddress,
           useEoa: true,
         });
         return NextResponse.json(balances, { headers: cors });
@@ -605,7 +588,7 @@ export async function POST(
   } catch (error: unknown) {
     const err = error as { statusCode?: number; message?: string; response?: { data?: unknown } };
     const status = err.statusCode || 500;
-    const message = getFriendlyEnsoError(err.message || "Enso API error", body);
+    const message = redactUrlsInText(getFriendlyEnsoError(err.message || "Enso API error", body));
     console.error(`[Enso Proxy] ${method} error:`, err.response?.data ?? message);
     return NextResponse.json({ error: message }, { status, headers: cors });
   }

@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { validSimulationUsd } from "@/lib/simulation-pricing";
+import { getSimulationErrorText } from "@/lib/tx-preflight";
 import { VAULTS } from "@/config/vaults";
 import { CUSTOM_TOKENS } from "@/lib/enso";
 import type { SimulationAssetChange } from "@/types/enso";
@@ -147,9 +148,7 @@ function isVaultMintPair(send: SimulationAssetChange, received: SimulationAssetC
 
 // Extract error message from string or object
 function getErrorMessage(error: string | { id?: string; slug?: string; message?: string } | null): string | null {
-  if (!error) return null;
-  if (typeof error === "string") return error;
-  return error.message || error.slug || "Unknown error";
+  return getSimulationErrorText(error) ?? (error ? "Unknown error" : null);
 }
 
 export function SimulationModal({

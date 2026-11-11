@@ -11,6 +11,17 @@ type OpenNextWorker = {
   fetch: (request: Request, env: YldfiEdgeEnv, ctx: ExecutionContext) => Promise<Response>;
 };
 
+/** Origin + path of the referer, without query string or fragment. */
+function refererWithoutQuery(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    return parsed.origin + parsed.pathname;
+  } catch {
+    return null;
+  }
+}
+
 function describeError(err: unknown, request: Request) {
   const url = new URL(request.url);
   const safe = (s: string, max: number) => s.length > max ? `${s.slice(0, max)}…` : s;
@@ -19,9 +30,11 @@ function describeError(err: unknown, request: Request) {
     message: safe(detail, 2000),
     meta: {
       method: request.method,
-      pathname: url.pathname + url.search,
+      // Path only: query strings can carry wallet addresses and signed
+      // share-link parameters, and this row is stored in D1.
+      pathname: url.pathname,
       country: request.headers.get("cf-ipcountry") ?? null,
-      referer: request.headers.get("referer") ?? null,
+      referer: refererWithoutQuery(request.headers.get("referer")),
     },
   };
 }

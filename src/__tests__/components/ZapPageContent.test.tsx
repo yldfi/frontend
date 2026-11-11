@@ -181,6 +181,7 @@ describe("ZapPageContent", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(localStorage.getItem).mockReset();
     sessionStorage.clear();
     window.history.replaceState({}, "", "/zap");
 
@@ -248,6 +249,7 @@ describe("ZapPageContent", () => {
       toggleFlashbots,
       safePending: null,
       batchesApproval: false,
+      isSimulationForCurrentQuote: () => true,
       simulationResult: null,
     } as ReturnType<typeof useZapActions>);
 
@@ -267,7 +269,7 @@ describe("ZapPageContent", () => {
     window.history.replaceState(
       {},
       "",
-      `/zap?input=${ETH_ADDRESS}&output=${TOKENS.CVX}&outputSymbol=CVX&outputDecimals=18&outputLogo=%2Ftokens%2Fcvx.png&outputAmount=150`,
+      `/zap?input=${ETH_ADDRESS}&output=${TOKENS.CVX}&outputAmount=150&outputLogo=https%3A%2F%2Fexample.invalid%2Fcvx.png`,
     );
 
     render(<ZapPageContent />);
@@ -277,12 +279,49 @@ describe("ZapPageContent", () => {
     expect(mockUseTokenBalances).toHaveBeenCalledWith(
       [
         expect.objectContaining({ symbol: "ETH" }),
-        expect.objectContaining({ address: TOKENS.CVX, symbol: "CVX" }),
+        expect.objectContaining({
+          address: TOKENS.CVX,
+          symbol: "CVX",
+          logoURI: "/tokens/cvx.png",
+        }),
       ],
       { preferOnchain: true, fetchPrices: false },
     );
     expect((screen.getByPlaceholderText("0.00") as HTMLInputElement).value).toBe("1");
     expect(screen.getByText("150")).toBeTruthy();
+  });
+
+  it("ignores token metadata supplied in the URL", () => {
+    const unknownAddress = "0x000000000000000000000000000000000000dead";
+    window.history.replaceState(
+      {},
+      "",
+      `/zap?input=${ETH_ADDRESS}&output=${unknownAddress}&outputSymbol=USDC&outputDecimals=6&outputLogo=https%3A%2F%2Fexample.invalid%2Fx.png`,
+    );
+
+    render(<ZapPageContent />);
+
+    const calls = mockUseTokenBalances.mock.calls;
+    const tokens = calls[calls.length - 1][0] as { address: string; symbol: string }[];
+    expect(tokens[1].address.toLowerCase()).not.toBe(unknownAddress.toLowerCase());
+    expect(tokens[1].symbol).not.toBe("USDC");
+    expect(document.querySelector('img[src*="example.invalid"]')).toBeNull();
+  });
+
+  it("does not let the URL relabel a known token", () => {
+    window.history.replaceState(
+      {},
+      "",
+      `/zap?input=${ETH_ADDRESS}&output=${TOKENS.CVX}&outputSymbol=USDC&outputDecimals=6`,
+    );
+
+    render(<ZapPageContent />);
+
+    const calls = mockUseTokenBalances.mock.calls;
+    const tokens = calls[calls.length - 1][0] as { address: string; symbol: string; decimals: number }[];
+    expect(tokens[1]).toEqual(
+      expect.objectContaining({ address: TOKENS.CVX, symbol: "CVX", decimals: 18 }),
+    );
   });
 
   it.each([null, "", "0", "0.000", "-1", "abc", "1e3", "1.2.3", "9".repeat(400)])("ignores invalid auction target %s and displays the initial quote", (target) => {
@@ -311,7 +350,7 @@ describe("ZapPageContent", () => {
     window.history.replaceState(
       {},
       "",
-      `/zap?input=${ETH_ADDRESS}&output=${TOKENS.CVX}&outputSymbol=CVX&outputDecimals=18&outputAmount=150`,
+      `/zap?input=${ETH_ADDRESS}&output=${TOKENS.CVX}&outputAmount=150`,
     );
     mockUseUniversalZap.mockReturnValue({
       quote: {
@@ -412,6 +451,42 @@ describe("ZapPageContent", () => {
     await waitFor(() => expect(executeZap).toHaveBeenCalledWith());
   });
 
+  it("treats a re-typed equal amount as the same quote", async () => {
+    render(<ZapPageContent />);
+
+    fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "0.10" } });
+
+    const zapButton = screen.getByRole("button", { name: "Zap" }) as HTMLButtonElement;
+    expect(zapButton.disabled).toBe(false);
+    expect(screen.queryByRole("button", { name: /Getting quote/ })).toBeNull();
+
+    fireEvent.click(zapButton);
+    await waitFor(() => expect(executeZap).toHaveBeenCalled());
+  });
+
+  it("passes the quote time and a stale-quote handler to the action hook", () => {
+    mockUseUniversalZap.mockReturnValue({
+      quote,
+      quoteUpdatedAt: 123,
+      isLoading: false,
+      error: null,
+      refetch: refetchQuote,
+    } as unknown as ReturnType<typeof useUniversalZap>);
+    render(<ZapPageContent />);
+
+    const calls = mockUseZapActions.mock.calls;
+    const freshness = calls[calls.length - 1]?.[1];
+    expect(freshness).toMatchObject({
+      quoteUpdatedAt: 123,
+      onStaleQuote: expect.any(Function),
+    });
+
+    freshness?.onStaleQuote?.();
+
+    expect(refetchQuote).toHaveBeenCalled();
+    expect(toast.info).toHaveBeenCalledWith("Quote refreshed. Check the new amounts, then try again.");
+  });
+
   it("warns instead of showing green when the quote is far above market", () => {
     mockUseUniversalZap.mockReturnValue({
       quote: { ...quote, priceImpact: -25.69 },
@@ -435,7 +510,7 @@ describe("ZapPageContent", () => {
   });
 
   it("shows the pending tx card while preparing and awaiting on-chain confirmation", () => {
-    sessionStorage.setItem("yldfi-universal-zap-amount", "0.1");
+    sessionStorage.setItem("yldfi-universal-zap-v2-amount", "0.1");
     const preparingZap = {
       needsApproval: () => false,
       approve,
@@ -456,6 +531,7 @@ describe("ZapPageContent", () => {
       toggleFlashbots,
       safePending: null,
       batchesApproval: false,
+      isSimulationForCurrentQuote: () => true,
       simulationResult: null,
     } as ReturnType<typeof useZapActions>;
     mockUseZapActions.mockReturnValue(preparingZap);
@@ -484,7 +560,7 @@ describe("ZapPageContent", () => {
     ["deposit", "Deposit confirming on-chain.", "Awaiting Confirmation"],
     ["withdraw", "Withdraw confirming on-chain.", "Awaiting Confirmation"],
   ] as const)("labels the pending card as a %s for a direct vault pair", (action, expectedCopy, expectedTitle) => {
-    sessionStorage.setItem("yldfi-universal-zap-amount", "1");
+    sessionStorage.setItem("yldfi-universal-zap-v2-amount", "1");
     mockUseUniversalZap.mockReturnValue({
       quote: {
         ...quote,
@@ -519,6 +595,7 @@ describe("ZapPageContent", () => {
       toggleFlashbots,
       safePending: null,
       batchesApproval: false,
+      isSimulationForCurrentQuote: () => true,
       simulationResult: null,
     } as ReturnType<typeof useZapActions>);
 
@@ -559,7 +636,7 @@ describe("ZapPageContent", () => {
   });
 
   it("keeps the route panel mounted with an error when the quote fails", () => {
-    sessionStorage.setItem("yldfi-universal-zap-amount", "0.1");
+    sessionStorage.setItem("yldfi-universal-zap-v2-amount", "0.1");
     mockUseUniversalZap.mockReturnValue({
       quote: undefined,
       isLoading: false,
@@ -580,7 +657,7 @@ describe("ZapPageContent", () => {
     ["Enso intent did not quote the requested final output token", "Route failed safety checks - try a different amount or token"],
     ["Rate limit exceeded", "Too many requests - please wait a moment"],
   ])("shows a specific route error for %s", (message, expected) => {
-    sessionStorage.setItem("yldfi-universal-zap-amount", "0.1");
+    sessionStorage.setItem("yldfi-universal-zap-v2-amount", "0.1");
     mockUseUniversalZap.mockReturnValue({
       quote: undefined,
       isLoading: false,
@@ -594,7 +671,7 @@ describe("ZapPageContent", () => {
   });
 
   it("keeps route details visible when the input balance is insufficient", () => {
-    sessionStorage.setItem("yldfi-universal-zap-amount", "0.1");
+    sessionStorage.setItem("yldfi-universal-zap-v2-amount", "0.1");
     mockUseBalance.mockReturnValue({
       data: { value: 0n },
       refetch: refetchBalance,
@@ -624,7 +701,7 @@ describe("ZapPageContent", () => {
 
     fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value: "200" } });
 
-    expect(mockUseZapActions).toHaveBeenLastCalledWith(null);
+    expect(mockUseZapActions).toHaveBeenLastCalledWith(null, expect.any(Object));
     const settlingButton = screen.getByRole("button", { name: /Getting quote/ });
     expect((settlingButton as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(settlingButton);
@@ -639,7 +716,7 @@ describe("ZapPageContent", () => {
     fireEvent.click(screen.getByRole("button", { name: "Swap input and output" }));
 
     expect((amountInput as HTMLInputElement).value).toBe("5.0554");
-    expect(sessionStorage.getItem("yldfi-universal-zap-amount")).toBe("5.0554");
+    expect(sessionStorage.getItem("yldfi-universal-zap-v2-amount")).toBe("5.0554");
     expect(mockUseUniversalZap).toHaveBeenLastCalledWith(
       expect.objectContaining({
         inputToken: expect.objectContaining({ symbol: "yscvxCRV" }),
@@ -650,7 +727,7 @@ describe("ZapPageContent", () => {
   });
 
   it("normalizes persisted known token metadata before quoting", () => {
-    sessionStorage.setItem("yldfi-universal-zap-input", JSON.stringify({
+    sessionStorage.setItem("yldfi-universal-zap-v2-input", JSON.stringify({
       address: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E",
       chainId: 1,
       name: "Curve.Fi USD Stablecoin",
@@ -682,8 +759,155 @@ describe("ZapPageContent", () => {
     );
   });
 
+  it("restores a token picked from the ordinary list together with its amount", () => {
+    sessionStorage.setItem("yldfi-universal-zap-v2-input", JSON.stringify({
+      address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      chainId: 1,
+      name: "USD Coin",
+      symbol: "USDC",
+      decimals: 6,
+      logoURI: "https://example.invalid/usdc.png",
+      type: "base",
+    }));
+    sessionStorage.setItem("yldfi-universal-zap-v2-amount", "12.5");
+
+    render(<ZapPageContent />);
+
+    expect(screen.getByTestId("token-USDC")).toBeTruthy();
+    expect((screen.getByPlaceholderText("0.00") as HTMLInputElement).value).toBe("12.5");
+    expect(mockUseUniversalZap).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        inputToken: expect.objectContaining({
+          address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+          symbol: "USDC",
+          decimals: 6,
+        }),
+        inputAmount: "12.5",
+      }),
+    );
+  });
+
+  it("ignores a token stored under the old prefix", () => {
+    sessionStorage.setItem("yldfi-universal-zap-input", JSON.stringify({
+      address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      chainId: 1,
+      name: "USD Coin",
+      symbol: "USDC",
+      decimals: 6,
+      type: "base",
+    }));
+    sessionStorage.setItem("yldfi-universal-zap-amount", "12.5");
+
+    render(<ZapPageContent />);
+
+    expect(screen.getByTestId("token-ETH")).toBeTruthy();
+    expect(screen.queryByTestId("token-USDC")).toBeNull();
+    expect((screen.getByPlaceholderText("0.00") as HTMLInputElement).value).toBe("");
+    expect(mockUseUniversalZap).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        inputToken: expect.objectContaining({ address: ETH_ADDRESS, symbol: "ETH", decimals: 18 }),
+        inputAmount: "",
+      }),
+    );
+  });
+
+  it.each([
+    ["a bad address", { address: "not-an-address", symbol: "USDC", decimals: 6, chainId: 1 }],
+    ["impossible decimals", {
+      address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      symbol: "USDC",
+      decimals: 99,
+      chainId: 1,
+    }],
+    ["a missing symbol", {
+      address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      decimals: 6,
+      chainId: 1,
+    }],
+  ])("falls back and clears the amount when a stored token has %s", (_label, stored) => {
+    sessionStorage.setItem("yldfi-universal-zap-v2-input", JSON.stringify(stored));
+    sessionStorage.setItem("yldfi-universal-zap-v2-amount", "12.5");
+
+    render(<ZapPageContent />);
+
+    expect(screen.getByTestId("token-ETH")).toBeTruthy();
+    expect((screen.getByPlaceholderText("0.00") as HTMLInputElement).value).toBe("");
+    expect(sessionStorage.getItem("yldfi-universal-zap-v2-amount")).toBeNull();
+    expect(mockUseUniversalZap).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        inputToken: expect.objectContaining({ address: ETH_ADDRESS, symbol: "ETH" }),
+        inputAmount: "",
+      }),
+    );
+  });
+
+  it("restores a stored token from the imported list using the imported metadata", () => {
+    const importedAddress = "0x000000000000000000000000000000000000beef";
+    vi.mocked(localStorage.getItem).mockImplementation((key) =>
+      key === "yldfi-imported-tokens"
+        ? JSON.stringify([{
+            address: importedAddress,
+            chainId: 1,
+            name: "Imported Token",
+            symbol: "IMPT",
+            decimals: 8,
+            logoURI: "/tokens/imported.png",
+            type: "base",
+          }])
+        : null,
+    );
+    sessionStorage.setItem("yldfi-universal-zap-v2-input", JSON.stringify({
+      address: importedAddress,
+      chainId: 1,
+      name: "USD Coin",
+      symbol: "USDC",
+      decimals: 6,
+      logoURI: "https://example.invalid/usdc.png",
+      type: "base",
+    }));
+
+    render(<ZapPageContent />);
+
+    expect(screen.getByTestId("token-IMPT")).toBeTruthy();
+    expect(mockUseUniversalZap).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        inputToken: expect.objectContaining({
+          address: importedAddress,
+          symbol: "IMPT",
+          decimals: 8,
+          logoURI: "/tokens/imported.png",
+        }),
+      }),
+    );
+  });
+
+  it("ignores the link pair and warns when a requested output address is unknown", () => {
+    window.history.replaceState(
+      {},
+      "",
+      `/zap?input=${ETH_ADDRESS}&output=0x000000000000000000000000000000000000dead&outputAmount=150`,
+    );
+    sessionStorage.setItem("yldfi-universal-zap-v2-amount", "0.25");
+
+    const { rerender } = render(<ZapPageContent />);
+
+    expect((screen.getByPlaceholderText("0.00") as HTMLInputElement).value).toBe("0.25");
+    expect(screen.queryByText("150")).toBeNull();
+    expect(mockUseUniversalZap).toHaveBeenLastCalledWith(
+      expect.objectContaining({ inputAmount: "0.25" }),
+    );
+    expect(toast.info).toHaveBeenCalledTimes(1);
+    expect(toast.info).toHaveBeenCalledWith(
+      "This link names a token the app doesn't recognise. Pick it in the token selector.",
+    );
+
+    rerender(<ZapPageContent />);
+
+    expect(toast.info).toHaveBeenCalledTimes(1);
+  });
+
   it("confirms the preview modal by sending with skipSimulation", async () => {
-    sessionStorage.setItem("yldfi-universal-zap-amount", "0.1");
+    sessionStorage.setItem("yldfi-universal-zap-v2-amount", "0.1");
     mockUseSettings.mockReturnValue({
       slippage: "50",
       updateSlippage,
@@ -718,6 +942,7 @@ describe("ZapPageContent", () => {
       toggleFlashbots,
       safePending: null,
       batchesApproval: false,
+      isSimulationForCurrentQuote: () => true,
       simulationResult: {
         simulationId: "test-simulation",
         success: true,
@@ -736,6 +961,101 @@ describe("ZapPageContent", () => {
       expect(setShowSimulationModal).toHaveBeenCalledWith(false);
       expect(executeZap).toHaveBeenCalledWith({ skipSimulation: true });
     });
+  });
+
+  function renderOpenPreview(isSimulationCurrent: boolean) {
+    sessionStorage.setItem("yldfi-universal-zap-v2-amount", "0.1");
+    mockUseSettings.mockReturnValue({
+      slippage: "50",
+      updateSlippage,
+      showSlippageModal: false,
+      setShowSlippageModal,
+      showSimulationPreview: true,
+      refreshSimulationPreview,
+      showSimulationModal: true,
+      setShowSimulationModal,
+      showRoute: true,
+      toggleRoute,
+      setShowSimulationPreview: vi.fn(),
+    });
+
+    mockUseZapActions.mockReturnValue({
+      needsApproval: () => false,
+      approve,
+      executeZap,
+      reset,
+      status: "idle",
+      error: null,
+      isLoading: false,
+      isSuccess: false,
+      isReverted: false,
+      zapHash: undefined,
+      pendingApproval: null,
+      approvalProgress: null,
+      isApproving: false,
+      refetchAllowance,
+      isFlashbotsEnabled: false,
+      isFlashbotsSupported: false,
+      toggleFlashbots,
+      safePending: null,
+      batchesApproval: false,
+      isSimulationForCurrentQuote: () => isSimulationCurrent,
+      simulationResult: {
+        simulationId: "test-simulation",
+        success: true,
+        gasUsed: 123456,
+        errorMessage: null,
+        tenderlyUrl: null,
+        assetChanges: [],
+      } satisfies SimulationResult,
+    } as ReturnType<typeof useZapActions>);
+
+    render(<ZapPageContent />);
+  }
+
+  it("re-previews through the page instead of sending when the quote changed under the preview", async () => {
+    renderOpenPreview(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Zap" }));
+
+    await waitFor(() => expect(executeZap).toHaveBeenCalledWith({ previewOnly: true }));
+    expect(executeZap).not.toHaveBeenCalledWith({ skipSimulation: true });
+    expect(setShowSimulationModal).toHaveBeenCalledWith(false);
+    expect(toast.info).toHaveBeenCalledWith(
+      "The quote changed since the preview. Check the new preview, then confirm.",
+    );
+  });
+
+  it("sends exactly once when the preview is still for the current quote", async () => {
+    renderOpenPreview(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Zap" }));
+
+    await waitFor(() => expect(executeZap).toHaveBeenCalledWith({ skipSimulation: true }));
+    expect(executeZap).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds the re-preview of a changed high-impact quote until CONFIRM is typed", async () => {
+    mockUseUniversalZap.mockReturnValue({
+      quote: { ...quote, priceImpact: 99.99 },
+      isLoading: false,
+      error: null,
+      refetch: refetchQuote,
+    } as unknown as ReturnType<typeof useUniversalZap>);
+    renderOpenPreview(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Zap" }));
+
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("99.99%")).toBeTruthy();
+    // Nothing may run before the impact confirmation is accepted.
+    expect(executeZap).not.toHaveBeenCalled();
+
+    fireEvent.change(within(dialog).getByLabelText("Type CONFIRM to proceed"), { target: { value: "CONFIRM" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Zap" }));
+
+    await waitFor(() => expect(executeZap).toHaveBeenCalledWith({ previewOnly: true }));
+    expect(executeZap).not.toHaveBeenCalledWith({ skipSimulation: true });
   });
 
   describe("high price impact confirmation", () => {
@@ -802,6 +1122,7 @@ describe("ZapPageContent", () => {
         toggleFlashbots,
         safePending: null,
       batchesApproval: false,
+        isSimulationForCurrentQuote: () => true,
         simulationResult: null,
       } as unknown as ReturnType<typeof useZapActions>);
       renderWithQuote(highImpactQuote);

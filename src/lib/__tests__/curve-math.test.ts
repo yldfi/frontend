@@ -1,267 +1,119 @@
 /**
- * Tests for off-chain Curve pool math implementations
- *
- * Unit tests verify the pure math functions with known inputs/outputs
- * Integration tests verify against actual on-chain values (skipped in CI)
+ * Known input/output vectors for the off-chain Curve StableSwap maths that
+ * src/lib/enso.ts uses. The implementation lives in @yldfi/curve-amm-math and
+ * is re-exported by src/lib/curve.
  */
 import { describe, it, expect } from "vitest";
 
-// Import the internal functions for testing
-// We need to export them from enso.ts or test via the public API
+import {
+  A_PRECISION,
+  N_COINS,
+  STABLESWAP_FEE_DENOMINATOR,
+  computeAnn,
+  dynamicFee,
+  getD,
+  getDy01,
+  getY,
+} from "@/lib/curve";
 
-// ============================================
-// Constants (must match enso.ts)
-// ============================================
-const STABLESWAP_N_COINS = 2n;
-const STABLESWAP_A_PRECISION = 100n;
-const STABLESWAP_FEE_DENOMINATOR = 10n ** 10n;
+const A = 37n;
+const Ann = computeAnn(A, 2);
 
-// ============================================
-// Pure math function implementations for testing
-// (These mirror the implementations in enso.ts)
-// ============================================
-
-function stableswapGetD(xp: [bigint, bigint], Ann: bigint): bigint {
-  const S = xp[0] + xp[1];
-  if (S === 0n) return 0n;
-
-  let D = S;
-  const N_COINS_POW = STABLESWAP_N_COINS ** STABLESWAP_N_COINS;
-
-  for (let i = 0; i < 255; i++) {
-    let D_P = D;
-    for (const x of xp) {
-      D_P = (D_P * D) / x;
-    }
-    D_P = D_P / N_COINS_POW;
-
-    const Dprev = D;
-    const numerator = ((Ann * S) / STABLESWAP_A_PRECISION + D_P * STABLESWAP_N_COINS) * D;
-    const denominator = ((Ann - STABLESWAP_A_PRECISION) * D) / STABLESWAP_A_PRECISION + (STABLESWAP_N_COINS + 1n) * D_P;
-    D = numerator / denominator;
-
-    if (D > Dprev ? D - Dprev <= 1n : Dprev - D <= 1n) break;
-  }
-  return D;
-}
-
-function stableswapGetY(i: number, j: number, x: bigint, xp: [bigint, bigint], Ann: bigint, D: bigint): bigint {
-  let c = D;
-  let S = 0n;
-
-  for (let k = 0; k < Number(STABLESWAP_N_COINS); k++) {
-    let _x: bigint;
-    if (k === i) {
-      _x = x;
-    } else if (k !== j) {
-      _x = xp[k];
-    } else {
-      continue;
-    }
-    S += _x;
-    c = (c * D) / (_x * STABLESWAP_N_COINS);
-  }
-
-  c = (c * D * STABLESWAP_A_PRECISION) / (Ann * STABLESWAP_N_COINS);
-  const b = S + (D * STABLESWAP_A_PRECISION) / Ann;
-
-  let y = D;
-  for (let iter = 0; iter < 255; iter++) {
-    const prevY = y;
-    y = (y * y + c) / (2n * y + b - D);
-    if (y > prevY ? y - prevY <= 1n : prevY - y <= 1n) break;
-  }
-  return y;
-}
-
-function stableswapDynamicFee(
-  xpi: bigint,
-  xpj: bigint,
-  baseFee: bigint,
-  feeMultiplier: bigint
-): bigint {
-  if (feeMultiplier <= STABLESWAP_FEE_DENOMINATOR) return baseFee;
-
-  const xps2 = (xpi + xpj) ** 2n;
-  return (feeMultiplier * baseFee) /
-    ((feeMultiplier - STABLESWAP_FEE_DENOMINATOR) * 4n * xpi * xpj / xps2 + STABLESWAP_FEE_DENOMINATOR);
-}
-
-function stableswapGetDyOffchain(
-  dx: bigint,
-  xp: [bigint, bigint],
-  Ann: bigint,
-  baseFee: bigint,
-  feeMultiplier: bigint
-): bigint {
-  const x = xp[0] + dx;
-  const D = stableswapGetD(xp, Ann);
-  const y = stableswapGetY(0, 1, x, xp, Ann, D);
-  const dy = xp[1] - y - 1n;
-
-  const fee = stableswapDynamicFee(
-    (xp[0] + x) / 2n,
-    (xp[1] + y) / 2n,
-    baseFee,
-    feeMultiplier
-  );
-  const feeAmount = (dy * fee) / STABLESWAP_FEE_DENOMINATOR;
-  return dy - feeAmount;
-}
-
-// ============================================
-// Unit Tests - Pure Math (No RPC needed)
-// ============================================
-
-describe("StableSwap Math", () => {
-  describe("stableswapGetD", () => {
-    it("returns 0 for empty pool", () => {
-      const xp: [bigint, bigint] = [0n, 0n];
-      const Ann = 37n * STABLESWAP_A_PRECISION * STABLESWAP_N_COINS;
-      expect(stableswapGetD(xp, Ann)).toBe(0n);
+describe("StableSwap maths", () => {
+  describe("getD", () => {
+    it("returns 0 for an empty pool", () => {
+      expect(getD([0n, 0n], Ann)).toBe(0n);
     });
 
-    it("calculates D correctly for balanced pool", () => {
-      // For a balanced pool, D should be close to sum of balances
+    it("returns about the sum of the balances for a balanced pool", () => {
       const balance = 1000n * 10n ** 18n;
-      const xp: [bigint, bigint] = [balance, balance];
-      const Ann = 37n * STABLESWAP_A_PRECISION * STABLESWAP_N_COINS;
-      const D = stableswapGetD(xp, Ann);
 
-      // D should be approximately 2000e18 for balanced pool
+      const D = getD([balance, balance], Ann);
+
+      expect(D).toBe(2000000000000000000000n);
       expect(D).toBeGreaterThan(1990n * 10n ** 18n);
       expect(D).toBeLessThan(2010n * 10n ** 18n);
     });
 
-    it("handles imbalanced pool", () => {
-      const xp: [bigint, bigint] = [50000n * 10n ** 18n, 70000n * 10n ** 18n];
-      const Ann = 37n * STABLESWAP_A_PRECISION * STABLESWAP_N_COINS;
-      const D = stableswapGetD(xp, Ann);
+    it("stays between the sum and twice the smaller balance for an imbalanced pool", () => {
+      const D = getD([50000n * 10n ** 18n, 70000n * 10n ** 18n], Ann);
 
-      // D should be between sum and 2*min
       expect(D).toBeGreaterThan(100000n * 10n ** 18n);
       expect(D).toBeLessThan(120000n * 10n ** 18n);
     });
   });
 
-  describe("stableswapGetY", () => {
-    it("finds correct y for swap", () => {
+  describe("getY", () => {
+    it("prices a 1000-token swap close to the peg", () => {
       const xp: [bigint, bigint] = [50000n * 10n ** 18n, 70000n * 10n ** 18n];
-      const Ann = 37n * STABLESWAP_A_PRECISION * STABLESWAP_N_COINS;
-      const D = stableswapGetD(xp, Ann);
+      const D = getD(xp, Ann);
 
-      // Swap 1000 tokens
-      const newX = xp[0] + 1000n * 10n ** 18n;
-      const y = stableswapGetY(0, 1, newX, xp, Ann, D);
+      const y = getY(0, 1, xp[0] + 1000n * 10n ** 18n, xp, Ann, D);
 
-      // y should be less than original xp[1]
       expect(y).toBeLessThan(xp[1]);
-      // But not by too much (StableSwap maintains peg)
       expect(y).toBeGreaterThan(xp[1] - 1100n * 10n ** 18n);
     });
   });
 
-  describe("stableswapDynamicFee", () => {
-    it("returns base fee when multiplier is 0", () => {
-      const baseFee = 10000000n; // 0.1%
-      const fee = stableswapDynamicFee(
-        50000n * 10n ** 18n,
-        50000n * 10n ** 18n,
-        baseFee,
-        0n
-      );
-      expect(fee).toBe(baseFee);
+  describe("dynamicFee", () => {
+    const baseFee = 10000000n; // 0.1%
+
+    it("returns the base fee when the multiplier is 0", () => {
+      expect(dynamicFee(50000n * 10n ** 18n, 50000n * 10n ** 18n, baseFee, 0n)).toBe(baseFee);
     });
 
-    it("returns base fee when multiplier equals denominator", () => {
-      const baseFee = 10000000n;
-      const fee = stableswapDynamicFee(
-        50000n * 10n ** 18n,
-        50000n * 10n ** 18n,
-        baseFee,
-        STABLESWAP_FEE_DENOMINATOR
-      );
-      expect(fee).toBe(baseFee);
+    it("returns the base fee when the multiplier equals the denominator", () => {
+      expect(
+        dynamicFee(50000n * 10n ** 18n, 50000n * 10n ** 18n, baseFee, STABLESWAP_FEE_DENOMINATOR),
+      ).toBe(baseFee);
     });
 
-    it("increases fee for imbalanced pool", () => {
-      const baseFee = 10000000n;
+    it("increases the fee for an imbalanced pool", () => {
       const feeMultiplier = 20000000000n; // 2x
 
-      // Balanced pool
-      const balancedFee = stableswapDynamicFee(
-        50000n * 10n ** 18n,
-        50000n * 10n ** 18n,
-        baseFee,
-        feeMultiplier
-      );
+      const balancedFee = dynamicFee(50000n * 10n ** 18n, 50000n * 10n ** 18n, baseFee, feeMultiplier);
+      const imbalancedFee = dynamicFee(30000n * 10n ** 18n, 70000n * 10n ** 18n, baseFee, feeMultiplier);
 
-      // Imbalanced pool
-      const imbalancedFee = stableswapDynamicFee(
-        30000n * 10n ** 18n,
-        70000n * 10n ** 18n,
-        baseFee,
-        feeMultiplier
-      );
-
-      // Imbalanced should have higher fee
       expect(imbalancedFee).toBeGreaterThan(balancedFee);
     });
   });
 
-  describe("stableswapGetDyOffchain", () => {
-    // Known values from a 2-coin StableSwap pool snapshot
-    const poolParams = {
-      xp: [52847921620037742048865n, 65464805601413182150594n] as [bigint, bigint],
-      A: 37n,
-      fee: 10000000n,
-      offpegFeeMultiplier: 20000000000n,
-    };
-    const Ann = poolParams.A * STABLESWAP_A_PRECISION * STABLESWAP_N_COINS;
+  describe("getDy01", () => {
+    // Snapshot of a 2-coin StableSwap pool with an off-peg fee multiplier.
+    const xp: [bigint, bigint] = [52847921620037742048865n, 65464805601413182150594n];
+    const fee = 10000000n;
+    const offpegFeeMultiplier = 20000000000n;
 
-    it("calculates swap output for 100 tokens", () => {
-      const dx = 100n * 10n ** 18n;
-      const dy = stableswapGetDyOffchain(dx, poolParams.xp, Ann, poolParams.fee, poolParams.offpegFeeMultiplier);
+    it("quotes slightly more than the input when the output side is heavier", () => {
+      const dy = getDy01(100n * 10n ** 18n, xp, Ann, fee, offpegFeeMultiplier);
 
-      // Should get slightly more than input (pool has excess of the output coin)
+      expect(dy).toBe(100469378842931378953n);
       expect(dy).toBeGreaterThan(100n * 10n ** 18n);
       expect(dy).toBeLessThan(101n * 10n ** 18n);
     });
 
-    it("calculates swap output for 1000 tokens", () => {
-      const dx = 1000n * 10n ** 18n;
-      const dy = stableswapGetDyOffchain(dx, poolParams.xp, Ann, poolParams.fee, poolParams.offpegFeeMultiplier);
+    it("quotes 1000 tokens with a smaller per-token bonus", () => {
+      const dy = getDy01(1000n * 10n ** 18n, xp, Ann, fee, offpegFeeMultiplier);
 
-      // Should get bonus but less per token than smaller swap
+      expect(dy).toBe(1004267579216845920174n);
       expect(dy).toBeGreaterThan(1000n * 10n ** 18n);
       expect(dy).toBeLessThan(1010n * 10n ** 18n);
     });
 
-    it("shows diminishing returns for large swaps", () => {
+    it("shows diminishing returns for a larger swap", () => {
       const dx1 = 1000n * 10n ** 18n;
       const dx2 = 50000n * 10n ** 18n;
 
-      const dy1 = stableswapGetDyOffchain(dx1, poolParams.xp, Ann, poolParams.fee, poolParams.offpegFeeMultiplier);
-      const dy2 = stableswapGetDyOffchain(dx2, poolParams.xp, Ann, poolParams.fee, poolParams.offpegFeeMultiplier);
+      const rate1 = Number(getDy01(dx1, xp, Ann, fee, offpegFeeMultiplier)) / Number(dx1);
+      const rate2 = Number(getDy01(dx2, xp, Ann, fee, offpegFeeMultiplier)) / Number(dx2);
 
-      const rate1 = Number(dy1) / Number(dx1);
-      const rate2 = Number(dy2) / Number(dx2);
-
-      // Larger swap should have worse rate
       expect(rate2).toBeLessThan(rate1);
     });
   });
+
+  describe("computeAnn", () => {
+    it("scales A by A_PRECISION and the coin count", () => {
+      expect(Ann).toBe(A * A_PRECISION * N_COINS);
+    });
+  });
 });
-
-// ============================================
-// Integration Tests - Against On-Chain (RPC needed)
-// These are kept as separate test files that can be run manually:
-// - test-stableswap-exact.ts
-// - test-cryptoswap-exact.ts
-//
-// Run with: bun x tsx test-stableswap-exact.ts
-// ============================================
-
-// Integration tests require real fetch which jsdom doesn't provide.
-// The standalone test files (test-stableswap-exact.ts, test-cryptoswap-exact.ts)
-// verify 0% error against on-chain and should be run manually before deployment.

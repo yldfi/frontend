@@ -368,7 +368,7 @@ describe("useZapActions integration", () => {
       });
 
       expect(result.current.status).toBe("error");
-      expect(result.current.error).toBe("Insufficient balance");
+      expect(result.current.error).toBe("Insufficient funds for gas");
     });
 
     it("parses user rejected error message", async () => {

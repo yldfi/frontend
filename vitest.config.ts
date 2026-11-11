@@ -60,8 +60,9 @@ export default defineConfig({
           // These suites talk to live upstreams (Enso routing, RPC, token
           // holder APIs) that intermittently answer "Swap not found" or a 5xx.
           // One retry keeps a single upstream hiccup from costing the nightly a
-          // whole 2-minute attempt; a real regression still fails twice, and the
-          // job-level retry loop remains the backstop.
+          // whole 2-minute attempt; a real regression still fails twice, and
+          // there is deliberately no job-level retry loop (it re-ran every
+          // passing live suite).
           retry: 1,
         },
       },

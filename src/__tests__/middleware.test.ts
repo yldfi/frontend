@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { NEVER_A_ROUTE } from "@/middleware";
 
 // Test the middleware logic by extracting testable functions
@@ -348,6 +348,67 @@ describe("scanner 404 fast-path", () => {
   });
 });
 
+describe("debug page 404", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  async function middlewareResponseFor(pathname: string) {
+    vi.resetModules();
+    const { NextRequest } = await import("next/server");
+    const { middleware } = await import("@/middleware");
+    return middleware(
+      new NextRequest(`https://yldfi.co${pathname}`, { headers: { "cf-ipcountry": "DE" } })
+    );
+  }
+
+  it.each(["/debug", "/debug/x"])(
+    "answers %s with the static 404 when the page is off in production",
+    async (pathname) => {
+      vi.stubEnv("NODE_ENV", "production");
+      vi.stubEnv("NEXT_PUBLIC_ENABLE_DEBUG_PAGE", undefined);
+
+      const response = await middlewareResponseFor(pathname);
+
+      expect(response.status).toBe(404);
+      expect(response.headers.get("Cache-Control")).toBe("public, max-age=3600");
+      expect(await response.text()).toContain("Page not found.");
+      expect(response.headers.get("x-middleware-next")).toBeNull();
+    }
+  );
+
+  it("passes /debugger through as any other path does", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_DEBUG_PAGE", undefined);
+
+    const response = await middlewareResponseFor("/debugger");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-middleware-next")).toBe("1");
+  });
+
+  it("serves the debug page when it was enabled at build time", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_DEBUG_PAGE", "1");
+
+    const response = await middlewareResponseFor("/debug");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-middleware-next")).toBe("1");
+  });
+
+  it("serves the debug page in development", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_DEBUG_PAGE", undefined);
+
+    const response = await middlewareResponseFor("/debug");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-middleware-next")).toBe("1");
+  });
+});
+
 describe("middleware framing headers (Safe App support)", () => {
   it("allows framing only by the site itself and Safe{Wallet}", async () => {
     const { NextRequest } = await import("next/server");
@@ -357,5 +418,75 @@ describe("middleware framing headers (Safe App support)", () => {
     expect(response.headers.get("Content-Security-Policy")).toBe("frame-ancestors 'self' https://app.safe.global");
     // X-Frame-Options can't express an allowlist; DENY would block Safe{Wallet}.
     expect(response.headers.get("X-Frame-Options")).toBeNull();
+  });
+});
+
+describe("middleware report-only content security policy", () => {
+  async function responseFor(country: string) {
+    const { NextRequest } = await import("next/server");
+    const { middleware } = await import("@/middleware");
+    return middleware(new NextRequest("https://yldfi.co/zap", { headers: { "cf-ipcountry": country } }));
+  }
+
+  it("sends the report-only policy next to the unchanged enforcing header", async () => {
+    const response = await responseFor("DE");
+
+    const reportOnly = response.headers.get("Content-Security-Policy-Report-Only");
+    expect(reportOnly).toBeTruthy();
+    expect(reportOnly).toContain("object-src 'none'");
+    expect(response.headers.get("Content-Security-Policy")).toBe("frame-ancestors 'self' https://app.safe.global");
+  });
+
+  it("leaves the geo-block untouched", async () => {
+    const response = await responseFor("GB");
+
+    expect(response.status).toBe(451);
+  });
+
+  it("never puts a path (which could be a keyed RPC URL) in connect-src", async () => {
+    const response = await responseFor("DE");
+    const csp = response.headers.get("Content-Security-Policy-Report-Only") ?? "";
+    const connectSrc = csp.split("; ").find((directive) => directive.startsWith("connect-src "));
+
+    expect(connectSrc).toBeDefined();
+    for (const source of connectSrc!.slice("connect-src ".length).split(" ")) {
+      if (!/^(https?|wss?):/.test(source)) continue;
+      expect(source).toMatch(/^(https?|wss?):\/\/[^/]+$/);
+    }
+  });
+});
+
+describe("middleware RPC environment origins", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  async function responseForPageRequest() {
+    const { NextRequest } = await import("next/server");
+    const { middleware } = await import("@/middleware");
+    return middleware(new NextRequest("https://yldfi.co/zap", { headers: { "cf-ipcountry": "DE" } }));
+  }
+
+  it("reduces an RPC URL with credentials and a keyed path to its origin", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ALCHEMY_RPC_URL", "https://user:pass@rpc.example.test/v2/SECRETKEY");
+    vi.resetModules();
+
+    const response = await responseForPageRequest();
+    const reportOnly = response.headers.get("Content-Security-Policy-Report-Only") ?? "";
+
+    expect(reportOnly).toContain("https://rpc.example.test");
+    expect(reportOnly).not.toContain("SECRETKEY");
+    expect(reportOnly).not.toContain("user:pass");
+  });
+
+  it("keeps both headers when an RPC URL is not a valid URL", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ALCHEMY_RPC_URL", "not a url");
+    vi.resetModules();
+
+    const response = await responseForPageRequest();
+
+    expect(response.headers.get("Content-Security-Policy-Report-Only")).toBeTruthy();
+    expect(response.headers.get("Content-Security-Policy")).toBe("frame-ancestors 'self' https://app.safe.global");
   });
 });

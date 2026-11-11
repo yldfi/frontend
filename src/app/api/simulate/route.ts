@@ -14,6 +14,7 @@ import {
   selectFinalTenderlySimulation,
   type TenderlySimulationRequest,
 } from "@/lib/tenderly-simulation-bundle";
+import { boundNoncePayload, shareLinkPayload, simulationNonceBinding } from "@/lib/simulation-nonce";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +38,10 @@ function getCorsHeaders(request: NextRequest): Record<string, string> {
 const CVX_BALANCE_SLOT = 0n;
 const MAX_UINT256 = (1n << 256n) - 1n;
 const MAX_REQUESTS_PER_MINUTE = 8;
+// Browser tabs loaded before nonce binding shipped still request unbound
+// nonces. Accept them for now; set this to false once those tabs have
+// reloaded.
+const ALLOW_UNBOUND_NONCE = true;
 const SIMULATE_TOTAL_TIMEOUT_MS = 12_000;
 const TENDERLY_FETCH_TIMEOUT_MS = 9_000;
 const TENDERLY_JSON_TIMEOUT_MS = 1_500;
@@ -499,7 +504,6 @@ export async function POST(request: NextRequest) {
     data?: string;
     value?: string;
     gas?: string | number;
-    networkId?: string | number;
     inputToken?: string;
     spender?: string;
     nonce?: string;
@@ -524,6 +528,22 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  if (
+    typeof body.from !== "string" || !/^0x[a-fA-F0-9]{40}$/.test(body.from) ||
+    typeof body.to !== "string" || typeof body.data !== "string"
+  ) {
+    return NextResponse.json(
+      { success: false, errorMessage: "Invalid from/to/data", retryable: false },
+      { status: 400, headers: corsHeaders }
+    );
+  }
+  if (body.value !== undefined && !(typeof body.value === "string" && /^\d{1,78}$/.test(body.value))) {
+    return NextResponse.json(
+      { success: false, errorMessage: "Invalid value", retryable: false },
+      { status: 400, headers: corsHeaders }
+    );
+  }
+
   const nonceSecret = process.env.SIMULATION_NONCE_SECRET;
   if (!nonceSecret) {
     return NextResponse.json(
@@ -539,6 +559,19 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Reject a non-string nonce or signature and a non-integer expiry before
+  // any signature check.
+  if (
+    typeof body.nonce !== "string" ||
+    typeof body.sig !== "string" ||
+    !Number.isSafeInteger(body.expires)
+  ) {
+    return NextResponse.json(
+      { success: false, errorMessage: "Invalid nonce", retryable: false },
+      { status: 400, headers: corsHeaders }
+    );
+  }
+
   if (Date.now() > body.expires) {
     return NextResponse.json(
       { success: false, errorMessage: "Nonce expired", retryable: false },
@@ -546,8 +579,21 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const noncePayload = `${body.nonce}.${body.expires}`;
-  const nonceOk = await verifySignature(nonceSecret, noncePayload, body.sig);
+  const binding = simulationNonceBinding({
+    from: body.from,
+    to: body.to,
+    data: body.data,
+    value: body.value,
+  });
+  const boundOk = await verifySignature(
+    nonceSecret,
+    boundNoncePayload(body.nonce, body.expires, binding),
+    body.sig,
+  );
+  const nonceOk = boundOk || (
+    ALLOW_UNBOUND_NONCE &&
+    await verifySignature(nonceSecret, `${body.nonce}.${body.expires}`, body.sig)
+  );
   if (!nonceOk) {
     return NextResponse.json(
       { success: false, errorMessage: "Invalid nonce", retryable: false },
@@ -670,7 +716,7 @@ export async function POST(request: NextRequest) {
   }
 
   const tenderlyRequest = {
-    network_id: body.networkId?.toString() ?? "1",
+    network_id: "1",
     from: body.from,
     to: body.to,
     input: body.data,
@@ -748,7 +794,7 @@ export async function POST(request: NextRequest) {
         {
           success: true,
           simulationUnavailable: true,
-          simulationUnavailableReason: reason,
+          simulationUnavailableReason: "Simulation service unavailable",
           gasUsed: null,
           errorMessage: null,
           retryable: false,
@@ -790,7 +836,7 @@ export async function POST(request: NextRequest) {
         {
           success: true,
           simulationUnavailable: true,
-          simulationUnavailableReason: reason,
+          simulationUnavailableReason: "Simulation service unavailable",
           gasUsed: null,
           errorMessage: null,
           retryable: false,
@@ -834,7 +880,7 @@ export async function POST(request: NextRequest) {
         {
           success: true,
           simulationUnavailable: true,
-          simulationUnavailableReason: apiErrorMessage,
+          simulationUnavailableReason: "Simulation service unavailable",
           gasUsed: null,
           errorMessage: null,
           retryable: false,
@@ -861,6 +907,48 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // A 200 whose body could not be read or parsed (truncated stream, HTML error
+  // page) reaches here as {}. It carries no simulation, so it must not be
+  // reported as a successful one: fall back to eth_call like the other
+  // "Tenderly unavailable" paths.
+  const hasSimulationData =
+    payload != null &&
+    typeof payload === "object" &&
+    ("simulation" in payload || "transaction" in payload || "simulation_results" in payload || "error" in payload);
+  if (!hasSimulationData) {
+    const ethCallResult = await tryEthCall();
+    if (ethCallResult.success) {
+      const reason = "Tenderly returned an unreadable response";
+      logSimulate("fallback_unavailable", { path: "tenderly_empty_payload", reason });
+      return NextResponse.json(
+        {
+          success: true,
+          simulationUnavailable: true,
+          simulationUnavailableReason: reason,
+          gasUsed: null,
+          errorMessage: null,
+          retryable: false,
+          simulationId: null,
+          tenderlyUrl: null,
+          assetChanges: [],
+        },
+        { status: 200, headers: corsHeaders }
+      );
+    }
+    logSimulate("failure", {
+      path: "tenderly_empty_payload",
+      error: ethCallResult.error ?? "Transaction would fail",
+    });
+    return NextResponse.json(
+      {
+        success: false,
+        errorMessage: ethCallResult.error ?? "Transaction would fail",
+        retryable: false,
+      },
+      { status: 400, headers: corsHeaders }
+    );
+  }
+
   const selected = selectFinalTenderlySimulation(payload, tenderlySimulation.expectedResults);
   const selectedPayload = selected.result;
   const simulation = (selectedPayload?.simulation ?? selectedPayload?.transaction ?? selectedPayload ?? {}) as Record<string, unknown>;
@@ -873,7 +961,7 @@ export async function POST(request: NextRequest) {
   // Return a signed link to our share endpoint which will verify before sharing via Tenderly
   const secret = process.env.SIMULATION_NONCE_SECRET;
   const tenderlyUrl = simulationId && secret
-    ? `/api/simulate/share/${simulationId}?sig=${await signPayload(secret, String(simulationId))}`
+    ? `/api/simulate/share/${simulationId}?sig=${await signPayload(secret, shareLinkPayload(String(simulationId)))}`
     : null;
   const errorMessage =
     simulation?.error_message ??

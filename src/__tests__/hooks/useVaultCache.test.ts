@@ -1,338 +1,118 @@
-import { describe, it, expect } from "vitest";
+import { renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useQuery } from "@tanstack/react-query";
 
-// Test the useVaultCache business logic directly
-// We test cache data structure and query configuration
+import { useVaultCache, type VaultCacheResponse } from "@/hooks/useVaultCache";
 
-describe("useVaultCache logic", () => {
-  describe("CacheResponse structure", () => {
-    interface VaultCacheData {
-      address: string;
-      totalAssets: string;
-      pricePerShare: string;
-      tvl: number;
-      pps: number;
-      tvlUsd: number;
-    }
+const CACHE: VaultCacheResponse = {
+  ycvxcrv: {
+    address: "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86",
+    totalAssets: "1000000000000000000000",
+    pricePerShare: "1050000000000000000",
+    tvl: 1000,
+    pps: 1.05,
+    tvlUsd: 930,
+    apy: 4.2,
+  },
+  yscvxcrv: {
+    address: "0xCa960E6DF1150100586c51382f619efCCcF72706",
+    totalAssets: "500000000000000000000",
+    pricePerShare: "1020000000000000000",
+    tvl: 500,
+    pps: 1.02,
+    tvlUsd: 465,
+    apy: null,
+  },
+  yscvx: {
+    address: "0x1Fd0A85084fC61c397AC619c4F0bA2350eA1cE9e",
+    totalAssets: "0",
+    pricePerShare: "1000000000000000000",
+    tvl: 0,
+    pps: 1,
+    tvlUsd: 0,
+    apy: null,
+  },
+  yspxcvx: {
+    address: "0x0000000000000000000000000000000000000001",
+    totalAssets: "0",
+    pricePerShare: "1000000000000000000",
+    tvl: 0,
+    pps: 1,
+    tvlUsd: 0,
+    apy: null,
+  },
+  cvxCrvPrice: 0.93,
+  pxCvxPrice: 1.94,
+  cvxPrice: 1.93,
+  lastUpdated: "2026-11-10T12:00:00Z",
+};
 
-    interface CacheResponse {
-      ycvxcrv: VaultCacheData;
-      yscvxcrv: VaultCacheData;
-      cvxCrvPrice: number;
-      lastUpdated: string;
-    }
+type QueryOptions = {
+  queryKey: string[];
+  queryFn: () => Promise<VaultCacheResponse>;
+};
 
-    const createMockCacheResponse = (): CacheResponse => ({
-      ycvxcrv: {
-        address: "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86",
-        totalAssets: "1000000000000000000000",
-        pricePerShare: "1050000000000000000",
-        tvl: 1000,
-        pps: 1.05,
-        tvlUsd: 930,
-      },
-      yscvxcrv: {
-        address: "0x27B5739e22ad9033bcBf192059122d163b60349D",
-        totalAssets: "500000000000000000000",
-        pricePerShare: "1020000000000000000",
-        tvl: 500,
-        pps: 1.02,
-        tvlUsd: 465,
-      },
-      cvxCrvPrice: 0.93,
-      lastUpdated: "2024-01-15T12:00:00Z",
-    });
+function captureQuery() {
+  renderHook(() => useVaultCache());
+  const [options] = vi.mocked(useQuery).mock.calls.at(-1)! as unknown as [QueryOptions];
+  return options;
+}
 
-    it("has ycvxcrv vault data", () => {
-      const response = createMockCacheResponse();
-      expect(response.ycvxcrv).toBeDefined();
-      expect(response.ycvxcrv.address).toBe("0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86");
-    });
-
-    it("has yscvxcrv vault data", () => {
-      const response = createMockCacheResponse();
-      expect(response.yscvxcrv).toBeDefined();
-      expect(response.yscvxcrv.address).toBe("0x27B5739e22ad9033bcBf192059122d163b60349D");
-    });
-
-    it("has cvxCrvPrice", () => {
-      const response = createMockCacheResponse();
-      expect(response.cvxCrvPrice).toBe(0.93);
-    });
-
-    it("has lastUpdated timestamp", () => {
-      const response = createMockCacheResponse();
-      expect(response.lastUpdated).toBe("2024-01-15T12:00:00Z");
-    });
+describe("useVaultCache", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(useQuery).mockReturnValue({
+      data: CACHE,
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useQuery>);
   });
 
-  describe("VaultCacheData structure", () => {
-    interface VaultCacheData {
-      address: string;
-      totalAssets: string;
-      pricePerShare: string;
-      tvl: number;
-      pps: number;
-      tvlUsd: number;
-    }
-
-    const createMockVaultData = (overrides: Partial<VaultCacheData> = {}): VaultCacheData => ({
-      address: "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86",
-      totalAssets: "1000000000000000000000",
-      pricePerShare: "1050000000000000000",
-      tvl: 1000,
-      pps: 1.05,
-      tvlUsd: 930,
-      ...overrides,
-    });
-
-    it("has address field", () => {
-      const data = createMockVaultData();
-      expect(data.address).toMatch(/^0x[a-fA-F0-9]{40}$/);
-    });
-
-    it("has totalAssets as string (for bigint)", () => {
-      const data = createMockVaultData();
-      expect(typeof data.totalAssets).toBe("string");
-      expect(BigInt(data.totalAssets)).toBe(BigInt("1000000000000000000000"));
-    });
-
-    it("has pricePerShare as string (for bigint)", () => {
-      const data = createMockVaultData();
-      expect(typeof data.pricePerShare).toBe("string");
-      expect(BigInt(data.pricePerShare)).toBe(BigInt("1050000000000000000"));
-    });
-
-    it("has tvl as number", () => {
-      const data = createMockVaultData({ tvl: 1500 });
-      expect(data.tvl).toBe(1500);
-    });
-
-    it("has pps (price per share) as number", () => {
-      const data = createMockVaultData({ pps: 1.15 });
-      expect(data.pps).toBe(1.15);
-    });
-
-    it("has tvlUsd as number", () => {
-      const data = createMockVaultData({ tvlUsd: 1500000 });
-      expect(data.tvlUsd).toBe(1500000);
-    });
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
-  describe("query configuration", () => {
-    const STALE_TIME = 60 * 1000; // 1 minute
-    const GC_TIME = 5 * 60 * 1000; // 5 minutes
-    const REFETCH_INTERVAL = 60 * 1000; // 1 minute
+  it("returns the cache payload from the query", () => {
+    const { result } = renderHook(() => useVaultCache());
 
-    it("has 1 minute stale time", () => {
-      expect(STALE_TIME).toBe(60000);
-    });
-
-    it("has 5 minute garbage collection time", () => {
-      expect(GC_TIME).toBe(300000);
-    });
-
-    it("has 1 minute refetch interval", () => {
-      expect(REFETCH_INTERVAL).toBe(60000);
-    });
-
-    it("gcTime is longer than staleTime", () => {
-      expect(GC_TIME).toBeGreaterThan(STALE_TIME);
-    });
+    expect(result.current.data).toBe(CACHE);
   });
 
-  describe("query key", () => {
-    const QUERY_KEY = ["vault-cache"];
+  it("requests the vault cache proxy and parses its JSON", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(CACHE)));
 
-    it("has correct query key format", () => {
-      expect(QUERY_KEY).toEqual(["vault-cache"]);
-    });
+    const response = await captureQuery().queryFn();
 
-    it("is a single-element array", () => {
-      expect(QUERY_KEY).toHaveLength(1);
-    });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/vaults",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(response).toEqual(CACHE);
   });
 
-  describe("API configuration", () => {
-    const CACHE_API_URL = "https://<cache-worker-host>/api/vaults";
+  it("fails the query when the cache proxy errors", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 502 })));
 
-    it("uses correct cache API URL", () => {
-      expect(CACHE_API_URL).toContain("yldfi-cache");
-      expect(CACHE_API_URL).toContain("/api/vaults");
-    });
-
-    it("uses HTTPS", () => {
-      expect(CACHE_API_URL.startsWith("https://")).toBe(true);
-    });
-
-    it("uses Cloudflare Workers", () => {
-      expect(CACHE_API_URL).toContain(".workers.dev");
-    });
+    await expect(captureQuery().queryFn()).rejects.toThrow("Failed to fetch vault cache");
   });
 
-  describe("TVL and price relationships", () => {
-    function calculateTvlUsd(tvl: number, cvxCrvPrice: number): number {
-      return tvl * cvxCrvPrice;
-    }
-
-    it("calculates TVL in USD", () => {
-      const tvl = 1000; // 1000 cvxCRV
-      const price = 0.93; // $0.93 per cvxCRV
-      expect(calculateTvlUsd(tvl, price)).toBe(930);
-    });
-
-    it("handles zero TVL", () => {
-      expect(calculateTvlUsd(0, 0.93)).toBe(0);
-    });
-
-    it("handles zero price", () => {
-      expect(calculateTvlUsd(1000, 0)).toBe(0);
-    });
-
-    it("calculates large TVL", () => {
-      const tvl = 1_000_000; // 1M cvxCRV
-      const price = 0.95;
-      expect(calculateTvlUsd(tvl, price)).toBe(950_000);
-    });
+  it("reads the cache under one stable key", () => {
+    expect(captureQuery().queryKey).toEqual(["vault-cache"]);
   });
 
-  describe("price per share interpretation", () => {
-    function parsePps(pricePerShareString: string): number {
-      // Price per share is stored as 18-decimal bigint string
-      return Number(BigInt(pricePerShareString)) / 1e18;
-    }
+  it("passes loading and error state through", () => {
+    const error = new Error("boom");
+    vi.mocked(useQuery).mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      error,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useQuery>);
 
-    it("parses 1.0 pps", () => {
-      expect(parsePps("1000000000000000000")).toBe(1);
-    });
+    const { result } = renderHook(() => useVaultCache());
 
-    it("parses 1.05 pps", () => {
-      expect(parsePps("1050000000000000000")).toBe(1.05);
-    });
-
-    it("parses 1.5 pps", () => {
-      expect(parsePps("1500000000000000000")).toBe(1.5);
-    });
-
-    it("parses 2.0 pps", () => {
-      expect(parsePps("2000000000000000000")).toBe(2);
-    });
-  });
-
-  describe("total assets interpretation", () => {
-    function parseTotalAssets(totalAssetsString: string): number {
-      // Total assets is stored as 18-decimal bigint string
-      return Number(BigInt(totalAssetsString)) / 1e18;
-    }
-
-    it("parses 1000 tokens", () => {
-      expect(parseTotalAssets("1000000000000000000000")).toBe(1000);
-    });
-
-    it("parses 1 token", () => {
-      expect(parseTotalAssets("1000000000000000000")).toBe(1);
-    });
-
-    it("parses 1M tokens", () => {
-      expect(parseTotalAssets("1000000000000000000000000")).toBe(1_000_000);
-    });
-  });
-
-  describe("vault addresses", () => {
-    const YCVXCRV_ADDRESS = "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86";
-    const YSCVXCRV_ADDRESS = "0x27B5739e22ad9033bcBf192059122d163b60349D";
-
-    it("ycvxcrv address is valid Ethereum address", () => {
-      expect(YCVXCRV_ADDRESS).toMatch(/^0x[a-fA-F0-9]{40}$/);
-    });
-
-    it("yscvxcrv address is valid Ethereum address", () => {
-      expect(YSCVXCRV_ADDRESS).toMatch(/^0x[a-fA-F0-9]{40}$/);
-    });
-
-    it("addresses are different", () => {
-      expect(YCVXCRV_ADDRESS).not.toBe(YSCVXCRV_ADDRESS);
-    });
-  });
-
-  describe("lastUpdated timestamp", () => {
-    function isValidISOTimestamp(timestamp: string): boolean {
-      const date = new Date(timestamp);
-      return !isNaN(date.getTime());
-    }
-
-    function getAgeInSeconds(timestamp: string): number {
-      const date = new Date(timestamp);
-      const now = new Date();
-      return (now.getTime() - date.getTime()) / 1000;
-    }
-
-    it("validates ISO timestamp format", () => {
-      expect(isValidISOTimestamp("2024-01-15T12:00:00Z")).toBe(true);
-    });
-
-    it("rejects invalid timestamp", () => {
-      expect(isValidISOTimestamp("not-a-date")).toBe(false);
-    });
-
-    it("calculates age from timestamp", () => {
-      // Create a timestamp 60 seconds ago
-      const sixtySecondsAgo = new Date(Date.now() - 60000).toISOString();
-      const age = getAgeInSeconds(sixtySecondsAgo);
-      expect(age).toBeGreaterThanOrEqual(59);
-      expect(age).toBeLessThanOrEqual(61);
-    });
-  });
-
-  describe("real-world cache scenarios", () => {
-    interface VaultCacheData {
-      address: string;
-      totalAssets: string;
-      pricePerShare: string;
-      tvl: number;
-      pps: number;
-      tvlUsd: number;
-    }
-
-    it("typical ycvxcrv vault state", () => {
-      const vault: VaultCacheData = {
-        address: "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86",
-        totalAssets: "1500000000000000000000000", // 1.5M tokens
-        pricePerShare: "1050000000000000000", // 1.05 pps
-        tvl: 1_500_000,
-        pps: 1.05,
-        tvlUsd: 1_395_000, // at $0.93 per cvxCRV
-      };
-
-      expect(vault.pps).toBe(1.05);
-      expect(vault.tvl).toBe(1_500_000);
-    });
-
-    it("new vault with 1:1 pps", () => {
-      const vault: VaultCacheData = {
-        address: "0x27B5739e22ad9033bcBf192059122d163b60349D",
-        totalAssets: "100000000000000000000", // 100 tokens
-        pricePerShare: "1000000000000000000", // 1.0 pps
-        tvl: 100,
-        pps: 1.0,
-        tvlUsd: 93, // at $0.93 per cvxCRV
-      };
-
-      expect(vault.pps).toBe(1);
-      expect(vault.tvl).toBe(100);
-    });
-
-    it("empty vault", () => {
-      const vault: VaultCacheData = {
-        address: "0x0000000000000000000000000000000000000000",
-        totalAssets: "0",
-        pricePerShare: "1000000000000000000",
-        tvl: 0,
-        pps: 1.0,
-        tvlUsd: 0,
-      };
-
-      expect(vault.tvl).toBe(0);
-      expect(vault.tvlUsd).toBe(0);
-    });
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.error).toBe(error);
   });
 });

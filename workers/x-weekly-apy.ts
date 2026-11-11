@@ -1,4 +1,5 @@
 import { notifyTelegram } from "./telegram-alert";
+import { timingSafeEqual } from "./timing-safe-equal";
 
 const BROWSER_RENDERING_ENDPOINT =
   "https://api.cloudflare.com/client/v4/accounts";
@@ -112,7 +113,7 @@ export default {
       console.error("weekly APY X post failed", error);
       await notifyTelegram(
         env,
-        `⚠️ yld weekly APY X post failed (${toDateKey(scheduledAt)}, cron)\n${getErrorMessage(error).slice(0, 500)}\n\nStatus: GET /status on the yldfi-x-weekly-apy worker. Rerun: POST /run?date=${toDateKey(scheduledAt)}.`,
+        `⚠️ yld weekly APY X post failed (${toDateKey(scheduledAt)}, cron)\n${getErrorMessage(error).slice(0, 500)}\n\nWorker: yldfi-x-weekly-apy. Status: /status. Post now: /run?date=${toDateKey(scheduledAt)}&post=1 (without post=1 it is a dry run). Both need SOCIAL_RUN_SECRET; see workers/README-x-weekly-apy.md.`,
       );
       throw error;
     }
@@ -613,15 +614,6 @@ function formatXError(response: Response, body: XMediaUploadResponse | XCreatePo
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function timingSafeEqual(a: string, b: string): boolean {
-  let diff = a.length ^ b.length;
-  const maxLength = Math.max(a.length, b.length);
-  for (let i = 0; i < maxLength; i += 1) {
-    diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
-  }
-  return diff === 0;
 }
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {

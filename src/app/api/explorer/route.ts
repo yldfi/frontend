@@ -19,6 +19,10 @@ const CACHE_TTL = 24 * 60 * 60; // 24 hours in seconds (KV cache)
 const BROWSER_CACHE_TTL = 60 * 60; // 1 hour in seconds (browser cache)
 const CACHE_VERSION = "v2"; // Bump to invalidate old cached data
 
+// The app only reads mainnet contracts. Anything else is rejected before it
+// can reach the keyed upstream URL or a cache key.
+const SUPPORTED_CHAIN_IDS = new Set(["1"]);
+
 // Cache headers for successful responses
 const cacheHeaders = {
   "Cache-Control": `public, max-age=${BROWSER_CACHE_TTL}, s-maxage=${BROWSER_CACHE_TTL}`,
@@ -55,6 +59,22 @@ import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
 
 const isRateLimited = createRateLimiter(30);
 
+function etherscanUrl(
+  chainId: string,
+  action: "getabi" | "getsourcecode",
+  address: string,
+  apiKey: string,
+): string {
+  const params = new URLSearchParams({
+    chainid: chainId,
+    module: "contract",
+    action,
+    address,
+    apikey: apiKey,
+  });
+  return `${ETHERSCAN_API_BASE}?${params.toString()}`;
+}
+
 // Get KV namespace from Cloudflare context
 // Returns null in local dev if bindings aren't configured
 function getKV(): KVNamespace | null {
@@ -88,6 +108,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Invalid address format" }, { status: 400 });
   }
 
+  if (!SUPPORTED_CHAIN_IDS.has(chainId)) {
+    return NextResponse.json({ error: "Unsupported chainId" }, { status: 400 });
+  }
+
   const normalizedAddress = address.toLowerCase();
   const apiKey = process.env.ETHERSCAN_API_KEY;
 
@@ -111,13 +135,14 @@ export async function GET(request: NextRequest) {
         }
 
         // Fetch from Etherscan
-        const url = `${ETHERSCAN_API_BASE}?chainid=${chainId}&module=contract&action=getabi&address=${address}&apikey=${apiKey}`;
+        const url = etherscanUrl(chainId, "getabi", address, apiKey);
         const response = await rateLimitedFetch(url);
         const data = (await response.json()) as EtherscanResponse;
 
         if (data.status !== "1") {
+          console.warn("Explorer getABI upstream error:", typeof data.result === "string" ? data.result : data.message);
           return NextResponse.json(
-            { error: (typeof data.result === "string" ? data.result : null) || data.message || "Failed to fetch ABI" },
+            { error: "Failed to fetch ABI" },
             { status: 404 }
           );
         }
@@ -144,7 +169,7 @@ export async function GET(request: NextRequest) {
         }
 
         // Fetch from Etherscan
-        const url = `${ETHERSCAN_API_BASE}?chainid=${chainId}&module=contract&action=getsourcecode&address=${address}&apikey=${apiKey}`;
+        const url = etherscanUrl(chainId, "getsourcecode", address, apiKey);
         const response = await rateLimitedFetch(url);
         const data = (await response.json()) as EtherscanResponse;
 
@@ -185,7 +210,7 @@ export async function GET(request: NextRequest) {
         }
 
         // Fetch from Etherscan
-        const url = `${ETHERSCAN_API_BASE}?chainid=${chainId}&module=contract&action=getsourcecode&address=${address}&apikey=${apiKey}`;
+        const url = etherscanUrl(chainId, "getsourcecode", address, apiKey);
         const response = await rateLimitedFetch(url);
         const data = (await response.json()) as EtherscanResponse;
 
@@ -203,7 +228,7 @@ export async function GET(request: NextRequest) {
           const implAddress = await getImplementationAddress(address, chainId);
           if (implAddress) {
             // Fetch implementation source
-            const implUrl = `${ETHERSCAN_API_BASE}?chainid=${chainId}&module=contract&action=getsourcecode&address=${implAddress}&apikey=${apiKey}`;
+            const implUrl = etherscanUrl(chainId, "getsourcecode", implAddress, apiKey);
             const implResponse = await rateLimitedFetch(implUrl);
             const implData = (await implResponse.json()) as EtherscanResponse;
 
@@ -282,7 +307,7 @@ export async function GET(request: NextRequest) {
         }
 
         // Fetch from Etherscan
-        const url = `${ETHERSCAN_API_BASE}?chainid=${chainId}&module=contract&action=getsourcecode&address=${address}&apikey=${apiKey}`;
+        const url = etherscanUrl(chainId, "getsourcecode", address, apiKey);
         const response = await rateLimitedFetch(url);
         const data = (await response.json()) as EtherscanResponse;
 
@@ -332,7 +357,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error("Explorer API error:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Internal server error" },
+      { error: "Internal server error" },
       { status: 500 }
     );
   }
@@ -425,7 +450,7 @@ async function fetchContractName(
   apiKey: string
 ): Promise<string | null> {
   try {
-    const url = `${ETHERSCAN_API_BASE}?chainid=${chainId}&module=contract&action=getsourcecode&address=${address}&apikey=${apiKey}`;
+    const url = etherscanUrl(chainId, "getsourcecode", address, apiKey);
     const response = await rateLimitedFetch(url);
     const data = (await response.json()) as EtherscanResponse;
 

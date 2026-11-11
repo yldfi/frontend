@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { boundNoncePayload, isSimulationNonceBinding } from "@/lib/simulation-nonce";
 
 export const dynamic = "force-dynamic";
 
@@ -71,11 +72,22 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  const bind = request.nextUrl.searchParams.get("bind");
+  if (bind !== null && !isSimulationNonceBinding(bind)) {
+    return NextResponse.json(
+      { success: false, errorMessage: "Invalid nonce binding" },
+      { status: 400, headers: corsHeaders }
+    );
+  }
+
   const nonceBytes = new Uint8Array(16);
   crypto.getRandomValues(nonceBytes);
   const nonce = base64UrlEncode(nonceBytes);
   const expires = Date.now() + NONCE_TTL_MS;
-  const payload = `${nonce}.${expires}`;
+  // Bound to one transaction when the client names it; the unbound form is
+  // kept only until old browser tabs have reloaded (see ALLOW_UNBOUND_NONCE
+  // in ../route.ts).
+  const payload = bind ? boundNoncePayload(nonce, expires, bind) : `${nonce}.${expires}`;
   const sig = await signPayload(secret, payload);
 
   return NextResponse.json({

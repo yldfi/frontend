@@ -1,5 +1,6 @@
 // Cloudflare Worker for caching vault data
 // Runs on a cron schedule to fetch vault data from Kong/Yearn API
+import { timingSafeEqual } from "./timing-safe-equal";
 import { historyResponse, isHistoryKey, maintainHistory } from "./vault-history";
 
 const KONG_API_URL = "https://kong.yearn.farm/api/gql";
@@ -216,7 +217,7 @@ async function ethCall(to: string, data: string, rpcUrls: string[], logger: Logg
   throw lastError ?? new Error("All RPCs failed");
 }
 
-async function getBlockNumber(rpcUrls: string[], logger: Logger): Promise<bigint> {
+async function getBlockNumber(rpcUrls: string[], _logger: Logger): Promise<bigint> {
   for (const rpcUrl of rpcUrls) {
     try {
       const { url: cleanUrl, headers } = rpcHeaders(rpcUrl);
@@ -760,7 +761,7 @@ async function backfillHistory(env: Env, logger: Logger, rpcUrls: string[], maxD
 }
 
 // Estimate a block's unix timestamp (used to compute day buckets for backfill).
-async function blockToSeconds(block: number, rpcUrls: string[], logger: Logger): Promise<number> {
+async function blockToSeconds(block: number, rpcUrls: string[], _logger: Logger): Promise<number> {
   const blockHex = "0x" + block.toString(16);
   for (const rpcUrl of rpcUrls) {
     try {
@@ -777,6 +778,13 @@ async function blockToSeconds(block: number, rpcUrls: string[], logger: Logger):
     } catch { /* try next */ }
   }
   return 0;
+}
+
+/** True only when REFRESH_SECRET is configured and the request carries it. */
+function hasRefreshSecret(request: Request, env: Env): boolean {
+  const secret = env.REFRESH_SECRET;
+  if (!secret) return false;
+  return timingSafeEqual(request.headers.get("x-refresh-secret") ?? "", secret);
 }
 
 export default {
@@ -831,8 +839,14 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    // GET /api/logs - View recent logs
+    // GET /api/logs - View recent logs (requires secret)
     if (url.pathname === "/api/logs") {
+      if (request.method !== "GET" || !hasRefreshSecret(request, env)) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
       const level = url.searchParams.get("level");
       const limit = Math.min(Number(url.searchParams.get("limit") || 100), 500);
       const source = url.searchParams.get("source");
@@ -846,7 +860,7 @@ export default {
 
       const result = await env.LOGS.prepare(query).bind(...params).all();
       return new Response(JSON.stringify(result.results), {
-        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
       });
     }
 
@@ -890,8 +904,7 @@ export default {
 
     // POST /api/vaults/refresh - Manual refresh (requires secret)
     if (url.pathname === "/api/vaults/refresh" && request.method === "POST") {
-      const authHeader = request.headers.get("x-refresh-secret");
-      if (!env.REFRESH_SECRET || authHeader !== env.REFRESH_SECRET) {
+      if (!hasRefreshSecret(request, env)) {
         return new Response(JSON.stringify({ error: "Unauthorized" }), {
           status: 401,
           headers: { "Content-Type": "application/json" },
@@ -922,8 +935,7 @@ export default {
     // to inception (requires secret). Makes many RPC calls, so must be
     // triggered explicitly rather than run on every cron.
     if (url.pathname === "/api/backfill" && request.method === "POST") {
-      const authHeader = request.headers.get("x-refresh-secret");
-      if (!env.REFRESH_SECRET || authHeader !== env.REFRESH_SECRET) {
+      if (!hasRefreshSecret(request, env)) {
         return new Response(JSON.stringify({ error: "Unauthorized" }), {
           status: 401,
           headers: { "Content-Type": "application/json" },

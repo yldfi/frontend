@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { buildReportOnlyCsp, originOf } from "@/lib/csp";
 
 // Countries to block for regulatory compliance
 // Includes: UK/US/CA (regulatory) + OFAC comprehensively sanctioned countries
@@ -253,6 +254,13 @@ const maintenancePageHtml = `<!DOCTYPE html>
 /** Origins allowed to embed the site: itself, and Safe{Wallet} for Safe Apps. */
 const FRAME_ANCESTORS = "'self' https://app.safe.global";
 
+// Evaluated and logged by browsers, never enforced: see src/lib/csp.ts.
+// Only origins are read from the environment, because an RPC URL can carry a key in its path.
+const REPORT_ONLY_CSP = buildReportOnlyCsp({
+  isDev: process.env.NODE_ENV !== "production",
+  extraConnectSrc: [process.env.NEXT_PUBLIC_ALCHEMY_RPC_URL, process.env.NEXT_PUBLIC_TENDERLY_VNET_RPC].flatMap(originOf),
+});
+
 const GEO_EXEMPT_PATHS = [
   "/api/token-holders",
   "/api/simulate",
@@ -269,6 +277,11 @@ const GEO_EXEMPT_PATHS = [
 export const NEVER_A_ROUTE =
   /(?:^|\/)\.(?:env|git|svn|hg|aws|ssh|ds_store|htaccess|htpasswd)(?:$|\/)|\.(?:php|phtml|asp|aspx|jsp|jspx|cgi|pl|py|rb|sql|bak|backup|old|orig|save|swp|swo|log|ini|cfg|conf|key|pem|crt|sh|bash|yml|yaml|toml|lock)$/i;
 
+// The debug page is off in production builds unless enabled at build time.
+const DEBUG_PAGE_ENABLED =
+  process.env.NODE_ENV !== "production" ||
+  process.env.NEXT_PUBLIC_ENABLE_DEBUG_PAGE === "1";
+
 const notFoundHtml = `<!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
@@ -281,6 +294,16 @@ const notFoundHtml = `<!DOCTYPE html>
   <p>Page not found.</p>
 </body>
 </html>`;
+
+function notFoundResponse(): NextResponse {
+  return new NextResponse(notFoundHtml, {
+    status: 404,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "public, max-age=3600",
+    },
+  });
+}
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -301,13 +324,13 @@ export function middleware(request: NextRequest) {
 
   // Cheap static 404 for scanner/crawler noise so it never reaches the renderer.
   if (NEVER_A_ROUTE.test(pathname)) {
-    return new NextResponse(notFoundHtml, {
-      status: 404,
-      headers: {
-        "Content-Type": "text/html; charset=utf-8",
-        "Cache-Control": "public, max-age=3600",
-      },
-    });
+    return notFoundResponse();
+  }
+
+  // Answer before rendering: the root layout streams before the page's notFound()
+  // runs, so a rendered 404 would reach the client as 200 with not-found content.
+  if (!DEBUG_PAGE_ENABLED && (pathname === "/debug" || pathname.startsWith("/debug/"))) {
+    return notFoundResponse();
   }
 
   // MAINTENANCE MODE — block everything except static assets and exempt APIs
@@ -351,6 +374,8 @@ export function middleware(request: NextRequest) {
   // X-Frame-Options can't allow a single origin (ALLOW-FROM is unsupported), so
   // it's omitted; every current browser enforces CSP frame-ancestors instead.
   response.headers.set("Content-Security-Policy", `frame-ancestors ${FRAME_ANCESTORS}`);
+  // Evaluated and logged by browsers, never enforced. See src/lib/csp.ts.
+  response.headers.set("Content-Security-Policy-Report-Only", REPORT_ONLY_CSP);
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");

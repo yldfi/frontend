@@ -1,87 +1,61 @@
-import { describe, it, expect } from "vitest";
+// @vitest-environment node
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Re-implement logic from src/app/api/vaults/route.ts
+import { GET } from "@/app/api/vaults/route";
+import { clearUpstreamJsonCache } from "@/lib/upstream-json-cache";
 
-// The vaults proxy route checks for CACHE_WORKER_URL and returns 500 if missing
-function validateConfig(cacheWorkerUrl: string | undefined): {
-  ok: boolean;
-  error?: string;
-} {
-  if (!cacheWorkerUrl) {
-    return { ok: false, error: "Configuration error" };
-  }
-  return { ok: true };
-}
+const CACHE_URL = "https://cache.example.com/vaults";
 
-// The route sets Cache-Control header on successful responses
-function getCacheControlHeader(): string {
-  return "public, s-maxage=60, stale-while-revalidate=120";
-}
+beforeEach(() => {
+  clearUpstreamJsonCache();
+  vi.stubEnv("CACHE_WORKER_URL", CACHE_URL);
+});
 
-// Upstream error passthrough: returns upstream status code
-function getUpstreamErrorResponse(upstreamStatus: number): {
-  error: string;
-  status: number;
-} {
-  return {
-    error: "Failed to fetch vault data",
-    status: upstreamStatus,
-  };
-}
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
-describe("Vaults Proxy API", () => {
-  describe("config validation", () => {
-    it("returns error when CACHE_WORKER_URL is undefined", () => {
-      const result = validateConfig(undefined);
-      expect(result.ok).toBe(false);
-      expect(result.error).toBe("Configuration error");
-    });
+describe("GET /api/vaults", () => {
+  it("reports a configuration error when the cache worker url is unset", async () => {
+    vi.stubEnv("CACHE_WORKER_URL", "");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
 
-    it("returns error when CACHE_WORKER_URL is empty string", () => {
-      // Empty string is falsy in JS, same as undefined for the check
-      const result = validateConfig("");
-      expect(result.ok).toBe(false);
-    });
+    const response = await GET();
 
-    it("returns ok when CACHE_WORKER_URL is set", () => {
-      const result = validateConfig("https://cache.example.com/vaults");
-      expect(result.ok).toBe(true);
-      expect(result.error).toBeUndefined();
-    });
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({ error: "Configuration error" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  describe("Cache-Control header", () => {
-    it("includes s-maxage=60", () => {
-      const header = getCacheControlHeader();
-      expect(header).toContain("s-maxage=60");
-    });
+  it("passes the cache worker payload through with a CDN cache header", async () => {
+    const payload = { ycvxcrv: { tvlUsd: 930 }, lastUpdated: "2026-11-10T12:00:00Z" };
+    const fetchMock = vi.fn(async () => Response.json(payload));
+    vi.stubGlobal("fetch", fetchMock);
 
-    it("includes stale-while-revalidate=120", () => {
-      const header = getCacheControlHeader();
-      expect(header).toContain("stale-while-revalidate=120");
-    });
+    const response = await GET();
 
-    it("is public", () => {
-      const header = getCacheControlHeader();
-      expect(header).toContain("public");
-    });
+    expect(fetchMock).toHaveBeenCalledWith(CACHE_URL, expect.objectContaining({
+      headers: { "Content-Type": "application/json" },
+    }));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(payload);
+    expect(response.headers.get("cache-control")).toBe("public, s-maxage=60, stale-while-revalidate=120");
   });
 
-  describe("upstream error passthrough", () => {
-    it("passes through 502 status", () => {
-      const result = getUpstreamErrorResponse(502);
-      expect(result.status).toBe(502);
-      expect(result.error).toBe("Failed to fetch vault data");
-    });
+  it.each([404, 502, 503])("passes an upstream %i through", async (status) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status })));
 
-    it("passes through 503 status", () => {
-      const result = getUpstreamErrorResponse(503);
-      expect(result.status).toBe(503);
-    });
+    const response = await GET();
 
-    it("passes through 404 status", () => {
-      const result = getUpstreamErrorResponse(404);
-      expect(result.status).toBe(404);
-    });
+    expect(response.status).toBe(status);
+    await expect(response.json()).resolves.toEqual({ error: "Failed to fetch vault data" });
+  });
+
+  it("reports a server error when the cache worker is unreachable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new Error("network down"))));
+
+    const response = await GET();
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({ error: "Internal server error" });
   });
 });

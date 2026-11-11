@@ -27,7 +27,7 @@ export function useVaultCache() {
   return useQuery<VaultCacheResponse>({
     queryKey: ["vault-cache"],
     queryFn: async () => {
-      const response = await fetch(CACHE_API_URL);
+      const response = await fetch(CACHE_API_URL, { signal: AbortSignal.timeout(5_000) });
       if (!response.ok) throw new Error("Failed to fetch vault cache");
       return response.json();
     },

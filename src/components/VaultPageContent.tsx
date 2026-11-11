@@ -751,6 +751,7 @@ export function VaultPageContent({ id }: { id: string }) {
     deposit,
     withdraw,
     executeAfterPreview: executeVaultAfterPreview,
+    isPreviewFor: isVaultPreviewFor,
     reset: resetVaultActions,
     status: txStatus,
     error: txError,
@@ -784,7 +785,7 @@ export function VaultPageContent({ id }: { id: string }) {
     underlyingToken: vault?.assetAddress ?? "",
     slippage: zapSlippage,
     underlyingTokenPrice: underlyingPrice, // For illiquid tokens without DEX quotes
-    paused: showSimulationModal || pendingImpactAction !== null || explorerOpen || zapInProgress || (exitOnlyVault && zapDirection === "in"),
+    paused: showSimulationModal || isSimulatingPreview || pendingImpactAction !== null || explorerOpen || zapInProgress || (exitOnlyVault && zapDirection === "in"),
     autoRefresh: !isZapIdle,
   });
   const isZapQuoteTooOld = useCallback(() => isQuoteOlderThan(zapQuoteUpdatedAt), [zapQuoteUpdatedAt]);
@@ -801,6 +802,11 @@ export function VaultPageContent({ id }: { id: string }) {
     toast.info("Quote refreshed. Check the new amounts, then try again.");
     return true;
   };
+  // The hook refuses to execute an old quote too (e.g. when an approval took minutes to mine).
+  const handleStaleZapQuote = useCallback(() => {
+    void refetchZapQuote();
+    toast.info("Quote refreshed. Check the new amounts, then try again.");
+  }, [refetchZapQuote]);
 
   // Every zap entry point (button, simulation preview fall-through, approve -> auto-execute)
   // runs through this, so a high-impact zap cannot start without the typed confirmation.
@@ -829,9 +835,10 @@ export function VaultPageContent({ id }: { id: string }) {
     isFlashbotsSupported: _isFlashbotsSupported,
     toggleFlashbots: _toggleFlashbots,
     simulationResult,
+    isSimulationForCurrentQuote: isZapSimulationForCurrentQuote,
     safePending: zapSafePending,
     batchesApproval: zapBatchesApproval,
-  } = useZapActions(zapQuote);
+  } = useZapActions(zapQuote, { quoteUpdatedAt: zapQuoteUpdatedAt, onStaleQuote: handleStaleZapQuote });
 
   const vaultCompletionResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const zapCompletionResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2116,9 +2123,19 @@ export function VaultPageContent({ id }: { id: string }) {
                           onConfirm={() => {
                             setShowSimulationModal(false);
                             const action = activeTab === "deposit" ? "deposit" : "withdraw";
+                            if (!isVaultPreviewFor(action, amount)) {
+                              toast.info("The amount changed since the preview. Check the new preview, then confirm.");
+                              // Mirror the action button: a Safe keeps an exact-amount approval.
+                              if (requiresApproval && vaultBatchesApproval) {
+                                void handleSubmit(parseUnits(amount, vault.assetDecimals ?? 18));
+                              } else {
+                                void handleSubmit();
+                              }
+                              return;
+                            }
                             if (action === "deposit") trackDepositInitiated(id, amount, vault.assetSymbol);
                             else trackWithdrawInitiated(id, amount, vault.assetSymbol);
-                            executeVaultAfterPreview();
+                            void executeVaultAfterPreview({ type: action, amount });
                           }}
                           simulationResult={vaultSimulationResult}
                           gasPrice={gasPrice}
@@ -2168,8 +2185,9 @@ export function VaultPageContent({ id }: { id: string }) {
                         ) : (
                           <button
                             onClick={() => {
-                              if (showSimulationPreview && vaultSimulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
-                                // Re-open cached simulation modal if same block
+                              if (showSimulationPreview && vaultSimulationResult && !showSimulationModal && currentBlock === simulationBlock.current
+                                  && isVaultPreviewFor(activeTab === "deposit" ? "deposit" : "withdraw", amount)) {
+                                // Re-open cached simulation modal if same block and same input
                                 setShowSimulationModal(true);
                               } else if (requiresApproval && vaultBatchesApproval) {
                                 // Safe: approve the exact amount inside the deposit's batch.
@@ -2539,8 +2557,8 @@ export function VaultPageContent({ id }: { id: string }) {
                       {isConnected ? (
                         <button
                           onClick={() => guardHighImpact(`Zap ${zapDirection === "in" ? "In" : "Out"}`, async () => {
-                            if (showSimulationPreview && effectiveSimulationResult && !showSimulationModal && currentBlock === simulationBlock.current) {
-                              // Re-open cached simulation modal if same block
+                            if (showSimulationPreview && effectiveSimulationResult && !showSimulationModal && currentBlock === simulationBlock.current && isZapSimulationForCurrentQuote()) {
+                              // Re-open cached simulation modal if same block and same quote
                               setShowSimulationModal(true);
                             } else if (showSimulationPreview) {
                               // Preview mode - run simulation first
@@ -2700,11 +2718,27 @@ export function VaultPageContent({ id }: { id: string }) {
           isOpen={showSimulationModal}
           onClose={() => setShowSimulationModal(false)}
           onConfirm={() => {
+            if (!isZapSimulationForCurrentQuote()) {
+              // The quote changed under the preview: never send a transaction the
+              // user never saw. Re-preview through the page (it re-runs the price
+              // impact gate and hides the pending card while simulating).
+              setShowSimulationModal(false);
+              toast.info("The quote changed since the preview. Check the new preview, then confirm.");
+              guardHighImpact(`Zap ${zapDirection === "in" ? "In" : "Out"}`, () => void runSimulationPreview());
+              return;
+            }
             setShowSimulationModal(false);
             if (refreshIfZapQuoteTooOld()) return;
             // High price impact was already confirmed before the simulation ran.
             setZapPendingDetails();
-            executeZap({ skipSimulation: true });
+            executeZap({ skipSimulation: true }).then((rePreview) => {
+              // The quote changed under the preview: show the fresh simulation
+              // instead of sending a transaction the user never saw.
+              if (!rePreview) return;
+              setPendingTxDetails(null);
+              setShowSimulationModal(true);
+              toast.info("The quote changed since the preview. Check the new preview, then confirm.");
+            });
           }}
           simulationResult={{
             success: effectiveSimulationResult.success,

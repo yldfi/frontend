@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockGetBundleData, mockGetQuoteData, mockGetMultiplePriceData } = vi.hoisted(() => ({
+const { mockGetBundleData, mockGetQuoteData, mockGetMultiplePriceData, mockGetRouteData, mockGetTokenData, mockGetBalances } = vi.hoisted(() => ({
   mockGetBundleData: vi.fn(),
   mockGetQuoteData: vi.fn(),
   mockGetMultiplePriceData: vi.fn(),
+  mockGetRouteData: vi.fn(),
+  mockGetTokenData: vi.fn(),
+  mockGetBalances: vi.fn(),
 }));
 
 vi.mock("@ensofinance/sdk", () => ({
@@ -11,22 +14,28 @@ vi.mock("@ensofinance/sdk", () => ({
     getBundleData = mockGetBundleData;
     getQuoteData = mockGetQuoteData;
     getMultiplePriceData = mockGetMultiplePriceData;
+    getRouteData = mockGetRouteData;
+    getTokenData = mockGetTokenData;
+    getBalances = mockGetBalances;
   },
 }));
 
 import { POST } from "@/app/api/enso/[method]/route";
 import { clearMemoryEnsoPrices } from "@/lib/enso-prices-cache";
 
-function request(body: Record<string, unknown>): Request {
-  return new Request("https://yldfi.co/api/enso/bundle", {
+function request(body: Record<string, unknown>, origin = "https://yldfi.co", method = "bundle"): Request {
+  return new Request(`https://yldfi.co/api/enso/${method}`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      origin: "https://yldfi.co",
+      origin,
     },
     body: JSON.stringify(body),
   });
 }
+
+const call = (method: string, body: Record<string, unknown>) =>
+  POST(request(body) as never, { params: Promise.resolve({ method }) });
 
 describe("Enso API route boundary", () => {
   beforeEach(() => {
@@ -49,6 +58,34 @@ describe("Enso API route boundary", () => {
     });
     expect(response.status).toBe(410);
     expect(mockGetBundleData).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown methods without calling Enso", async () => {
+    for (const method of ["unknown", "swap", "", "ROUTE"]) {
+      const response = await POST(
+        request({}, "https://yldfi.co", method) as never,
+        { params: Promise.resolve({ method }) },
+      );
+
+      expect(response.status).toBe(404);
+      await expect(response.json()).resolves.toEqual({ error: `Unknown method: ${method}` });
+    }
+    expect(mockGetBundleData).not.toHaveBeenCalled();
+    expect(mockGetRouteData).not.toHaveBeenCalled();
+  });
+
+  it("reflects an allowed origin and falls back to the canonical origin otherwise", async () => {
+    const allowed = await POST(
+      request({}, "https://www.yldfi.co") as never,
+      { params: Promise.resolve({ method: "bundle" }) },
+    );
+    expect(allowed.headers.get("Access-Control-Allow-Origin")).toBe("https://www.yldfi.co");
+
+    const unknown = await POST(
+      request({}, "https://attacker.example") as never,
+      { params: Promise.resolve({ method: "bundle" }) },
+    );
+    expect(unknown.headers.get("Access-Control-Allow-Origin")).toBe("https://yldfi.co");
   });
 
   describe("quote", () => {
@@ -78,6 +115,24 @@ describe("Enso API route boundary", () => {
       expect(mockGetQuoteData).toHaveBeenCalledWith(expect.objectContaining({ chainId: 1, tokenIn: [USDC], tokenOut: [CVX], amountIn: ["100000000"], ignoreAggregators: ["0x"] }));
     });
 
+    it("omits priceImpact when the quoter returns null", async () => {
+      mockGetQuoteData.mockResolvedValue({
+        amountOut: 49277653475340641617n,
+        priceImpact: null,
+        route: [{ action: "swap", protocol: "uniswap-v3", tokenIn: [USDC], tokenOut: [CVX] }],
+      });
+
+      const response = await quote({ fromAddress: USER, tokenIn: [USDC], tokenOut: [CVX], amountIn: ["100000000"] });
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toEqual({
+        amountOut: "49277653475340641617",
+        route: [{ action: "swap", protocol: "uniswap-v3", tokenIn: [USDC], tokenOut: [CVX] }],
+      });
+      expect(body).not.toHaveProperty("priceImpact");
+    });
+
     it.each([
       ["multi-token arrays", { fromAddress: USER, tokenIn: [USDC, CVX], tokenOut: [CVX], amountIn: ["1", "2"] }],
       ["a bad address", { fromAddress: USER, tokenIn: ["0xnotanaddress"], tokenOut: [CVX], amountIn: ["1"] }],
@@ -88,6 +143,30 @@ describe("Enso API route boundary", () => {
       const response = await quote(body);
       expect(response.status).toBe(400);
       expect(mockGetQuoteData).not.toHaveBeenCalled();
+    });
+
+    it("strips a URL from a failed quote so the key in its path never reaches the browser", async () => {
+      mockGetQuoteData.mockRejectedValue(
+        new Error("fetch failed for https://rpc.example.invalid/v2/abcdef123 (timeout)")
+      );
+
+      const response = await quote({ fromAddress: USER, tokenIn: [USDC], tokenOut: [CVX], amountIn: ["100000000"] });
+
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toEqual({
+        error: "fetch failed for rpc.example.invalid (timeout)",
+      });
+    });
+
+    it("returns an upstream quote error's wording unchanged when it carries no URL", async () => {
+      mockGetQuoteData.mockRejectedValue(
+        Object.assign(new Error("Swap not found for A -> B"), { statusCode: 404 })
+      );
+
+      const response = await quote({ fromAddress: USER, tokenIn: [USDC], tokenOut: [CVX], amountIn: ["100000000"] });
+
+      expect(response.status).toBe(404);
+      await expect(response.json()).resolves.toEqual({ error: "Swap not found for A -> B" });
     });
   });
 
@@ -163,6 +242,76 @@ describe("Enso API route boundary", () => {
       expect(a.status).toBe(200);
       expect(b.status).toBe(200);
       expect(mockGetMultiplePriceData).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("route", () => {
+    it("retires the raw route method without calling Enso", async () => {
+      const response = await call("route", {
+        fromAddress: "0x1234567890123456789012345678901234567890",
+        tokenIn: ["0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"],
+        tokenOut: ["0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B"],
+        amountIn: ["100000000"],
+        slippage: "100",
+      });
+
+      await expect(response.json()).resolves.toEqual({
+        error: "Raw Enso routes are disabled; use /api/enso/intent",
+      });
+      expect(response.status).toBe(410);
+      expect(mockGetRouteData).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("tokens", () => {
+    it("forwards the app's mainnet base token list request", async () => {
+      mockGetTokenData.mockResolvedValue({ data: [], meta: {} });
+
+      const response = await call("tokens", { type: "base", includeMetadata: true });
+
+      expect(response.status).toBe(200);
+      expect(mockGetTokenData).toHaveBeenCalledWith(
+        expect.objectContaining({ chainId: 1, type: "base", includeMetadata: true }),
+      );
+    });
+
+    it.each([
+      ["a non-mainnet chain", { chainId: 137 }],
+      ["an unknown type", { type: "other" }],
+      ["a zero page", { page: 0 }],
+      ["a fractional page", { page: 1.5 }],
+      ["a string page", { page: "2" }],
+      ["a page past the bound", { page: 101 }],
+      ["a non-boolean includeMetadata", { includeMetadata: "yes" }],
+    ])("rejects %s before calling Enso", async (_label, body) => {
+      const response = await call("tokens", body);
+      expect(response.status).toBe(400);
+      expect(mockGetTokenData).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("balances", () => {
+    it("forwards a valid address for the mainnet EOA balance lookup", async () => {
+      mockGetBalances.mockResolvedValue([]);
+
+      const response = await call("balances", {
+        eoaAddress: "0x1234567890123456789012345678901234567890",
+      });
+
+      expect(response.status).toBe(200);
+      expect(mockGetBalances).toHaveBeenCalledWith(
+        expect.objectContaining({ chainId: 1, useEoa: true }),
+      );
+    });
+
+    it.each([
+      ["a missing address", {}],
+      ["a short address", { eoaAddress: "0x123" }],
+      ["a non-string address", { eoaAddress: 5 }],
+    ])("rejects %s before calling Enso", async (_label, body) => {
+      const response = await call("balances", body);
+      expect(response.status).toBe(400);
+      expect(mockGetBalances).not.toHaveBeenCalled();
     });
   });
 });

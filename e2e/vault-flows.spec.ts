@@ -65,23 +65,17 @@ test.describe("Zap In Flow", () => {
     // Wait for Zap In button to be visible (tab content loaded)
     await expect(page.getByRole("button", { name: "Zap In" })).toBeVisible({ timeout: 10000 });
 
-    // Find the token selector button - it's the one showing a token symbol like "ETH" or "CVX"
-    // It's typically between Amount label and percentage buttons
-    const tokenSelectors = page.locator('button').filter({ hasText: /^(ETH|CVX|USDC|USDT|CRV)\s+(ETH|CVX|USDC|USDT|CRV)$/ });
-    const tokenButton = tokenSelectors.first();
+    // The token selector button shows the selected token's symbol (ETH by default)
+    const tokenButton = page.getByRole("button", { name: /ETH|CVX|USDC/ }).first();
 
-    if (await tokenButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await tokenButton.click();
+    await expect(tokenButton).toBeVisible({ timeout: 5000 });
+    await tokenButton.click();
 
-      // Modal should open with token list
-      await expect(page.getByRole("heading", { name: "Select a token" })).toBeVisible();
+    // Modal should open with token list
+    await expect(page.getByRole("heading", { name: "Select a token" })).toBeVisible();
 
-      // Should show search input
-      await expect(page.getByPlaceholder(/search/i)).toBeVisible();
-    } else {
-      // Token selector might not be visible in this test run - that's ok
-      test.skip();
-    }
+    // Should show search input
+    await expect(page.getByPlaceholder(/search/i)).toBeVisible();
   });
 
   test("should select CVX token", async ({ page }) => {
@@ -91,31 +85,24 @@ test.describe("Zap In Flow", () => {
     await expect(page.getByRole("button", { name: "Zap In" })).toBeVisible({ timeout: 10000 });
 
     // Find and click token selector button
-    const tokenSelectors = page.locator('button').filter({ hasText: /^(ETH|CVX|USDC|USDT|CRV)\s+(ETH|CVX|USDC|USDT|CRV)$/ });
-    const tokenButton = tokenSelectors.first();
+    const tokenButton = page.getByRole("button", { name: /ETH|CVX|USDC/ }).first();
 
-    if (await tokenButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await tokenButton.click();
+    await expect(tokenButton).toBeVisible({ timeout: 5000 });
+    await tokenButton.click();
 
-      // Wait for modal
-      await expect(page.getByRole("heading", { name: "Select a token" })).toBeVisible();
+    // Wait for modal
+    await expect(page.getByRole("heading", { name: "Select a token" })).toBeVisible();
 
-      // Search for CVX to filter the list
-      const searchInput = page.getByPlaceholder(/search/i);
-      await searchInput.fill("CVX");
+    // Search for CVX to filter the list
+    const searchInput = page.getByPlaceholder(/search/i);
+    await searchInput.fill("CVX");
 
-      // Click on CVX in the filtered list
-      const cvxButton = page.locator('button').filter({ hasText: /CVX.*Convex/ }).first();
-      if (await cvxButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-        await cvxButton.click();
-        // Verify modal closed
-        await expect(page.getByRole("heading", { name: "Select a token" })).not.toBeVisible({ timeout: 5000 });
-      } else {
-        test.skip();
-      }
-    } else {
-      test.skip();
-    }
+    // Click on CVX in the filtered list
+    const cvxButton = page.locator('button').filter({ hasText: /CVX.*Convex/ }).first();
+    await expect(cvxButton).toBeVisible({ timeout: 5000 });
+    await cvxButton.click();
+    // Verify modal closed
+    await expect(page.getByRole("heading", { name: "Select a token" })).not.toBeVisible({ timeout: 5000 });
   });
 });
 
@@ -254,14 +241,9 @@ test.describe("Vault-to-Vault Flow", () => {
     await expect(page.getByRole("button", { name: "Zap In" })).toBeVisible({ timeout: 10000 });
 
     // Find and click token selector button
-    const tokenSelectors = page.locator('button').filter({ hasText: /^(ETH|CVX|USDC|USDT|CRV)\s+(ETH|CVX|USDC|USDT|CRV)$/ });
-    const tokenButton = tokenSelectors.first();
+    const tokenButton = page.getByRole("button", { name: /ETH|CVX|USDC/ }).first();
 
-    if (!(await tokenButton.isVisible({ timeout: 5000 }).catch(() => false))) {
-      test.skip();
-      return;
-    }
-
+    await expect(tokenButton).toBeVisible({ timeout: 5000 });
     await tokenButton.click();
 
     // Wait for modal
@@ -269,15 +251,12 @@ test.describe("Vault-to-Vault Flow", () => {
 
     // Look for yld Vaults tab
     const vaultsTab = page.locator('button:has-text("yld Vaults")');
-    if (await vaultsTab.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await vaultsTab.click();
+    await expect(vaultsTab).toBeVisible({ timeout: 5000 });
+    await vaultsTab.click();
 
-      // Should show other vaults (use first() to avoid strict mode)
-      await expect(page.locator("text=ycvxCRV").first()).toBeVisible({ timeout: 5000 });
-    } else {
-      // Tab might not be visible, that's ok - skip this assertion
-      test.skip();
-    }
+    // Other yld vaults are offered as selectable tokens (ysCVX is the only vault
+    // this selector lists: ycvxCRV is holder-only and yscvxCRV is the current vault)
+    await expect(page.getByRole("button", { name: /ysCVX/ }).first()).toBeVisible({ timeout: 5000 });
   });
 
   test("should show zap out with vault as destination", async ({ page }) => {
@@ -288,14 +267,9 @@ test.describe("Vault-to-Vault Flow", () => {
     await expect(page.getByRole("button", { name: "Zap Out" })).toBeVisible({ timeout: 10000 });
 
     // Find and click token selector button
-    const tokenSelectors = page.locator('button').filter({ hasText: /^(ETH|CVX|USDC|USDT|CRV)\s+(ETH|CVX|USDC|USDT|CRV)$/ });
-    const tokenButton = tokenSelectors.first();
+    const tokenButton = page.getByRole("button", { name: /ETH|CVX|USDC/ }).first();
 
-    if (!(await tokenButton.isVisible({ timeout: 5000 }).catch(() => false))) {
-      test.skip();
-      return;
-    }
-
+    await expect(tokenButton).toBeVisible({ timeout: 5000 });
     await tokenButton.click();
 
     // Wait for modal
@@ -303,15 +277,12 @@ test.describe("Vault-to-Vault Flow", () => {
 
     // Look for vaults tab
     const vaultsTab = page.locator('button:has-text("yld Vaults")');
-    if (await vaultsTab.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await vaultsTab.click();
+    await expect(vaultsTab).toBeVisible({ timeout: 5000 });
+    await vaultsTab.click();
 
-      // Other vaults should be visible as destinations
-      await expect(page.locator("text=ycvxCRV").first()).toBeVisible({ timeout: 5000 });
-    } else {
-      // Tab might not be visible, that's ok - skip this assertion
-      test.skip();
-    }
+    // Other yld vaults are offered as destinations (ysCVX is the only vault this
+    // selector lists: ycvxCRV is holder-only and yscvxCRV is the current vault)
+    await expect(page.getByRole("button", { name: /ysCVX/ }).first()).toBeVisible({ timeout: 5000 });
   });
 });
 

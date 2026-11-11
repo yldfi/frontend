@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useAccount, useReadContract, useReadContracts, useWaitForTransactionReceipt } from "wagmi";
 import { parseUnits, stringToHex } from "viem";
+import { toast } from "sonner";
 
 import { estimateLikelySettlementAt, VaultHarvestPanel } from "@/components/VaultHarvestPanel";
 import { PERMISSIONLESS_KEEPER } from "@/config/harvest";
@@ -19,6 +20,13 @@ vi.mock("@rainbow-me/rainbowkit", () => ({ useConnectModal: () => ({ openConnect
 vi.mock("@/hooks/useDirectWriteContract", () => ({ useDirectWriteContract: vi.fn() }));
 vi.mock("@/hooks/useVaultCache", () => ({ useVaultCache: vi.fn() }));
 vi.mock("@/hooks/useTokenMetadata", () => ({ useTokenMetadata: () => ({ token: null }) }));
+vi.mock("sonner", () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn(),
+    info: vi.fn(),
+  },
+}));
 vi.mock("next/image", () => ({ default: ({ alt }: { alt: string }) => <span role="img" aria-label={alt} /> }));
 
 const mockUseAccount = vi.mocked(useAccount);
@@ -95,9 +103,14 @@ describe("VaultHarvestPanel", () => {
     render(<VaultHarvestPanel vaultAddress={VAULT_ADDRESSES.YSCVX} />);
 
     const link = screen.getByRole("link", { name: "Buy CVX" });
-    expect(link.getAttribute("href")).toContain("/zap?input=0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
-    expect(link.getAttribute("href")).toContain(`output=${TOKENS.CVX}`);
-    expect(link.getAttribute("href")).toContain("outputAmount=150");
+    const href = link.getAttribute("href")!;
+    expect(href).toContain("/zap?input=0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+    expect(href).toContain(`output=${TOKENS.CVX}`);
+    expect(href).toContain("outputAmount=150");
+    const params = new URL(href, "https://yldfi.co").searchParams;
+    expect(params.has("outputSymbol")).toBe(false);
+    expect(params.has("outputDecimals")).toBe(false);
+    expect(params.has("outputLogo")).toBe(false);
   });
 
   it.each(["zero", "failed"])("omits the Zap output target when the auction payment read is %s", (paymentRead) => {
@@ -429,5 +442,47 @@ describe("VaultHarvestPanel", () => {
       functionName: "take",
       args: [TOKENS.CVXCRV, 25n * 10n ** 17n, account],
     }));
+  });
+
+  it("shows an error, not a success toast, when the transaction reverted", () => {
+    mockUseReceipt.mockReturnValue({
+      isLoading: false,
+      isSuccess: true,
+      data: { status: "reverted" },
+    } as unknown as ReturnType<typeof useWaitForTransactionReceipt>);
+    mockUseReadContracts.mockReturnValue({ data: [], isLoading: false, refetch } as unknown as ReturnType<typeof useReadContracts>);
+
+    render(<VaultHarvestPanel vaultAddress={VAULT_ADDRESSES.YSCVX} />);
+
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("reverted"));
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("shows the success toast when the transaction succeeded", () => {
+    mockUseReceipt.mockReturnValue({
+      isLoading: false,
+      isSuccess: true,
+      data: { status: "success" },
+    } as unknown as ReturnType<typeof useWaitForTransactionReceipt>);
+    mockUseReadContracts.mockReturnValue({ data: [], isLoading: false, refetch } as unknown as ReturnType<typeof useReadContracts>);
+
+    render(<VaultHarvestPanel vaultAddress={VAULT_ADDRESSES.YSCVX} />);
+
+    expect(toast.success).toHaveBeenCalledWith("Harvest report submitted");
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("refreshes on-chain reads after a reverted transaction", () => {
+    mockUseReceipt.mockReturnValue({
+      isLoading: false,
+      isSuccess: true,
+      data: { status: "reverted" },
+    } as unknown as ReturnType<typeof useWaitForTransactionReceipt>);
+    mockUseReadContracts.mockReturnValue({ data: [], isLoading: false, refetch } as unknown as ReturnType<typeof useReadContracts>);
+
+    render(<VaultHarvestPanel vaultAddress={VAULT_ADDRESSES.YSCVX} />);
+
+    expect(refetch).toHaveBeenCalled();
   });
 });

@@ -35,10 +35,12 @@ describe("weekly X post failure alert (tracker 386)", () => {
   it("alerts and still rethrows when the cron run fails", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const calls: string[] = [];
+    let alertText = "";
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
       calls.push(String(url));
       if (String(url).startsWith("https://api.telegram.org/")) {
-        expect(JSON.parse(String(init?.body)).text).toMatch(/weekly APY X post failed \(2026-11-16, cron\)/);
+        alertText = JSON.parse(String(init?.body)).text;
+        expect(alertText).toMatch(/weekly APY X post failed \(2026-11-16, cron\)/);
         return new Response("{}", { status: 200 });
       }
       return new Response("render failed", { status: 500 }); // Browser Rendering fails
@@ -46,6 +48,7 @@ describe("weekly X post failure alert (tracker 386)", () => {
     const kv = { get: vi.fn(async () => null), put: vi.fn(async () => undefined) };
     const env = {
       ...secrets,
+      SOCIAL_RUN_SECRET: "run-secret-value",
       SOCIAL_CACHE: kv,
       CLOUDFLARE_ACCOUNT_ID: "acct",
       CLOUDFLARE_API_TOKEN: "tok",
@@ -60,6 +63,10 @@ describe("weekly X post failure alert (tracker 386)", () => {
       worker.scheduled({ scheduledTime: Date.parse("2026-11-16T10:00:00Z"), cron: "0 10 * * 1" }, env, {}),
     ).rejects.toThrow();
     expect(calls.some((u) => u.startsWith("https://api.telegram.org/bot123:abc/sendMessage"))).toBe(true);
+    expect(alertText).toContain("/run?date=2026-11-16&post=1");
+    expect(alertText).toContain("SOCIAL_RUN_SECRET");
+    expect(alertText).not.toContain("run-secret-value");
+    expect(alertText).not.toContain("Rerun: POST");
     expect(kv.put).toHaveBeenCalledWith("x:weekly-apy:last-run", expect.stringContaining('"ok":false'), expect.anything());
   });
 });

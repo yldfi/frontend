@@ -13,14 +13,15 @@ import { buildLegacyMorphoPermitTransaction, ENSO_ROUTER_V2, ETH_ADDRESS, LEGACY
 import { FORBIDDEN_APPROVAL_SPENDER_ERROR, assertSafeApprovalSpender, isForbiddenApprovalSpender } from "@/lib/approval-safety";
 import { ERC20_APPROVAL_ABI, ERC20_PERMIT_ABI } from "@/lib/abis";
 import { readZapAllowance } from "@/lib/zap-allowance";
+import { isQuoteOlderThan } from "@/lib/quote-freshness";
 import { shouldResetApprovalToZeroFirst } from "@/lib/approval-reset";
 import { useTestNetwork } from "@/contexts/TestNetworkContext";
 import { useFlashbotsProtect } from "@/hooks/useFlashbotsProtect";
 import { useSendTx } from "@/hooks/useSendTx";
 import type { ZapQuote, SimulationResult } from "@/types/enso";
 import type { PendingApproval, ApprovalProgress } from "@/types/approval";
-import { runVNetSimulation } from "@/lib/vnet-simulation";
-import { parseErrorMessage, anvilCall } from "@/lib/tx-utils";
+import { parseErrorMessage } from "@/lib/tx-utils";
+import { buildUnavailableSimulationResult, getSimulationErrorText, runTxPreflight } from "@/lib/tx-preflight";
 import {
   buildApprovalSimulationTransaction,
   type ApprovalSimulationTransaction,
@@ -40,7 +41,15 @@ export type ZapStatus =
   | "reverted"
   | "error";
 
-export function useZapActions(quote: ZapQuote | null | undefined) {
+export function useZapActions(
+  quote: ZapQuote | null | undefined,
+  freshness?: {
+    /** When the on-screen quote was fetched (ms epoch). 0 or omitted = unknown, never treated as stale. */
+    quoteUpdatedAt?: number;
+    /** Called when an execute is refused because the quote is too old. */
+    onStaleQuote?: () => void;
+  },
+) {
   const { address: userAddress, chainId } = useAccount();
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
@@ -58,6 +67,8 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const autoExecuteRef = useRef(false);
   const pendingOptionsRef = useRef<{ skipSimulation?: boolean; previewOnly?: boolean } | undefined>(undefined);
+  /** The exact transaction the stored simulationResult was produced for. */
+  const simulatedTxRef = useRef<{ to: string; data: string; value: bigint } | null>(null);
   const [approvalResetFlow, setApprovalResetFlow] = useState<{
     stage: "reset" | "approve";
     token: `0x${string}`;
@@ -80,6 +91,14 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
   // set when the user approves on a Safe that supports wallet_sendCalls.
   const batchApprovalsRef = useRef<ApprovalSimulationTransaction[] | null>(null);
   const executeZapInternalRef = useRef<(options?: { skipSimulation?: boolean; previewOnly?: boolean }, signal?: AbortSignal) => Promise<SimulationResult | null>>(async () => null);
+  // Read at execute time, so a long approval wait sees the current age/handler
+  // without `executeZap` taking new dependencies.
+  const quoteUpdatedAtRef = useRef(freshness?.quoteUpdatedAt ?? 0);
+  const onStaleQuoteRef = useRef(freshness?.onStaleQuote);
+  useEffect(() => {
+    quoteUpdatedAtRef.current = freshness?.quoteUpdatedAt ?? 0;
+    onStaleQuoteRef.current = freshness?.onStaleQuote;
+  });
 
   const invalidateBalances = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["onchain-balances"] });
@@ -620,8 +639,17 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       }
     })();
 
-    // If skipSimulation is true, go straight to sending (used after preview mode confirmation)
-    if (options?.skipSimulation && simulationResult?.success) {
+    // If skipSimulation is true, go straight to sending (used after preview mode
+    // confirmation) — but only when the preview belongs to this exact transaction.
+    // Anything else re-simulates below and returns a fresh preview instead.
+    const simulated = simulatedTxRef.current;
+    const simulatedThisTx = !!simulated
+      && simulated.data === txParams.data
+      && simulated.to.toLowerCase() === txParams.to.toLowerCase()
+      && simulated.value === txParams.value;
+    // Confirm path: only send the exact transaction the user previewed.
+    const confirmMismatch = !!options?.skipSimulation && !(simulationResult?.success && simulatedThisTx);
+    if (options?.skipSimulation && !confirmMismatch) {
       setActionState("zapping");
       try {
         const hash = await sendZapTx(txParams);
@@ -632,153 +660,48 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       }
       return null;
     }
+    // The quote changed since the preview: simulate the new one and return it
+    // for a fresh preview instead of sending something the user never saw.
+    const previewOnly = !!options?.previewOnly || confirmMismatch;
 
-    // Three-way simulation:
-    // 1. Mainnet → Tenderly REST API
-    // 2. Tenderly VNet → VNet RPC simulation
-    // 3. Anvil / chainId 1337 → skip (eth_call only below)
-    const simPromise = (testNetworkType === null && chainId !== 1337)
-      ? (async () => {
-          try {
-            const nonceResponse = await fetch("/api/simulate/nonce", {
-              method: "GET",
-              headers: { "Content-Type": "application/json" },
-              signal: AbortSignal.timeout(5_000), // 5s timeout
-            });
-            const nonceResult = (await nonceResponse.json()) as {
-              success: boolean;
-              nonce?: string;
-              expires?: number;
-              sig?: string;
-            };
-
-            if (!nonceResult.success || !nonceResult.nonce || !nonceResult.expires || !nonceResult.sig) {
-              return {
-                ok: false as const,
-                errorMessage: "Failed to obtain simulation nonce",
-                retryable: true,
-              };
-            }
-
-            const response = await fetch("/api/simulate", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                from: userAddress,
-                to: txParams.to,
-                data: txParams.data,
-                value: txParams.value.toString(),
-                inputToken: quote.inputToken.address,
-                // Non-Enso entry points (direct vault deposits) approve the
-                // vault, not the Enso router — the API validates this too.
-                spender: approvalSpender,
-                // Tenderly can lag the block containing a just-confirmed
-                // approval. Re-run the exact approval call(s) immediately
-                // before the zap in a bundled simulation so every token's own
-                // storage layout and approval behavior are respected.
-                approvalTransactions,
-                nonce: nonceResult.nonce,
-                expires: nonceResult.expires,
-                sig: nonceResult.sig,
-              }),
-              signal: AbortSignal.timeout(20_000), // 20s timeout
-            });
-
-            const result = (await response.json()) as SimulationResult & { retryable?: boolean };
-
-            if (process.env.NODE_ENV === "development") {
-              console.log("[Tenderly Simulation]", {
-                success: result.success,
-                simulationId: result.simulationId,
-                tenderlyUrl: result.tenderlyUrl,
-                gasUsed: result.gasUsed,
-                errorMessage: result.errorMessage,
-                assetChanges: result.assetChanges?.length ?? 0,
-              });
-            }
-
-            if (result.success) return { ok: true as const, result };
-            return {
-              ok: false as const,
-              result,
-              errorMessage: result.errorMessage ?? "Tenderly simulation failed",
-              retryable: Boolean(result.retryable),
-            };
-          } catch (error) {
-            return {
-              ok: false as const,
-              result: null,
-              errorMessage: error instanceof Error ? error.message : "Tenderly simulation failed",
-              retryable: true,
-            };
-          }
-        })()
-      : (testNetworkType === "tenderly" && publicClient)
-        ? runVNetSimulation(
-            publicClient.transport,
-            { from: userAddress, to: txParams.to, data: txParams.data, value: txParams.value.toString() },
-            userAddress,
-          )
-        : Promise.resolve({ ok: true as const, result: null });
-
-    const ethCallPromise = (async () => {
-      try {
-        await anvilCall(publicClient, {
-          account: userAddress,
-          ...txParams,
-        });
-        if (process.env.NODE_ENV === "development") console.log("[eth_call]", { ok: true, to: txParams.to });
-        return { ok: true as const };
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : "Unknown error";
-        if (process.env.NODE_ENV === "development") console.log("[eth_call]", { ok: false, to: txParams.to, error: msg });
-        return {
-          ok: false as const,
-          errorMessage: msg,
-        };
-      }
-    })();
-
-    const [simResult, ethCallResult] = await Promise.all([
-      simPromise,
-      ethCallPromise,
-    ]);
+    const { simResult, ethCallResult } = await runTxPreflight({
+      publicClient,
+      userAddress,
+      tx: { to: txParams.to, data: txParams.data, value: txParams.value },
+      ethCall: { account: userAddress, ...txParams },
+      simulateBodyExtra: {
+        inputToken: quote.inputToken.address,
+        // Non-Enso entry points (direct vault deposits) approve the
+        // vault, not the Enso router — the API validates this too.
+        spender: approvalSpender,
+        // Tenderly can lag the block containing a just-confirmed
+        // approval. Re-run the exact approval call(s) immediately
+        // before the zap in a bundled simulation so every token's own
+        // storage layout and approval behavior are respected.
+        approvalTransactions,
+      },
+      vnetValue: txParams.value.toString(),
+      testNetworkType,
+      chainId,
+      logTag: "[Tenderly Simulation]",
+    });
 
     if (signal?.aborted) return null;
 
     // Store the simulation result for preview mode
     if (simResult.result) {
+      simulatedTxRef.current = { to: txParams.to, data: txParams.data, value: txParams.value };
       setSimulationResult(simResult.result);
     }
 
     // If Tenderly/VNet is unavailable but the chain-level eth_call passed,
     // keep preview mode in the modal flow instead of falling through to send.
     if (!simResult.ok && ethCallResult.ok) {
-      const unavailableReason = typeof simResult.errorMessage === "string"
-        ? simResult.errorMessage
-        : simResult.errorMessage?.message
-          ?? simResult.errorMessage?.slug
-          ?? "Simulation unavailable for this transaction type";
-      const unavailableResult: SimulationResult = simResult.result
-        ? {
-            ...simResult.result,
-            success: true,
-            simulationUnavailable: true,
-            simulationUnavailableReason: unavailableReason,
-            errorMessage: null,
-          }
-        : {
-            success: true,
-            gasUsed: null,
-            simulationId: null,
-            tenderlyUrl: null,
-            assetChanges: [],
-            errorMessage: null,
-            simulationUnavailable: true,
-            simulationUnavailableReason: unavailableReason,
-          };
+      const unavailableReason = getSimulationErrorText(simResult.errorMessage) ?? "Simulation unavailable for this transaction type";
+      const unavailableResult = buildUnavailableSimulationResult(simResult.result, unavailableReason);
+      simulatedTxRef.current = { to: txParams.to, data: txParams.data, value: txParams.value };
       setSimulationResult(unavailableResult);
-      if (options?.previewOnly) {
+      if (previewOnly) {
         setActionState("idle");
         return unavailableResult;
       }
@@ -788,7 +711,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
       const rawMsg = (simResult as { retryable?: boolean }).retryable
         ? ethCallResult.errorMessage ?? simResult.errorMessage
         : simResult.errorMessage;
-      const errorMsg = typeof rawMsg === "string" ? rawMsg : (rawMsg as { message?: string })?.message ?? "Simulation failed";
+      const errorMsg = getSimulationErrorText(rawMsg) ?? "Simulation failed";
       setSimulationError(
         parseErrorMessage(new Error(errorMsg), "Transaction would fail")
       );
@@ -797,7 +720,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     }
 
     // If previewOnly mode, stop here without sending tx and return simulation result
-    if (options?.previewOnly) {
+    if (previewOnly) {
       setActionState("idle");
       return simResult.result ?? null;
     }
@@ -835,6 +758,16 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     setPendingApproval(null);
 
     setSimulationError(null);
+
+    // Executing sends this quote's calldata as-is. The pages check its age at
+    // click time; this covers the paths they can't (auto-execute after an
+    // approval mines, which can be minutes later).
+    if (isQuoteOlderThan(quoteUpdatedAtRef.current)) {
+      allowanceCheckRef.current = null;
+      setActionState("idle");
+      onStaleQuoteRef.current?.();
+      return null;
+    }
 
     // Safe batch armed: the approval rides in the same transaction, so the
     // on-chain allowance is expected to be short. Don't re-ask for approval.
@@ -933,9 +866,28 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     });
   }, [isApprovalSuccess, approvalReceipt, approvalResetFlow, replacementError, approvalScope]);
 
+  /** True when the stored simulationResult is for the current quote's transaction. */
+  const isSimulationForCurrentQuote = useCallback((): boolean => {
+    const simulated = simulatedTxRef.current;
+    if (!quote || !simulated) return false;
+    const current = quote.legacyMorphoPermit
+      ? preparedPermitTxRef.current?.txParams
+      : { to: quote.tx.to, data: quote.tx.data, value: quote.tx.value };
+    if (!current
+      || current.data !== simulated.data
+      || current.to.toLowerCase() !== simulated.to.toLowerCase()) return false;
+    try {
+      return BigInt(current.value || "0") === simulated.value;
+    } catch {
+      // A malformed value is not the transaction that was simulated.
+      return false;
+    }
+  }, [quote]);
+
   // Reset state
   const reset = useCallback(() => {
     batchApprovalsRef.current = null;
+    simulatedTxRef.current = null;
     allowanceCheckRef.current?.abort();
     allowanceCheckRef.current = null;
     confirmedApprovalRef.current = null;
@@ -984,5 +936,7 @@ export function useZapActions(quote: ZapQuote | null | undefined) {
     toggleFlashbots,
     // Simulation result for preview mode
     simulationResult,
+    /** True when the stored simulationResult is for the current quote's transaction. */
+    isSimulationForCurrentQuote,
   };
 }

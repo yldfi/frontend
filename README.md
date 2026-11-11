@@ -34,14 +34,29 @@ pnpm dev
 pnpm build
 ```
 
-## Deployment
-
-Deployed to Cloudflare Workers using OpenNext:
+Checks that are safe to run locally:
 
 ```bash
-pnpm build:cloudflare
-wrangler deploy
+pnpm lint
+pnpm type-check
+pnpm test:unit
 ```
+
+See `AGENTS.md` for the full guide, including the test commands that call live, paid upstream services and should not be run locally.
+
+## Deployment
+
+Deployed to Cloudflare Workers using OpenNext. Merging to `main` deploys the site Worker (`yldfi`) and the vault cache Worker (`yldfi-cache`) automatically through GitHub Actions.
+
+The manual equivalent of the site deploy is:
+
+```bash
+pnpm run deploy
+```
+
+That builds for Cloudflare, populates the static-assets cache and then runs the Worker deploy. Use `pnpm run deploy`, not `pnpm deploy` — the latter is pnpm's own built-in command.
+
+The third Worker, `yldfi-x-weekly-apy` (the weekly X post), is deployed by hand; see `workers/README-x-weekly-apy.md`. `AGENTS.md` has the full deploy map.
 
 ## Environment Variables
 

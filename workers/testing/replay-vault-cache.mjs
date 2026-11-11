@@ -76,6 +76,12 @@ async function outbound(req) {
     const entry = (await env.VAULT_CACHE.list()).keys.find(k => k.name === 'vault-data');
     assert(entry.expiration - Math.floor(Date.now()/1000) > 86000);
     console.log('PASS recovery and 24-hour retention');
+    r = await mf.dispatchFetch('http://localhost/api/logs'); assert.equal(r.status, 401);
+    r = await mf.dispatchFetch('http://localhost/api/logs', { headers: { 'x-refresh-secret': 'wrong' } }); assert.equal(r.status, 401);
+    r = await mf.dispatchFetch('http://localhost/api/logs', { method: 'POST', headers: { 'x-refresh-secret': 'local-fixture' } }); assert.equal(r.status, 401);
+    r = await mf.dispatchFetch('http://localhost/api/logs?limit=5', { headers: { 'x-refresh-secret': 'local-fixture' } }); assert.equal(r.status, 200);
+    assert.equal(r.headers.get('access-control-allow-origin'), null); assert(Array.isArray(await r.json()));
+    console.log('PASS log reads require the refresh secret');
     await (await mf.getWorker()).scheduled({ cron: '*/5 * * * *' });
     assert(await env.HISTORY.get('history/yspxcvx.json'));
     console.log('PASS healthy scheduled refresh and R2 history sampling');

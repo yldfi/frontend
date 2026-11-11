@@ -8,6 +8,7 @@ import {
   checkAllowance,
   runTenderlySimulation,
 } from "@/lib/tx-utils";
+import { simulationNonceBinding } from "@/lib/simulation-nonce";
 
 // ---------------------------------------------------------------------------
 // Helper: build a valid Enso error hex blob
@@ -193,12 +194,22 @@ describe("parseErrorMessage", () => {
   });
 
   // Insufficient / exceeds balance
-  it("detects 'insufficient' (catches 'insufficient funds' too)", () => {
-    expect(parseErrorMessage("insufficient funds for gas")).toBe("Insufficient balance");
+  it("reports 'insufficient funds' as a gas shortfall, not a token balance problem", () => {
+    expect(parseErrorMessage("insufficient funds for gas")).toBe("Insufficient funds for gas");
+    expect(parseErrorMessage("insufficient funds for gas * price + value")).toBe("Insufficient funds for gas");
+    expect(
+      parseErrorMessage(
+        "The total cost (gas * gas fee + value) of executing this transaction exceeds the balance of the account"
+      )
+    ).toBe("Insufficient funds for gas");
   });
 
   it("detects 'exceeds balance'", () => {
     expect(parseErrorMessage("amount exceeds balance")).toBe("Insufficient balance");
+  });
+
+  it("still reports a plain 'insufficient balance' as a balance problem", () => {
+    expect(parseErrorMessage("ERC20: insufficient balance")).toBe("Insufficient balance");
   });
 
   // Slippage
@@ -208,16 +219,19 @@ describe("parseErrorMessage", () => {
     );
   });
 
-  it("detects 'insufficient_output' — note: 'insufficient' branch matches first", () => {
-    // "insufficient_output" contains "insufficient" which is caught on line 79 before
-    // the slippage check on line 87. This is the actual production behavior.
-    expect(parseErrorMessage("Error: insufficient_output")).toBe("Insufficient balance");
+  it("reports 'insufficient_output' as slippage", () => {
+    expect(parseErrorMessage("Error: insufficient_output")).toBe(
+      "Swap output below minimum. Increase the amount or slippage."
+    );
+    expect(parseErrorMessage("execution reverted: UniswapV2Router: INSUFFICIENT_OUTPUT_AMOUNT")).toBe(
+      "Swap output below minimum. Increase the amount or slippage."
+    );
+    expect(parseErrorMessage("execution reverted: Insufficient output amount")).toBe(
+      "Swap output below minimum. Increase the amount or slippage."
+    );
   });
 
   it("detects slippage via 'insufficient_output' when no 'insufficient' prefix", () => {
-    // If the string only has "insufficient_output" at word boundary without bare "insufficient"
-    // — in practice, "insufficient_output" always contains "insufficient",
-    // so slippage is only triggered by the "slippage" keyword or other paths.
     expect(parseErrorMessage("Error: slippage exceeded")).toBe(
       "Swap output below minimum. Increase the amount or slippage."
     );
@@ -568,5 +582,41 @@ describe("runTenderlySimulation", () => {
     const result = await runTenderlySimulation(userAddress, txTo, txData, txValue, inputToken);
     expect(result.ok).toBe(false);
     expect(result.errorMessage).toBe("Reverted at step 2");
+  });
+
+  it("binds the nonce to the transaction it simulates", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        json: async () => ({ success: true, nonce: "n4", expires: 9999999999, sig: "s4" }),
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({
+          success: true,
+          simulationId: null,
+          tenderlyUrl: null,
+          gasUsed: null,
+          errorMessage: null,
+          assetChanges: [],
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runTenderlySimulation(userAddress, txTo, txData, txValue, inputToken);
+
+    const nonceUrl = String(fetchMock.mock.calls[0][0]);
+    const bind = new URL(nonceUrl, "http://localhost:3000").searchParams.get("bind");
+    const body = JSON.parse(String((fetchMock.mock.calls[1][1] as { body?: string }).body)) as {
+      from: string;
+      to: string;
+      data: string;
+      value?: string;
+    };
+
+    expect(bind).toBe(simulationNonceBinding({
+      from: body.from,
+      to: body.to,
+      data: body.data,
+      value: body.value,
+    }));
   });
 });

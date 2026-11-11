@@ -89,9 +89,6 @@ importers:
       '@opennextjs/cloudflare':
         specifier: 1.20.15
         version: 1.20.15(next@16.4.3(@babel/core@7.29.7)(@playwright/test@1.64.1)(@types/node@26.6.6)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(wrangler@4.156.1(@types/node@26.6.6)(bufferutil@4.0.9)(utf-8-validate@5.0.10))
-      '@openzeppelin/contracts':
-        specifier: 5.6.1
-        version: 5.6.1
       '@playwright/test':
         specifier: 1.64.1
         version: 1.64.1
@@ -104,9 +101,6 @@ importers:
       '@testing-library/react':
         specifier: 16.3.3
         version: 16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
-      '@types/dotenv':
-        specifier: 8.2.3
-        version: 8.2.3
       '@types/node':
         specifier: 26.6.6
         version: 26.6.6
@@ -1321,9 +1315,6 @@ packages:
       rclone.js:
         optional: true
 
-  '@openzeppelin/contracts@5.6.1':
-    resolution: {integrity: sha512-Ly6SlsVJ3mj+b18W3R8gNufB7dTICT105fJhodGAGgyC2oqnBAhqSiNDJ8V8DLY05cCz81GLI0CU5vNYA1EC/w==}
-
   '@oxc-project/types@0.155.0':
     resolution: {integrity: sha512-SeE8JPwW1xs1tHeNycjUtUBdhorRa8o4jlvjwk49R7/Z291i+4DQa7JJIgOm/TaYQZx+QrPQbVJ/9c8dMIZN8Q==}
 
@@ -2108,10 +2099,6 @@ packages:
 
   '@types/deep-eql@4.0.2':
     resolution: {integrity: sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw==}
-
-  '@types/dotenv@8.2.3':
-    resolution: {integrity: sha512-g2FXjlDX/cYuc5CiQvyU/6kkbP1JtmGzh0obW50zD7OKeILVL0NSpPWLXVfqoAGQjom2/SLLx9zHq0KXvD6mbw==}
-    deprecated: This is a stub types definition. dotenv provides its own type definitions, so you do not need this installed.
 
   '@types/estree@1.0.8':
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
@@ -7377,8 +7364,6 @@ snapshots:
       - encoding
       - supports-color
 
-  '@openzeppelin/contracts@5.6.1': {}
-
   '@oxc-project/types@0.155.0': {}
 
   '@paulmillr/qr@0.2.1': {}
@@ -8549,10 +8534,6 @@ snapshots:
       '@types/ms': 2.1.0
 
   '@types/deep-eql@4.0.2': {}
-
-  '@types/dotenv@8.2.3':
-    dependencies:
-      dotenv: 18.0.9
 
   '@types/estree@1.0.8': {}
 

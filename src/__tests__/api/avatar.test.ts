@@ -1,237 +1,245 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+// @vitest-environment node
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
 
-// Test the API route logic without directly importing Next.js server components
-// We test the business logic and validation rules
+import { GET, OPTIONS } from "@/app/api/avatar/[name]/route";
 
-describe("ENS Avatar API Route Logic", () => {
-  describe("ENS name validation", () => {
-    function isValidEnsName(name: string | undefined | null): boolean {
-      if (!name || !name.includes(".")) {
-        return false;
+function request(name: string, origin = "https://yldfi.co") {
+  return new NextRequest(`https://yldfi.co/api/avatar/${encodeURIComponent(name)}`, {
+    headers: { origin, "x-forwarded-for": `avatar-${crypto.randomUUID()}` },
+  });
+}
+
+function get(name: string, origin?: string) {
+  return GET(request(name, origin), { params: Promise.resolve({ name }) });
+}
+
+function imageResponse(type: string, bytes = 4) {
+  return new Response(new Uint8Array(bytes), {
+    status: 200,
+    headers: { "content-type": type },
+  });
+}
+
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+
+describe("GET /api/avatar/[name]", () => {
+  it("proxies a valid ENS name to euc.li and returns the image", async () => {
+    const fetchMock = vi.fn(async () => imageResponse("image/jpeg"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await get("vitalik.eth");
+
+    expect(fetchMock).toHaveBeenCalledWith("https://euc.li/vitalik.eth", {
+      headers: { "User-Agent": "yld ENS Avatar Proxy" },
+      signal: expect.any(AbortSignal),
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/jpeg");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=3600");
+    expect(new Uint8Array(await response.arrayBuffer())).toHaveLength(4);
+  });
+
+  it("preserves subdomains and their casing in the upstream request", async () => {
+    const fetchMock = vi.fn(async () => imageResponse("image/png"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await get("Sub.Domain.eth");
+
+    expect(fetchMock).toHaveBeenCalledWith("https://euc.li/Sub.Domain.eth", expect.anything());
+  });
+
+  it.each(["image/png", "image/jpeg", "image/webp", "image/gif", "image/avif"])(
+    "passes an upstream %s through with that content type",
+    async (type) => {
+      vi.stubGlobal("fetch", vi.fn(async () => imageResponse(type)));
+
+      const response = await get("vitalik.eth");
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe(type);
+    }
+  );
+
+  it("strips parameters and casing from an allowed upstream content type", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => imageResponse("IMAGE/JPEG; charset=binary")));
+
+    const response = await get("vitalik.eth");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/jpeg");
+  });
+
+  it("marks a served avatar as inert", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => imageResponse("image/png")));
+
+    const response = await get("vitalik.eth");
+
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+  });
+
+  it.each(["image/svg+xml", "image/png+xml", "text/html", "image/png, text/html"])(
+    "refuses an upstream %s response",
+    async (type) => {
+      vi.stubGlobal("fetch", vi.fn(async () => imageResponse(type)));
+
+      const response = await get("vitalik.eth");
+
+      expect(response.status).toBe(415);
+      expect(await response.text()).toBe("Unsupported avatar type");
+    }
+  );
+
+  it("refuses an upstream response that has no content type", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array(2), { status: 200 })));
+
+    const response = await get("vitalik.eth");
+
+    expect(response.status).toBe(415);
+    expect(await response.text()).toBe("Unsupported avatar type");
+  });
+
+  it("refuses an upstream avatar that declares itself over the size cap without reading it", async () => {
+    let cancelled = false;
+    let pulls = 0;
+    const upstream = new Response(
+      new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            pulls++;
+            controller.enqueue(new Uint8Array(4));
+            controller.close();
+          },
+          cancel() {
+            cancelled = true;
+          },
+        },
+        { highWaterMark: 0 }
+      ),
+      {
+        status: 200,
+        headers: {
+          "content-type": "image/png",
+          "content-length": String(2 * 1024 * 1024 + 1),
+        },
       }
-      return true;
-    }
+    );
+    vi.stubGlobal("fetch", vi.fn(async () => upstream));
 
-    it("validates standard .eth names", () => {
-      expect(isValidEnsName("vitalik.eth")).toBe(true);
-    });
+    const response = await get("vitalik.eth");
 
-    it("validates subdomain names", () => {
-      expect(isValidEnsName("sub.domain.eth")).toBe(true);
-    });
-
-    it("validates other TLDs", () => {
-      expect(isValidEnsName("test.xyz")).toBe(true);
-    });
-
-    it("rejects names without dot", () => {
-      expect(isValidEnsName("vitalik")).toBe(false);
-    });
-
-    it("rejects empty string", () => {
-      expect(isValidEnsName("")).toBe(false);
-    });
-
-    it("rejects undefined", () => {
-      expect(isValidEnsName(undefined)).toBe(false);
-    });
-
-    it("rejects null", () => {
-      expect(isValidEnsName(null)).toBe(false);
-    });
+    expect(response.status).toBe(413);
+    expect(await response.text()).toBe("Avatar too large");
+    // The body is released instead of left dangling.
+    expect(cancelled).toBe(true);
+    // Nothing was read: the declared length alone settled it.
+    expect(pulls).toBe(0);
   });
 
-  describe("avatar URL construction", () => {
-    function getAvatarUrl(name: string): string {
-      return `https://euc.li/${name}`;
-    }
+  it.each([
+    ["a refused content type", 415, { status: 200, headers: { "content-type": "image/svg+xml" } }],
+    ["a failed upstream response", 503, { status: 503 }],
+  ])("releases the upstream body of %s", async (_label, status, init) => {
+    let cancelled = false;
+    const upstream = new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.enqueue(new Uint8Array(4));
+          controller.close();
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+      init
+    );
+    vi.stubGlobal("fetch", vi.fn(async () => upstream));
 
-    it("constructs correct URL for standard name", () => {
-      expect(getAvatarUrl("vitalik.eth")).toBe("https://euc.li/vitalik.eth");
-    });
+    const response = await get("vitalik.eth");
 
-    it("constructs correct URL for subdomain", () => {
-      expect(getAvatarUrl("sub.domain.eth")).toBe("https://euc.li/sub.domain.eth");
-    });
-
-    it("preserves case in name", () => {
-      expect(getAvatarUrl("Test.eth")).toBe("https://euc.li/Test.eth");
-    });
+    expect(response.status).toBe(status);
+    expect(cancelled).toBe(true);
   });
 
-  describe("content-type handling", () => {
-    function getContentType(headers: Headers | null): string {
-      return headers?.get("content-type") || "image/png";
-    }
+  it("refuses a body that crosses the size cap without a content-length before reading it all", async () => {
+    const total = 3 * 1024 * 1024;
+    const chunkSize = 64 * 1024;
+    let sent = 0;
+    const upstream = new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (sent >= total) {
+            controller.close();
+            return;
+          }
+          const size = Math.min(chunkSize, total - sent);
+          controller.enqueue(new Uint8Array(size));
+          sent += size;
+        },
+      }),
+      { status: 200, headers: { "content-type": "image/png" } }
+    );
+    expect(upstream.headers.get("content-length")).toBeNull();
+    vi.stubGlobal("fetch", vi.fn(async () => upstream));
 
-    it("returns content-type from headers", () => {
-      const headers = new Headers({ "content-type": "image/jpeg" });
-      expect(getContentType(headers)).toBe("image/jpeg");
-    });
+    const response = await get("vitalik.eth");
 
-    it("defaults to image/png when no content-type", () => {
-      const headers = new Headers();
-      expect(getContentType(headers)).toBe("image/png");
-    });
-
-    it("defaults to image/png for null headers", () => {
-      expect(getContentType(null)).toBe("image/png");
-    });
-
-    it("handles webp content-type", () => {
-      const headers = new Headers({ "content-type": "image/webp" });
-      expect(getContentType(headers)).toBe("image/webp");
-    });
-
-    it("handles gif content-type", () => {
-      const headers = new Headers({ "content-type": "image/gif" });
-      expect(getContentType(headers)).toBe("image/gif");
-    });
+    expect(response.status).toBe(413);
+    expect(await response.text()).toBe("Avatar too large");
+    expect(sent).toBeLessThan(total);
   });
 
-  describe("CORS headers", () => {
-    const EXPECTED_CORS_HEADERS = {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-      "Access-Control-Max-Age": "86400",
-    };
+  it.each([
+    ["a name without a TLD", "vitalik"],
+    ["a non-eth TLD", "test.xyz"],
+    ["markup", "vitalik<script>.eth"],
+    ["a slash", "vitalik/eth"],
+    ["an empty name", ""],
+  ])("rejects %s before calling euc.li", async (_label, name) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
 
-    it("has correct Allow-Origin header", () => {
-      expect(EXPECTED_CORS_HEADERS["Access-Control-Allow-Origin"]).toBe("*");
-    });
+    const response = await get(name);
 
-    it("allows GET and OPTIONS methods", () => {
-      expect(EXPECTED_CORS_HEADERS["Access-Control-Allow-Methods"]).toBe("GET, OPTIONS");
-    });
-
-    it("allows Content-Type header", () => {
-      expect(EXPECTED_CORS_HEADERS["Access-Control-Allow-Headers"]).toBe("Content-Type");
-    });
-
-    it("has 24 hour max age for preflight cache", () => {
-      expect(EXPECTED_CORS_HEADERS["Access-Control-Max-Age"]).toBe("86400");
-    });
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "Invalid ENS name" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  describe("cache control", () => {
-    const CACHE_CONTROL = "public, max-age=3600";
+  it.each([404, 403, 500])("passes an upstream %i through as a failed image response", async (status) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status })));
 
-    it("sets 1 hour cache", () => {
-      expect(CACHE_CONTROL).toBe("public, max-age=3600");
-    });
+    const response = await get("vitalik.eth");
 
-    it("cache is public", () => {
-      expect(CACHE_CONTROL.includes("public")).toBe(true);
-    });
-
-    it("max-age is 3600 seconds (1 hour)", () => {
-      expect(CACHE_CONTROL.includes("max-age=3600")).toBe(true);
-    });
+    expect(response.status).toBe(status);
+    expect(await response.text()).toBe("Avatar not found");
   });
 
-  describe("error response logic", () => {
-    type ErrorResponse = { status: number; message: string };
+  it("reports an unreachable avatar service as a server error", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new Error("network down"))));
 
-    function getErrorResponse(error: unknown, upstreamStatus?: number): ErrorResponse {
-      if (upstreamStatus === 404) {
-        return { status: 404, message: "Avatar not found" };
-      }
-      if (upstreamStatus && upstreamStatus >= 400) {
-        return { status: upstreamStatus, message: "Avatar not found" };
-      }
-      return { status: 500, message: "Failed to fetch avatar" };
-    }
+    const response = await get("vitalik.eth");
 
-    it("returns 404 for upstream 404", () => {
-      const response = getErrorResponse(null, 404);
-      expect(response.status).toBe(404);
-    });
-
-    it("returns upstream status for other 4xx errors", () => {
-      const response = getErrorResponse(null, 403);
-      expect(response.status).toBe(403);
-    });
-
-    it("returns 500 for network errors", () => {
-      const response = getErrorResponse(new Error("Network error"));
-      expect(response.status).toBe(500);
-      expect(response.message).toBe("Failed to fetch avatar");
-    });
-
-    it("returns 500 for upstream 500", () => {
-      const response = getErrorResponse(null, 500);
-      expect(response.status).toBe(500);
-    });
+    expect(response.status).toBe(500);
+    expect(await response.text()).toBe("Failed to fetch avatar");
   });
 
-  describe("fetch integration", () => {
-    // These tests verify the expected behavior when integrated with fetch
-    const originalFetch = global.fetch;
+  it("adds CORS headers to every response", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => imageResponse("image/png")));
 
-    beforeEach(() => {
-      // Reset fetch mock
-      vi.resetAllMocks();
-    });
+    const allowed = await get("vitalik.eth", "https://www.yldfi.co");
+    expect(allowed.headers.get("access-control-allow-origin")).toBe("https://www.yldfi.co");
+    expect(allowed.headers.get("access-control-allow-methods")).toBe("GET, OPTIONS");
 
-    afterEach(() => {
-      global.fetch = originalFetch;
-    });
+    const unknown = await get("vitalik.eth", "https://attacker.example");
+    expect(unknown.headers.get("access-control-allow-origin")).toBe("https://yldfi.co");
+  });
 
-    it("should call euc.li with correct URL", async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        headers: new Headers({ "content-type": "image/png" }),
-        arrayBuffer: () => Promise.resolve(new ArrayBuffer(100)),
-      });
-      global.fetch = mockFetch;
+  it("answers the CORS preflight", async () => {
+    const response = await OPTIONS(request("vitalik.eth", "https://yldfi.co"));
 
-      await global.fetch("https://euc.li/test.eth", {
-        headers: { "User-Agent": "yld ENS Avatar Proxy" },
-      });
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        "https://euc.li/test.eth",
-        expect.objectContaining({
-          headers: { "User-Agent": "yld ENS Avatar Proxy" },
-        })
-      );
-    });
-
-    it("should handle successful response", async () => {
-      const mockImageData = new ArrayBuffer(100);
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        headers: new Headers({ "content-type": "image/jpeg" }),
-        arrayBuffer: () => Promise.resolve(mockImageData),
-      });
-      global.fetch = mockFetch;
-
-      const response = await global.fetch("https://euc.li/test.eth");
-
-      expect(response.ok).toBe(true);
-      expect(response.headers.get("content-type")).toBe("image/jpeg");
-    });
-
-    it("should handle 404 response", async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: false,
-        status: 404,
-        headers: new Headers(),
-      });
-      global.fetch = mockFetch;
-
-      const response = await global.fetch("https://euc.li/notfound.eth");
-
-      expect(response.ok).toBe(false);
-      expect(response.status).toBe(404);
-    });
-
-    it("should handle network errors", async () => {
-      const mockFetch = vi.fn().mockRejectedValue(new Error("Network error"));
-      global.fetch = mockFetch;
-
-      await expect(global.fetch("https://euc.li/fail.eth")).rejects.toThrow("Network error");
-    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://yldfi.co");
   });
 });

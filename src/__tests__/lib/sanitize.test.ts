@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sanitizeAmount } from "@/lib/sanitize";
+import { isSameAmount, sanitizeAmount } from "@/lib/sanitize";
 
 describe("sanitizeAmount", () => {
   it("passes through plain numbers", () => {
@@ -64,5 +64,31 @@ describe("sanitizeAmount", () => {
 
   it("strips currency symbols when pasting", () => {
     expect(sanitizeAmount("€100.50")).toBe("100.50");
+  });
+});
+
+describe("isSameAmount", () => {
+  it("treats trailing zeros as the same amount", () => {
+    expect(isSameAmount("1.5", "1.50", 18)).toBe(true);
+    expect(isSameAmount("1", "1.0", 6)).toBe(true);
+    expect(isSameAmount("0.1", "0.10", 18)).toBe(true);
+  });
+
+  it("distinguishes different amounts", () => {
+    expect(isSameAmount("1.5", "1.51", 18)).toBe(false);
+    expect(isSameAmount("200", "297.900852", 6)).toBe(false);
+  });
+
+  it("treats identical empty strings as equal", () => {
+    expect(isSameAmount("", "", 18)).toBe(true);
+  });
+
+  it("treats unparseable input as only equal to itself", () => {
+    expect(isSameAmount("abc", "abc", 18)).toBe(true);
+    expect(isSameAmount("abc", "1", 18)).toBe(false);
+  });
+
+  it("short-circuits identical strings that do not fit the decimals", () => {
+    expect(isSameAmount("1.1234567", "1.1234567", 6)).toBe(true);
   });
 });
