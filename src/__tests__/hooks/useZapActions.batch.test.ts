@@ -1,4 +1,4 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { decodeFunctionData, parseUnits } from "viem";
 import { useAccount, usePublicClient, useReadContract, useWaitForTransactionReceipt, useWalletClient } from "wagmi";
@@ -43,6 +43,15 @@ const USDC: EnsoToken = {
   decimals: 6,
   type: "base",
 };
+// USDT requires approve(0) first, so its batch has two approval calls.
+const USDT: EnsoToken = {
+  address: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+  chainId: 1,
+  name: "Tether USD",
+  symbol: "USDT",
+  decimals: 6,
+  type: "base",
+};
 const QUOTE: ZapQuote = {
   inputToken: USDC,
   inputAmount: "1000",
@@ -56,34 +65,51 @@ const QUOTE: ZapQuote = {
   tx: { to: "0x80EbA3855878739F4710233A8a19d89Bdd2ffB8E", data: "0xabcdef", value: "0" },
   route: [],
 };
+const USDT_QUOTE: ZapQuote = { ...QUOTE, inputToken: USDT };
 
 describe("useZapActions Safe batch", () => {
   let simulateBodies: Array<Record<string, unknown>>;
+  /** Allowance the hook reads from wagmi (`useReadContract`). */
+  let allowance: bigint;
+  /** Allowance the fresh on-chain read in `executeZap` returns. */
+  let onchainAllowance: bigint;
+  /** Runs on every `/api/simulate` request, so a test can see the hook mid-flight. */
+  let onSimulate: (() => void) | undefined;
+  /** When set, the `/api/simulate` reply waits for it, so a test can hold a send mid-flight. */
+  let simulateGate: Promise<void> | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
     batchState.canBatch = true;
     simulateBodies = [];
+    allowance = 0n;
+    onchainAllowance = 0n;
+    onSimulate = undefined;
+    simulateGate = undefined;
     vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url.includes("/api/simulate/nonce")) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true, nonce: "n", expires: Date.now() + 60_000, sig: "s" }) });
       }
       if (url.includes("/api/simulate")) {
         simulateBodies.push(JSON.parse(String(init?.body)));
-        return Promise.resolve({
+        onSimulate?.();
+        const reply = {
           ok: true,
           json: () => Promise.resolve({ success: true, gasUsed: 1, simulationId: "sim", tenderlyUrl: null, assetChanges: [], errorMessage: null }),
-        });
+        };
+        return simulateGate ? simulateGate.then(() => reply) : Promise.resolve(reply);
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
     }));
     vi.mocked(useAccount).mockReturnValue({ address: SAFE, chainId: 1, isConnected: true } as unknown as ReturnType<typeof useAccount>);
     vi.mocked(usePublicClient).mockReturnValue({
       getBlockNumber: vi.fn().mockResolvedValue(26313129n),
-      readContract: vi.fn().mockResolvedValue(0n), // no allowance
+      readContract: vi.fn().mockImplementation(() => Promise.resolve(onchainAllowance)),
     } as unknown as ReturnType<typeof usePublicClient>);
     vi.mocked(useWalletClient).mockReturnValue({ data: undefined } as unknown as ReturnType<typeof useWalletClient>);
-    vi.mocked(useReadContract).mockReturnValue({ data: 0n, refetch: vi.fn() } as unknown as ReturnType<typeof useReadContract>);
+    vi.mocked(useReadContract).mockImplementation(
+      () => ({ data: allowance, refetch: vi.fn() }) as unknown as ReturnType<typeof useReadContract>,
+    );
     vi.mocked(useWaitForTransactionReceipt).mockReturnValue({ isLoading: false, isSuccess: false, data: undefined } as unknown as ReturnType<typeof useWaitForTransactionReceipt>);
     mockAnvilCall.mockRejectedValue(new Error("insufficient allowance"));
     mockSendBatch.mockResolvedValue(SAFE_TX_HASH);
@@ -131,5 +157,175 @@ describe("useZapActions Safe batch", () => {
 
     expect(mockWriteApprove).toHaveBeenCalledTimes(1);
     expect(mockSendBatch).not.toHaveBeenCalled();
+  });
+
+  it("sends the exact approval calls the preview simulated, in order", async () => {
+    allowance = parseUnits("1", 6); // a nonzero USDT allowance needs approve(0) first
+
+    const { result } = renderHook(() => useZapActions(USDT_QUOTE));
+
+    await act(async () => {
+      await result.current.executeZap({ previewOnly: true });
+    });
+    const exact = parseUnits("1000", 6);
+    const previewed = simulateBodies.at(-1)!.approvalTransactions as Array<{ to: string; data: `0x${string}` }>;
+    expect(previewed).toHaveLength(2);
+    expect(previewed.map((call) => decodeFunctionData({ abi: ERC20_APPROVAL_ABI, data: call.data }).args)).toEqual([
+      [ENSO_ROUTER_V2, 0n],
+      [ENSO_ROUTER_V2, exact],
+    ]);
+
+    await act(async () => {
+      await result.current.executeZap({ skipSimulation: true });
+    });
+
+    expect(mockSendBatch).toHaveBeenCalledTimes(1);
+    const [calls] = mockSendBatch.mock.calls[0] as [Array<{ to: string; data: string }>];
+    expect(calls).toHaveLength(3);
+    // Everything before the zap is exactly what the user previewed.
+    expect(calls.slice(0, -1)).toEqual(previewed.map(({ to, data }) => ({ to, data })));
+    expect(calls.at(-1)).toMatchObject({ to: USDT_QUOTE.tx.to, data: USDT_QUOTE.tx.data });
+    expect(result.current.zapHash).toBe(SAFE_TX_HASH);
+  });
+
+  it("does not send when the batch gains a reset call after the preview", async () => {
+    const { result, rerender } = renderHook(({ q }: { q: ZapQuote }) => useZapActions(q), {
+      initialProps: { q: USDT_QUOTE },
+    });
+
+    // Preview with a single approve: the allowance is zero, so no reset.
+    await act(async () => {
+      await result.current.executeZap({ previewOnly: true });
+    });
+    const previewed = simulateBodies.at(-1)!.approvalTransactions as Array<{ data: `0x${string}` }>;
+    expect(previewed).toHaveLength(1);
+    expect(result.current.isSimulationForCurrentQuote()).toBe(true);
+
+    // The allowance moves before the confirm, so the same token now needs
+    // approve(0) first: the armed batch would carry two calls, not one.
+    allowance = parseUnits("1", 6);
+    rerender({ q: { ...USDT_QUOTE, inputAmount: "1001" } });
+    expect(result.current.isSimulationForCurrentQuote()).toBe(false);
+
+    const previewedCurrent: boolean[] = [];
+    onSimulate = () => previewedCurrent.push(result.current.isSimulationForCurrentQuote());
+
+    await act(async () => {
+      await result.current.executeZap({ skipSimulation: true });
+    });
+
+    expect(mockSendBatch).not.toHaveBeenCalled();
+    const rebuilt = simulateBodies.at(-1)!.approvalTransactions as Array<{ to: string; data: `0x${string}` }>;
+    expect(rebuilt.map((call) => decodeFunctionData({ abi: ERC20_APPROVAL_ABI, data: call.data }).args)).toEqual([
+      [ENSO_ROUTER_V2, 0n],
+      [ENSO_ROUTER_V2, parseUnits("1001", 6)],
+    ]);
+    // While the confirm re-simulated, the stored preview no longer matched.
+    expect(previewedCurrent).toEqual([false]);
+  });
+
+  it("does not send when the allowance drops after a preview with no approvals", async () => {
+    onchainAllowance = parseUnits("1000", 6);
+    allowance = parseUnits("1000", 6);
+    const { result, rerender } = renderHook(() => useZapActions(QUOTE));
+
+    await act(async () => {
+      await result.current.executeZap({ previewOnly: true });
+    });
+    expect(simulateBodies).toHaveLength(1);
+    expect(simulateBodies[0]).not.toHaveProperty("approvalTransactions");
+    expect(result.current.isSimulationForCurrentQuote()).toBe(true);
+
+    // The allowance is spent elsewhere before the user confirms.
+    onchainAllowance = 0n;
+    allowance = 0n;
+    rerender();
+
+    const previewedCurrent: boolean[] = [];
+    onSimulate = () => previewedCurrent.push(result.current.isSimulationForCurrentQuote());
+
+    await act(async () => {
+      await result.current.executeZap({ skipSimulation: true });
+    });
+
+    expect(mockSendBatch).not.toHaveBeenCalled();
+    const approvals = simulateBodies.at(-1)!.approvalTransactions as Array<{ to: string; data: `0x${string}` }>;
+    expect(approvals.map((call) => call.to)).toEqual([USDC.address]);
+    expect(decodeFunctionData({ abi: ERC20_APPROVAL_ABI, data: approvals[0].data }).args).toEqual([
+      ENSO_ROUTER_V2,
+      parseUnits("1000", 6),
+    ]);
+    // The confirm re-simulated because the preview had no approvals.
+    expect(previewedCurrent).toEqual([false]);
+  });
+
+  it("does not send when the amount changes while the simulation runs", async () => {
+    const { result, rerender } = renderHook(({ q }: { q: ZapQuote }) => useZapActions(q), {
+      initialProps: { q: QUOTE },
+    });
+
+    let releaseSimulation!: () => void;
+    simulateGate = new Promise<void>((resolve) => {
+      releaseSimulation = resolve;
+    });
+
+    let execution: Promise<unknown> = Promise.resolve();
+    await act(async () => {
+      execution = result.current.executeZap();
+    });
+    // The zap is now waiting on the simulation, with its approval batch armed.
+    await waitFor(() => expect(simulateBodies).toHaveLength(1));
+    const armed = simulateBodies.at(-1)!.approvalTransactions as Array<{ to: string }>;
+    expect(armed.map((call) => call.to)).toEqual([USDC.address]);
+
+    // The user edits the amount while the simulation is still running.
+    rerender({ q: { ...QUOTE, inputAmount: "2000" } });
+
+    await act(async () => {
+      releaseSimulation();
+      await execution;
+    });
+
+    expect(mockSendBatch).not.toHaveBeenCalled();
+    expect(mockSendTx).not.toHaveBeenCalled();
+  });
+
+  it("drops the armed batch and the preview when the approval spender changes", async () => {
+    const VAULT_A = "0x1111111111111111111111111111111111111111" as const;
+    const VAULT_B = "0x2222222222222222222222222222222222222222" as const;
+    const directQuote = (vaultAddress: string): ZapQuote => ({
+      ...QUOTE,
+      directVault: { vaultAddress, action: "deposit", symbol: "yUSDC" },
+    });
+
+    const { result, rerender } = renderHook(({ q }: { q: ZapQuote }) => useZapActions(q), {
+      initialProps: { q: directQuote(VAULT_A) },
+    });
+
+    // Preview at the first vault: the batch of one approval is armed for it.
+    await act(async () => {
+      await result.current.executeZap({ previewOnly: true });
+    });
+    const previewed = simulateBodies.at(-1)!.approvalTransactions as Array<{ to: string; data: `0x${string}` }>;
+    expect(decodeFunctionData({ abi: ERC20_APPROVAL_ABI, data: previewed[0].data }).args).toEqual([
+      VAULT_A,
+      parseUnits("1000", 6),
+    ]);
+    expect(result.current.isSimulationForCurrentQuote()).toBe(true);
+
+    // Same token and amount, a different spender: nothing armed for VAULT_A may
+    // survive into the quote that approves VAULT_B.
+    rerender({ q: directQuote(VAULT_B) });
+    expect(result.current.isSimulationForCurrentQuote()).toBe(false);
+
+    await act(async () => {
+      await result.current.executeZap({ skipSimulation: true });
+    });
+
+    expect(mockSendBatch).not.toHaveBeenCalled();
+    const rebuilt = simulateBodies.at(-1)!.approvalTransactions as Array<{ to: string; data: `0x${string}` }>;
+    expect(rebuilt.map((call) => decodeFunctionData({ abi: ERC20_APPROVAL_ABI, data: call.data }).args)).toEqual([
+      [VAULT_B, parseUnits("1000", 6)],
+    ]);
   });
 });

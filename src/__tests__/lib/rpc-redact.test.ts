@@ -28,7 +28,7 @@ describe("redactRpcUrl", () => {
   });
 
   it("never interpolates a raw RPC URL into error messages", () => {
-    // Keys live in some RPC URL paths (private-node, Alchemy); a full URL in an error reaches Workers Logs.
+    // Keys live in some RPC URL paths (a private node, Alchemy); a full URL in an error reaches Workers Logs.
     const ensoFiles = ensoSourceFiles();
     // The RPC code lives in modules, not the barrel, so a fallback to enso.ts alone would make
     // this pass without reading what it guards.
@@ -120,8 +120,8 @@ describe("redactUrlsInText", () => {
   });
 
   it.each([
-    ["a port and digit", "id:1https://rpc.example/rpc/SECRETKEY"],
-    ["an underscore", "_https://rpc.example/rpc/SECRETKEY"],
+    ["a port and digit", "id:1https://node.example/rpc/SECRETKEY"],
+    ["an underscore", "_https://node.example/rpc/SECRETKEY"],
   ])("scrubs a URL glued to %s", (_label, text) => {
     expect(redactUrlsInText(text)).not.toContain("SECRETKEY");
   });

@@ -6,7 +6,7 @@
  */
 
 import { redactRpcUrl } from "@/lib/rpc-redact";
-import { getAllRpcUrls, isRpcTimeout, RPC_TIMEOUT_MS } from "@/config/rpc";
+import { getAllRpcUrls, isRpcTimeout, RPC_TIMEOUT_MS, rpcAuthHeaderFor } from "@/config/rpc";
 import { CURVE_CVX_ETH_POOL } from "@/config/addresses";
 
 // Use DEBUG_RPC_URL if available (more reliable, higher rate limits)
@@ -16,13 +16,6 @@ const getRpcUrls = (): string[] => {
     return [process.env.DEBUG_RPC_URL, ...getAllRpcUrls()];
   }
   return getAllRpcUrls();
-};
-
-const getRpcAuth = (): string | undefined => {
-  if (typeof process !== "undefined" && process.env?.DEBUG_RPC_AUTH) {
-    return process.env.DEBUG_RPC_AUTH;
-  }
-  return undefined;
 };
 
 // Function selectors (exported for helpers)
@@ -88,7 +81,6 @@ export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]
   if (calls.length === 0) return [];
 
   const rpcUrls = getRpcUrls();
-  const rpcAuth = getRpcAuth();
 
   const batch = calls.map((call, id) => ({
     jsonrpc: "2.0",
@@ -108,10 +100,7 @@ export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]
   for (const rpcUrl of rpcUrls) {
     for (let attempt = 0; attempt < retriesPerUrl; attempt++) {
       try {
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
-        if (rpcAuth) {
-          headers["Authorization"] = `Basic ${rpcAuth}`;
-        }
+        const headers: Record<string, string> = { "Content-Type": "application/json", ...rpcAuthHeaderFor(rpcUrl) };
 
         const response = await fetch(rpcUrl, {
           method: "POST",
@@ -243,7 +232,6 @@ export async function getCurveGetDy(
   dx: string
 ): Promise<bigint | null> {
   const rpcUrls = getRpcUrls();
-  const rpcAuth = getRpcAuth();
 
   const data =
     SELECTORS.GET_DY_INT128 +
@@ -254,10 +242,7 @@ export async function getCurveGetDy(
   for (const rpcUrl of rpcUrls) {
     try {
       return await withRetry(async () => {
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
-        if (rpcAuth) {
-          headers["Authorization"] = `Basic ${rpcAuth}`;
-        }
+        const headers: Record<string, string> = { "Content-Type": "application/json", ...rpcAuthHeaderFor(rpcUrl) };
 
         const response = await fetch(rpcUrl, {
           method: "POST",
@@ -305,7 +290,6 @@ export async function getCurveGetDyFactory(
   dx: string
 ): Promise<bigint | null> {
   const rpcUrls = getRpcUrls();
-  const rpcAuth = getRpcAuth();
 
   const data =
     SELECTORS.GET_DY_UINT256 +
@@ -316,10 +300,7 @@ export async function getCurveGetDyFactory(
   for (const rpcUrl of rpcUrls) {
     try {
       return await withRetry(async () => {
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
-        if (rpcAuth) {
-          headers["Authorization"] = `Basic ${rpcAuth}`;
-        }
+        const headers: Record<string, string> = { "Content-Type": "application/json", ...rpcAuthHeaderFor(rpcUrl) };
 
         const response = await fetch(rpcUrl, {
           method: "POST",

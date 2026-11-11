@@ -15,6 +15,7 @@ describe("server-side RPC timeouts", () => {
     // Production-like retry settings (live mode), with a private node first in the list.
     vi.stubEnv("ENSO_API_KEY", "test-key");
     vi.stubEnv("DEBUG_RPC_URL", PRIVATE);
+    vi.stubEnv("DEBUG_RPC_AUTH", "user:pass");
     vi.resetModules();
     fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.startsWith(PRIVATE)) throw timeoutError();
@@ -53,5 +54,25 @@ describe("server-side RPC timeouts", () => {
     const out = await rpc.getCurveGetDy("0x0000000000000000000000000000000000000002", 0, 1, "1000");
     expect(out).toBe(1234n);
     expect(privateCalls()).toHaveLength(1);
+  });
+
+  it("sends the basic-auth header to the private node only", async () => {
+    const headers: Array<[string, Record<string, string>]> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const target = String(url);
+      if (target.includes("chainid.network")) return { ok: false, json: async () => [] } as unknown as Response;
+      headers.push([target, ((init as RequestInit).headers ?? {}) as Record<string, string>]);
+      if (target.startsWith(PRIVATE)) return { ok: false, status: 500, json: async () => ({}) } as unknown as Response;
+      return { ok: true, json: async () => [{ id: 0, result: "0x4d2" }] } as unknown as Response;
+    }));
+
+    const results = await rpc.batchRpcCalls([{ to: "0x0000000000000000000000000000000000000001", data: "0x" }]);
+
+    expect(results).toEqual([1234n]);
+    expect(headers[0][0].startsWith(PRIVATE)).toBe(true);
+    expect(headers[0][1].Authorization).toBe("Basic user:pass");
+    const publicCall = headers.find(([url]) => !url.startsWith(PRIVATE));
+    expect(publicCall).toBeDefined();
+    expect(publicCall![1]).not.toHaveProperty("Authorization");
   });
 });

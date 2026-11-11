@@ -767,6 +767,11 @@ describe("route step amounts", () => {
       { token: "pxCVX", amount: "5.5000" }, // runtime CVX x 1.1, not the slippage-buffered 4.95 CVX
       { token: "yspxCVX", amount: "5.2500" },
     ]);
+
+    // The paid bundle call still runs exactly once, with the same amountsOut.
+    expect(mockGetBundleData).toHaveBeenCalledTimes(1);
+    expect(result.amountsOut[VAULT_ADDRESSES.YSPXCVX.toLowerCase()]).toBe("5250000000000000000");
+    expect(result.amountsOut[TOKENS.PXCVX.toLowerCase()]).toBe("5500000000000000000");
   });
 
   it("shows external -> external vault intermediate amounts", async () => {
@@ -1416,6 +1421,10 @@ describe("route step amounts", () => {
         amountIn: "1000000000",
         slippage: "100",
       })).rejects.toThrow(/Failed to estimate uCRV shares/);
+
+      // The paid bundle call must not run when a read fails first.
+      expect(mockGetBundleData).not.toHaveBeenCalled();
+      expect(mockGetRouteData).not.toHaveBeenCalled();
     });
 
     it("fails the Beefy zap when the underlying pre-quote fails", async () => {
@@ -1444,6 +1453,10 @@ describe("route step amounts", () => {
         amountIn: "1000000000",
         slippage: "100",
       })).rejects.toThrow(/Failed to estimate Beefy vault shares/);
+
+      // Neither the paid bundle call nor the pre-quote runs when the read fails.
+      expect(mockGetBundleData).not.toHaveBeenCalled();
+      expect(mockGetRouteData).not.toHaveBeenCalled();
     });
 
     it("fails the Beefy zap with its estimate message when pricePerFullShare returns 0x", async () => {
@@ -1462,6 +1475,8 @@ describe("route step amounts", () => {
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toMatch(/Failed to estimate Beefy vault shares/);
       expect((error as Error).message).not.toMatch(/Cannot convert 0x to a BigInt/);
+      expect(mockGetBundleData).not.toHaveBeenCalled();
+      expect(mockGetRouteData).not.toHaveBeenCalled();
     });
 
     it("fails the external vault zap when previewDeposit returns no result", async () => {
@@ -1478,6 +1493,55 @@ describe("route step amounts", () => {
         amountIn: "10000000",
         slippage: "100",
       })).rejects.toThrow(/previewDeposit returned no result/);
+
+      // The paid bundle call must not run when the read fails first.
+      expect(mockGetBundleData).not.toHaveBeenCalled();
+    });
+
+    it("fails the external vault zap for a special token input when previewDeposit returns no result", async () => {
+      // Only the previewDeposit read fails; every other read answers healthily.
+      mockRpcReplies((id, data) =>
+        data && data.startsWith("0xef8b30f7")
+          ? rpcEmptyReply(id)
+          : { id, result: `0x${ONE_ETHER.toString(16)}` });
+
+      await expect(fetchSpecialTokenToExternalVaultRoute({
+        fromAddress: TEST_WALLET,
+        inputToken: YVUSDC1_ADDRESS,
+        outputVault: LLAMA_AIRFORCE.UCVX,
+        amountIn: "10000000",
+        slippage: "100",
+      })).rejects.toThrow(/previewDeposit returned no result/);
+
+      // The paid bundle call must not run when the read fails first.
+      expect(mockGetBundleData).not.toHaveBeenCalled();
+    });
+
+    it("fails the legacy MORPHO zap when previewDeposit returns no result", async () => {
+      mockGetRouteData.mockResolvedValueOnce({
+        amountOut: "27538222472939391973",
+        gas: "411888",
+        priceImpact: 0,
+        tx: { to: "0xroute", data: "0xrouteData", value: "0" },
+        route: [],
+      });
+      // Only the previewDeposit read fails; every other read answers healthily.
+      mockRpcReplies((id, data) =>
+        data && data.startsWith("0xef8b30f7")
+          ? rpcEmptyReply(id)
+          : { id, result: `0x${ONE_ETHER.toString(16)}` });
+
+      await expect(fetchLegacyMorphoZapInRoute({
+        fromAddress: TEST_WALLET,
+        vaultAddress: VAULT_ADDRESSES.YCVXCRV,
+        amountIn: "1162575544199150998",
+        slippage: "100",
+        underlyingToken: TOKENS.CVXCRV,
+      })).rejects.toThrow(/previewDeposit returned no result/);
+
+      // The standalone route quote is expected; the paid bundle call is not.
+      expect(mockGetRouteData).toHaveBeenCalledTimes(1);
+      expect(mockGetBundleData).not.toHaveBeenCalled();
     });
 
     it("reports uCRV shares and the cvxCRV amount when every read succeeds", async () => {
@@ -1502,8 +1566,35 @@ describe("route step amounts", () => {
       });
 
       const expectedShares = (cvxCrvFromQuote * totalSupply) / totalUnderlying;
+      expect(mockGetBundleData).toHaveBeenCalledTimes(1);
       expect(result.amountsOut[LLAMA_AIRFORCE.UCRV.toLowerCase()]).toBe(expectedShares.toString());
       expect(result.amountsOut[LLAMA_AIRFORCE.UCRV_UNDERLYING.toLowerCase()]).toBe(cvxCrvFromQuote.toString());
+    });
+
+    it("reports Beefy shares and the underlying amount when every read succeeds", async () => {
+      const underlyingFromQuote = 1_000_000_000_000_000_000n;
+      const pps = 5_250_000_000_000_000_000n;
+      mockGetRouteData.mockResolvedValue({
+        amountOut: underlyingFromQuote.toString(),
+        tx: { to: "0xroute", data: "0x4", value: "0" },
+        route: [],
+      });
+      mockRpcReplies((id) => ({ id, result: `0x${pps.toString(16)}` }));
+
+      const result = await fetchAnyToBeefyRoute({
+        fromAddress: TEST_WALLET,
+        inputToken: USDC_ADDRESS,
+        beefyVault: BEEFY.MOO_CVX_CRV,
+        beefyVaultUnderlying: TOKENS.CVXCRV,
+        beefyVaultSymbol: "mooCvxCRV",
+        amountIn: "1000000000",
+        slippage: "100",
+      });
+
+      const expectedShares = (underlyingFromQuote * (10n ** 18n)) / pps;
+      expect(mockGetBundleData).toHaveBeenCalledTimes(1);
+      expect(result.amountsOut[BEEFY.MOO_CVX_CRV.toLowerCase()]).toBe(expectedShares.toString());
+      expect(result.amountsOut[TOKENS.CVXCRV.toLowerCase()]).toBe(underlyingFromQuote.toString());
     });
 
     it("fails the uCRV -> yld zap when the withdraw preview has no RPC result", async () => {

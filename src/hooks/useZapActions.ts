@@ -29,6 +29,17 @@ import {
 
 const ZAP_APPROVAL_SPENDER = ENSO_ROUTER_V2 as `0x${string}`;
 
+type Call = { to: string; data: string };
+
+/** Same calls, in the same order; addresses compare case-insensitively. */
+function sameCalls(a: readonly Call[], b: readonly Call[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((call, index) => {
+    const other = b[index];
+    return call.data === other.data && call.to.toLowerCase() === other.to.toLowerCase();
+  });
+}
+
 export type ZapStatus =
   | "idle"
   | "needsApproval"
@@ -67,8 +78,16 @@ export function useZapActions(
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const autoExecuteRef = useRef(false);
   const pendingOptionsRef = useRef<{ skipSimulation?: boolean; previewOnly?: boolean } | undefined>(undefined);
-  /** The exact transaction the stored simulationResult was produced for. */
-  const simulatedTxRef = useRef<{ to: string; data: string; value: bigint } | null>(null);
+  /** The exact transaction and approval calls the stored simulationResult was produced for. */
+  const simulatedTxRef = useRef<{
+    to: string;
+    data: string;
+    value: bigint;
+    /** Approval calls passed to the simulation, in order; empty when none. */
+    approvals: Call[];
+    /** Whether batch approvals were armed (Safe batch) when the simulation ran. */
+    batch: boolean;
+  } | null>(null);
   const [approvalResetFlow, setApprovalResetFlow] = useState<{
     stage: "reset" | "approve";
     token: `0x${string}`;
@@ -143,6 +162,12 @@ export function useZapActions(
   useEffect(() => {
     if (previousScopeRef.current !== approvalScope) {
       previousScopeRef.current = approvalScope;
+      // The armed batch and the stored preview were built for the previous
+      // scope (wallet, token, spender or amount): drop them here, not later, so
+      // nothing can send or confirm them for the new one.
+      batchApprovalsRef.current = null;
+      preparedApprovalSimulationRef.current = null;
+      simulatedTxRef.current = null;
       queueMicrotask(() => {
         setActionState("idle");
         setPendingApproval(null);
@@ -575,9 +600,13 @@ export function useZapActions(
   }, [quote, userAddress, publicClient, walletClient]);
 
   // Sends the zap, prefixed with the approval call(s) as one atomic Safe batch
-  // when the user approved on a Safe; otherwise a normal transaction.
-  const sendZapTx = useCallback(async (txParams: { to: `0x${string}`; data: `0x${string}`; value: bigint }): Promise<Hash> => {
-    const approvals = batchApprovalsRef.current;
+  // when the user approved on a Safe; otherwise a normal transaction. The
+  // approvals are the ones the caller captured and simulated, never a ref read
+  // at send time.
+  const sendZapTx = useCallback(async (
+    txParams: { to: `0x${string}`; data: `0x${string}`; value: bigint },
+    approvals: ApprovalSimulationTransaction[] | null,
+  ): Promise<Hash> => {
     if (!approvals) return sendTx(txParams);
     const id = await sendBatch([...approvals.map((t) => ({ to: t.to, data: t.data })), txParams]);
     batchApprovalsRef.current = null;
@@ -621,8 +650,14 @@ export function useZapActions(
 
     if (signal?.aborted) return null;
 
+    // Safe batch: the approval calls armed for this send.
+    const batchApprovals = batchApprovalsRef.current;
+
     const approvalTransactions = (() => {
       if (quote.legacyMorphoPermit) return undefined;
+      // On a Safe the batch that will be sent is the batch that is simulated:
+      // one source, so the approvals the user previewed are the ones sent.
+      if (batchApprovals) return batchApprovals;
       const prepared = preparedApprovalSimulationRef.current;
       if (
         !prepared ||
@@ -640,19 +675,26 @@ export function useZapActions(
     })();
 
     // If skipSimulation is true, go straight to sending (used after preview mode
-    // confirmation) — but only when the preview belongs to this exact transaction.
+    // confirmation) — but only when the preview belongs to this exact transaction
+    // and, for a batch, to the same approval calls that will be sent with it.
     // Anything else re-simulates below and returns a fresh preview instead.
     const simulated = simulatedTxRef.current;
+    const simulatedApprovals = (approvalTransactions ?? []).map((t) => ({ to: t.to, data: t.data }));
     const simulatedThisTx = !!simulated
       && simulated.data === txParams.data
       && simulated.to.toLowerCase() === txParams.to.toLowerCase()
-      && simulated.value === txParams.value;
+      && simulated.value === txParams.value
+      // An EOA sends only the zap, so its approvals only matter when the
+      // simulation or this send is a batch.
+      && (!simulated.batch && !batchApprovals
+        ? true
+        : sameCalls(simulated.approvals, batchApprovals ?? []));
     // Confirm path: only send the exact transaction the user previewed.
     const confirmMismatch = !!options?.skipSimulation && !(simulationResult?.success && simulatedThisTx);
     if (options?.skipSimulation && !confirmMismatch) {
       setActionState("zapping");
       try {
-        const hash = await sendZapTx(txParams);
+        const hash = await sendZapTx(txParams, batchApprovals);
         setZapHash(hash);
       } catch (err) {
         setTxError(err instanceof Error ? err : new Error(String(err)));
@@ -690,7 +732,13 @@ export function useZapActions(
 
     // Store the simulation result for preview mode
     if (simResult.result) {
-      simulatedTxRef.current = { to: txParams.to, data: txParams.data, value: txParams.value };
+      simulatedTxRef.current = {
+        to: txParams.to,
+        data: txParams.data,
+        value: txParams.value,
+        approvals: simulatedApprovals,
+        batch: !!batchApprovals,
+      };
       setSimulationResult(simResult.result);
     }
 
@@ -699,7 +747,13 @@ export function useZapActions(
     if (!simResult.ok && ethCallResult.ok) {
       const unavailableReason = getSimulationErrorText(simResult.errorMessage) ?? "Simulation unavailable for this transaction type";
       const unavailableResult = buildUnavailableSimulationResult(simResult.result, unavailableReason);
-      simulatedTxRef.current = { to: txParams.to, data: txParams.data, value: txParams.value };
+      simulatedTxRef.current = {
+        to: txParams.to,
+        data: txParams.data,
+        value: txParams.value,
+        approvals: simulatedApprovals,
+        batch: !!batchApprovals,
+      };
       setSimulationResult(unavailableResult);
       if (previewOnly) {
         setActionState("idle");
@@ -726,9 +780,16 @@ export function useZapActions(
     }
 
     // Simulation passed - send the actual transaction (gas + Flashbots handled by useSendTx)
+    // The armed batch can change while the simulation runs (the amount, token or
+    // spender changed), and the page re-quotes on input change: never send a
+    // batch whose approvals are not the ones just simulated.
+    if (batchApprovalsRef.current !== batchApprovals) {
+      setActionState("idle");
+      return null;
+    }
     setActionState("zapping");
     try {
-      const hash = await sendZapTx(txParams);
+      const hash = await sendZapTx(txParams, batchApprovals);
       setZapHash(hash);
     } catch (err) {
       setTxError(err instanceof Error ? err : new Error(String(err)));
@@ -870,6 +931,11 @@ export function useZapActions(
   const isSimulationForCurrentQuote = useCallback((): boolean => {
     const simulated = simulatedTxRef.current;
     if (!quote || !simulated) return false;
+    // A batch sends its approval calls with the zap, so the preview only covers
+    // this quote while the armed approvals are the ones it simulated.
+    const batchApprovals = batchApprovalsRef.current;
+    if ((simulated.batch || batchApprovals)
+      && !sameCalls(simulated.approvals, batchApprovals ?? [])) return false;
     const current = quote.legacyMorphoPermit
       ? preparedPermitTxRef.current?.txParams
       : { to: quote.tx.to, data: quote.tx.data, value: quote.tx.value };

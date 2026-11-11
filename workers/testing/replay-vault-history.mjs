@@ -1,5 +1,5 @@
 // Actual worker/R2 replay. No live network; the single-day archive fixture is a
-// synthetic ysCVX day shaped like a private-node archive capture (see its `source`).
+// synthetic ysCVX day shaped like an archive-node capture (see its `source`).
 import { createRequire } from 'node:module';
 import { readFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';

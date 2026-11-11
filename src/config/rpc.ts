@@ -111,3 +111,16 @@ export function isRpcTimeout(error: unknown): boolean {
   const name = (error as { name?: string } | null)?.name;
   return name === "TimeoutError" || name === "AbortError";
 }
+
+/**
+ * Basic-auth header for an RPC request, only for the configured private node.
+ * The credential in DEBUG_RPC_AUTH belongs to DEBUG_RPC_URL: sending it to any
+ * other URL in the fallback list would hand it to a public provider.
+ */
+export function rpcAuthHeaderFor(url: string): Record<string, string> {
+  if (typeof process === "undefined") return {};
+  const privateUrl = process.env?.DEBUG_RPC_URL;
+  const auth = process.env?.DEBUG_RPC_AUTH;
+  if (!privateUrl || !auth || url !== privateUrl) return {};
+  return { Authorization: auth.startsWith("Basic ") ? auth : `Basic ${auth}` };
+}

@@ -8,6 +8,8 @@
  * This client maps a safeTxHash to that on-chain hash.
  */
 
+import { toEventSelector } from "viem";
+
 const SAFE_TX_SERVICE_URLS: Record<number, string> = {
   1: "https://api.safe.global/tx-service/eth",
 };
@@ -19,6 +21,11 @@ export type SafeTxLookup =
   | { kind: "not-found" }
   | {
       kind: "safe";
+      /**
+       * The Safe's own address, lowercased; null when the reply carried no
+       * usable address, which disables matching the Safe's own receipt logs.
+       */
+      safe: `0x${string}` | null;
       /** On-chain hash once executed, otherwise null. */
       transactionHash: `0x${string}` | null;
       isExecuted: boolean;
@@ -80,6 +87,7 @@ export async function fetchSafeMultisigTx(
 
   return {
     kind: "safe",
+    safe: body.safe && ADDRESS_RE.test(body.safe) ? (body.safe.toLowerCase() as `0x${string}`) : null,
     transactionHash: txHash,
     isExecuted,
     isSuccessful: body.isSuccessful ?? null,
@@ -90,6 +98,56 @@ export async function fetchSafeMultisigTx(
 }
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+
+/** Topics the Safe itself emits to report the inner call's verdict. */
+const EXECUTION_SUCCESS_TOPIC = toEventSelector("ExecutionSuccess(bytes32,uint256)");
+const EXECUTION_FAILURE_TOPIC = toEventSelector("ExecutionFailure(bytes32,uint256)");
+
+export type SafeExecutionVerdict = "succeeded" | "failed" | "unknown";
+
+/**
+ * Whether the call a Safe executed actually succeeded.
+ *
+ * `execTransaction` succeeds on-chain even when the inner call reverts, so the
+ * receipt's own status says nothing. Two independent sources answer it:
+ * the Safe's own events in the mined receipt (immediate), and the service's
+ * `isSuccessful` field (which can lag behind the hash it reports). Receipt
+ * logs win; without them the service decides. Only events for this exact
+ * `safeTxHash` count: a receipt can carry another Safe transaction's verdict.
+ */
+export function safeExecutionVerdict({
+  safe,
+  logs,
+  isSuccessful,
+  safeTxHash,
+}: {
+  safe: string | null;
+  logs: readonly { address: string; topics: readonly string[]; data?: string }[] | undefined;
+  isSuccessful: boolean | null;
+  safeTxHash: string;
+}): SafeExecutionVerdict {
+  if (safe && logs) {
+    const safeAddress = safe.toLowerCase();
+    const expectedHash = safeTxHash.toLowerCase();
+    // The event's transaction hash: `txHash` is indexed, so it is topic 1; a
+    // log without the indexed argument carries it as the first 32 bytes of data.
+    const logTxHash = (log: { topics: readonly string[]; data?: string }): string | undefined => {
+      if (log.topics.length >= 2) return log.topics[1]?.toLowerCase();
+      const data = log.data;
+      if (typeof data === "string" && data.length >= 66) return `0x${data.slice(2, 66)}`.toLowerCase();
+      return undefined;
+    };
+    const fromSafe = logs.filter(
+      (log) => log.address?.toLowerCase() === safeAddress && logTxHash(log) === expectedHash,
+    );
+    // Topic0 is the event selector, whether or not its arguments are indexed.
+    if (fromSafe.some((log) => log.topics[0]?.toLowerCase() === EXECUTION_FAILURE_TOPIC)) return "failed";
+    if (fromSafe.some((log) => log.topics[0]?.toLowerCase() === EXECUTION_SUCCESS_TOPIC)) return "succeeded";
+  }
+  if (isSuccessful === false) return "failed";
+  if (isSuccessful === true) return "succeeded";
+  return "unknown";
+}
 
 /**
  * Whether an unexecuted Safe tx at `nonce` has been superseded. Only asks for

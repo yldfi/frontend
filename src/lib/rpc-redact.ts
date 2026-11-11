@@ -1,6 +1,6 @@
 /**
  * Host-only form of an RPC URL for logs and error messages. Some providers put the API key in
- * the path (e.g. https://rpc.example/rpc/<key>, Alchemy's /v2/<key>), so a full URL in a log line
+ * the path (e.g. https://rpc.example/<key>, or a /v2/<key> path), so a full URL in a log line
  * leaks the key into Workers Logs.
  */
 export function redactRpcUrl(url: string): string {

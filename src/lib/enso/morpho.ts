@@ -304,6 +304,11 @@ export async function fetchLegacyMorphoZapInRoute(params: {
     receiver: ENSO_SHORTCUTS,
   });
   const expectedUnderlying = BigInt(standaloneRoute.amountOut);
+  const expectedShares = await estimateExternalVaultShares({
+    vaultAddress: params.vaultAddress,
+    vaultInterface: "erc4626",
+    underlyingAmount: expectedUnderlying,
+  });
   const innerZapBundle = await fetchZapInRoute({
     fromAddress: params.fromAddress,
     vaultAddress: params.vaultAddress,
@@ -313,12 +318,6 @@ export async function fetchLegacyMorphoZapInRoute(params: {
     underlyingToken: underlying,
   });
   const innerZapData = extractInnerSwapData(innerZapBundle.tx.data) as Hex;
-
-  const expectedShares = await estimateExternalVaultShares({
-    vaultAddress: params.vaultAddress,
-    vaultInterface: "erc4626",
-    underlyingAmount: expectedUnderlying,
-  });
 
   const innerGas = innerZapBundle.gas && innerZapBundle.gas !== "0" ? innerZapBundle.gas : standaloneRoute.gas;
   const gasFallback = BigInt(innerGas || "0") + 160000n;

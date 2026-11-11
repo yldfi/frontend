@@ -91,20 +91,28 @@ function RewardRow({ reward, claimReward = reward }: { reward: MerklReward; clai
   const claimableUsd = formattedClaimable * price;
 
   const { writeContract, data: txHash, isPending: isClaiming, error: writeError } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess: isConfirmed, error: receiptError } = useTxReceipt({ hash: txHash });
+  const { isLoading: isConfirming, isSuccess: isConfirmed, data: receipt, error: receiptError } = useTxReceipt({ hash: txHash });
+  const receiptStatus = receipt?.status;
+  // `isSuccess` only says the receipt arrived; a mined-but-reverted claim is not
+  // a claimed reward.
+  const claimConfirmed = isConfirmed && receiptStatus === "success";
 
   useEffect(() => {
-    if (isConfirmed) {
+    if (claimConfirmed) {
       toast.success("Rewards claimed successfully!", {
         description: `${formattedClaimable.toLocaleString("en-US", { maximumFractionDigits: 4 })} ${reward.token.symbol}`,
       });
     }
-  }, [isConfirmed, formattedClaimable, reward.token.symbol]);
+  }, [claimConfirmed, formattedClaimable, reward.token.symbol]);
 
   useEffect(() => {
     if (writeError) toast.error(writeError.message?.split("\n")[0] || "Failed to submit claim");
     if (receiptError) toast.error("Claim transaction failed");
   }, [writeError, receiptError]);
+
+  useEffect(() => {
+    if (receiptStatus === "reverted") toast.error("Claim failed: the transaction reverted");
+  }, [receiptStatus]);
 
   const handleClaim = () => {
     if (!address || !claimReward) return;
@@ -137,7 +145,7 @@ function RewardRow({ reward, claimReward = reward }: { reward: MerklReward; clai
             <div className="font-medium">{reward.token.symbol}</div>
           </div>
         </div>
-        {hasClaimable && hasClaimAction && !isConfirmed && (
+        {hasClaimable && hasClaimAction && !claimConfirmed && (
           <button
             className="px-4 py-1.5 text-sm font-medium rounded-md bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
             onClick={handleClaim}
@@ -146,7 +154,7 @@ function RewardRow({ reward, claimReward = reward }: { reward: MerklReward; clai
             {isClaiming ? <>Confirm <LoadingDots /></> : isConfirming ? <>Claiming <LoadingDots /></> : claimReward === reward ? "Claim" : "Claim all"}
           </button>
         )}
-        {isConfirmed && (
+        {claimConfirmed && (
           <span className="px-4 py-1.5 text-sm font-medium text-green-400 flex items-center gap-1.5">
             <CheckCircle2 className="w-4 h-4" /> Claimed
           </span>

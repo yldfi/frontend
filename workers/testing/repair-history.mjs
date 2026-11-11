@@ -14,8 +14,10 @@ mkdirSync(out, { recursive: true });
 await build({ entryPoints: ['workers/vault-history.ts'], outfile: `${out}/history.mjs`, bundle: true, platform: 'node', format: 'esm' });
 const { HISTORY_VAULTS, dayBucket, readBlock, blockAt, sampleDay, parseHistory } = await import(pathToFileURL(`${out}/history.mjs`));
 const endpoints = execFileSync(process.env.ETHCLI_BIN || 'ethcli', ['endpoints','list'], { encoding: 'utf8', stdio: ['ignore','pipe','pipe'] });
-const endpoint = (endpoints.match(/https?:\/\/\S+/g) || []).find(u => new URL(u).hostname === 'rpc.example' && new URL(u).pathname === '/eth/rpc');
-if (!endpoint) throw new Error('Configured private-node archive endpoint missing');
+const archiveHost = process.env.ARCHIVE_RPC_HOST;
+if (!archiveHost) throw new Error('Set ARCHIVE_RPC_HOST to the archive RPC hostname');
+const endpoint = (endpoints.match(/https?:\/\/\S+/g) || []).find(u => new URL(u).hostname === archiveHost && new URL(u).pathname === '/eth/rpc');
+if (!endpoint) throw new Error('Configured archive endpoint missing');
 const rpcUrl = new URL(endpoint);
 const headers = { 'Content-Type': 'application/json' };
 if (rpcUrl.username) { headers.Authorization = 'Basic ' + Buffer.from(`${decodeURIComponent(rpcUrl.username)}:${decodeURIComponent(rpcUrl.password)}`).toString('base64'); rpcUrl.username = ''; rpcUrl.password = ''; }
@@ -50,7 +52,7 @@ try {
     const doc = existsSync(file) ? parseHistory(readFileSync(file,'utf8'),key) : { version:2,key,generatedAt:'',points:[] };
     const points = new Map(doc.points.map(p => [p.time,p]));
     let lower = await readBlock(rpc,vault.inception);
-    console.log(JSON.stringify({ key,inception:lower,source:'configured private-node archive',through:new Date(end*1000).toISOString().slice(0,10) }));
+    console.log(JSON.stringify({ key,inception:lower,source:'configured archive node',through:new Date(end*1000).toISOString().slice(0,10) }));
     for (let time = Date.parse(vault.firstDay)/1000; time <= end; time += 86400) {
       if (points.has(time) && points.get(time).tvl !== null) { lower=points.get(time).block; continue; }
       const block = await blockAt(rpc,time+86399,lower,latest);
@@ -65,5 +67,5 @@ try {
     summaries.push({key,count:doc.points.length,first:doc.points[0]?.time,last:doc.points.at(-1)?.time,nullTvl:doc.points.filter(p=>p.tvl===null).map(p=>p.time),zeroTvl:doc.points.filter(p=>p.tvl===0).map(p=>p.time)});
   }
 } finally { writeFileSync(cachePath,JSON.stringify(cache)); }
-writeFileSync(`${out}/summary.json`,JSON.stringify({source:'configured private-node archive',latest,summaries},null,2));
+writeFileSync(`${out}/summary.json`,JSON.stringify({source:'configured archive node',latest,summaries},null,2));
 console.log(JSON.stringify({completed:true,summaries}));

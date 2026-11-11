@@ -10,6 +10,7 @@ import { assertAddress, assertPositiveAmount, assertTokenAddress, failValidation
 import { ENSO_PRICE_MAX_ADDRESSES, fetchPricesInBatches } from "@/lib/enso-price-batches";
 import {
   dedupeEnsoPrices,
+  ensoPricesCacheIdentity,
   ensoPricesCacheKey,
   readCachedEnsoPrices,
   writeCachedEnsoPrices,
@@ -549,7 +550,8 @@ export async function POST(
         // Bursts of identical requests would each fan out into several sequential Enso
         // calls; serve repeats from a short-lived cache instead.
         const cacheKey = ensoPricesCacheKey(addresses);
-        const cached = await readCachedEnsoPrices(cacheKey);
+        const cacheIdentity = ensoPricesCacheIdentity(addresses);
+        const cached = await readCachedEnsoPrices(cacheKey, cacheIdentity);
         if (cached !== null) {
           return NextResponse.json(cached, {
             headers: { ...cors, "X-Enso-Price-Cache": "hit" },
@@ -557,11 +559,11 @@ export async function POST(
         }
         // Batched: one Enso GET with hundreds of addresses fails with HTTP 431.
         // dedupeEnsoPrices collapses concurrent identical requests onto one fan-out.
-        const priceData = await dedupeEnsoPrices(cacheKey, async () => {
+        const priceData = await dedupeEnsoPrices(cacheKey, cacheIdentity, async () => {
           const data = await fetchPricesInBatches(addresses, (batch) =>
             ensoClient.getMultiplePriceData({ chainId: CHAIN_ID, addresses: batch as `0x${string}`[] }),
           );
-          await writeCachedEnsoPrices(cacheKey, data);
+          await writeCachedEnsoPrices(cacheKey, cacheIdentity, data);
           return data;
         });
         return NextResponse.json(priceData, {

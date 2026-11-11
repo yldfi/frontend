@@ -864,27 +864,6 @@ export async function fetchAnyToUCrvRoute(params: {
     },
   });
 
-  const bundleResult = await fetchBundle({
-    fromAddress: params.fromAddress,
-    actions,
-    receiver: params.fromAddress,
-    routingStrategy: "router",
-    skipQuote: true,
-  });
-
-  // Resolve the cvxCRV amount we'll actually deposit. For non-cvxCRV inputs we
-  // need to pre-quote the Enso route; using amountIn directly gives wrong
-  // decimals (e.g. 1000 USDC = 1000e6, but totalUnderlying/totalSupply are 1e18).
-  // A failed quote fails the zap quote: a wrong output becomes the intent guard's minimum.
-  const cvxCrvAmount = inputIsCvxCrv
-    ? params.amountIn
-    : (await fetchQuote({
-        fromAddress: params.fromAddress,
-        tokenIn: params.inputToken,
-        tokenOut: LLAMA_AIRFORCE.UCRV_UNDERLYING,
-        amountIn: params.amountIn,
-      })).amountOut;
-
   const [totalUnderlyingRes, totalSupplyRes] = await Promise.all([
     rpcWithFallback<{ result?: string }>({
       jsonrpc: "2.0", id: 0, method: "eth_call",
@@ -905,7 +884,29 @@ export async function fetchAnyToUCrvRoute(params: {
   if (totalUnderlying <= 0n || totalSupply <= 0n) {
     throw new Error("Failed to estimate uCRV shares");
   }
+
+  // Resolve the cvxCRV amount we'll actually deposit. For non-cvxCRV inputs we
+  // need to pre-quote the Enso route; using amountIn directly gives wrong
+  // decimals (e.g. 1000 USDC = 1000e6, but totalUnderlying/totalSupply are 1e18).
+  // A failed quote fails the zap quote: a wrong output becomes the intent guard's minimum.
+  const cvxCrvAmount = inputIsCvxCrv
+    ? params.amountIn
+    : (await fetchQuote({
+        fromAddress: params.fromAddress,
+        tokenIn: params.inputToken,
+        tokenOut: LLAMA_AIRFORCE.UCRV_UNDERLYING,
+        amountIn: params.amountIn,
+      })).amountOut;
+
   const expectedShares = ((BigInt(cvxCrvAmount) * totalSupply) / totalUnderlying).toString();
+
+  const bundleResult = await fetchBundle({
+    fromAddress: params.fromAddress,
+    actions,
+    receiver: params.fromAddress,
+    routingStrategy: "router",
+    skipQuote: true,
+  });
   bundleResult.amountsOut = {
     ...bundleResult.amountsOut,
     [LLAMA_AIRFORCE.UCRV.toLowerCase()]: expectedShares,
@@ -1029,26 +1030,6 @@ export async function fetchAnyToBeefyRoute(params: {
     },
   });
 
-  const bundleResult = await fetchBundle({
-    fromAddress: params.fromAddress,
-    actions,
-    receiver: params.fromAddress,
-    routingStrategy: "router",
-    skipQuote: true,
-  });
-
-  // Estimate underlying amount (for non-underlying inputs we need the post-swap
-  // cvxCRV/CVX amount, not USDC amountIn) then derive shares via pricePerFullShare.
-  // A failed quote fails the zap quote: a wrong output becomes the intent guard's minimum.
-  const underlyingAmount = inputIsUnderlying
-    ? params.amountIn
-    : (await fetchQuote({
-        fromAddress: params.fromAddress,
-        tokenIn: params.inputToken,
-        tokenOut: params.beefyVaultUnderlying,
-        amountIn: params.amountIn,
-      })).amountOut;
-
   const ppsRes = await rpcWithFallback<{ result?: string }>({
     jsonrpc: "2.0",
     id: 0,
@@ -1063,7 +1044,28 @@ export async function fetchAnyToBeefyRoute(params: {
   if (pps <= 0n) {
     throw new Error("Failed to estimate Beefy vault shares");
   }
+
+  // Estimate underlying amount (for non-underlying inputs we need the post-swap
+  // cvxCRV/CVX amount, not USDC amountIn) then derive shares via pricePerFullShare.
+  // A failed quote fails the zap quote: a wrong output becomes the intent guard's minimum.
+  const underlyingAmount = inputIsUnderlying
+    ? params.amountIn
+    : (await fetchQuote({
+        fromAddress: params.fromAddress,
+        tokenIn: params.inputToken,
+        tokenOut: params.beefyVaultUnderlying,
+        amountIn: params.amountIn,
+      })).amountOut;
+
   const expectedShares = ((BigInt(underlyingAmount) * (10n ** 18n)) / pps).toString();
+
+  const bundleResult = await fetchBundle({
+    fromAddress: params.fromAddress,
+    actions,
+    receiver: params.fromAddress,
+    routingStrategy: "router",
+    skipQuote: true,
+  });
   bundleResult.amountsOut = {
     ...bundleResult.amountsOut,
     [params.beefyVault.toLowerCase()]: expectedShares,
@@ -1164,17 +1166,17 @@ export async function fetchComposableZapInRoute(params: {
     },
   });
 
+  const expectedShares = await estimateExternalVaultShares({
+    vaultAddress: params.vaultAddress,
+    vaultInterface: "erc4626",
+    underlyingAmount: finalState.expectedAmount,
+  });
+
   const bundleResult = await fetchBundle({
     fromAddress: params.fromAddress,
     actions,
     routingStrategy: "router",
     skipQuote: true,
-  });
-
-  const expectedShares = await estimateExternalVaultShares({
-    vaultAddress: params.vaultAddress,
-    vaultInterface: "erc4626",
-    underlyingAmount: finalState.expectedAmount,
   });
 
   bundleResult.amountsOut = {
@@ -1444,18 +1446,18 @@ export async function fetchSpecialTokenToExternalVaultRoute(params: {
     });
   }
 
+  const expectedShares = await estimateExternalVaultShares({
+    vaultAddress: outputConfig.address,
+    vaultInterface: outputConfig.interface,
+    underlyingAmount: finalState.expectedAmount,
+  });
+
   const bundleResult = await fetchBundle({
     fromAddress: params.fromAddress,
     actions,
     receiver: params.fromAddress,
     routingStrategy: "router",
     skipQuote: true,
-  });
-
-  const expectedShares = await estimateExternalVaultShares({
-    vaultAddress: outputConfig.address,
-    vaultInterface: outputConfig.interface,
-    underlyingAmount: finalState.expectedAmount,
   });
 
   bundleResult.amountsOut = {

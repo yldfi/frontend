@@ -7,7 +7,7 @@ import type {
   EnsoRouteResponse,
   EnsoToken,
 } from "@/types/enso";
-import { RPC_TIMEOUT_MS, getAllRpcUrls } from "@/config/rpc";
+import { RPC_TIMEOUT_MS, getAllRpcUrls, rpcAuthHeaderFor } from "@/config/rpc";
 import { fetchEnsoIntent, shouldUsePlainTokenSwapIntent } from "@/lib/enso-intents";
 import {
   assertProtectedEnsoBundleActions,
@@ -498,22 +498,40 @@ const getRpcUrls = (): string[] => {
   return getAllRpcUrls();
 };
 
-const getRpcAuth = (): string | undefined => {
-  if (typeof process !== "undefined" && process.env?.DEBUG_RPC_AUTH) {
-    return process.env.DEBUG_RPC_AUTH;
+/**
+ * Whether a JSON-RPC reply is worth asking another provider for. A provider can
+ * answer HTTP 200 with an `error` body (rate limited, "header not found",
+ * internal error); that is not a success. An execution revert is the exception:
+ * it is deterministic, so every provider would answer the same.
+ */
+function rpcReplyNeedsRetry(reply: unknown): boolean {
+  if (Array.isArray(reply)) {
+    // An empty batch, or any failed entry, means the batch did not really run.
+    return reply.length === 0 || reply.some((entry) => rpcReplyNeedsRetry(entry));
   }
-  return undefined;
-};
+  if (reply === null || typeof reply !== "object") return true;
+  const error = (reply as { error?: unknown }).error;
+  if (error === null || error === undefined) return false;
+  if (typeof error === "object") {
+    const { code, message } = error as { code?: unknown; message?: unknown };
+    if (code === 3) return false;
+    if (typeof message === "string" && /execution reverted|revert/i.test(message)) return false;
+  }
+  return true;
+}
 
 /**
  * Make a JSON-RPC request with RPC URL fallback. Tries each available
- * RPC URL until one returns a successful response.
- * Works for both single calls and batch calls.
+ * RPC URL until one returns a successful response; a JSON-RPC error body also
+ * moves on to the next URL. Works for both single calls and batch calls.
+ * An error body is returned only when every URL failed that way.
+ * Read methods only: a request is repeated against other providers.
  */
 export async function rpcWithFallback<T = unknown>(body: unknown): Promise<T> {
   const rpcUrls = getRpcUrls();
-  const rpcAuth = getRpcAuth();
   let lastError: Error | undefined;
+  let firstErrorReply: unknown;
+  let errorReplies = 0;
 
   for (const rpcUrl of rpcUrls) {
     try {
@@ -522,7 +540,7 @@ export async function rpcWithFallback<T = unknown>(body: unknown): Promise<T> {
         signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
         headers: {
           "Content-Type": "application/json",
-          ...(rpcAuth ? { Authorization: rpcAuth.startsWith("Basic ") ? rpcAuth : `Basic ${rpcAuth}` } : {}),
+          ...rpcAuthHeaderFor(rpcUrl),
         },
         body: JSON.stringify(body),
       });
@@ -530,12 +548,21 @@ export async function rpcWithFallback<T = unknown>(body: unknown): Promise<T> {
         lastError = new Error(`RPC ${redactRpcUrl(rpcUrl)} returned ${response?.status}`);
         continue;
       }
-      return (await response.json()) as T;
+      const reply = (await response.json()) as unknown;
+      if (!rpcReplyNeedsRetry(reply)) return reply as T;
+      if (firstErrorReply === undefined) firstErrorReply = reply;
+      lastError = new Error(`RPC ${redactRpcUrl(rpcUrl)} returned a JSON-RPC error`);
+      // Cap the extra calls: a provider that answers an error body may do so for
+      // every request, and the caller still gets the first error body to decide on.
+      errorReplies += 1;
+      if (errorReplies >= 3) break;
+      continue;
     } catch (e) {
       lastError = e instanceof Error ? e : new Error(String(e));
       continue;
     }
   }
+  if (firstErrorReply !== undefined) return firstErrorReply as T;
   throw lastError ?? new Error("All RPC URLs failed");
 }
 

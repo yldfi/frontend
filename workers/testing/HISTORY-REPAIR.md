@@ -25,10 +25,12 @@ points are immutable; unavailable pricing can be retried.
 
 ## Reproduce and validate (local only)
 
-Use the locked project dependencies and `ethcli` with the configured private-node
-archive endpoint. `ETHCLI_BIN` can select another CLI path. No production signing
-credentials are needed or loaded. The reconstruction script makes only read RPC
-calls and writes only the selected local directory.
+Use the locked project dependencies and `ethcli` with the configured archive node
+endpoint. `ETHCLI_BIN` can select another CLI path. The script needs
+`ARCHIVE_RPC_HOST` set to that node's hostname: it picks the `ethcli` endpoint
+whose host matches. No production signing credentials are needed or loaded. The
+reconstruction script makes only read RPC calls and writes only the selected
+local directory.
 
 ```
 node workers/testing/repair-history.mjs local/history-repair

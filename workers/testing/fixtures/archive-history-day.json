@@ -1,5 +1,5 @@
 {
-  "source": "Synthetic ysCVX day (2026-07-19) built when yscvgCVX was sunset; structure matches a private-node archive capture. Recapture with repair-history.mjs when archive access is available.",
+  "source": "Synthetic ysCVX day (2026-07-19) built when yscvgCVX was sunset; structure matches an archive-node capture. Recapture with repair-history.mjs when archive access is available.",
   "key": "yscvx",
   "point": {
     "time": 1784419200,

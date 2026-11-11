@@ -21,10 +21,9 @@ wrangler secret put --config workers/wrangler.x-weekly-apy.toml SOCIAL_RUN_SECRE
 wrangler secret put --config workers/wrangler.x-weekly-apy.toml CLOUDFLARE_API_TOKEN
 wrangler secret put --config workers/wrangler.x-weekly-apy.toml X_CLIENT_ID
 wrangler secret put --config workers/wrangler.x-weekly-apy.toml X_CLIENT_SECRET
-# Optional: Telegram alert when a cron run fails (ask the maintainer for the
-# bot token and chat ID)
-printf '%s' "$TELEGRAM_BOT_TOKEN" | wrangler secret put --config workers/wrangler.x-weekly-apy.toml TELEGRAM_BOT_TOKEN
-printf '%s' "$TELEGRAM_CHAT_ID" | wrangler secret put --config workers/wrangler.x-weekly-apy.toml TELEGRAM_CHAT_ID
+# Optional: Telegram alert when a cron run fails
+wrangler secret put --config workers/wrangler.x-weekly-apy.toml TELEGRAM_BOT_TOKEN
+wrangler secret put --config workers/wrangler.x-weekly-apy.toml TELEGRAM_CHAT_ID
 ```
 
 `CLOUDFLARE_ACCOUNT_ID` is a plain `[vars]` entry in `workers/wrangler.x-weekly-apy.toml`, not a secret.
@@ -32,7 +31,7 @@ printf '%s' "$TELEGRAM_CHAT_ID" | wrangler secret put --config workers/wrangler.
 4. In the X Developer app settings, add this callback URL:
 
 ```text
-https://<x-worker-host>/oauth/callback
+https://<worker-host>/oauth/callback
 ```
 
 5. Deploy the worker.

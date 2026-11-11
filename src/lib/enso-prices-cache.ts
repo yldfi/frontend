@@ -15,6 +15,10 @@
  *  - a short in-isolate value map, which absorbs repeats within the TTL;
  *  - the Cloudflare Cache API, which absorbs repeats across isolates in the same colo.
  *
+ * Every layer also checks the requested address set (the "identity"), not just the
+ * hashed cache slot: the addresses come from the request, so a hash collision must not
+ * be able to serve one set's prices to another.
+ *
  * Note: the Cloudflare Cache API does not collapse concurrent requests, which is why the
  * in-flight map exists.
  */
@@ -26,21 +30,36 @@ const MAX_MEMORY_ENTRIES = 256;
 const CACHE_ORIGIN = "https://enso-prices.cache.internal";
 
 interface MemoryEntry {
+  identity: string;
   value: unknown;
   expiresAt: number;
+}
+
+/**
+ * Edge body. The Cache API path is a hash, so the body carries the full address-set
+ * identity and its expiry; a read that does not match both is treated as a miss.
+ */
+interface EdgeEnvelope {
+  k: string;
+  exp: number;
+  v: unknown;
 }
 
 const memory = new Map<string, MemoryEntry>();
 const inFlight = new Map<string, Promise<unknown>>();
 
 /** Collapse concurrent identical lookups onto one upstream call. */
-export function dedupeEnsoPrices<T>(key: string, produce: () => Promise<T>): Promise<T> {
-  const existing = inFlight.get(key) as Promise<T> | undefined;
+export function dedupeEnsoPrices<T>(
+  key: string,
+  identity: string,
+  produce: () => Promise<T>,
+): Promise<T> {
+  const existing = inFlight.get(identity) as Promise<T> | undefined;
   if (existing) return existing;
   const pending = produce().finally(() => {
-    inFlight.delete(key);
+    inFlight.delete(identity);
   });
-  inFlight.set(key, pending);
+  inFlight.set(identity, pending);
   return pending;
 }
 
@@ -53,30 +72,46 @@ function fnv1a(input: string, seed = 0x811c9dc5): string {
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
-/** Stable key for an address set: order- and case-insensitive, independent of set size. */
-export function ensoPricesCacheKey(addresses: readonly string[]): string {
+/**
+ * Canonical form of an address set: lowercased, de-duplicated, sorted, joined with ",".
+ * This is the value every cache layer compares on a hit.
+ */
+export function ensoPricesCacheIdentity(addresses: readonly string[]): string {
   const unique = [...new Set(addresses.map((address) => address.toLowerCase()))].sort();
-  const joined = unique.join(",");
-  // Two independent hashes -> 64 bits, so a collision can't return another set's prices.
-  return `${CACHE_VERSION}:${joined.length.toString(16)}:${fnv1a(joined)}:${fnv1a(joined, 0x9e3779b9)}`;
+  return unique.join(",");
 }
 
-export function readMemoryEnsoPrices(key: string): unknown | null {
+/** Cache slot name for an address set: order- and case-insensitive, independent of set size. */
+export function ensoPricesCacheKey(addresses: readonly string[]): string {
+  const identity = ensoPricesCacheIdentity(addresses);
+  // The hash only names the slot. It is not collision-resistant, so a hit is only
+  // trusted when the stored identity matches the requested one.
+  return `${CACHE_VERSION}:${identity.length.toString(16)}:${fnv1a(identity)}:${fnv1a(identity, 0x9e3779b9)}`;
+}
+
+export function readMemoryEnsoPrices(key: string, identity: string): unknown | null {
   const entry = memory.get(key);
   if (!entry) return null;
   if (entry.expiresAt <= Date.now()) {
     memory.delete(key);
     return null;
   }
+  // Same slot, different address set: a miss, but the entry may still serve its own set.
+  if (entry.identity !== identity) return null;
   return entry.value;
 }
 
-export function writeMemoryEnsoPrices(key: string, value: unknown): void {
+export function writeMemoryEnsoPrices(
+  key: string,
+  identity: string,
+  value: unknown,
+  expiresAt = Date.now() + ENSO_PRICES_CACHE_TTL_SECONDS * 1000,
+): void {
   if (memory.size >= MAX_MEMORY_ENTRIES && !memory.has(key)) {
     const oldest = memory.keys().next().value;
     if (oldest !== undefined) memory.delete(oldest);
   }
-  memory.set(key, { value, expiresAt: Date.now() + ENSO_PRICES_CACHE_TTL_SECONDS * 1000 });
+  memory.set(key, { identity, value, expiresAt });
 }
 
 /** Drop all in-isolate state. Exposed for tests. */
@@ -98,8 +133,24 @@ function cacheRequest(key: string): Request {
   return new Request(`${CACHE_ORIGIN}/${key}`, { method: "GET" });
 }
 
-export async function readCachedEnsoPrices(key: string): Promise<unknown | null> {
-  const inMemory = readMemoryEnsoPrices(key);
+function parseEdgeEnvelope(
+  body: unknown,
+  identity: string,
+): { value: unknown; expiresAt: number } | null {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
+  const { k, exp, v } = body as { k?: unknown; exp?: unknown; v?: unknown };
+  if (k !== identity) return null;
+  if (typeof exp !== "number" || !Number.isFinite(exp) || exp <= Date.now()) return null;
+  // A body without prices is a miss: an envelope's `v` is the price array.
+  if (v === undefined) return null;
+  return { value: v, expiresAt: exp };
+}
+
+export async function readCachedEnsoPrices(
+  key: string,
+  identity: string,
+): Promise<unknown | null> {
+  const inMemory = readMemoryEnsoPrices(key, identity);
   if (inMemory !== null) return inMemory;
 
   const cache = edgeCache();
@@ -108,24 +159,35 @@ export async function readCachedEnsoPrices(key: string): Promise<unknown | null>
   try {
     const hit = await cache.match(cacheRequest(key));
     if (!hit) return null;
-    const value: unknown = await hit.json();
-    writeMemoryEnsoPrices(key, value);
-    return value;
+    // Bodies in any other shape — including ones written before the envelope
+    // existed — are a miss, never prices attributed to this address set.
+    const parsed = parseEdgeEnvelope(await hit.json(), identity);
+    if (!parsed) return null;
+    // Seed the memory layer with the envelope's expiry, never a fresh TTL.
+    writeMemoryEnsoPrices(key, identity, parsed.value, parsed.expiresAt);
+    return parsed.value;
   } catch {
     return null;
   }
 }
 
-export async function writeCachedEnsoPrices(key: string, value: unknown): Promise<void> {
-  writeMemoryEnsoPrices(key, value);
+export async function writeCachedEnsoPrices(
+  key: string,
+  identity: string,
+  value: unknown,
+): Promise<void> {
+  const expiresAt = Date.now() + ENSO_PRICES_CACHE_TTL_SECONDS * 1000;
+  writeMemoryEnsoPrices(key, identity, value, expiresAt);
 
   const cache = edgeCache();
   if (!cache) return;
 
+  const envelope: EdgeEnvelope = { k: identity, exp: expiresAt, v: value };
+
   try {
     await cache.put(
       cacheRequest(key),
-      new Response(JSON.stringify(value), {
+      new Response(JSON.stringify(envelope), {
         headers: {
           "Content-Type": "application/json",
           "Cache-Control": `max-age=${ENSO_PRICES_CACHE_TTL_SECONDS}`,

@@ -46,7 +46,7 @@ async function resolveRpcUrl(env: Env): Promise<string | undefined> {
 }
 
 /**
- * Priority: private-node → alchemy → infura → a shuffled sample of public RPCs.
+ * Priority: the configured private node → alchemy → infura → a shuffled sample of public RPCs.
  */
 async function getRpcUrls(env: Env): Promise<{ rpcUrls: string[]; privateCount: number; publicCount: number }> {
   const privateRpcs = (
