@@ -239,4 +239,96 @@ describe("Enso call queue", () => {
     await vi.runAllTimersAsync();
     await expect(Promise.all(callers)).resolves.toHaveLength(3);
   });
+
+  describe("timing log line", () => {
+    type CallLine = { queueMs: number; runMs: number; attempts: number; ok: boolean };
+    const callLines = (log: { mock: { calls: unknown[][] } }): CallLine[] =>
+      log.mock.calls
+        .filter((args) => args[0] === "[Enso] call")
+        .map((args) => JSON.parse(String(args[1])) as CallLine);
+
+    let log: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      log = vi.spyOn(console, "log").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      log.mockRestore();
+    });
+
+    const enqueue = async () => {
+      const { enqueueEnsoCall } = await import("@/lib/enso/client");
+      return enqueueEnsoCall;
+    };
+
+    it("logs attempts and run time for a slow call", async () => {
+      const enqueueEnsoCall = await enqueue();
+      const result = enqueueEnsoCall(
+        () => new Promise((resolve) => setTimeout(() => resolve("done"), 50)),
+      );
+
+      await vi.advanceTimersByTimeAsync(50);
+      await expect(result).resolves.toBe("done");
+
+      const lines = callLines(log);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatchObject({ attempts: 1, ok: true });
+      expect(lines[0].runMs).toBeGreaterThanOrEqual(50);
+      expect(lines[0].queueMs).toBeLessThan(5);
+    });
+
+    it("reports time spent behind an earlier call as queueMs", async () => {
+      const enqueueEnsoCall = await enqueue();
+      const first = enqueueEnsoCall(
+        () => new Promise((resolve) => setTimeout(() => resolve("first"), 100)),
+      );
+      const second = enqueueEnsoCall(async () => "second");
+
+      await vi.advanceTimersByTimeAsync(100);
+      await expect(Promise.all([first, second])).resolves.toEqual(["first", "second"]);
+
+      const lines = callLines(log);
+      expect(lines).toHaveLength(2);
+      expect(lines[1].queueMs).toBeGreaterThanOrEqual(100);
+    });
+
+    it("counts a retried 429 as a second attempt", async () => {
+      const enqueueEnsoCall = await enqueue();
+      const fn = vi
+        .fn<() => Promise<string>>()
+        .mockRejectedValueOnce(rateLimited())
+        .mockResolvedValueOnce("ok");
+
+      const result = enqueueEnsoCall(fn);
+      await vi.advanceTimersByTimeAsync(250);
+      await expect(result).resolves.toBe("ok");
+
+      const lines = callLines(log);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatchObject({ attempts: 2, ok: true });
+    });
+
+    it("logs a failed call and still rejects with the original error", async () => {
+      const enqueueEnsoCall = await enqueue();
+      const failure = new Error("boom");
+      const result = enqueueEnsoCall(
+        () => new Promise((_, reject) => setTimeout(() => reject(failure), 20)),
+      );
+      const outcome = expect(result).rejects.toBe(failure);
+
+      await vi.advanceTimersByTimeAsync(20);
+      await outcome;
+
+      const lines = callLines(log);
+      expect(lines).toHaveLength(1);
+      expect(lines[0].ok).toBe(false);
+    });
+
+    it("logs nothing for an instant call", async () => {
+      const enqueueEnsoCall = await enqueue();
+      await expect(enqueueEnsoCall(async () => "instant")).resolves.toBe("instant");
+      expect(callLines(log)).toHaveLength(0);
+    });
+  });
 });

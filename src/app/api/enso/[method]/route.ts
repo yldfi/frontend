@@ -105,8 +105,16 @@ export async function POST(
     switch (method) {
       case "intent": {
         assertValidEnsoIntentRequest(body);
-        const respond = (response: EnsoIntentResponse) =>
-          NextResponse.json(protectEnsoIntentResponse(body, response), { headers: cors });
+        const intentStartedAt = Date.now();
+        const respond = (response: EnsoIntentResponse) => {
+          const protectedResponse = protectEnsoIntentResponse(body, response);
+          console.log("[Enso Proxy] intent timing", JSON.stringify({
+            intent: body.intent,
+            ms: Date.now() - intentStartedAt,
+            ok: true,
+          }));
+          return NextResponse.json(protectedResponse, { headers: cors });
+        };
 
         const {
           fetchAnyFromBeefyRoute,
@@ -139,6 +147,7 @@ export async function POST(
           fetchRepayWithSwapBundle,
         } = await import("@/lib/curve-lending");
 
+        try {
         switch (body.intent) {
           case "plainTokenSwap": {
             const route = await fetchRoute({
@@ -466,6 +475,14 @@ export async function POST(
 
           default:
             throw new Error(`Unhandled Enso intent: ${(body as { intent: string }).intent}`);
+        }
+        } catch (error) {
+          console.log("[Enso Proxy] intent timing", JSON.stringify({
+            intent: body.intent,
+            ms: Date.now() - intentStartedAt,
+            ok: false,
+          }));
+          throw error;
         }
       }
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createPublicClient, encodeAbiParameters, formatUnits, http, keccak256, pad, parseAbiParameters, toHex, type Chain } from "viem";
+import { createPublicClient, encodeAbiParameters, fallback, formatUnits, http, keccak256, pad, parseAbiParameters, toHex, type Chain } from "viem";
+import { getAllRpcUrls, rpcAuthHeaderFor, RPC_URL_LIST } from "@/config/rpc";
 import { TOKENS, VAULT_ADDRESSES, CURVE_CONTROLLERS, getVaultByAddress, LLAMA_AIRFORCE, CONCENTRATOR, CURVE_SAVINGS, ASYMMETRY } from "@/config/vaults";
 import { fetchTokenPricesDirect, ENSO_ROUTER_V2, MORPHO_BUNDLER3_ADDRESS } from "@/lib/enso";
 import { CRVUSD_ADDRESS, USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
@@ -16,6 +17,7 @@ import {
 } from "@/lib/tenderly-simulation-bundle";
 import { boundNoncePayload, shareLinkPayload, simulationNonceBinding } from "@/lib/simulation-nonce";
 import { isCrossSiteBrowserRequest } from "@/lib/request-origin";
+import { redactUrlsInText } from "@/lib/rpc-redact";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +45,9 @@ const SIMULATE_TOTAL_TIMEOUT_MS = 12_000;
 const TENDERLY_FETCH_TIMEOUT_MS = 9_000;
 const TENDERLY_JSON_TIMEOUT_MS = 1_500;
 const ETH_CALL_TIMEOUT_MS = 2_500;
+// A provider that hangs must leave time for the next one inside the stage budget:
+// two providers fit inside the 2.5 s eth_call stage.
+const RPC_PROVIDER_TIMEOUT_MS = 1_200;
 const ENRICH_TIMEOUT_MS = 4_000;
 const VAULT_DISCOVERY_TIMEOUT_MS = 1_500;
 const MAINNET_CHAIN = {
@@ -51,16 +56,40 @@ const MAINNET_CHAIN = {
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   rpcUrls: {
     default: {
-      http: ["https://eth.merkle.io"],
+      http: [RPC_URL_LIST[0]],
     },
   },
 } as const satisfies Chain;
 
-// Create public client for RPC calls
-const publicClient = createPublicClient({
-  chain: MAINNET_CHAIN,
-  transport: http(),
-});
+// Server-side RPC list: the configured private node first, then the public list.
+// Read at call time, not module load, because the environment is not available
+// at import time in every runtime.
+function getRpcUrls(): string[] {
+  const configured = process.env?.DEBUG_RPC_URL;
+  const urls = [...(configured ? [configured] : []), ...getAllRpcUrls()];
+  return [...new Set(urls.filter((url) => Boolean(url)))];
+}
+
+// Create public client lazily for RPC calls
+let publicClient: ReturnType<typeof createPublicClient> | null = null;
+function getPublicClient(): ReturnType<typeof createPublicClient> {
+  if (!publicClient) {
+    publicClient = createPublicClient({
+      chain: MAINNET_CHAIN,
+      transport: fallback(
+        getRpcUrls().map((url) =>
+          http(url, {
+            timeout: RPC_PROVIDER_TIMEOUT_MS,
+            retryCount: 0,
+            fetchOptions: { headers: rpcAuthHeaderFor(url) },
+          }),
+        ),
+        { rank: false, retryCount: 0 },
+      ),
+    });
+  }
+  return publicClient;
+}
 
 import { createSharedRateLimiter, getClientIp } from "@/lib/rate-limit";
 
@@ -149,6 +178,38 @@ function formatSimulateError(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
   return String(error);
+}
+
+/** Error text that is safe to log: no request body, no URL beyond its host, bounded. */
+function safeLogErrorText(error: unknown): string {
+  const text = formatSimulateError(error)
+    .split("\n")
+    .filter((line) => !/^\s*(URL|Request body|Raw Call Arguments|data|from|to):/i.test(line))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return redactUrlsInText(text).slice(0, 300);
+}
+
+// A revert reason is text chosen by whatever contract reverted, so it can carry
+// a link ("Claim refund at https://…"). Links are never shown to the user.
+const REVERT_REASON_URL = /\b(?:https?:\/\/|wss?:\/\/|www\.)\S+/gi;
+// A bare host needs a letter-only top-level part, so ordinary prose such as
+// "1.5/2" is not mistaken for one.
+const REVERT_REASON_HOST_PATH = /\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\/\S*/gi;
+const LINK_REMOVED = "[link removed]";
+
+/** Printable, link-free, whitespace-collapsed and bounded revert reason; absent if empty. */
+function cleanRevertReason(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const cleaned = raw
+    .replace(/[^\x20-\x7e]/g, " ")
+    .replace(REVERT_REASON_URL, LINK_REMOVED)
+    .replace(REVERT_REASON_HOST_PATH, LINK_REMOVED)
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+  return cleaned && cleaned !== LINK_REMOVED ? cleaned : undefined;
 }
 
 function shortAddress(address?: string): string | undefined {
@@ -394,12 +455,12 @@ async function discoverSimulationVault(address: string) {
   if (known) return known;
   // Only cache successful discovery; RPC failures must not permanently blacklist tokens.
   const underlying = await withTimeout(
-    publicClient.readContract({ address: address as `0x${string}`, abi: ERC4626_ABI, functionName: "asset" }),
+    getPublicClient().readContract({ address: address as `0x${string}`, abi: ERC4626_ABI, functionName: "asset" }),
     VAULT_DISCOVERY_TIMEOUT_MS,
     "vault_asset_lookup",
   );
   const decimals = await withTimeout(
-    publicClient.readContract({ address: underlying, abi: ERC4626_ABI, functionName: "decimals" }),
+    getPublicClient().readContract({ address: underlying, abi: ERC4626_ABI, functionName: "decimals" }),
     VAULT_DISCOVERY_TIMEOUT_MS,
     "underlying_decimals_lookup",
   );
@@ -693,7 +754,7 @@ export async function POST(request: NextRequest) {
         stage,
         durationMs: Date.now() - stageStartedAt,
         budgetMs,
-        error: formatSimulateError(error),
+        error: safeLogErrorText(error),
       });
       throw error;
     }
@@ -745,10 +806,10 @@ export async function POST(request: NextRequest) {
   });
 
   // Helper to try eth_call as fallback
-  async function tryEthCall(): Promise<{ success: boolean; error?: string }> {
+  async function tryEthCall(): Promise<{ success: boolean; error?: string; detail?: string }> {
     try {
       await runStage("eth_call", ETH_CALL_TIMEOUT_MS, () =>
-        publicClient.call({
+        getPublicClient().call({
           account: body.from as `0x${string}`,
           to: body.to as `0x${string}`,
           data: body.data as `0x${string}`,
@@ -758,9 +819,31 @@ export async function POST(request: NextRequest) {
       return { success: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : "eth_call failed";
-      // Extract revert reason if present
-      const revertMatch = message.match(/reverted with reason string '([^']+)'/);
-      return { success: false, error: revertMatch?.[1] ?? message };
+      // A revert reason, captured from either wording the transport or a node may use.
+      const revertReasonRaw =
+        message.match(/reverted with reason string '([^']+)'/)?.[1] ??
+        message.match(/reverted with reason: ([^\n]+?)\.?(?:\n|$)/i)?.[1];
+      const revertReason = cleanRevertReason(revertReasonRaw);
+      // A "gas required exceeds allowance" text captured by the reason regex is
+      // an out-of-gas answer, not a revert reason worth showing as one.
+      const usableReason = revertReason && !/^gas required exceeds/i.test(revertReason)
+        ? revertReason
+        : undefined;
+      // Never surface transport text (URLs, request bodies, provider errors) to the user.
+      // The reason is checked before the balance wording: a token's own
+      // "transfer amount exceeds balance" is its revert reason, not a funding problem.
+      const errorMessage = usableReason
+        // An out-of-gas answer outranks the generic revert wording: viem wraps
+        // "gas required exceeds allowance" as "Execution reverted with reason: …",
+        // and "out of gas" is a more useful message than "would revert".
+        || (/out of gas|gas required exceeds/i.test(message)
+          ? "Transaction would run out of gas"
+          : /execution reverted|vm execution error/i.test(message)
+            ? "Transaction would revert"
+            : /insufficient funds|exceeds the balance of the account/i.test(message)
+              ? "Not enough balance to cover this transaction and its gas"
+              : "Could not check the transaction: the network did not answer");
+      return { success: false, error: errorMessage, detail: safeLogErrorText(error) };
     }
   }
 
@@ -785,7 +868,7 @@ export async function POST(request: NextRequest) {
     // Tenderly request failed (network error) - try eth_call fallback
     const ethCallResult = await tryEthCall();
     if (ethCallResult.success) {
-      const reason = formatSimulateError(error);
+      const reason = safeLogErrorText(error);
       logSimulate("fallback_unavailable", {
         reason,
         path: "tenderly_fetch",
@@ -808,6 +891,7 @@ export async function POST(request: NextRequest) {
     logSimulate("failure", {
       path: "tenderly_fetch",
       error: ethCallResult.error ?? "Transaction would fail",
+      detail: ethCallResult.detail ?? null,
     });
     return NextResponse.json(
       {
@@ -827,7 +911,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const ethCallResult = await tryEthCall();
     if (ethCallResult.success) {
-      const reason = formatSimulateError(error);
+      const reason = safeLogErrorText(error);
       logSimulate("fallback_unavailable", {
         path: "tenderly_json",
         reason,
@@ -850,6 +934,7 @@ export async function POST(request: NextRequest) {
     logSimulate("failure", {
       path: "tenderly_json",
       error: ethCallResult.error ?? "Transaction would fail",
+      detail: ethCallResult.detail ?? null,
     });
     return NextResponse.json(
       {
@@ -896,6 +981,7 @@ export async function POST(request: NextRequest) {
       path: "tenderly_api_error",
       errorSlug: errorSlug ?? null,
       error: ethCallResult.error ?? "Transaction would fail",
+      detail: ethCallResult.detail ?? null,
     });
     return NextResponse.json(
       {
@@ -938,6 +1024,7 @@ export async function POST(request: NextRequest) {
     logSimulate("failure", {
       path: "tenderly_empty_payload",
       error: ethCallResult.error ?? "Transaction would fail",
+      detail: ethCallResult.detail ?? null,
     });
     return NextResponse.json(
       {
@@ -1023,7 +1110,7 @@ export async function POST(request: NextRequest) {
     },
     knownVault: lookupVault,
     lookupVault: discoverSimulationVault,
-    convertToAssets: (address, rawAmount) => publicClient.readContract({
+    convertToAssets: (address, rawAmount) => getPublicClient().readContract({
       address: address as `0x${string}`,
       abi: ERC4626_ABI,
       functionName: "convertToAssets",

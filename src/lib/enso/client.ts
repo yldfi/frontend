@@ -85,34 +85,49 @@ export const DYNAMIC_ROUTE_UNAVAILABLE_MESSAGE =
   "Enso can't route this swap step right now";
 
 export const enqueueEnsoCall = async <T>(fn: () => Promise<T>): Promise<T> => {
+  const enqueuedAt = Date.now();
   const run = async (): Promise<T> => {
-    const now = Date.now();
-    if (ENSO_RATE_LIMIT_MS > 0) {
-      const waitMs = lastEnsoCallAt + ENSO_RATE_LIMIT_MS - now;
-      if (waitMs > 0) {
-        await sleep(waitMs);
-      }
-    }
-    lastEnsoCallAt = Date.now();
-
-    for (let attempt = 0; attempt <= ENSO_MAX_RETRIES; attempt += 1) {
-      try {
-        return await withEnsoTimeout(fn);
-      } catch (error) {
-        if (!isEnsoRateLimit(error) || attempt === ENSO_MAX_RETRIES) {
-          throw error;
+    const startedAt = Date.now();
+    let attempts = 0;
+    let ok = false;
+    try {
+      const now = Date.now();
+      if (ENSO_RATE_LIMIT_MS > 0) {
+        const waitMs = lastEnsoCallAt + ENSO_RATE_LIMIT_MS - now;
+        if (waitMs > 0) {
+          await sleep(waitMs);
         }
-        // Enso's limit is per second (10 RPS on our plan), so a 429 clears
-        // within about a second. The old 1 s / 2 s / 3 s / 4 s ladder held this
-        // serial queue (and every quote behind it) for ~10 s; quote timings
-        // on 10 Nov clustered at exactly that. Back off 250 ms, 500 ms, 1 s.
-        const backoffMs = ENSO_RATE_LIMIT_MS > 0
-          ? ENSO_RATE_LIMIT_MS * (attempt + 1)
-          : 250 * 2 ** attempt;
-        await sleep(backoffMs);
+      }
+      lastEnsoCallAt = Date.now();
+
+      for (let attempt = 0; attempt <= ENSO_MAX_RETRIES; attempt += 1) {
+        attempts = attempt + 1;
+        try {
+          const result = await withEnsoTimeout(fn);
+          ok = true;
+          return result;
+        } catch (error) {
+          if (!isEnsoRateLimit(error) || attempt === ENSO_MAX_RETRIES) {
+            throw error;
+          }
+          // Enso's limit is per second (10 RPS on our plan), so a 429 clears
+          // within about a second. The old 1 s / 2 s / 3 s / 4 s ladder held this
+          // serial queue (and every quote behind it) for ~10 s; quote timings
+          // on 10 Nov clustered at exactly that. Back off 250 ms, 500 ms, 1 s.
+          const backoffMs = ENSO_RATE_LIMIT_MS > 0
+            ? ENSO_RATE_LIMIT_MS * (attempt + 1)
+            : 250 * 2 ** attempt;
+          await sleep(backoffMs);
+        }
+      }
+      throw new Error("Enso request failed after retries");
+    } finally {
+      const queueMs = startedAt - enqueuedAt;
+      const runMs = Date.now() - startedAt;
+      if (queueMs + runMs >= 5) {
+        console.log("[Enso] call", JSON.stringify({ queueMs, runMs, attempts, ok }));
       }
     }
-    throw new Error("Enso request failed after retries");
   };
 
   const resultPromise = ensoQueue.then(run, run);
