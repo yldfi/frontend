@@ -80,13 +80,16 @@ function RewardRow({ reward, claimReward = reward }: { reward: MerklReward; clai
   const claimClaimed = claimReward ? BigInt(claimReward.claimed) : 0n;
   const hasClaimAction = claimReward && claimAmount > claimClaimed;
 
-  // Total earned = claimable + claimed + pending
-  const totalEarned = amount > 0n ? amount : pending;
+  // Earned is the cumulative amount; the on-chain claimed figure can run ahead of it
+  // for a moment after a claim, so it is never shown below claimed.
+  const earned = amount > claimed ? amount : claimed;
+  // Nothing earned yet but rewards are accruing: the row shows the pending amount.
+  const showsPending = amount === 0n && pending > 0n;
+  const totalEarned = showsPending ? pending : earned;
 
   const formattedAmount = parseFloat(formatUnits(totalEarned, reward.token.decimals));
   const formattedClaimed = parseFloat(formatUnits(claimed, reward.token.decimals));
   const formattedClaimable = parseFloat(formatUnits(claimable, reward.token.decimals));
-  const formattedPending = parseFloat(formatUnits(pending, reward.token.decimals));
 
   const price = merklTokenUsdPrice(reward.token);
   const claimableUsd = formattedClaimable * price;
@@ -165,7 +168,7 @@ function RewardRow({ reward, claimReward = reward }: { reward: MerklReward; clai
       <div className="grid grid-cols-3 gap-4 text-sm">
         <div>
           <div className="text-[var(--muted-foreground)] mb-1">
-            {formattedPending > 0 && amount === 0n ? "Pending" : "Earned"}
+            {showsPending ? "Pending" : "Earned"}
           </div>
           <div className="font-medium mono">
             {formattedAmount.toLocaleString("en-US", { maximumFractionDigits: 4 })}

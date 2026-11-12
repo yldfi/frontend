@@ -151,6 +151,17 @@ function summaryClaimable(): string {
   return label.nextElementSibling?.textContent ?? "";
 }
 
+/** The value under a column label (Earned / Claimed / Claimable) inside a row. */
+function columnValue(row: HTMLElement, label: string): string {
+  return within(row).getByText(label).nextElementSibling?.textContent ?? "";
+}
+
+/** The USD line under a column's value, shown when the token has a price. */
+function columnUsd(row: HTMLElement, label: string): string {
+  const value = within(row).getByText(label).nextElementSibling;
+  return value?.nextElementSibling?.textContent ?? "";
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockUseAccount.mockReturnValue({
@@ -227,6 +238,91 @@ describe("RewardsPageContent claim row", () => {
     expect(within(row).queryByRole("button")).toBeNull();
     const claimableLabel = within(row).getByText("Claimable");
     expect(claimableLabel.nextElementSibling?.textContent).toBe("0");
+  });
+
+  it("shows earned at least as large as claimed", () => {
+    setup([
+      reward({
+        amount: "1000000000000000000",
+        claimed: "3000000000000000000",
+        pending: "0",
+      }),
+    ]);
+
+    const row = rowFor("crvUSD");
+    expect(within(row).queryByRole("button")).toBeNull();
+    expect(columnValue(row, "Earned")).toBe("3");
+    expect(columnValue(row, "Claimed")).toBe("3");
+    expect(columnValue(row, "Claimable")).toBe("0");
+  });
+
+  it("labels a row with only pending rewards as Pending", () => {
+    setup([
+      reward({
+        amount: "0",
+        claimed: "0",
+        pending: "2000000000000000000",
+      }),
+    ]);
+
+    const row = rowFor("crvUSD");
+    expect(columnValue(row, "Pending")).toBe("2");
+  });
+
+  it("labels a row Earned once anything was earned", () => {
+    setup([
+      reward({
+        amount: "1000000000000000000",
+        claimed: "0",
+        pending: "2000000000000000000",
+      }),
+    ]);
+
+    const row = rowFor("crvUSD");
+    expect(columnValue(row, "Earned")).toBe("1");
+  });
+
+  it("shows the pending amount under a Pending label when nothing is claimable", () => {
+    setup([
+      reward({
+        amount: "0",
+        claimed: "2000000000000000000",
+        pending: "1000000000000000000",
+      }),
+    ]);
+
+    const row = rowFor("crvUSD");
+    expect(within(row).queryByRole("button")).toBeNull();
+    expect(columnValue(row, "Pending")).toBe("1");
+    expect(columnUsd(row, "Pending")).toBe("$1.00");
+    expect(columnValue(row, "Claimed")).toBe("2");
+    expect(columnValue(row, "Claimable")).toBe("0");
+  });
+
+  it("shows the claimed amount under an Earned label when nothing is pending", () => {
+    setup([
+      reward({
+        amount: "0",
+        claimed: "2000000000000000000",
+        pending: "0",
+      }),
+    ]);
+
+    const row = rowFor("crvUSD");
+    expect(columnValue(row, "Earned")).toBe("2");
+  });
+
+  it("shows zero under an Earned label when nothing was earned and nothing is pending", () => {
+    setup([
+      reward({
+        amount: "0",
+        claimed: "0",
+        pending: "0",
+      }),
+    ]);
+
+    const row = rowFor("crvUSD");
+    expect(columnValue(row, "Earned")).toBe("0");
   });
 
   it("floors the page's claimable total at zero", () => {

@@ -24,7 +24,12 @@ import { useCvxPrice } from "@/hooks/useCvxPrice";
 import { useCurveLendingVault } from "@/hooks/useCurveLendingData";
 import { useCurveLendingPosition } from "@/hooks/useCurveLendingPosition";
 import { useCurveMarketRates } from "@/hooks/useCurveMarketRates";
-import { useMerklOpportunities, useMerklRewards } from "@/hooks/useMerklRewards";
+import {
+  useMerklOpportunities,
+  useMerklRewards,
+  type MerklOpportunity,
+  type MerklReward,
+} from "@/hooks/useMerklRewards";
 import { usePricePerShare } from "@/hooks/usePricePerShare";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { useVaultActions } from "@/hooks/useVaultActions";
@@ -320,6 +325,8 @@ type SetupOptions = {
   withdrawResult?: unknown;
   tokenBalance?: bigint;
   vaultBalance?: bigint;
+  merklRewards?: MerklReward[];
+  merklOpportunities?: MerklOpportunity[];
 };
 
 function defaultVaultActions(): VaultActionsResult {
@@ -436,8 +443,12 @@ function installDefaultHooks(options: SetupOptions = {}) {
     refetch: vi.fn(),
   } as unknown as ReturnType<typeof useCurveLendingPosition>);
   mockUseCurveMarketRates.mockReturnValue(null);
-  mockUseMerklRewards.mockReturnValue({ data: undefined } as unknown as ReturnType<typeof useMerklRewards>);
-  mockUseMerklOpportunities.mockReturnValue({ data: undefined } as unknown as ReturnType<typeof useMerklOpportunities>);
+  mockUseMerklRewards.mockReturnValue({
+    data: options.merklRewards ? [{ rewards: options.merklRewards }] : undefined,
+  } as unknown as ReturnType<typeof useMerklRewards>);
+  mockUseMerklOpportunities.mockReturnValue({
+    data: options.merklOpportunities,
+  } as unknown as ReturnType<typeof useMerklOpportunities>);
   mockUseCvxCrvPrice.mockReturnValue({ price: 0 } as unknown as ReturnType<typeof useCvxCrvPrice>);
   mockUseCvxPrice.mockReturnValue({ price: 0 } as unknown as ReturnType<typeof useCvxPrice>);
 
@@ -504,6 +515,60 @@ function actionButton(name: string | RegExp): HTMLButtonElement {
 function typeAmount(value: string) {
   fireEvent.change(screen.getByPlaceholderText("0.00"), { target: { value } });
 }
+
+const YLD_CAMPAIGN_ID = "0xb12032fde1bfb5ba7a853ed91ddfb164764b0eb3813cbfa25799af06efe117be";
+
+/** A yld-campaign reward in the shape the real campaign split helpers expect. */
+function yldReward(
+  overrides: {
+    amount?: string;
+    claimed?: string;
+    pending?: string;
+    token?: Partial<MerklReward["token"]>;
+  } = {},
+): MerklReward {
+  const amount = overrides.amount ?? "2000000000000000000";
+  const claimed = overrides.claimed ?? "0";
+  const pending = overrides.pending ?? "0";
+  return {
+    root: `0x${"0".repeat(64)}`,
+    distributionChainId: 1,
+    amount,
+    claimed,
+    pending,
+    proofs: [],
+    recipient: "0x1234567890123456789012345678901234567890",
+    token: {
+      chainId: 1,
+      address: "0x2222222222222222222222222222222222222222",
+      decimals: 18,
+      symbol: "crvUSD",
+      price: 0.5,
+      ...overrides.token,
+    },
+    breakdowns: [
+      {
+        root: `0x${"0".repeat(64)}`,
+        distributionChainId: 1,
+        reason: "test",
+        amount,
+        claimed,
+        pending,
+        campaignId: YLD_CAMPAIGN_ID,
+      },
+    ],
+  };
+}
+
+const liveOpportunity: MerklOpportunity = {
+  identifier: "0x0000000000000000000000000000000000000003",
+  name: "Yld Borrow crvUSD",
+  status: "LIVE",
+  chainId: 1,
+  type: "ENCOMPASSING",
+  apr: 12.34,
+  tvl: 0,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -753,5 +818,154 @@ describe("VaultPageContent deposit and withdraw form", () => {
 
     expect(() => render(<VaultPageContent id="not-a-real-vault" />)).toThrow("NEXT_NOT_FOUND");
     expect(mockNotFound).toHaveBeenCalled();
+  });
+});
+
+describe("VaultPageContent rewards banner", () => {
+  const rewardsVault = VAULTS.ycvxcrv;
+
+  function rewardsBanner(): HTMLElement | null {
+    return screen.queryByRole("link", { name: /crvUSD Rewards/ });
+  }
+
+  /**
+   * Mocks the vault config with the rewards vault's deprecated flag lifted.
+   * `getVault` reads the module's own `VAULTS`, so it has to be pointed at the
+   * patched vault as well. Call `vi.resetModules()` first.
+   */
+  async function mockRewardsVaultWithoutDeprecation() {
+    vi.doMock("@/config/vaults", async () => {
+      const actual = await vi.importActual<typeof import("@/config/vaults")>(
+        "@/config/vaults",
+      );
+      const vault = { ...actual.VAULTS.ycvxcrv, deprecated: undefined };
+      return {
+        ...actual,
+        VAULTS: { ...actual.VAULTS, ycvxcrv: vault },
+        getVault: (id: string) =>
+          id.toLowerCase() === "ycvxcrv" ? vault : actual.getVault(id),
+      };
+    });
+  }
+
+  it("does not render the banner on the deprecated vault without earnings", () => {
+    setup({ vault: rewardsVault });
+
+    expect(rewardsBanner()).toBeNull();
+  });
+
+  it("shows the unclaimed plus pending total of a priced yld-campaign reward", () => {
+    setup({
+      vault: rewardsVault,
+      merklRewards: [
+        yldReward({
+          amount: "3000000000000000000",
+          claimed: "1000000000000000000",
+          pending: "2000000000000000000",
+        }),
+      ],
+    });
+
+    // (3 − 1 + 2) × $0.50 = $2.00
+    expect(screen.getByText("Earning $2.00")).toBeTruthy();
+  });
+
+  it("counts only the priced reward when another has no price", () => {
+    setup({
+      vault: rewardsVault,
+      merklRewards: [
+        yldReward({ token: { symbol: "UNK", price: undefined } }),
+        yldReward(),
+      ],
+    });
+
+    expect(screen.getByText("Earning $1.00")).toBeTruthy();
+    expect(screen.queryByText(/NaN/)).toBeNull();
+  });
+
+  it("values a crvUSD reward without a price at $1", () => {
+    setup({
+      vault: rewardsVault,
+      merklRewards: [yldReward({ token: { price: undefined } })],
+    });
+
+    expect(screen.getByText("Earning $2.00")).toBeTruthy();
+  });
+
+  it("shows only the pending amount when claimed runs ahead of amount", () => {
+    setup({
+      vault: rewardsVault,
+      merklRewards: [
+        yldReward({
+          amount: "0",
+          claimed: "2000000000000000000",
+          pending: "1000000000000000000",
+          token: { price: 1 },
+        }),
+      ],
+    });
+
+    expect(screen.getByText("Earning $1.00")).toBeTruthy();
+  });
+
+  it("adds the live campaign APR when the opportunity is live", () => {
+    setup({
+      vault: rewardsVault,
+      merklRewards: [yldReward()],
+      merklOpportunities: [liveOpportunity],
+    });
+
+    expect(screen.getByText("Earning $1.00")).toBeTruthy();
+    expect(screen.getByText("12.3% APR")).toBeTruthy();
+  });
+
+  it("does not render the banner on another vault with the same earnings", () => {
+    setup({ merklRewards: [yldReward()] });
+
+    expect(rewardsBanner()).toBeNull();
+  });
+
+  it("does not render the banner on a non-deprecated rewards vault without a campaign", async () => {
+    // The only vault with the banner is deprecated, and that flag alone hides
+    // it, so the campaign condition can only be exercised with the flag lifted.
+    vi.resetModules();
+    mockRewardsVaultWithoutDeprecation();
+
+    try {
+      const { VaultPageContent: FreshVaultPageContent } = await import(
+        "@/components/VaultPageContent"
+      );
+      installDefaultHooks({ vault: rewardsVault });
+      render(<FreshVaultPageContent id={rewardsVault.id} />);
+
+      expect(rewardsBanner()).toBeNull();
+    } finally {
+      vi.doUnmock("@/config/vaults");
+      vi.resetModules();
+    }
+  });
+
+  it("shows the live campaign APR on a non-deprecated rewards vault", async () => {
+    vi.resetModules();
+    mockRewardsVaultWithoutDeprecation();
+
+    try {
+      const { VaultPageContent: FreshVaultPageContent } = await import(
+        "@/components/VaultPageContent"
+      );
+      installDefaultHooks({
+        vault: rewardsVault,
+        merklOpportunities: [liveOpportunity],
+      });
+      render(<FreshVaultPageContent id={rewardsVault.id} />);
+
+      expect(screen.getByText("12.3% APR")).toBeTruthy();
+      expect(
+        screen.getByText("Earn crvUSD by borrowing against ycvxCRV"),
+      ).toBeTruthy();
+    } finally {
+      vi.doUnmock("@/config/vaults");
+      vi.resetModules();
+    }
   });
 });

@@ -2,6 +2,9 @@ import type { TwocryptoParams } from "@yldfi/curve-amm-math";
 import { cryptoswap, getCryptoSwapParams } from "@/lib/curve";
 import { rpcWithFallback } from "./api";
 
+/** Longest the peg-point re-check may take before it counts as a failed read. */
+const PEG_RECHECK_TIMEOUT_MS = 2_500;
+
 // ============================================================================
 // pxCVX Pool Helper Functions (CryptoSwap pool - uses uint256 indices)
 // ============================================================================
@@ -88,9 +91,25 @@ export function findPegPointOffchainCryptoSwap(params: TwocryptoParams): bigint 
   return cryptoswap.findPegPoint(params, 0, 1);
 }
 
+/** Read get_dy(i, j, dx) from the pool contract itself. Rejects when the node
+ *  returns no usable result. */
+async function getPoolDyOnChain(i: number, j: number, amountIn: bigint): Promise<bigint> {
+  const { PIREX } = await import("@/config/vaults");
+  const selector = "0x556d6e9f"; // get_dy(uint256,uint256,uint256)
+  const word = (n: bigint) => n.toString(16).padStart(64, "0");
+  const result = await rpcWithFallback<{ result?: string }>({
+    jsonrpc: "2.0", id: 1, method: "eth_call",
+    params: [{ to: PIREX.LPXCVX_CVX_POOL, data: selector + word(BigInt(i)) + word(BigInt(j)) + word(amountIn) }, "latest"],
+  });
+  if (!result.result || result.result === "0x") {
+    throw new Error("Pool get_dy returned no data");
+  }
+  return BigInt(result.result);
+}
+
 /**
  * Calculate optimal swap amount for pxCVX hybrid swap/mint strategy
- * Uses off-chain CryptoSwap math for efficiency (1 batched RPC call + verification)
+ * Uses off-chain CryptoSwap math for efficiency (1 batched RPC call for the pool parameters, 1 eth_call to re-check the peg point)
  *
  * If swap rate (CVX → lpxCVX) > 1:1, swap gives bonus pxCVX
  * If swap rate < 1:1, mint directly via Pirex at 1:1
@@ -124,9 +143,26 @@ export async function getOptimalPxCvxSwapAmount(totalCvxAmount: string): Promise
       return { swapAmount: 0n, mintAmount: totalAmount };
     }
 
-    // RPC call 2: Verify peg point with on-chain get_dy
+    // Re-check the peg point against the pool contract's own get_dy. If the chain
+    // gives less than 1:1 the off-chain model was optimistic: swap 1% less. If the
+    // read fails, swap 2% less. A read that takes longer than the cap counts as
+    // failed.
     try {
-      const onChainDy = await getPxCvxSwapRate(pegPoint.toString());
+      const read = getPoolDyOnChain(0, 1, pegPoint);
+      // The read may still settle after the cap fires; it must not surface as an
+      // unhandled rejection.
+      read.catch(() => {});
+
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const onChainDy = await Promise.race([
+        read,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("Peg point re-check timed out")),
+            PEG_RECHECK_TIMEOUT_MS,
+          );
+        }),
+      ]).finally(() => clearTimeout(timer));
 
       if (onChainDy < pegPoint) {
         // Off-chain was slightly optimistic, reduce by 1% for safety
