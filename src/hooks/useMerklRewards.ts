@@ -45,7 +45,14 @@ export interface MerklToken {
   address: string;
   decimals: number;
   symbol: string;
-  price: number;
+  price?: number | null;
+}
+
+/** Dollar price of a reward token; crvUSD without a price counts as $1, anything else as $0. */
+export function merklTokenUsdPrice(token: Pick<MerklToken, "symbol" | "price">): number {
+  const price = token.price;
+  if (typeof price === "number" && Number.isFinite(price)) return price;
+  return token.symbol === "crvUSD" ? 1 : 0;
 }
 
 export interface MerklBreakdown {

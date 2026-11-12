@@ -10,6 +10,7 @@ import { formatUnits } from "viem";
 import { getVault, CURVE_CONTROLLERS, CURVE_SAVINGS, isLendingDisabledWithoutPosition } from "@/config/vaults";
 import {
   getYldMerklCampaignIds,
+  merklTokenUsdPrice,
   splitMerklRewardsByCampaign,
   useMerklRewards,
   useMerklOpportunities,
@@ -86,7 +87,7 @@ export function LendingPageContent({ vaultId }: { vaultId: string }) {
     const claimable = BigInt(r.amount) - BigInt(r.claimed);
     const unclaimed = claimable > 0n ? claimable : 0n;
     const pending = BigInt(r.pending);
-    return sum + parseFloat(formatUnits(unclaimed + pending, r.token.decimals)) * r.token.price;
+    return sum + parseFloat(formatUnits(unclaimed + pending, r.token.decimals)) * merklTokenUsdPrice(r.token);
   }, 0);
 
   // Merkl reward APR

@@ -31,8 +31,6 @@ vi.mock("@/lib/curve", () => ({
   getCurveGetDy: vi.fn(),
   getCurveGetDyFactory: vi.fn(),
   getEthToCvxEstimate: vi.fn(),
-  getStableSwapParams: vi.fn(),
-  estimateCryptoSwapOffchain: vi.fn(),
   previewRedeem: vi.fn(async (vaultAddress: string) => {
     const lower = vaultAddress.toLowerCase();
     if (lower === "0xbe53a109b494e5c9f97b9cd39fe969be68bf6204") {
@@ -46,7 +44,6 @@ vi.mock("@/lib/curve", () => ({
     }
     return "1000000000000000000";
   }),
-  batchRedeemAndEstimateSwap: vi.fn(),
   findPegPoint: vi.fn(() => 0n),
   calculateMinDy: vi.fn((amount: bigint) => amount.toString()),
   validateSlippage: vi.fn((slippage?: string) => Number(slippage ?? "100")),
@@ -63,7 +60,7 @@ vi.mock("@/lib/curve", () => ({
 
 import { POST } from "@/app/api/enso/[method]/route";
 import { assertValidEnsoIntentRequest } from "@/lib/enso-intents";
-import { cryptoswap, estimateCryptoSwapOffchain, findPegPoint, getCurveGetDy, getCurveGetDyFactory, getStableSwapParams } from "@/lib/curve";
+import { cryptoswap, findPegPoint, getCurveGetDy, getCurveGetDyFactory } from "@/lib/curve";
 import { ASYMMETRY, BEEFY, CONCENTRATOR, CURVE_CONTROLLERS, CURVE_SAVINGS, LLAMA_AIRFORCE, TOKENS, VAULT_ADDRESSES, YEARN } from "@/config/vaults";
 import { CRVUSD_ADDRESS, USDC_ADDRESS } from "@/config/addresses";
 
@@ -196,8 +193,6 @@ function applyMode(mode: (typeof MODES)[number]): void {
   vi.mocked(findPegPoint).mockReturnValue(peg);
   vi.mocked(cryptoswap.getDy).mockImplementation((_p: unknown, i: number, j: number, dx: bigint) =>
     i === 0 && j === 1 ? (mode.split && dx > ONE ? (dx * 9n) / 10n : (dx * 11n) / 10n) : i === 1 && j === 0 ? dx - dx / 10n : dx);
-  vi.mocked(estimateCryptoSwapOffchain).mockResolvedValue(5n * 10n ** 15n);
-  vi.mocked(getStableSwapParams).mockResolvedValue({ balances: [0n, 0n], A: 0n, Ann: 0n, fee: 0n, offpegFeeMultiplier: 0n });
   vi.mocked(getCurveGetDy).mockImplementation(async (_pool: string, i: number, j: number, amount: string) =>
     i === 0 && j === 1 ? BigInt(amount) + BigInt(amount) / 10n : BigInt(amount));
   vi.mocked(getCurveGetDyFactory).mockImplementation(async (_pool: string, _i: number, _j: number, amount: string) => BigInt(amount));

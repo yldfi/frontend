@@ -24,7 +24,7 @@ export const FLASHBOTS_RPC_URL = "https://rpc.flashbots.net" as const;
 // Only RPCs from known no-tracking providers are accepted.
 
 // Domains verified as tracking: "none" in DefiLlama chainlist
-const PRIVACY_SAFE_DOMAINS = new Set([
+export const PRIVACY_SAFE_DOMAINS: ReadonlySet<string> = new Set([
   "eth.drpc.org",
   "ethereum-rpc.publicnode.com",
   "1rpc.io",

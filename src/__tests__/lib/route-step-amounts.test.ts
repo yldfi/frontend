@@ -32,8 +32,6 @@ vi.mock("@/lib/curve", () => ({
   getCurveGetDy: vi.fn(),
   getCurveGetDyFactory: vi.fn(),
   getEthToCvxEstimate: vi.fn(),
-  getStableSwapParams: vi.fn(),
-  estimateCryptoSwapOffchain: vi.fn(),
   previewRedeem: vi.fn(async (vaultAddress: string) => {
     const lower = vaultAddress.toLowerCase();
     if (lower === "0xbe53a109b494e5c9f97b9cd39fe969be68bf6204") {
@@ -47,7 +45,6 @@ vi.mock("@/lib/curve", () => ({
     }
     return "1000000000000000000";
   }),
-  batchRedeemAndEstimateSwap: vi.fn(),
   findPegPoint: vi.fn(() => 0n),
   calculateMinDy: vi.fn((amount: bigint) => amount.toString()),
   validateSlippage: vi.fn((slippage?: string) => Number(slippage ?? "100")),
@@ -100,7 +97,7 @@ import {
   MORPHO_GENERAL_ADAPTER1_ADDRESS,
   MORPHO_TOKEN_ADDRESS,
 } from "@/lib/enso";
-import { cryptoswap, estimateCryptoSwapOffchain, findPegPoint, getCurveGetDy, getCurveGetDyFactory, getStableSwapParams, previewRedeem } from "@/lib/curve";
+import { cryptoswap, findPegPoint, getCurveGetDy, getCurveGetDyFactory, previewRedeem } from "@/lib/curve";
 import { BEEFY, CONCENTRATOR, LLAMA_AIRFORCE, PIREX, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 import { USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
 import type { EnsoBundleAction } from "@/types/enso";
@@ -230,14 +227,6 @@ describe("route step amounts", () => {
     });
     vi.mocked(cryptoswap.findPegPoint).mockReturnValue(0n);
     vi.mocked(findPegPoint).mockReturnValue(0n);
-    vi.mocked(estimateCryptoSwapOffchain).mockResolvedValue(5_000_000_000_000_000n);
-    vi.mocked(getStableSwapParams).mockResolvedValue({
-      balances: [0n, 0n],
-      A: 0n,
-      Ann: 0n,
-      fee: 0n,
-      offpegFeeMultiplier: 0n,
-    });
     vi.mocked(getCurveGetDy).mockImplementation(async (_pool: string, i: number, j: number, amount: string) => {
       const rawAmount = BigInt(amount);
       if (_pool.toLowerCase() === "0x4dece678ceceb27446b35c672dc7d61f30bad69e") {

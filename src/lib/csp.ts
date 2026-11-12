@@ -14,7 +14,11 @@
  * Only origins belong in the policy: an RPC URL can carry an API key in its
  * path, so every URL is reduced with `originOf`.
  */
-import { FLASHBOTS_RPC_URL, RPC_URL_LIST } from "@/config/rpc";
+import {
+  FLASHBOTS_RPC_URL,
+  PRIVACY_SAFE_DOMAINS,
+  RPC_URL_LIST,
+} from "@/config/rpc";
 
 export interface ReportOnlyCspOptions {
   isDev: boolean;
@@ -44,6 +48,11 @@ const RPC_CONNECT_SRC: readonly string[] = [
   ...RPC_URL_LIST,
   FLASHBOTS_RPC_URL,
 ].flatMap(originOf);
+
+/** Hosts dynamic RPC discovery may select (src/config/rpc.ts:27-37). */
+const DISCOVERY_RPC_CONNECT_SRC: readonly string[] = [...PRIVACY_SAFE_DOMAINS]
+  .map((host) => `https://${host}`)
+  .flatMap(originOf);
 
 /** Browser-side fetches found in src/. */
 const BROWSER_FETCH_CONNECT_SRC: readonly string[] = [
@@ -76,6 +85,13 @@ const WALLET_CONNECT_SRC: readonly string[] = [
   "https://*.reown.com",
 ];
 
+/** Coinbase Wallet SDK hosts. // candidate: confirm from console reports */
+const COINBASE_WALLET_CONNECT_SRC: readonly string[] = [
+  "https://*.coinbase.com",
+  "https://www.walletlink.org",
+  "wss://www.walletlink.org",
+];
+
 /** Local dev servers and the Anvil fork. */
 const DEV_CONNECT_SRC: readonly string[] = [
   "http://localhost:*",
@@ -88,14 +104,19 @@ export function buildReportOnlyCsp(options: ReportOnlyCspOptions): string {
   const { isDev } = options;
   const extraConnectSrc = (options.extraConnectSrc ?? []).flatMap(originOf);
 
+  // De-duplicated, first-seen order: the discovery list overlaps the RPC lists.
   const connectSrc = [
-    "'self'",
-    ...RPC_CONNECT_SRC,
-    ...BROWSER_FETCH_CONNECT_SRC,
-    ...ANALYTICS_CONNECT_SRC,
-    ...WALLET_CONNECT_SRC,
-    ...extraConnectSrc,
-    ...(isDev ? DEV_CONNECT_SRC : []),
+    ...new Set([
+      "'self'",
+      ...RPC_CONNECT_SRC,
+      ...DISCOVERY_RPC_CONNECT_SRC,
+      ...BROWSER_FETCH_CONNECT_SRC,
+      ...ANALYTICS_CONNECT_SRC,
+      ...WALLET_CONNECT_SRC,
+      ...COINBASE_WALLET_CONNECT_SRC,
+      ...extraConnectSrc,
+      ...(isDev ? DEV_CONNECT_SRC : []),
+    ]),
   ];
 
   const scriptSrc = [

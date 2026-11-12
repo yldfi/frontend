@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { buildReportOnlyCsp } from "@/lib/csp";
-import { FLASHBOTS_RPC_URL, RPC_URL_LIST } from "@/config/rpc";
+import {
+  FLASHBOTS_RPC_URL,
+  PRIVACY_SAFE_DOMAINS,
+  RPC_URL_LIST,
+} from "@/config/rpc";
 
 function directivesOf(csp: string): Map<string, string> {
   return new Map(
@@ -50,6 +54,41 @@ describe("buildReportOnlyCsp", () => {
     expect(connectSrc).toBeDefined();
     for (const url of [...RPC_URL_LIST, FLASHBOTS_RPC_URL]) {
       expect(connectSrc!.split(" ")).toContain(new URL(url).origin);
+    }
+  });
+
+  it("covers every dynamic-discovery host in connect-src", () => {
+    const connectSrc = directivesOf(buildReportOnlyCsp({ isDev: false })).get("connect-src");
+
+    expect(connectSrc).toBeDefined();
+    for (const host of PRIVACY_SAFE_DOMAINS) {
+      expect(connectSrc!.split(" ")).toContain(`https://${host}`);
+    }
+  });
+
+  it("covers the Coinbase Wallet SDK origins in connect-src only", () => {
+    const directives = directivesOf(buildReportOnlyCsp({ isDev: false }));
+    const connectSrc = directives.get("connect-src")!.split(" ");
+    const coinbaseSources = [
+      "https://*.coinbase.com",
+      "https://www.walletlink.org",
+      "wss://www.walletlink.org",
+    ];
+
+    for (const source of coinbaseSources) {
+      expect(connectSrc).toContain(source);
+      for (const [name, value] of directives) {
+        if (name === "connect-src") continue;
+        expect(value.split(" ")).not.toContain(source);
+      }
+    }
+  });
+
+  it("lists no source twice in connect-src", () => {
+    for (const isDev of [false, true]) {
+      const connectSrc = directivesOf(buildReportOnlyCsp({ isDev })).get("connect-src")!.split(" ");
+
+      expect(connectSrc).toHaveLength(new Set(connectSrc).size);
     }
   });
 

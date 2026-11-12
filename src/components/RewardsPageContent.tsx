@@ -12,6 +12,7 @@ import { LoadingDots } from "@/components/LoadingDots";
 import {
   getMerklOpportunityUrl,
   getYldMerklCampaignIds,
+  merklTokenUsdPrice,
   splitMerklRewardsByCampaign,
   useMerklOpportunities,
   useMerklRewards,
@@ -87,7 +88,7 @@ function RewardRow({ reward, claimReward = reward }: { reward: MerklReward; clai
   const formattedClaimable = parseFloat(formatUnits(claimable, reward.token.decimals));
   const formattedPending = parseFloat(formatUnits(pending, reward.token.decimals));
 
-  const price = reward.token.price ?? (reward.token.symbol === "crvUSD" ? 1 : 0);
+  const price = merklTokenUsdPrice(reward.token);
   const claimableUsd = formattedClaimable * price;
 
   const { writeContract, data: txHash, isPending: isClaiming, error: writeError } = useWriteContract();
@@ -253,7 +254,7 @@ export function RewardsPageContent() {
   const yldRewardKeys = new Set(yldRewards.map(rewardKey));
 
   // Use price from API, fallback to $1 for stablecoins
-  const getPrice = (r: MerklReward) => r.token.price ?? (r.token.symbol === "crvUSD" ? 1 : 0);
+  const getPrice = (r: MerklReward) => merklTokenUsdPrice(r.token);
 
   // Calculate totals
   const totalClaimableUsd = rewards.reduce((sum, r) => {

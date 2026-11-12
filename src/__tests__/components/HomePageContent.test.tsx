@@ -645,6 +645,38 @@ describe("HomePageContent rewards badge", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("values a crvUSD reward without a price at $1", () => {
+    const reward = yldReward("2000000", 0);
+    reward.token = {
+      ...reward.token,
+      symbol: "crvUSD",
+      price: undefined,
+    };
+    const { container } = setup({ balances: hiddenBalance, merklRewards: [reward] });
+
+    const row = vaultRow(container, hiddenId);
+    expect(row).not.toBeNull();
+    expect(
+      within(row as HTMLElement).getAllByText("Earning $2.00").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("counts only the priced reward when a non-crvUSD reward has no price", () => {
+    const unpriced = yldReward("2000000", 0);
+    unpriced.token = { ...unpriced.token, price: undefined };
+    const { container } = setup({
+      balances: hiddenBalance,
+      merklRewards: [unpriced, yldReward("3000000", 0.5)],
+    });
+
+    const row = vaultRow(container, hiddenId);
+    expect(row).not.toBeNull();
+    expect(
+      within(row as HTMLElement).getAllByText("Earning $1.50").length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText(/NaN/)).toBeNull();
+  });
+
   it("shows the live campaign APR when the rewards vault is not deprecated", async () => {
     // The only hasRewards vault is ycvxcrv, which the real config marks
     // deprecated (so the badge requires earnings and shows the earnings text).

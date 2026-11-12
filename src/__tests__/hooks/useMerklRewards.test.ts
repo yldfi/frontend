@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   getYldMerklCampaignIds,
+  merklTokenUsdPrice,
   splitMerklRewardsByCampaign,
   YLD_MERKL_OPPORTUNITY_IDENTIFIER,
   type MerklReward,
@@ -96,5 +97,27 @@ describe("Merkl campaign classification", () => {
       claimed: "15",
       pending: "10",
     });
+  });
+});
+
+describe("merklTokenUsdPrice", () => {
+  it("returns a finite price as-is", () => {
+    expect(merklTokenUsdPrice({ symbol: "CRV", price: 0.42 })).toBe(0.42);
+  });
+
+  it("keeps a zero price as zero", () => {
+    expect(merklTokenUsdPrice({ symbol: "CRV", price: 0 })).toBe(0);
+  });
+
+  it("values an unpriced crvUSD token at $1", () => {
+    expect(merklTokenUsdPrice({ symbol: "crvUSD", price: undefined })).toBe(1);
+    expect(merklTokenUsdPrice({ symbol: "crvUSD", price: null })).toBe(1);
+    expect(merklTokenUsdPrice({ symbol: "crvUSD", price: NaN })).toBe(1);
+  });
+
+  it("values other unpriced tokens at $0", () => {
+    expect(merklTokenUsdPrice({ symbol: "CRV", price: undefined })).toBe(0);
+    expect(merklTokenUsdPrice({ symbol: "CRV", price: null })).toBe(0);
+    expect(merklTokenUsdPrice({ symbol: "CRV", price: NaN })).toBe(0);
   });
 });

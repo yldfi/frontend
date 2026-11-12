@@ -6,7 +6,7 @@ import { useAccount } from "wagmi";
 import { formatUnits } from "viem";
 import { Logo } from "@/components/Logo";
 import { CustomConnectButton } from "@/components/CustomConnectButton";
-import { useMerklRewards } from "@/hooks/useMerklRewards";
+import { merklTokenUsdPrice, useMerklRewards } from "@/hooks/useMerklRewards";
 import { formatUsd } from "@/lib/utils";
 
 export function Header() {
@@ -18,7 +18,7 @@ export function Header() {
   const totalClaimable = rewards.reduce((sum, r) => {
     const claimable = BigInt(r.amount) - BigInt(r.claimed);
     if (claimable <= 0n) return sum;
-    const price = r.token.price ?? (r.token.symbol === "crvUSD" ? 1 : 0);
+    const price = merklTokenUsdPrice(r.token);
     return sum + parseFloat(formatUnits(claimable, r.token.decimals)) * price;
   }, 0);
 
