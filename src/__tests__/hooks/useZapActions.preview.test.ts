@@ -12,6 +12,7 @@ import {
 
 import { useZapActions } from "@/hooks/useZapActions";
 import { useDirectWriteContract } from "@/hooks/useDirectWriteContract";
+import { useTestNetwork } from "@/contexts/TestNetworkContext";
 import {
   ENSO_ROUTER_V2,
   LEGACY_MORPHO_ADDRESS,
@@ -454,6 +455,49 @@ describe("useZapActions preview fallback", () => {
       data: mockEthQuote.tx.data,
       value: BigInt(mockEthQuote.tx.value),
     });
+  });
+
+  it.each([
+    [10n ** 16n, "0x2386f26fc10000"],
+    [0n, "0x0"],
+  ])("passes a zap value of %s to the test-network simulation as %s", async (value, expected) => {
+    const request = vi.fn().mockResolvedValue({
+      status: true,
+      gasUsed: "0x5208",
+      assetChanges: [],
+    });
+    mockUsePublicClient.mockReturnValue({
+      getBlockNumber: vi.fn().mockResolvedValue(25967620n),
+      readContract: vi.fn(async () => 0n),
+      transport: { request },
+    } as unknown as ReturnType<typeof usePublicClient>);
+    vi.mocked(useTestNetwork).mockReturnValue({
+      testNetworkType: "tenderly",
+    } as ReturnType<typeof useTestNetwork>);
+
+    const quote: ZapQuote = {
+      ...mockEthQuote,
+      tx: { ...mockEthQuote.tx, value: value.toString() },
+    };
+    try {
+      const { result } = renderHook(() => useZapActions(quote));
+
+      await act(async () => {
+        await result.current.executeZap({ previewOnly: true });
+      });
+
+      expect(request).toHaveBeenCalledWith({
+        method: "tenderly_simulateTransaction",
+        params: [
+          expect.objectContaining({ value: expected }),
+          "latest",
+        ],
+      });
+    } finally {
+      vi.mocked(useTestNetwork).mockReturnValue({
+        testNetworkType: null,
+      } as ReturnType<typeof useTestNetwork>);
+    }
   });
 
   it("does not send a different quote than the one previewed", async () => {
@@ -1307,6 +1351,7 @@ describe("useZapActions preview fallback", () => {
     const simulateCalls = vi.mocked(fetch).mock.calls.filter(([input]) => String(input).includes("/api/simulate"));
     expect(simulateCalls).toHaveLength(0);
     expect(onStaleQuote).toHaveBeenCalledTimes(1);
+    expect(onStaleQuote).toHaveBeenCalledWith({ afterApproval: false });
     expect(result.current.status).toBe("idle");
   });
 
@@ -1348,6 +1393,7 @@ describe("useZapActions preview fallback", () => {
       await result.current.executeZap();
     });
     expect(onStaleQuote).toHaveBeenCalledTimes(1);
+    expect(onStaleQuote).toHaveBeenCalledWith({ afterApproval: false });
     expect(mockSendTx).not.toHaveBeenCalled();
 
     rerender({ at: Date.now() });
@@ -1406,6 +1452,7 @@ describe("useZapActions preview fallback", () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(100); });
 
       expect(onStaleQuote).toHaveBeenCalledTimes(1);
+      expect(onStaleQuote).toHaveBeenCalledWith({ afterApproval: true });
       expect(mockSendTx).not.toHaveBeenCalled();
       const simulateCalls = vi.mocked(fetch).mock.calls.filter(([input]) => String(input).includes("/api/simulate"));
       expect(simulateCalls).toHaveLength(0);

@@ -391,9 +391,13 @@ export function ZapPageContent() {
     [quoteUpdatedAt],
   );
   // The hook refuses to execute an old quote (e.g. when an approval took minutes to mine).
-  const handleStaleQuote = useCallback(() => {
+  const handleStaleQuote = useCallback(({ afterApproval }: { afterApproval: boolean }) => {
     void refetchQuote();
-    toast.info("Quote refreshed. Check the new amounts, then try again.");
+    toast.info(
+      afterApproval
+        ? "Approval confirmed. The quote was refreshed while it was pending — check the new amounts, then zap."
+        : "Quote refreshed. Check the new amounts, then try again.",
+    );
   }, [refetchQuote]);
   // Back from idle: re-quote right away if the one on screen has aged.
   const wasIdleRef = useRef(false);

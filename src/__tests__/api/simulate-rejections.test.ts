@@ -6,6 +6,10 @@ type Rejection = { success: boolean; errorMessage?: string; retryable?: boolean 
 type Credentials = { nonce: string; expires: number; sig: string };
 
 const mocks = vi.hoisted(() => ({ prices: vi.fn(), readContract: vi.fn() }));
+const { mockGetCloudflareContext } = vi.hoisted(() => ({ mockGetCloudflareContext: vi.fn() }));
+vi.mock("@opennextjs/cloudflare", () => ({
+  getCloudflareContext: mockGetCloudflareContext,
+}));
 vi.mock("@/lib/enso", () => ({
   fetchTokenPricesDirect: mocks.prices,
   ENSO_ROUTER_V2: "0xf75584ef6673ad213a685a1b58cc0330b8ea22cf",
@@ -50,6 +54,9 @@ beforeEach(() => {
   vi.stubEnv("TENDERLY_ACCESS_KEY", "fixture-only");
   vi.stubEnv("SIMULATION_NONCE_SECRET", "fixture-only-local-secret");
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({})));
+  mockGetCloudflareContext.mockImplementation(() => {
+    throw new Error("no cf context");
+  });
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.clearAllMocks(); });
 
@@ -219,5 +226,65 @@ describe("POST /api/simulate rejections", () => {
     expect(result.errorMessage).toBe("Rate limit exceeded");
     expect(result.retryable).toBe(true);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a cross-site request before the rate limit and any paid call", async () => {
+    const limit = vi.fn();
+    mockGetCloudflareContext.mockReturnValue({ env: { RL_SIMULATE: { limit } } });
+    const requestHeaders = {
+      origin: "https://attacker.example",
+      "sec-fetch-site": "cross-site",
+      "x-forwarded-for": `cross-${crypto.randomUUID()}`,
+    };
+
+    const response = await post({ from: FROM, to: VALID_TO, data: DATA }, requestHeaders);
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ success: false, errorMessage: "Forbidden" });
+    expect(limit).not.toHaveBeenCalled();
+    expect(mockGetCloudflareContext).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps serving requests without origin headers", async () => {
+    const response = await post({}, {});
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ errorMessage: "Missing from/to/data" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/simulate/nonce cross-site rejection", () => {
+  const bind = simulationNonceBinding({ from: FROM, to: VALID_TO, data: DATA });
+
+  function nonceRequest(headers: Record<string, string>) {
+    return nonce(new NextRequest(`http://localhost:3000/api/simulate/nonce?bind=${bind}`, { headers }));
+  }
+
+  it("refuses a cross-site request before the rate limit and issuing a nonce", async () => {
+    const limit = vi.fn();
+    mockGetCloudflareContext.mockReturnValue({ env: { RL_SIMULATE_NONCE: { limit } } });
+
+    const response = await nonceRequest({
+      origin: "https://attacker.example",
+      "sec-fetch-site": "cross-site",
+      "x-forwarded-for": `cross-${crypto.randomUUID()}`,
+    });
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ success: false, errorMessage: "Forbidden" });
+    expect(limit).not.toHaveBeenCalled();
+  });
+
+  it("keeps issuing nonces to requests without origin headers", async () => {
+    const response = await nonceRequest({ "x-forwarded-for": `no-origin-${crypto.randomUUID()}` });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      nonce: expect.any(String),
+      expires: expect.any(Number),
+      sig: expect.any(String),
+    });
   });
 });

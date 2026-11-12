@@ -58,6 +58,68 @@ const eslintConfig = defineConfig([
       "import/no-anonymous-default-export": "off",
     },
   },
+  // `src/lib/enso.ts` is the barrel; modules under `src/lib/enso/` are internal
+  // so they stay free to change without freezing their helpers into the API.
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@/lib/enso/*", "**/lib/enso/*"],
+              message:
+                'Import from "@/lib/enso" (the barrel); modules under src/lib/enso/ are internal.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  // Files directly under `src/lib/` reach the internals through `./enso/*`.
+  {
+    files: ["src/lib/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@/lib/enso/*", "**/lib/enso/*", "./enso/*"],
+              message:
+                'Import from "@/lib/enso" (the barrel); modules under src/lib/enso/ are internal.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  // Files in subfolders of `src/lib/` reach the internals one or two levels up.
+  {
+    files: ["src/lib/*/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@/lib/enso/*", "**/lib/enso/*", "../enso/*", "../../enso/*"],
+              message:
+                'Import from "@/lib/enso" (the barrel); modules under src/lib/enso/ are internal.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  // The Enso modules themselves, the barrel and the tests may reach internals.
+  {
+    files: ["src/lib/enso/**", "src/lib/enso.ts", "src/__tests__/**"],
+    rules: {
+      "no-restricted-imports": "off",
+    },
+  },
   // Unit tests must exercise real source code, not a copy of it.
   {
     files: ["src/**/*.{test,spec}.ts", "src/**/*.{test,spec}.tsx"],

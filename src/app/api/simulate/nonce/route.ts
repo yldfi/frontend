@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { boundNoncePayload, isSimulationNonceBinding } from "@/lib/simulation-nonce";
+import { isCrossSiteBrowserRequest } from "@/lib/request-origin";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +55,13 @@ export async function OPTIONS(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   const corsHeaders = getCorsHeaders(request);
+
+  if (isCrossSiteBrowserRequest(request)) {
+    return NextResponse.json(
+      { success: false, errorMessage: "Forbidden" },
+      { status: 403, headers: corsHeaders }
+    );
+  }
 
   // Rate limiting
   const clientIp = getClientIp(request);

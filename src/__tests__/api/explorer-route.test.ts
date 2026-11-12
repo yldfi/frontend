@@ -3,10 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 // No KV in tests: the route's getKV() catches this and returns null.
+const { mockGetCloudflareContext } = vi.hoisted(() => ({ mockGetCloudflareContext: vi.fn() }));
 vi.mock("@opennextjs/cloudflare", () => ({
-  getCloudflareContext: () => {
-    throw new Error("no cf");
-  },
+  getCloudflareContext: mockGetCloudflareContext,
 }));
 
 import { GET } from "@/app/api/explorer/route";
@@ -27,6 +26,9 @@ describe("Explorer API route boundary", () => {
   beforeEach(() => {
     vi.stubEnv("ETHERSCAN_API_KEY", "test-key");
     vi.stubGlobal("fetch", fetchMock);
+    mockGetCloudflareContext.mockImplementation(() => {
+      throw new Error("no cf");
+    });
   });
 
   afterEach(() => {
@@ -135,5 +137,34 @@ describe("Explorer API route boundary", () => {
     const body = await response.json();
     expect(body).toEqual({ error: "Internal server error" });
     expect(JSON.stringify(body)).not.toContain(leaked);
+  });
+
+  it("refuses cross-site browser requests before the rate limit and Etherscan", async () => {
+    const limit = vi.fn();
+    mockGetCloudflareContext.mockReturnValue({ env: { RL_EXPLORER: { limit } } });
+
+    const response = await GET(
+      new NextRequest(`https://yldfi.co/api/explorer?action=getABI&address=${ADDRESS}&chainId=1`, {
+        headers: {
+          origin: "https://attacker.example",
+          "sec-fetch-site": "cross-site",
+          "x-forwarded-for": "203.0.113.9",
+        },
+      })
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: "Forbidden" });
+    expect(limit).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps serving requests without origin headers", async () => {
+    fetchMock.mockResolvedValue(okAbi());
+
+    const response = await GET(request(`action=getABI&address=${ADDRESS}&chainId=1`, "203.0.113.11"));
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

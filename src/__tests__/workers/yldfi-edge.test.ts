@@ -50,6 +50,20 @@ beforeEach(() => {
   openNextFetch = vi.spyOn(openNext, "fetch");
 });
 
+/** Throws `err` from the inner worker and returns the message stored in D1. */
+async function storedErrorMessage(err: string | Error) {
+  openNextFetch.mockRejectedValue(err);
+  const { env, fakeD1 } = makeEnv();
+  const { ctx, pending } = captureWaitUntil();
+
+  const res = await edgeWorker.fetch(new Request("https://yldfi.co/vaults"), env, ctx);
+
+  expect(res.status).toBe(500);
+  await pending();
+  expect(fakeD1.rows).toHaveLength(1);
+  return String(fakeD1.rows[0].args[3]);
+}
+
 describe("yldfi-edge wrapper", () => {
   it("passes through successful responses", async () => {
     openNextFetch.mockResolvedValue(new Response("ok", { status: 200 }));
@@ -99,6 +113,42 @@ describe("yldfi-edge wrapper", () => {
     expect(meta.referer).toBe("https://yldfi.co/zap");
     expect(JSON.stringify(meta)).not.toContain("SECRETISH");
     expect(JSON.stringify(meta)).not.toContain("input=");
+  });
+
+  it("keeps only the host from a URL in an Error's message and stack", async () => {
+    const message = await storedErrorMessage(
+      new Error("fetch failed for https://api.example/v2/SECRETKEY?wallet=0xabc&sig=123"),
+    );
+
+    expect(message).toContain("fetch failed for");
+    expect(message).toContain("api.example");
+    expect(message).not.toContain("SECRETKEY");
+    expect(message).not.toContain("wallet=");
+    expect(message).not.toContain("sig=");
+  });
+
+  it("keeps only the host from a URL in a thrown string", async () => {
+    const message = await storedErrorMessage("upstream failed: wss://rpc.example/SECRETKEY?token=abc");
+
+    expect(message).toBe("upstream failed: rpc.example");
+  });
+
+  it("stores an error with no URL unchanged", async () => {
+    const message = await storedErrorMessage("plain failure, nothing else");
+
+    expect(message).toBe("plain failure, nothing else");
+  });
+
+  it("applies the 2,000-character cap after redaction", async () => {
+    const longText = `${"x".repeat(1900)} https://api.example/v2/SECRETKEY?wallet=0xabc&sig=123 ${"y".repeat(3000)}`;
+
+    const message = await storedErrorMessage(longText);
+
+    expect(message).toContain("api.example");
+    expect(message).not.toContain("SECRET");
+    expect(message).not.toContain("wallet=");
+    expect(message.length).toBe(2001);
+    expect(message.endsWith("…")).toBe(true);
   });
 
   it("still returns 500 when the D1 write itself fails", async () => {

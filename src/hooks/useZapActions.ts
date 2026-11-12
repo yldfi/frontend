@@ -58,7 +58,7 @@ export function useZapActions(
     /** When the on-screen quote was fetched (ms epoch). 0 or omitted = unknown, never treated as stale. */
     quoteUpdatedAt?: number;
     /** Called when an execute is refused because the quote is too old. */
-    onStaleQuote?: () => void;
+    onStaleQuote?: (info: { afterApproval: boolean }) => void;
   },
 ) {
   const { address: userAddress, chainId } = useAccount();
@@ -722,7 +722,7 @@ export function useZapActions(
         // storage layout and approval behavior are respected.
         approvalTransactions,
       },
-      vnetValue: txParams.value.toString(),
+      vnetValue: `0x${txParams.value.toString(16)}`,
       testNetworkType,
       chainId,
       logTag: "[Tenderly Simulation]",
@@ -826,7 +826,11 @@ export function useZapActions(
     if (isQuoteOlderThan(quoteUpdatedAtRef.current)) {
       allowanceCheckRef.current = null;
       setActionState("idle");
-      onStaleQuoteRef.current?.();
+      onStaleQuoteRef.current?.({
+        // True when this execute is the auto-continuation after an approval
+        // just mined: the page can say the approval went through.
+        afterApproval: confirmedApprovalRef.current?.scope === approvalScope,
+      });
       return null;
     }
 

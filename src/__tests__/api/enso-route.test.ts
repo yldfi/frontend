@@ -100,6 +100,48 @@ describe("Enso API route boundary", () => {
     expect(unknown.headers.get("Access-Control-Allow-Origin")).toBe("https://yldfi.co");
   });
 
+  it("refuses cross-site browser requests before the rate limit and any Enso call", async () => {
+    const limit = vi.fn();
+    mockGetCloudflareContext.mockReturnValue({ env: { RL_ENSO: { limit } } });
+
+    const response = await POST(
+      new Request("https://yldfi.co/api/enso/quote", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://attacker.example",
+          "sec-fetch-site": "cross-site",
+        },
+        body: JSON.stringify({}),
+      }) as never,
+      { params: Promise.resolve({ method: "quote" }) },
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: "Forbidden" });
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://yldfi.co");
+    expect(limit).not.toHaveBeenCalled();
+    expect(mockGetQuoteData).not.toHaveBeenCalled();
+    expect(mockGetBundleData).not.toHaveBeenCalled();
+  });
+
+  it("keeps serving header-less requests", async () => {
+    const response = await POST(
+      new Request("https://yldfi.co/api/enso/bundle", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ fromAddress: "0x1234567890123456789012345678901234567890", actions: [] }),
+      }) as never,
+      { params: Promise.resolve({ method: "bundle" }) },
+    );
+
+    expect(response.status).toBe(410);
+    await expect(response.json()).resolves.toEqual({
+      error: "Raw Enso bundle actions are disabled; use /api/enso/intent",
+    });
+    expect(mockGetBundleData).not.toHaveBeenCalled();
+  });
+
   describe("quote", () => {
     const USER = "0x1234567890123456789012345678901234567890";
     const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";

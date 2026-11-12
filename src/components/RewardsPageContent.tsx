@@ -257,7 +257,9 @@ export function RewardsPageContent() {
 
   // Calculate totals
   const totalClaimableUsd = rewards.reduce((sum, r) => {
-    const claimable = BigInt(r.amount) - BigInt(r.claimed);
+    const amount = BigInt(r.amount);
+    const claimed = BigInt(r.claimed);
+    const claimable = amount > claimed ? amount - claimed : 0n;
     return sum + parseFloat(formatUnits(claimable, r.token.decimals)) * getPrice(r);
   }, 0);
 

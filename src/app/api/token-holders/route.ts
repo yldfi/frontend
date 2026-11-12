@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { RPC_TIMEOUT_MS, RPC_URL_LIST } from "@/config/rpc";
+import { isCrossSiteBrowserRequest } from "@/lib/request-origin";
 
 export const dynamic = "force-dynamic";
 
@@ -108,6 +109,10 @@ async function fetchFromBlockscout(
 }
 
 export async function POST(request: NextRequest) {
+  if (isCrossSiteBrowserRequest(request)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   // Auth check
   const apiKey = request.headers.get("x-api-key");
   if (!TOKEN_HOLDER_API_KEY || !apiKey || !timingSafeEqual(apiKey, TOKEN_HOLDER_API_KEY)) {

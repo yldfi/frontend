@@ -481,10 +481,30 @@ describe("ZapPageContent", () => {
       onStaleQuote: expect.any(Function),
     });
 
-    freshness?.onStaleQuote?.();
+    freshness?.onStaleQuote?.({ afterApproval: false });
 
     expect(refetchQuote).toHaveBeenCalled();
     expect(toast.info).toHaveBeenCalledWith("Quote refreshed. Check the new amounts, then try again.");
+  });
+
+  it("says the approval went through when the quote is refreshed after it", () => {
+    mockUseUniversalZap.mockReturnValue({
+      quote,
+      quoteUpdatedAt: 123,
+      isLoading: false,
+      error: null,
+      refetch: refetchQuote,
+    } as unknown as ReturnType<typeof useUniversalZap>);
+    render(<ZapPageContent />);
+
+    const calls = mockUseZapActions.mock.calls;
+    const freshness = calls[calls.length - 1]?.[1];
+    freshness?.onStaleQuote?.({ afterApproval: true });
+
+    expect(refetchQuote).toHaveBeenCalled();
+    expect(toast.info).toHaveBeenCalledWith(
+      "Approval confirmed. The quote was refreshed while it was pending — check the new amounts, then zap.",
+    );
   });
 
   it("warns instead of showing green when the quote is far above market", () => {

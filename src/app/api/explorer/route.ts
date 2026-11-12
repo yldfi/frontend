@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { RPC_TIMEOUT_MS, RPC_URL_LIST } from "@/config/rpc";
+import { isCrossSiteBrowserRequest } from "@/lib/request-origin";
 
 /**
  * Explorer API - Server-side Etherscan proxy with Cloudflare KV caching
@@ -88,6 +89,10 @@ function getKV(): KVNamespace | null {
 }
 
 export async function GET(request: NextRequest) {
+  if (isCrossSiteBrowserRequest(request)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   // Per-IP rate limiting
   const clientIp = getClientIp(request);
   if (await isRateLimited(clientIp)) {

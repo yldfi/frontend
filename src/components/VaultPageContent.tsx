@@ -803,9 +803,13 @@ export function VaultPageContent({ id }: { id: string }) {
     return true;
   };
   // The hook refuses to execute an old quote too (e.g. when an approval took minutes to mine).
-  const handleStaleZapQuote = useCallback(() => {
+  const handleStaleZapQuote = useCallback(({ afterApproval }: { afterApproval: boolean }) => {
     void refetchZapQuote();
-    toast.info("Quote refreshed. Check the new amounts, then try again.");
+    toast.info(
+      afterApproval
+        ? "Approval confirmed. The quote was refreshed while it was pending — check the new amounts, then zap."
+        : "Quote refreshed. Check the new amounts, then try again.",
+    );
   }, [refetchZapQuote]);
 
   // Every zap entry point (button, simulation preview fall-through, approve -> auto-execute)

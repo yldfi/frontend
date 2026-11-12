@@ -15,6 +15,7 @@ import {
   type TenderlySimulationRequest,
 } from "@/lib/tenderly-simulation-bundle";
 import { boundNoncePayload, shareLinkPayload, simulationNonceBinding } from "@/lib/simulation-nonce";
+import { isCrossSiteBrowserRequest } from "@/lib/request-origin";
 
 export const dynamic = "force-dynamic";
 
@@ -470,6 +471,13 @@ export async function OPTIONS(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const corsHeaders = getCorsHeaders(request);
+
+  if (isCrossSiteBrowserRequest(request)) {
+    return NextResponse.json(
+      { success: false, errorMessage: "Forbidden" },
+      { status: 403, headers: corsHeaders }
+    );
+  }
 
   const clientIp = getClientIp(request);
   if (await isRateLimited(clientIp)) {

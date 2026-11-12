@@ -16,6 +16,7 @@ import {
   writeCachedEnsoPrices,
 } from "@/lib/enso-prices-cache";
 import { redactUrlsInText } from "@/lib/rpc-redact";
+import { isCrossSiteBrowserRequest } from "@/lib/request-origin";
 import { getExternalVaultConfig, LLAMA_AIRFORCE, TOKENS } from "@/config/vaults";
 
 export const dynamic = "force-dynamic";
@@ -70,6 +71,10 @@ export async function POST(
 ) {
   const { method } = await params;
   const cors = getCorsHeaders(request);
+
+  if (isCrossSiteBrowserRequest(request)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403, headers: cors });
+  }
 
   const clientIp = getClientIp(request);
   if (await isRateLimited(clientIp)) {

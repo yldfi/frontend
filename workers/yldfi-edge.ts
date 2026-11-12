@@ -1,4 +1,5 @@
 import openNextWorker from "../.open-next/worker.js";
+import { redactUrlsInText } from "../src/lib/rpc-redact";
 
 interface YldfiEdgeEnv {
   ASSETS: Fetcher;
@@ -25,9 +26,10 @@ function refererWithoutQuery(value: string | null): string | null {
 function describeError(err: unknown, request: Request) {
   const url = new URL(request.url);
   const safe = (s: string, max: number) => s.length > max ? `${s.slice(0, max)}…` : s;
+  // Error text can quote a full upstream URL; keep hosts only.
   const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
   return {
-    message: safe(detail, 2000),
+    message: safe(redactUrlsInText(detail), 2000),
     meta: {
       method: request.method,
       // Path only: query strings can carry wallet addresses and signed
