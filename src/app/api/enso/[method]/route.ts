@@ -56,9 +56,9 @@ function getFriendlyEnsoError(message: string, body?: Record<string, unknown>): 
   return message;
 }
 
-import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
+import { createSharedRateLimiter, getClientIp } from "@/lib/rate-limit";
 
-const isRateLimited = createRateLimiter(120);
+const isRateLimited = createSharedRateLimiter("RL_ENSO", 120);
 
 export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, { status: 204, headers: getCorsHeaders(request) });
@@ -72,7 +72,7 @@ export async function POST(
   const cors = getCorsHeaders(request);
 
   const clientIp = getClientIp(request);
-  if (isRateLimited(clientIp)) {
+  if (await isRateLimited(clientIp)) {
     return NextResponse.json(
       { error: "Rate limit exceeded" },
       { status: 429, headers: cors }

@@ -127,12 +127,13 @@ describe("middleware geo-blocking logic", () => {
       if (
         pathname.startsWith("/_next/") ||
         pathname.startsWith("/favicon") ||
-        pathname.endsWith(".ico") ||
-        pathname.endsWith(".png") ||
-        pathname.endsWith(".svg") ||
-        pathname.endsWith(".jpg") ||
-        pathname.endsWith(".css") ||
-        pathname.endsWith(".js")
+        (!pathname.startsWith("/api/") &&
+          (pathname.endsWith(".ico") ||
+            pathname.endsWith(".png") ||
+            pathname.endsWith(".svg") ||
+            pathname.endsWith(".jpg") ||
+            pathname.endsWith(".css") ||
+            pathname.endsWith(".js")))
       ) {
         return true;
       }
@@ -190,6 +191,10 @@ describe("middleware geo-blocking logic", () => {
     it("does not bypass API paths", () => {
       expect(shouldBypassGeoBlock("/api/avatar/test.eth")).toBe(false);
     });
+
+    it("does not bypass API paths that look like images", () => {
+      expect(shouldBypassGeoBlock("/api/merkl/v4/opportunities/x.png")).toBe(false);
+    });
   });
 
   // API endpoints exempt from geo-blocking (for CI/testing)
@@ -238,12 +243,13 @@ describe("middleware geo-blocking logic", () => {
       if (
         pathname.startsWith("/_next/") ||
         pathname.startsWith("/favicon") ||
-        pathname.endsWith(".ico") ||
-        pathname.endsWith(".png") ||
-        pathname.endsWith(".svg") ||
-        pathname.endsWith(".jpg") ||
-        pathname.endsWith(".css") ||
-        pathname.endsWith(".js")
+        (!pathname.startsWith("/api/") &&
+          (pathname.endsWith(".ico") ||
+            pathname.endsWith(".png") ||
+            pathname.endsWith(".svg") ||
+            pathname.endsWith(".jpg") ||
+            pathname.endsWith(".css") ||
+            pathname.endsWith(".js")))
       ) {
         return "bypass";
       }
@@ -308,6 +314,10 @@ describe("middleware geo-blocking logic", () => {
 
     it("still blocks US user for /api/explorer", () => {
       expect(getMiddlewareDecision("US", "/api/explorer")).toBe("block");
+    });
+
+    it("still blocks US user for an API path that looks like an image", () => {
+      expect(getMiddlewareDecision("US", "/api/merkl/v4/opportunities/x.png")).toBe("block");
     });
   });
 });
@@ -488,5 +498,71 @@ describe("middleware RPC environment origins", () => {
 
     expect(response.headers.get("Content-Security-Policy-Report-Only")).toBeTruthy();
     expect(response.headers.get("Content-Security-Policy")).toBe("frame-ancestors 'self' https://app.safe.global");
+  });
+});
+
+describe("middleware region check for API paths", () => {
+  async function responseFor(pathname: string, country = "US") {
+    const { NextRequest } = await import("next/server");
+    const { middleware } = await import("@/middleware");
+    return middleware(
+      new NextRequest(`https://yldfi.co${pathname}`, { headers: { "cf-ipcountry": country } })
+    );
+  }
+
+  it("blocks an API catch-all path that ends like an image just like its plain form", async () => {
+    const plain = await responseFor("/api/merkl/v4/opportunities");
+    const disguised = await responseFor("/api/merkl/v4/opportunities/x.png");
+
+    expect(plain.status).toBe(451);
+    expect(disguised.status).toBe(plain.status);
+    expect(disguised.headers.get("x-middleware-next")).toBeNull();
+    expect(await disguised.text()).toBe(await plain.text());
+  });
+
+  it.each(["/api/enso/intent.js", "/api/kong/vault.svg"])(
+    "blocks %s in a blocked region",
+    async (pathname) => {
+      const response = await responseFor(pathname);
+
+      expect(response.status).toBe(451);
+      expect(response.headers.get("x-middleware-next")).toBeNull();
+    }
+  );
+
+  it.each(["/api/vaults", "/api/simulate"])(
+    "still lets the geo-exempt path %s through",
+    async (pathname) => {
+      const response = await responseFor(pathname);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("x-middleware-next")).toBe("1");
+    }
+  );
+
+  it("lets an allowed region through on an API path that ends like an image", async () => {
+    const response = await responseFor("/api/merkl/v4/opportunities/x.png", "DE");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-middleware-next")).toBe("1");
+  });
+
+  it.each(["/logo.png", "/_next/static/chunk.js", "/favicon.ico"])(
+    "still passes the static asset %s through in a blocked region",
+    async (pathname) => {
+      const response = await responseFor(pathname);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("x-middleware-next")).toBe("1");
+    }
+  );
+
+  it("matches every API path in the middleware config and keeps the original pattern", async () => {
+    const { config } = await import("@/middleware");
+
+    expect(config.matcher).toContain("/api/:path*");
+    expect(config.matcher).toContain(
+      "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)"
+    );
   });
 });

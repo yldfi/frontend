@@ -25,6 +25,7 @@ vi.mock("viem", async (importOriginal) => ({
 }));
 import { POST } from "@/app/api/simulate/route";
 import { GET as nonce } from "@/app/api/simulate/nonce/route";
+import { simulationNonceBinding } from "@/lib/simulation-nonce";
 
 beforeEach(() => {
   vi.stubEnv("TENDERLY_ACCOUNT_SLUG", "fixture");
@@ -43,10 +44,12 @@ afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.clearAllMocks();
 
 async function simulate() {
   const headers = { "origin": "http://localhost:3000", "x-forwarded-for": `fixture-${crypto.randomUUID()}` };
-  const credentials = await (await nonce(new NextRequest("http://localhost:3000/api/simulate/nonce", { headers }))).json() as { nonce: string; expires: number; sig: string };
+  const body = { from: fixture.wallet, to: "0xf75584ef6673ad213a685a1b58cc0330b8ea22cf", data: "0x21025a06" };
+  const bind = simulationNonceBinding(body);
+  const credentials = await (await nonce(new NextRequest(`http://localhost:3000/api/simulate/nonce?bind=${bind}`, { headers }))).json() as { nonce: string; expires: number; sig: string };
   return POST(new NextRequest("http://localhost:3000/api/simulate", {
     method: "POST", headers,
-    body: JSON.stringify({ from: fixture.wallet, to: "0xf75584ef6673ad213a685a1b58cc0330b8ea22cf", data: "0x21025a06", ...credentials }),
+    body: JSON.stringify({ ...body, ...credentials }),
   }));
 }
 

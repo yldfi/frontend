@@ -36,6 +36,37 @@
       "id": "f7acb436175d46b0a9da72a2d304294d"
     }
   ],
+  // Shared rate limits for the routes that spend an upstream quota per call.
+  // Counts are shared by all instances in a Cloudflare location and are
+  // approximate, not an exact global counter.
+  // namespace_id values must be unique across the whole Cloudflare account; this app uses 3001-3099.
+  "ratelimits": [
+    {
+      "name": "RL_ENSO",
+      "namespace_id": "3001",
+      "simple": { "limit": 120, "period": 60 }
+    },
+    {
+      "name": "RL_SIMULATE",
+      "namespace_id": "3002",
+      "simple": { "limit": 8, "period": 60 }
+    },
+    {
+      "name": "RL_SIMULATE_NONCE",
+      "namespace_id": "3003",
+      "simple": { "limit": 20, "period": 60 }
+    },
+    {
+      "name": "RL_TOKEN_HOLDERS",
+      "namespace_id": "3004",
+      "simple": { "limit": 30, "period": 60 }
+    },
+    {
+      "name": "RL_EXPLORER",
+      "namespace_id": "3005",
+      "simple": { "limit": 30, "period": 60 }
+    }
+  ],
   "d1_databases": [
     {
       "binding": "LOGS",

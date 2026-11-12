@@ -167,7 +167,7 @@ describe("simulation nonce binding", () => {
   });
 
   it("rejects a numeric string expires", async () => {
-    const credentials = await getCredentials();
+    const credentials = await boundCreds({ from: FROM, to: TARGET, data: DATA, value: "0" });
     const response = await postSimulation({
       ...baseBody(),
       ...credentials,
@@ -179,12 +179,23 @@ describe("simulation nonce binding", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("still accepts an unbound nonce while ALLOW_UNBOUND_NONCE is true", async () => {
-    const credentials = await getCredentials();
-    const response = await postSimulation({ ...baseBody(), ...credentials });
+  it("rejects an unbound nonce", async () => {
+    // Signed the old way, as the nonce route no longer issues this form.
+    const nonce = "unbound-nonce";
+    const expires = Date.now() + 60_000;
+    const sig = await hmac(SECRET, `${nonce}.${expires}`);
+    const response = await postSimulation({ ...baseBody(), nonce, expires, sig });
     const result = await response.json() as SimulateResult;
-    expect(response.status).toBe(200);
-    expect(result.success).toBe(true);
+    expect(response.status).toBe(400);
+    expect(result.errorMessage).toBe("Invalid nonce");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a nonce request without a binding", async () => {
+    const response = await getNonce();
+    const result = await response.json() as { success: boolean; errorMessage: string };
+    expect(response.status).toBe(400);
+    expect(result.errorMessage).toBe("Invalid nonce binding");
   });
 
   it("rejects a malformed nonce binding", async () => {
@@ -208,7 +219,7 @@ describe("simulation nonce binding", () => {
   });
 
   it("rejects a malformed sender", async () => {
-    const credentials = await getCredentials();
+    const credentials = await boundCreds({ from: FROM, to: TARGET, data: DATA, value: "0" });
     const response = await postSimulation({ ...baseBody({ from: "0x123" }), ...credentials });
     const result = await response.json() as SimulateResult;
     expect(response.status).toBe(400);
@@ -218,7 +229,7 @@ describe("simulation nonce binding", () => {
 
   it("rejects a non-decimal or negative value", async () => {
     for (const value of ["abc", "-1"]) {
-      const credentials = await getCredentials();
+      const credentials = await boundCreds({ from: FROM, to: TARGET, data: DATA, value: "0" });
       const response = await postSimulation({ ...baseBody({ value }), ...credentials });
       const result = await response.json() as SimulateResult;
       expect(response.status).toBe(400);

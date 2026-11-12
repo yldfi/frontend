@@ -29,6 +29,7 @@ vi.mock("viem", async (importOriginal) => ({
 import { OPTIONS, POST } from "@/app/api/simulate/route";
 import { GET as shareSimulation } from "@/app/api/simulate/share/[simulationId]/route";
 import { GET as nonce } from "@/app/api/simulate/nonce/route";
+import { simulationNonceBinding } from "@/lib/simulation-nonce";
 
 const FROM = "0x1234567890123456789012345678901234567890";
 const TO = "0xf75584ef6673ad213a685a1b58cc0330b8ea22cf";
@@ -86,11 +87,13 @@ function uniqueHeaders(origin = "https://yldfi.co") {
 }
 
 async function post(body: Record<string, unknown>, headers: Record<string, string>) {
-  const credentials = await (await nonce(new NextRequest("http://localhost:3000/api/simulate/nonce", { headers }))).json() as Credentials;
+  const payload = { from: FROM, to: TO, data: DATA, ...body } as Parameters<typeof simulationNonceBinding>[0] & Record<string, unknown>;
+  const bind = simulationNonceBinding(payload);
+  const credentials = await (await nonce(new NextRequest(`http://localhost:3000/api/simulate/nonce?bind=${bind}`, { headers }))).json() as Credentials;
   return POST(new NextRequest("http://localhost:3000/api/simulate", {
     method: "POST",
     headers,
-    body: JSON.stringify({ from: FROM, to: TO, data: DATA, ...credentials, ...body }),
+    body: JSON.stringify({ ...payload, ...credentials }),
   }));
 }
 

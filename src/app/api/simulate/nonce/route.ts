@@ -23,9 +23,9 @@ function getCorsHeaders(request: NextRequest): Record<string, string> {
   };
 }
 
-import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
+import { createSharedRateLimiter, getClientIp } from "@/lib/rate-limit";
 
-const isRateLimited = createRateLimiter(20);
+const isRateLimited = createSharedRateLimiter("RL_SIMULATE_NONCE", 20);
 
 function base64UrlEncode(bytes: Uint8Array): string {
   return Buffer.from(bytes)
@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
 
   // Rate limiting
   const clientIp = getClientIp(request);
-  if (isRateLimited(clientIp)) {
+  if (await isRateLimited(clientIp)) {
     return NextResponse.json(
       { success: false, errorMessage: "Rate limit exceeded" },
       { status: 429, headers: corsHeaders }
@@ -73,7 +73,7 @@ export async function GET(request: NextRequest) {
   }
 
   const bind = request.nextUrl.searchParams.get("bind");
-  if (bind !== null && !isSimulationNonceBinding(bind)) {
+  if (bind === null || !isSimulationNonceBinding(bind)) {
     return NextResponse.json(
       { success: false, errorMessage: "Invalid nonce binding" },
       { status: 400, headers: corsHeaders }
@@ -84,10 +84,7 @@ export async function GET(request: NextRequest) {
   crypto.getRandomValues(nonceBytes);
   const nonce = base64UrlEncode(nonceBytes);
   const expires = Date.now() + NONCE_TTL_MS;
-  // Bound to one transaction when the client names it; the unbound form is
-  // kept only until old browser tabs have reloaded (see ALLOW_UNBOUND_NONCE
-  // in ../route.ts).
-  const payload = bind ? boundNoncePayload(nonce, expires, bind) : `${nonce}.${expires}`;
+  const payload = boundNoncePayload(nonce, expires, bind);
   const sig = await signPayload(secret, payload);
 
   return NextResponse.json({

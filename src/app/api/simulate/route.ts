@@ -38,10 +38,6 @@ function getCorsHeaders(request: NextRequest): Record<string, string> {
 const CVX_BALANCE_SLOT = 0n;
 const MAX_UINT256 = (1n << 256n) - 1n;
 const MAX_REQUESTS_PER_MINUTE = 8;
-// Browser tabs loaded before nonce binding shipped still request unbound
-// nonces. Accept them for now; set this to false once those tabs have
-// reloaded.
-const ALLOW_UNBOUND_NONCE = true;
 const SIMULATE_TOTAL_TIMEOUT_MS = 12_000;
 const TENDERLY_FETCH_TIMEOUT_MS = 9_000;
 const TENDERLY_JSON_TIMEOUT_MS = 1_500;
@@ -65,9 +61,9 @@ const publicClient = createPublicClient({
   transport: http(),
 });
 
-import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
+import { createSharedRateLimiter, getClientIp } from "@/lib/rate-limit";
 
-const isRateLimited = createRateLimiter(MAX_REQUESTS_PER_MINUTE);
+const isRateLimited = createSharedRateLimiter("RL_SIMULATE", MAX_REQUESTS_PER_MINUTE);
 
 // Track consumed nonces to prevent replay within TTL window
 // Map<nonce, expiresAt> — entries self-clean on each check
@@ -476,7 +472,7 @@ export async function POST(request: NextRequest) {
   const corsHeaders = getCorsHeaders(request);
 
   const clientIp = getClientIp(request);
-  if (isRateLimited(clientIp)) {
+  if (await isRateLimited(clientIp)) {
     return NextResponse.json(
       { success: false, errorMessage: "Rate limit exceeded", retryable: true },
       { status: 429, headers: corsHeaders }
@@ -590,11 +586,7 @@ export async function POST(request: NextRequest) {
     boundNoncePayload(body.nonce, body.expires, binding),
     body.sig,
   );
-  const nonceOk = boundOk || (
-    ALLOW_UNBOUND_NONCE &&
-    await verifySignature(nonceSecret, `${body.nonce}.${body.expires}`, body.sig)
-  );
-  if (!nonceOk) {
+  if (!boundOk) {
     return NextResponse.json(
       { success: false, errorMessage: "Invalid nonce", retryable: false },
       { status: 400, headers: corsHeaders }

@@ -55,9 +55,9 @@ async function rateLimitedFetch(url: string): Promise<Response> {
   return fetch(url);
 }
 
-import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
+import { createSharedRateLimiter, getClientIp } from "@/lib/rate-limit";
 
-const isRateLimited = createRateLimiter(30);
+const isRateLimited = createSharedRateLimiter("RL_EXPLORER", 30);
 
 function etherscanUrl(
   chainId: string,
@@ -90,7 +90,7 @@ function getKV(): KVNamespace | null {
 export async function GET(request: NextRequest) {
   // Per-IP rate limiting
   const clientIp = getClientIp(request);
-  if (isRateLimited(clientIp)) {
+  if (await isRateLimited(clientIp)) {
     return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
   }
 

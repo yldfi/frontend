@@ -10,9 +10,9 @@ const BLOCKSCOUT_API_BASE = "https://eth.blockscout.com/api/v2";
 const holdersCache = new Map<string, { holders: string[]; timestamp: number }>();
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
-import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
+import { createSharedRateLimiter, getClientIp } from "@/lib/rate-limit";
 
-const isRateLimited = createRateLimiter(30);
+const isRateLimited = createSharedRateLimiter("RL_TOKEN_HOLDERS", 30);
 
 function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -119,7 +119,7 @@ export async function POST(request: NextRequest) {
 
   // Rate limiting
   const clientIp = getClientIp(request);
-  if (isRateLimited(clientIp)) {
+  if (await isRateLimited(clientIp)) {
     return NextResponse.json(
       { success: false, error: "Rate limit exceeded" },
       { status: 429 }

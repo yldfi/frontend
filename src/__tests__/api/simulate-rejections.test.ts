@@ -17,6 +17,7 @@ vi.mock("viem", async (importOriginal) => ({
 }));
 import { POST } from "@/app/api/simulate/route";
 import { GET as nonce } from "@/app/api/simulate/nonce/route";
+import { simulationNonceBinding } from "@/lib/simulation-nonce";
 
 const VALID_TO = "0xf75584ef6673ad213a685a1b58cc0330b8ea22cf";
 const FROM = "0x1234567890123456789012345678901234567890";
@@ -26,8 +27,12 @@ function headers() {
   return { origin: "http://localhost:3000", "x-forwarded-for": `rej-${crypto.randomUUID()}` };
 }
 
-async function credentials(requestHeaders: Record<string, string>): Promise<Credentials> {
-  const response = await nonce(new NextRequest("http://localhost:3000/api/simulate/nonce", { headers: requestHeaders }));
+async function credentials(
+  requestHeaders: Record<string, string>,
+  subject: Parameters<typeof simulationNonceBinding>[0],
+): Promise<Credentials> {
+  const bind = simulationNonceBinding(subject);
+  const response = await nonce(new NextRequest(`http://localhost:3000/api/simulate/nonce?bind=${bind}`, { headers: requestHeaders }));
   return await response.json() as Credentials;
 }
 
@@ -111,7 +116,7 @@ describe("POST /api/simulate rejections", () => {
 
   it("rejects a nonce whose signature does not match", async () => {
     const requestHeaders = headers();
-    const valid = await credentials(requestHeaders);
+    const valid = await credentials(requestHeaders, { from: FROM, to: VALID_TO, data: DATA });
     const response = await post(
       { from: FROM, to: VALID_TO, data: DATA, ...valid, nonce: `${valid.nonce}-tampered` },
       requestHeaders
@@ -125,7 +130,11 @@ describe("POST /api/simulate rejections", () => {
 
   it("rejects a target that is not allowlisted", async () => {
     const requestHeaders = headers();
-    const valid = await credentials(requestHeaders);
+    const valid = await credentials(requestHeaders, {
+      from: FROM,
+      to: "0x000000000000000000000000000000000000dEaD",
+      data: DATA,
+    });
     const response = await post(
       { from: FROM, to: "0x000000000000000000000000000000000000dEaD", data: DATA, ...valid },
       requestHeaders
@@ -139,7 +148,7 @@ describe("POST /api/simulate rejections", () => {
 
   it("rejects calldata that is too short", async () => {
     const requestHeaders = headers();
-    const valid = await credentials(requestHeaders);
+    const valid = await credentials(requestHeaders, { from: FROM, to: VALID_TO, data: "0x1234" });
     const response = await post(
       { from: FROM, to: VALID_TO, data: "0x1234", ...valid },
       requestHeaders
@@ -153,7 +162,7 @@ describe("POST /api/simulate rejections", () => {
 
   it("rejects calldata without a 0x prefix", async () => {
     const requestHeaders = headers();
-    const valid = await credentials(requestHeaders);
+    const valid = await credentials(requestHeaders, { from: FROM, to: VALID_TO, data: "abcdefghijkl" });
     const response = await post(
       { from: FROM, to: VALID_TO, data: "abcdefghijkl", ...valid },
       requestHeaders
@@ -168,7 +177,11 @@ describe("POST /api/simulate rejections", () => {
   // Pins current behaviour, which is probably unintended: the nonce is burned before the allowlist check, so a rejected target still consumes it. Expected to change when nonce validation is reworked.
   it("burns the nonce even when the allowlist rejects the request", async () => {
     const requestHeaders = headers();
-    const valid = await credentials(requestHeaders);
+    const valid = await credentials(requestHeaders, {
+      from: FROM,
+      to: "0x000000000000000000000000000000000000dEaD",
+      data: DATA,
+    });
 
     const first = await post(
       { from: FROM, to: "0x000000000000000000000000000000000000dEaD", data: DATA, ...valid },
@@ -177,7 +190,12 @@ describe("POST /api/simulate rejections", () => {
     expect(first.status).toBe(400);
     expect((await first.json() as Rejection).errorMessage).toContain("Simulation target not in allowlist");
 
-    const second = await post({ from: FROM, to: VALID_TO, data: DATA, ...valid }, requestHeaders);
+    // The nonce is bound to the rejected target, so the replay repeats the same
+    // request: the burn is still observed ahead of the allowlist check.
+    const second = await post(
+      { from: FROM, to: "0x000000000000000000000000000000000000dEaD", data: DATA, ...valid },
+      requestHeaders
+    );
     const result = await second.json() as Rejection;
 
     expect(second.status).toBe(400);

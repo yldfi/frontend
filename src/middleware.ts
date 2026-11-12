@@ -309,15 +309,17 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Allow static assets in all modes
+  // API routes are never static files, whatever their path ends with.
   if (
     pathname.startsWith("/_next/") ||
     pathname.startsWith("/favicon") ||
-    pathname.endsWith(".ico") ||
-    pathname.endsWith(".png") ||
-    pathname.endsWith(".svg") ||
-    pathname.endsWith(".jpg") ||
-    pathname.endsWith(".css") ||
-    pathname.endsWith(".js")
+    (!pathname.startsWith("/api/") &&
+      (pathname.endsWith(".ico") ||
+        pathname.endsWith(".png") ||
+        pathname.endsWith(".svg") ||
+        pathname.endsWith(".jpg") ||
+        pathname.endsWith(".css") ||
+        pathname.endsWith(".js")))
   ) {
     return NextResponse.next();
   }
@@ -410,7 +412,11 @@ export const config = {
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
      * - public folder files
+     * The second pattern matches every API path, including catch-all routes whose
+     * trailing segments look like files (for example /api/merkl/v4/x.png), so the
+     * middleware always runs for API requests.
      */
     "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    "/api/:path*",
   ],
 };

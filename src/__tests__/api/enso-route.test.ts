@@ -9,6 +9,15 @@ const { mockGetBundleData, mockGetQuoteData, mockGetMultiplePriceData, mockGetRo
   mockGetBalances: vi.fn(),
 }));
 
+const { mockGetCloudflareContext } = vi.hoisted(() => ({
+  mockGetCloudflareContext: vi.fn(),
+}));
+
+// No Cloudflare context by default: the routes fall back to in-memory limiting.
+vi.mock("@opennextjs/cloudflare", () => ({
+  getCloudflareContext: mockGetCloudflareContext,
+}));
+
 vi.mock("@ensofinance/sdk", () => ({
   EnsoClient: class MockEnsoClient {
     getBundleData = mockGetBundleData;
@@ -42,6 +51,9 @@ describe("Enso API route boundary", () => {
     vi.clearAllMocks();
     clearMemoryEnsoPrices();
     vi.stubEnv("ENSO_API_KEY", "test-key");
+    mockGetCloudflareContext.mockImplementation(() => {
+      throw new Error("no cf context");
+    });
   });
 
   it("rejects public raw bundle actions before calling Enso", async () => {
@@ -167,6 +179,18 @@ describe("Enso API route boundary", () => {
 
       expect(response.status).toBe(404);
       await expect(response.json()).resolves.toEqual({ error: "Swap not found for A -> B" });
+    });
+
+    it("returns 429 without calling Enso when the shared limiter rejects the request", async () => {
+      mockGetCloudflareContext.mockReturnValue({
+        env: { RL_ENSO: { limit: vi.fn().mockResolvedValue({ success: false }) } },
+      });
+
+      const response = await quote({ fromAddress: USER, tokenIn: [USDC], tokenOut: [CVX], amountIn: ["100000000"] });
+
+      expect(response.status).toBe(429);
+      await expect(response.json()).resolves.toEqual({ error: "Rate limit exceeded" });
+      expect(mockGetQuoteData).not.toHaveBeenCalled();
     });
   });
 

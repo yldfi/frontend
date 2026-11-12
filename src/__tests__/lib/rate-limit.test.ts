@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createRateLimiter, getClientIp } from "@/lib/rate-limit";
+import { createRateLimiter, createSharedRateLimiter, getClientIp } from "@/lib/rate-limit";
 import type { NextRequest } from "next/server";
+
+const { mockGetCloudflareContext } = vi.hoisted(() => ({
+  mockGetCloudflareContext: vi.fn(),
+}));
+
+vi.mock("@opennextjs/cloudflare", () => ({
+  getCloudflareContext: mockGetCloudflareContext,
+}));
 
 // ---------------------------------------------------------------------------
 // createRateLimiter
@@ -161,5 +169,86 @@ describe("getClientIp", () => {
     });
 
     expect(getClientIp(req)).toBe("203.0.113.50");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createSharedRateLimiter
+// ---------------------------------------------------------------------------
+
+describe("createSharedRateLimiter", () => {
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    mockGetCloudflareContext.mockReset();
+    mockGetCloudflareContext.mockImplementation(() => {
+      throw new Error("no cf context");
+    });
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+  });
+
+  it("behaves like the in-memory limiter when there is no binding", async () => {
+    const isRateLimited = createSharedRateLimiter("RL_TEST_NONE", 2);
+
+    await expect(isRateLimited("203.0.113.1")).resolves.toBe(false);
+    await expect(isRateLimited("203.0.113.1")).resolves.toBe(false);
+    await expect(isRateLimited("203.0.113.1")).resolves.toBe(true);
+  });
+
+  it("does not limit a request the binding accepts", async () => {
+    const binding = { limit: vi.fn().mockResolvedValue({ success: true }) };
+    mockGetCloudflareContext.mockReturnValue({ env: { RL_TEST_ALLOW: binding } });
+
+    const isRateLimited = createSharedRateLimiter("RL_TEST_ALLOW", 10);
+
+    await expect(isRateLimited("203.0.113.2")).resolves.toBe(false);
+    expect(binding.limit).toHaveBeenCalledWith({ key: "203.0.113.2" });
+  });
+
+  it("limits a request the binding rejects", async () => {
+    const binding = { limit: vi.fn().mockResolvedValue({ success: false }) };
+    mockGetCloudflareContext.mockReturnValue({ env: { RL_TEST_DENY: binding } });
+
+    const isRateLimited = createSharedRateLimiter("RL_TEST_DENY", 10);
+
+    await expect(isRateLimited("203.0.113.3")).resolves.toBe(true);
+  });
+
+  it("fails open and warns once when the binding throws", async () => {
+    const binding = { limit: vi.fn().mockRejectedValue(new Error("binding down")) };
+    mockGetCloudflareContext.mockReturnValue({ env: { RL_TEST_THROWS: binding } });
+
+    const isRateLimited = createSharedRateLimiter("RL_TEST_THROWS", 10);
+
+    await expect(isRateLimited("203.0.113.4")).resolves.toBe(false);
+    await expect(isRateLimited("203.0.113.5")).resolves.toBe(false);
+    await expect(isRateLimited("203.0.113.6")).resolves.toBe(false);
+    expect(binding.limit).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails open when the binding resolves without a boolean success", async () => {
+    const binding = { limit: vi.fn().mockResolvedValue({}) };
+    mockGetCloudflareContext.mockReturnValue({ env: { RL_TEST_EMPTY: binding } });
+
+    const isRateLimited = createSharedRateLimiter("RL_TEST_EMPTY", 10);
+
+    await expect(isRateLimited("203.0.113.7")).resolves.toBe(false);
+  });
+
+  it("does not call the binding once the in-memory limit is reached", async () => {
+    const binding = { limit: vi.fn().mockResolvedValue({ success: true }) };
+    mockGetCloudflareContext.mockReturnValue({ env: { RL_TEST_MEMORY: binding } });
+
+    const isRateLimited = createSharedRateLimiter("RL_TEST_MEMORY", 1);
+
+    await expect(isRateLimited("203.0.113.8")).resolves.toBe(false);
+    await expect(isRateLimited("203.0.113.8")).resolves.toBe(true);
+    await expect(isRateLimited("203.0.113.8")).resolves.toBe(true);
+    expect(binding.limit).toHaveBeenCalledTimes(1);
   });
 });
