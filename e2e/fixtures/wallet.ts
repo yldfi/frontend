@@ -65,7 +65,8 @@ export async function injectTestWallet(page: Page, address: string = TEST_WALLET
  * wallet on its own; otherwise go through the app's normal RainbowKit connect flow.
  */
 export async function connectTestWallet(page: Page): Promise<void> {
-  const account = page.getByRole("button", { name: /vitalik\.eth|0xd8dA/i }).first();
+  // The header shows the ENS name when the lookup answers and the shortened address when it does not; both mean connected, so the tests need no chain node.
+  const account = page.getByRole("button", { name: /vitalik\.eth|0xd8…6045/i }).first();
   // "Connect wallet" shows briefly before wagmi's reconnect finishes, so give the reconnect a
   // chance before falling back to the modal.
   const reconnected = await account.waitFor({ timeout: 10_000 }).then(() => true, () => false);
