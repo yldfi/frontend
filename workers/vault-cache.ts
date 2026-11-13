@@ -45,6 +45,12 @@ async function resolveRpcUrl(env: Env): Promise<string | undefined> {
   }
 }
 
+/** Short error text for logs; never includes URLs (the archive URL carries a key). */
+function errorReason(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.replace(/https?:\/\/\S+/g, "[url]").slice(0, 120);
+}
+
 /**
  * Priority: the configured private node → alchemy → infura → a shuffled sample of public RPCs.
  */
@@ -800,7 +806,8 @@ export default {
     // behind a different public endpoint.
     if (controller.cron === HISTORY_CRON) {
       const archiveRpcUrl = await resolveRpcUrl(env);
-      if (archiveRpcUrl) try {
+      if (!archiveRpcUrl) logger.warn("history", "No archive RPC URL resolved; history sampling skipped");
+      else try {
         const { url, headers } = rpcHeaders(archiveRpcUrl);
         await maintainHistory(env.HISTORY, async (method, params) => {
           const response = await fetch(url, { method: "POST", headers,
@@ -809,7 +816,7 @@ export default {
           const body = await response.json() as { result?: unknown; error?: unknown };
           if (body.error || body.result === undefined) throw new Error("Archive read unavailable");
           return body.result;
-        });
+        }, (key, error) => logger.warn("history", "History sample failed for vault", { key, reason: errorReason(error) }));
       } catch { logger.warn("history", "Archive sampling failed; stored history retained"); }
       ctx.waitUntil(logger.flush(env.LOGS));
       return;

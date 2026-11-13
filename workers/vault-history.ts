@@ -142,7 +142,7 @@ export async function savePoints(bucket: R2Bucket, key: HistoryKey, points: Dail
   throw new Error("Concurrent history update; retry required");
 }
 
-export async function maintainHistory(bucket: R2Bucket, rpc: Rpc) {
+export async function maintainHistory(bucket: R2Bucket, rpc: Rpc, onError?: (key: string, error: unknown) => void) {
   const latest = await readBlock(rpc, "latest");
   const yesterday = dayBucket(latest.timestamp) - 86400;
   const blocks = new Map<number, Block>();
@@ -171,7 +171,7 @@ export async function maintainHistory(bucket: R2Bucket, rpc: Rpc) {
         }
         await savePoints(bucket, key, [await sampleDay(rpc, key, time, block)]);
       }
-    } catch { console.warn(`History sampling unavailable for ${key}; stored points retained`); }
+    } catch (error) { console.warn(`History sampling unavailable for ${key}; stored points retained`); onError?.(key, error); }
   }
 }
 
