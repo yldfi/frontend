@@ -617,6 +617,95 @@ describe("middleware enforced content security policy (production)", () => {
   });
 });
 
+describe("middleware geo-block without a country header (production)", () => {
+  beforeEach(() => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  async function responseFor(pathname: string, headers: Record<string, string> = {}) {
+    const { NextRequest } = await import("next/server");
+    const { middleware } = await import("@/middleware");
+    return middleware(new NextRequest(`https://yldfi.co${pathname}`, { headers }));
+  }
+
+  it("blocks a proxied request that carries no country header", async () => {
+    const response = await responseFor("/zap", { "cf-ray": "8f0000000000abcd-CDG" });
+
+    expect(response.status).toBe(451);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+  });
+
+  it("blocks a proxied request whose country header is empty", async () => {
+    const response = await responseFor("/zap", {
+      "cf-ray": "8f0000000000abcd-CDG",
+      "cf-ipcountry": "",
+    });
+
+    expect(response.status).toBe(451);
+  });
+
+  it("lets a request that did not come through Cloudflare through", async () => {
+    const response = await responseFor("/zap");
+
+    expect(response.status).not.toBe(451);
+    expect(response.headers.get("Content-Security-Policy")).toBeTruthy();
+  });
+
+  it("lets a known allowed country through", async () => {
+    const response = await responseFor("/zap", {
+      "cf-ray": "8f0000000000abcd-CDG",
+      "cf-ipcountry": "DE",
+    });
+
+    expect(response.status).not.toBe(451);
+  });
+
+  it.each(["T1", "XX"])("lets the allowed header value %s through", async (country) => {
+    const response = await responseFor("/zap", {
+      "cf-ray": "8f0000000000abcd-CDG",
+      "cf-ipcountry": country,
+    });
+
+    expect(response.status).not.toBe(451);
+  });
+
+  it("still blocks a restricted country", async () => {
+    const response = await responseFor("/zap", {
+      "cf-ray": "8f0000000000abcd-CDG",
+      "cf-ipcountry": "US",
+    });
+
+    expect(response.status).toBe(451);
+  });
+
+  it.each(["/api/vaults", "/api/simulate", "/social/weekly-apy"])(
+    "still lets the geo-exempt path %s through",
+    async (pathname) => {
+      const response = await responseFor(pathname, { "cf-ray": "8f0000000000abcd-CDG" });
+
+      expect(response.status).not.toBe(451);
+    }
+  );
+});
+
+describe("middleware geo-block without a country header (outside production)", () => {
+  it("lets a request with a cf-ray header through", async () => {
+    const { NextRequest } = await import("next/server");
+    const { middleware } = await import("@/middleware");
+    const response = middleware(
+      new NextRequest("https://yldfi.co/zap", { headers: { "cf-ray": "8f0000000000abcd-CDG" } })
+    );
+
+    expect(response.status).not.toBe(451);
+  });
+});
+
 describe("middleware region check for API paths", () => {
   async function responseFor(pathname: string, country = "US") {
     const { NextRequest } = await import("next/server");

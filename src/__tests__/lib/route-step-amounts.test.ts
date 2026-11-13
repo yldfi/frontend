@@ -1161,6 +1161,37 @@ describe("route step amounts", () => {
     expect(config.skipQuote).toBe(false);
   });
 
+  it("refuses to build a pxCVX vault -> vault bundle when the lpxCVX -> CVX quote is zero", async () => {
+    // The off-chain Curve maths fails and every RPC endpoint answers an error, so
+    // getLpxCvxToCvxSwapRate falls back to zero. That must not become min_dy=0.
+    vi.mocked(cryptoswap.getDy).mockImplementationOnce((_params: unknown, i: number, j: number, dx: bigint) => {
+      if (i === 1 && j === 0) throw new Error("cryptoswap unavailable");
+      return dx;
+    });
+    const bundleCallsBefore = mockGetBundleData.mock.calls.length;
+
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: "unavailable" } }),
+    }) as unknown as Response));
+
+    try {
+      await expect(fetchVaultToVaultRoute({
+        fromAddress: TEST_WALLET,
+        sourceVault: VAULT_ADDRESSES.YSPXCVX,
+        targetVault: VAULT_ADDRESSES.YSCVX,
+        amountIn: ONE_ETHER.toString(),
+        sourceUnderlyingToken: TOKENS.PXCVX,
+        targetUnderlyingToken: TOKENS.CVX,
+        slippage: "100",
+      })).rejects.toThrow(/Failed to estimate Curve lpxCVX→CVX swap output/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(mockGetBundleData.mock.calls.length).toBe(bundleCallsBefore);
+  });
+
   describe("yld vault -> external vault sources", () => {
     it("labels the cvxCRV -> pxCVX legs with the conversion engine's steps (yscvxCRV -> uCVX)", async () => {
       const result = await fetchYldVaultToExternalVaultRoute({

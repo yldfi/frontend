@@ -468,6 +468,10 @@ async function fetchPxCvxVaultToVaultRoute(params: {
   const estimatedLpxCvx = estimatedPxCvx;
   // Estimate CVX output from Curve exchange (lpxCVX → CVX)
   const estimatedCvx = await getLpxCvxToCvxSwapRate(estimatedLpxCvx);
+  // CRITICAL: Throw if estimation fails or returns zero - never use min_dy=0
+  if (estimatedCvx === 0n) {
+    throw new Error("Failed to estimate Curve lpxCVX→CVX swap output for slippage protection");
+  }
   // Calculate min_dy for the lpxCVX → CVX swap with slippage protection
   const minDyCvx = calculateMinDy(estimatedCvx, slippageBps);
 

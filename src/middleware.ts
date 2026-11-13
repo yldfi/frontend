@@ -257,6 +257,8 @@ const FRAME_ANCESTORS = "'self' https://app.safe.global";
 /** Enforced in production, report-only in development: see src/lib/csp.ts. */
 const ENFORCE_CSP = process.env.NODE_ENV === "production";
 
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+
 // Only origins are read from the environment, because an RPC URL can carry a key in its path.
 const CSP_OPTIONS = {
   isDev: process.env.NODE_ENV !== "production",
@@ -362,8 +364,8 @@ export function middleware(request: NextRequest) {
     });
   }
 
-  // Get country from Cloudflare headers (available on Cloudflare Workers)
-  // cf-ipcountry is set by Cloudflare for all proxied requests
+  // Cloudflare sets cf-ipcountry on proxied requests while the zone's IP geolocation
+  // setting is on.
   const country = request.headers.get("cf-ipcountry") || "";
 
   // Allow geo-exempt API endpoints (for CI/testing)
@@ -371,8 +373,14 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // A request that came through Cloudflare (it carries cf-ray) but has no country header
+  // is blocked, so the geo-block cannot silently turn off; a local server never receives
+  // cf-ray.
+  const countryUnknownOnCloudflare =
+    IS_PRODUCTION && country === "" && request.headers.has("cf-ray");
+
   // Block restricted countries
-  if (BLOCKED_COUNTRIES.has(country)) {
+  if (BLOCKED_COUNTRIES.has(country) || countryUnknownOnCloudflare) {
     return new NextResponse(blockedPageHtml, {
       status: 451, // Unavailable For Legal Reasons
       headers: {
