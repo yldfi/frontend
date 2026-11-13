@@ -1,4 +1,4 @@
-import { afterEach, describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { NEVER_A_ROUTE } from "@/middleware";
 
 // Test the middleware logic by extracting testable functions
@@ -498,6 +498,122 @@ describe("middleware RPC environment origins", () => {
 
     expect(response.headers.get("Content-Security-Policy-Report-Only")).toBeTruthy();
     expect(response.headers.get("Content-Security-Policy")).toBe("frame-ancestors 'self' https://app.safe.global");
+  });
+
+  it("keeps a local fork RPC reachable in development", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ANVIL_RPC", "http://127.0.0.1:8545");
+    vi.resetModules();
+
+    const response = await responseForPageRequest();
+    const reportOnly = response.headers.get("Content-Security-Policy-Report-Only") ?? "";
+
+    expect(reportOnly).toContain("http://127.0.0.1:8545");
+  });
+});
+
+describe("middleware enforced content security policy (production)", () => {
+  beforeEach(() => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  async function responseForPageRequest(country = "DE") {
+    const { NextRequest } = await import("next/server");
+    const { middleware } = await import("@/middleware");
+    return middleware(new NextRequest("https://yldfi.co/zap", { headers: { "cf-ipcountry": country } }));
+  }
+
+  async function enforcedCsp(country = "DE"): Promise<string> {
+    const response = await responseForPageRequest(country);
+    return response.headers.get("Content-Security-Policy") ?? "";
+  }
+
+  it("enforces the full policy with frame-ancestors last", async () => {
+    const csp = await enforcedCsp();
+
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("base-uri 'self'");
+    expect(csp).toContain("form-action 'self'");
+    expect(csp).toContain("connect-src ");
+    expect(csp).toContain("script-src ");
+    expect(csp.endsWith("frame-ancestors 'self' https://app.safe.global")).toBe(true);
+  });
+
+  it("sends no report-only header in production", async () => {
+    const response = await responseForPageRequest();
+
+    expect(response.headers.get("Content-Security-Policy-Report-Only")).toBeNull();
+  });
+
+  it("allows the MetaMask SDK relay in connect-src", async () => {
+    const csp = await enforcedCsp();
+    const connectSrc = csp.split("; ").find((directive) => directive.startsWith("connect-src ")) ?? "";
+
+    expect(connectSrc.split(" ")).toContain("wss://metamask-sdk.api.cx.metamask.io");
+  });
+
+  it("allows no eval, localhost or plain-http source", async () => {
+    const csp = await enforcedCsp();
+
+    expect(csp).not.toContain("'unsafe-eval'");
+    expect(csp).not.toContain("localhost");
+    expect(csp).not.toContain("127.0.0.1");
+    expect(csp).not.toMatch(/\shttp:\/\//);
+  });
+
+  it("sends the policy as one line of at most 4,000 characters", async () => {
+    const csp = await enforcedCsp();
+
+    expect(csp).not.toContain("\n");
+    expect(csp.length).toBeGreaterThan(0);
+    expect(csp.length).toBeLessThanOrEqual(4000);
+  });
+
+  it("keeps the other security headers unchanged", async () => {
+    const response = await responseForPageRequest();
+
+    expect(response.headers.get("X-Frame-Options")).toBeNull();
+    expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(response.headers.get("Strict-Transport-Security")).toBe(
+      "max-age=63072000; includeSubDomains; preload",
+    );
+    expect(response.headers.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
+    expect(response.headers.get("Permissions-Policy")).toBe(
+      "camera=(), microphone=(), geolocation=()",
+    );
+  });
+
+  it("still blocks a restricted country", async () => {
+    const response = await responseForPageRequest("GB");
+
+    expect(response.status).toBe(451);
+  });
+
+  it("reduces a keyed RPC URL to its origin in the enforced header", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ALCHEMY_RPC_URL", "https://user:pass@rpc.example.test/v2/SECRETKEY");
+    vi.resetModules();
+
+    const csp = await enforcedCsp();
+
+    expect(csp).toContain("https://rpc.example.test");
+    expect(csp).not.toContain("SECRETKEY");
+    expect(csp).not.toContain("user:pass");
+  });
+
+  it("keeps a local fork RPC reachable in a production build", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ANVIL_RPC", "http://127.0.0.1:8545");
+    vi.resetModules();
+
+    const csp = await enforcedCsp();
+    const connectSrc = csp.split("; ").find((directive) => directive.startsWith("connect-src ")) ?? "";
+
+    expect(connectSrc.split(" ")).toContain("http://127.0.0.1:8545");
   });
 });
 

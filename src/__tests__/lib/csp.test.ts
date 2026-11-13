@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildReportOnlyCsp } from "@/lib/csp";
+import { buildContentSecurityPolicy } from "@/lib/csp";
 import {
   FLASHBOTS_RPC_URL,
   PRIVACY_SAFE_DOMAINS,
@@ -15,9 +15,9 @@ function directivesOf(csp: string): Map<string, string> {
   );
 }
 
-describe("buildReportOnlyCsp", () => {
+describe("buildContentSecurityPolicy", () => {
   it("locks down plugins, base URI, form targets and the default source", () => {
-    const csp = buildReportOnlyCsp({ isDev: false });
+    const csp = buildContentSecurityPolicy({ isDev: false });
     const directives = directivesOf(csp);
 
     expect(directives.get("object-src")).toBe("'none'");
@@ -27,14 +27,14 @@ describe("buildReportOnlyCsp", () => {
   });
 
   it("is a single serialised line without frame-ancestors", () => {
-    const csp = buildReportOnlyCsp({ isDev: true });
+    const csp = buildContentSecurityPolicy({ isDev: true });
 
     expect(csp).not.toContain("\n");
     expect(csp).not.toContain("frame-ancestors");
   });
 
   it("keeps production free of eval, localhost and plain-http sources", () => {
-    const csp = buildReportOnlyCsp({ isDev: false });
+    const csp = buildContentSecurityPolicy({ isDev: false });
 
     expect(csp).not.toContain("'unsafe-eval'");
     expect(csp).not.toContain("localhost");
@@ -42,14 +42,14 @@ describe("buildReportOnlyCsp", () => {
   });
 
   it("allows eval and the local dev servers in development only", () => {
-    const csp = buildReportOnlyCsp({ isDev: true });
+    const csp = buildContentSecurityPolicy({ isDev: true });
 
     expect(csp).toContain("'unsafe-eval'");
     expect(csp).toContain("ws://localhost:*");
   });
 
   it("covers every exported RPC URL origin in connect-src", () => {
-    const connectSrc = directivesOf(buildReportOnlyCsp({ isDev: false })).get("connect-src");
+    const connectSrc = directivesOf(buildContentSecurityPolicy({ isDev: false })).get("connect-src");
 
     expect(connectSrc).toBeDefined();
     for (const url of [...RPC_URL_LIST, FLASHBOTS_RPC_URL]) {
@@ -58,7 +58,7 @@ describe("buildReportOnlyCsp", () => {
   });
 
   it("covers every dynamic-discovery host in connect-src", () => {
-    const connectSrc = directivesOf(buildReportOnlyCsp({ isDev: false })).get("connect-src");
+    const connectSrc = directivesOf(buildContentSecurityPolicy({ isDev: false })).get("connect-src");
 
     expect(connectSrc).toBeDefined();
     for (const host of PRIVACY_SAFE_DOMAINS) {
@@ -67,7 +67,7 @@ describe("buildReportOnlyCsp", () => {
   });
 
   it("covers the Coinbase Wallet SDK origins in connect-src only", () => {
-    const directives = directivesOf(buildReportOnlyCsp({ isDev: false }));
+    const directives = directivesOf(buildContentSecurityPolicy({ isDev: false }));
     const connectSrc = directives.get("connect-src")!.split(" ");
     const coinbaseSources = [
       "https://*.coinbase.com",
@@ -84,16 +84,37 @@ describe("buildReportOnlyCsp", () => {
     }
   });
 
+  it("allows the MetaMask SDK relay in connect-src in production and development", () => {
+    for (const isDev of [false, true]) {
+      const connectSrc = directivesOf(buildContentSecurityPolicy({ isDev })).get("connect-src")!.split(" ");
+
+      expect(connectSrc).toContain("https://metamask-sdk.api.cx.metamask.io");
+      expect(connectSrc).toContain("wss://metamask-sdk.api.cx.metamask.io");
+    }
+  });
+
+  it("leaves frame-src, style-src and font-src unchanged", () => {
+    for (const isDev of [false, true]) {
+      const directives = directivesOf(buildContentSecurityPolicy({ isDev }));
+
+      expect(directives.get("frame-src")).toBe(
+        "'self' https://verify.walletconnect.com https://verify.walletconnect.org",
+      );
+      expect(directives.get("style-src")).toBe("'self' 'unsafe-inline'");
+      expect(directives.get("font-src")).toBe("'self' data:");
+    }
+  });
+
   it("lists no source twice in connect-src", () => {
     for (const isDev of [false, true]) {
-      const connectSrc = directivesOf(buildReportOnlyCsp({ isDev })).get("connect-src")!.split(" ");
+      const connectSrc = directivesOf(buildContentSecurityPolicy({ isDev })).get("connect-src")!.split(" ");
 
       expect(connectSrc).toHaveLength(new Set(connectSrc).size);
     }
   });
 
   it("appends extra connect sources to connect-src only", () => {
-    const csp = buildReportOnlyCsp({
+    const csp = buildContentSecurityPolicy({
       isDev: false,
       extraConnectSrc: ["https://example-rpc.test"],
     });
@@ -107,7 +128,7 @@ describe("buildReportOnlyCsp", () => {
   });
 
   it("reduces extra connect sources to origins, dropping credentials, paths and queries", () => {
-    const csp = buildReportOnlyCsp({
+    const csp = buildContentSecurityPolicy({
       isDev: false,
       extraConnectSrc: ["https://user:pass@rpc.example.test/v2/SECRETKEY?x=1#y"],
     });
@@ -122,7 +143,7 @@ describe("buildReportOnlyCsp", () => {
   });
 
   it("drops extra connect sources that are not plain http(s) origins", () => {
-    const csp = buildReportOnlyCsp({
+    const csp = buildContentSecurityPolicy({
       isDev: false,
       extraConnectSrc: ["not a url", "foo:bar", "file:///etc/hosts", "https://a.com;x"],
     });
@@ -133,5 +154,27 @@ describe("buildReportOnlyCsp", () => {
     expect(connectSrc).not.toContain("file:///etc/hosts");
     expect(connectSrc).not.toContain("https://a.com;x");
     expect(csp).not.toContain("not a url");
+  });
+
+  it("adds no frame-ancestors directive by default", () => {
+    expect(buildContentSecurityPolicy({ isDev: false })).not.toContain("frame-ancestors");
+  });
+
+  it("appends frame-ancestors as the last directive when asked", () => {
+    const withoutOption = buildContentSecurityPolicy({ isDev: false });
+    const withOption = buildContentSecurityPolicy({
+      isDev: false,
+      frameAncestors: "'self' https://app.safe.global",
+    });
+    const directives = withOption.split("; ");
+
+    expect(directives.at(-1)).toBe("frame-ancestors 'self' https://app.safe.global");
+    expect(directives.slice(0, -1).join("; ")).toBe(withoutOption);
+  });
+
+  it("adds nothing for an empty frame-ancestors string", () => {
+    expect(buildContentSecurityPolicy({ isDev: false, frameAncestors: "" })).toBe(
+      buildContentSecurityPolicy({ isDev: false }),
+    );
   });
 });

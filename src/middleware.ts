@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { buildReportOnlyCsp, originOf } from "@/lib/csp";
+import { buildContentSecurityPolicy, originOf } from "@/lib/csp";
 
 // Countries to block for regulatory compliance
 // Includes: UK/US/CA (regulatory) + OFAC comprehensively sanctioned countries
@@ -254,12 +254,24 @@ const maintenancePageHtml = `<!DOCTYPE html>
 /** Origins allowed to embed the site: itself, and Safe{Wallet} for Safe Apps. */
 const FRAME_ANCESTORS = "'self' https://app.safe.global";
 
-// Evaluated and logged by browsers, never enforced: see src/lib/csp.ts.
+/** Enforced in production, report-only in development: see src/lib/csp.ts. */
+const ENFORCE_CSP = process.env.NODE_ENV === "production";
+
 // Only origins are read from the environment, because an RPC URL can carry a key in its path.
-const REPORT_ONLY_CSP = buildReportOnlyCsp({
+const CSP_OPTIONS = {
   isDev: process.env.NODE_ENV !== "production",
-  extraConnectSrc: [process.env.NEXT_PUBLIC_ALCHEMY_RPC_URL, process.env.NEXT_PUBLIC_TENDERLY_VNET_RPC].flatMap(originOf),
+  extraConnectSrc: [
+    process.env.NEXT_PUBLIC_ALCHEMY_RPC_URL,
+    process.env.NEXT_PUBLIC_TENDERLY_VNET_RPC,
+    process.env.NEXT_PUBLIC_ANVIL_RPC,
+  ].flatMap(originOf),
+};
+
+const ENFORCED_CSP = buildContentSecurityPolicy({
+  ...CSP_OPTIONS,
+  frameAncestors: FRAME_ANCESTORS,
 });
+const REPORT_ONLY_CSP = buildContentSecurityPolicy(CSP_OPTIONS);
 
 const GEO_EXEMPT_PATHS = [
   "/api/token-holders",
@@ -375,9 +387,14 @@ export function middleware(request: NextRequest) {
   // Framing is allowed only by Safe{Wallet}, so the site can run as a Safe App.
   // X-Frame-Options can't allow a single origin (ALLOW-FROM is unsupported), so
   // it's omitted; every current browser enforces CSP frame-ancestors instead.
-  response.headers.set("Content-Security-Policy", `frame-ancestors ${FRAME_ANCESTORS}`);
-  // Evaluated and logged by browsers, never enforced. See src/lib/csp.ts.
-  response.headers.set("Content-Security-Policy-Report-Only", REPORT_ONLY_CSP);
+  if (ENFORCE_CSP) {
+    // Enforced in production. See src/lib/csp.ts.
+    response.headers.set("Content-Security-Policy", ENFORCED_CSP);
+  } else {
+    response.headers.set("Content-Security-Policy", `frame-ancestors ${FRAME_ANCESTORS}`);
+    // Evaluated and logged by browsers, never enforced in development. See src/lib/csp.ts.
+    response.headers.set("Content-Security-Policy-Report-Only", REPORT_ONLY_CSP);
+  }
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");

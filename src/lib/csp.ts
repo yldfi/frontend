@@ -1,10 +1,9 @@
 /**
- * Report-only Content-Security-Policy.
+ * Content-Security-Policy.
  *
- * The policy is sent as `Content-Security-Policy-Report-Only`: browsers evaluate
- * it and log violations in the console ("[Report Only] Refused to …") but block
- * nothing. It is not enforced yet; enforcing it is a separate decision made from
- * what the console shows.
+ * The policy is enforced in production and sent report-only in development. In
+ * report-only mode browsers evaluate it and log violations in the console
+ * ("[Report Only] Refused to …") but block nothing.
  *
  * `script-src` keeps `'unsafe-inline'` on purpose: pages are prerendered static
  * assets, so a per-request nonce cannot be injected into them. The policy still
@@ -13,6 +12,12 @@
  *
  * Only origins belong in the policy: an RPC URL can carry an API key in its
  * path, so every URL is reduced with `originOf`.
+ *
+ * A connected wallet's ENS avatar lookup (done inside the wallet library) fetches
+ * the avatar's own host, which can be any host. That host is deliberately not
+ * allowed: the app does not use the result (its avatar comes from the
+ * same-origin `/api/avatar` route), and the library falls back to an image load,
+ * which `img-src` permits.
  */
 import {
   FLASHBOTS_RPC_URL,
@@ -20,9 +25,10 @@ import {
   RPC_URL_LIST,
 } from "@/config/rpc";
 
-export interface ReportOnlyCspOptions {
+export interface ContentSecurityPolicyOptions {
   isDev: boolean;
   extraConnectSrc?: readonly string[];
+  frameAncestors?: string;
 }
 
 /** Plain http(s)/ws(s) origins: no credentials, paths, queries or fragments. */
@@ -67,7 +73,7 @@ const BROWSER_FETCH_CONNECT_SRC: readonly string[] = [
   "https://tokens.1inch.io",
 ];
 
-/** Google Analytics collection. // candidate: confirm from console reports */
+/** Google Analytics collection. // seen in console walks */
 const ANALYTICS_CONNECT_SRC: readonly string[] = [
   "https://www.googletagmanager.com", // src/components/GoogleAnalytics.tsx:90.
   "https://www.google-analytics.com",
@@ -75,7 +81,7 @@ const ANALYTICS_CONNECT_SRC: readonly string[] = [
   "https://*.analytics.google.com",
 ];
 
-/** WalletConnect / Reown. // candidate: confirm from console reports */
+/** WalletConnect / Reown. // seen in console walks */
 const WALLET_CONNECT_SRC: readonly string[] = [
   "https://*.walletconnect.com",
   "https://*.walletconnect.org",
@@ -85,11 +91,17 @@ const WALLET_CONNECT_SRC: readonly string[] = [
   "https://*.reown.com",
 ];
 
-/** Coinbase Wallet SDK hosts. // candidate: confirm from console reports */
+/** Coinbase Wallet SDK hosts. // the Base option was opened in console walks; the wallet popup itself was not exercised */
 const COINBASE_WALLET_CONNECT_SRC: readonly string[] = [
   "https://*.coinbase.com",
   "https://www.walletlink.org",
   "wss://www.walletlink.org",
+];
+
+/** MetaMask SDK relay, used when MetaMask is chosen in a phone browser. // seen in a phone-emulation walk */
+const METAMASK_SDK_CONNECT_SRC: readonly string[] = [
+  "https://metamask-sdk.api.cx.metamask.io",
+  "wss://metamask-sdk.api.cx.metamask.io",
 ];
 
 /** Local dev servers and the Anvil fork. */
@@ -100,8 +112,8 @@ const DEV_CONNECT_SRC: readonly string[] = [
   "ws://127.0.0.1:*",
 ];
 
-export function buildReportOnlyCsp(options: ReportOnlyCspOptions): string {
-  const { isDev } = options;
+export function buildContentSecurityPolicy(options: ContentSecurityPolicyOptions): string {
+  const { isDev, frameAncestors } = options;
   const extraConnectSrc = (options.extraConnectSrc ?? []).flatMap(originOf);
 
   // De-duplicated, first-seen order: the discovery list overlaps the RPC lists.
@@ -114,6 +126,7 @@ export function buildReportOnlyCsp(options: ReportOnlyCspOptions): string {
       ...ANALYTICS_CONNECT_SRC,
       ...WALLET_CONNECT_SRC,
       ...COINBASE_WALLET_CONNECT_SRC,
+      ...METAMASK_SDK_CONNECT_SRC,
       ...extraConnectSrc,
       ...(isDev ? DEV_CONNECT_SRC : []),
     ]),
@@ -126,8 +139,8 @@ export function buildReportOnlyCsp(options: ReportOnlyCspOptions): string {
     ...(isDev ? ["'unsafe-eval'"] : []),
   ];
 
-  // `frame-ancestors` is intentionally absent: it is ignored in report-only mode
-  // and already enforced by the separate `Content-Security-Policy` header.
+  // `frame-ancestors` is added only for the enforced header (browsers ignore it
+  // in report-only mode).
   const directives: ReadonlyArray<readonly [string, string]> = [
     ["default-src", "'self'"],
     ["script-src", scriptSrc.join(" ")],
@@ -140,6 +153,7 @@ export function buildReportOnlyCsp(options: ReportOnlyCspOptions): string {
     ["object-src", "'none'"],
     ["base-uri", "'self'"],
     ["form-action", "'self'"],
+    ...(frameAncestors ? [["frame-ancestors", frameAncestors] as const] : []),
   ];
 
   return directives.map(([name, value]) => `${name} ${value}`).join("; ");
