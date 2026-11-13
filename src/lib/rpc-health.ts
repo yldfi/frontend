@@ -10,34 +10,59 @@
 
 import { redactRpcUrl } from "@/lib/rpc-redact";
 
-/** How long a provider that timed out is tried last instead of first. */
+/** How long a provider that timed out once is tried last instead of first. */
 export const RPC_COOLDOWN_MS = 60_000;
+/** Upper bound for the growing cooldown of a provider that keeps timing out. */
+export const RPC_COOLDOWN_MAX_MS = 600_000;
 /** Attempts at least this slow are logged even when they succeed. */
 export const RPC_SLOW_LOG_MS = 1_000;
 
-const cooldownUntil = new Map<string, number>();
+interface RpcCooldown {
+  until: number;
+  strikes: number;
+}
 
-/** Remember that this provider just timed out. */
+const cooldowns = new Map<string, RpcCooldown>();
+
+/**
+ * Remember that this provider just timed out. A timeout soon after the previous
+ * cooldown ended doubles the next one, up to RPC_COOLDOWN_MAX_MS, so an outage
+ * costs one timeout per growing interval instead of one per minute. A timeout
+ * that arrives while the cooldown is still running is the same outage: it does
+ * not add a strike and does not extend the cooldown, because one slow provider
+ * times out every read in a batch at once.
+ */
 export function markRpcTimedOut(url: string, now = Date.now()): void {
-  cooldownUntil.set(url, now + RPC_COOLDOWN_MS);
+  const previous = cooldowns.get(url);
+  if (previous !== undefined && now < previous.until) return;
+  const strikes =
+    previous !== undefined && now - previous.until < RPC_COOLDOWN_MAX_MS
+      ? previous.strikes + 1
+      : 1;
+  const cooldownMs = Math.min(RPC_COOLDOWN_MS * 2 ** (strikes - 1), RPC_COOLDOWN_MAX_MS);
+  cooldowns.set(url, { until: now + cooldownMs, strikes });
+}
+
+/** A provider that answered is fully reset: no cooldown, no strikes. */
+export function markRpcHealthy(url: string): void {
+  cooldowns.delete(url);
 }
 
 /** Same URLs, same relative order, but providers in cooldown moved to the end. */
 export function orderRpcUrls(urls: readonly string[], now = Date.now()): string[] {
   const present = new Set(urls);
-  // Keep the map bounded by the lists actually in use.
-  for (const url of [...cooldownUntil.keys()]) {
-    if (!present.has(url)) cooldownUntil.delete(url);
+  // Keep the map bounded by the lists actually in use, and drop records too old
+  // to make a repeat timeout count as a strike.
+  for (const [url, entry] of cooldowns) {
+    if (!present.has(url) || now - entry.until >= RPC_COOLDOWN_MAX_MS) cooldowns.delete(url);
   }
 
   const ready: string[] = [];
   const coolingDown: string[] = [];
   for (const url of urls) {
-    const until = cooldownUntil.get(url);
-    if (until === undefined) {
-      ready.push(url);
-    } else if (until <= now) {
-      cooldownUntil.delete(url);
+    const entry = cooldowns.get(url);
+    // An expired record stays for the strike count but no longer reorders.
+    if (entry === undefined || entry.until <= now) {
       ready.push(url);
     } else {
       coolingDown.push(url);
@@ -48,7 +73,7 @@ export function orderRpcUrls(urls: readonly string[], now = Date.now()): string[
 
 /** Forget all cooldowns (tests). */
 export function resetRpcHealth(): void {
-  cooldownUntil.clear();
+  cooldowns.clear();
 }
 
 export type RpcAttemptOutcome = "ok" | "timeout" | "http_error" | "rpc_error" | "error";

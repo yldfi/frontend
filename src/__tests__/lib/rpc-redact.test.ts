@@ -77,13 +77,52 @@ describe("redactUrlsInText", () => {
     expect(redactUrlsInText(message)).toBe(message);
   });
 
-  it("keeps the character that ends a URL", () => {
-    expect(redactUrlsInText("see (https://rpc.example.invalid/key)")).toBe(
-      "see (rpc.example.invalid)"
-    );
-    expect(redactUrlsInText('at "https://rpc.example.invalid/key"')).toBe(
-      'at "rpc.example.invalid"'
-    );
+  it("loses the character that ends a quoted URL (cosmetic cost in a log line)", () => {
+    expect(redactUrlsInText("see (https://rpc.example.invalid/key)")).toBe("see (rpc.example.invalid");
+    expect(redactUrlsInText('at "https://rpc.example.invalid/key"')).toBe('at "rpc.example.invalid');
+  });
+
+  it.each([
+    ["a closing paren in the path", "https://rpc.example.invalid/rpc/SECRET)KEY"],
+    ["a closing bracket in the path", "https://rpc.example.invalid/rpc/SECRET]KEY"],
+    ["an apostrophe in the path", "https://rpc.example.invalid/rpc/SECRET'KEY"],
+    ["a double quote in the path", 'https://rpc.example.invalid/rpc/SECRET"KEY'],
+    ["a closing paren in the query", "https://rpc.example.invalid/rpc?key=SECRET)KEY"],
+    ["a closing bracket in the query", "https://rpc.example.invalid/rpc?key=SECRET]KEY"],
+    ["an apostrophe in the query", "https://rpc.example.invalid/rpc?key=SECRET'KEY"],
+    ["a double quote in the query", 'https://rpc.example.invalid/rpc?key=SECRET"KEY'],
+  ])("fully removes a key containing %s", (_label, text) => {
+    // The exact output: a key that survives after the delimiter used to stay
+    // visible, so asserting only that "SECRET" is gone would pass either way.
+    expect(redactUrlsInText(`call to ${text} failed`)).toBe("call to rpc.example.invalid failed");
+  });
+
+  it.each([
+    ["junk after the host with no slash", "https://h.example)SECRET", "h.example", "secret"],
+    ["a URL inside a JSON body", '{"e":"https://h.example","next":"x"}', "h.example", "next"],
+  ])("keeps only the host of %s", (_label, text, host, hidden) => {
+    const output = redactUrlsInText(text).toLowerCase();
+    expect(output).toContain(host);
+    expect(output).not.toContain(hidden);
+  });
+
+  it("drops userinfo in front of the host", () => {
+    const output = redactUrlsInText("https://user:pass@h.example/k");
+    expect(output).toContain("h.example");
+    expect(output).not.toContain("user");
+    expect(output).not.toContain("pass");
+  });
+
+  it("keeps the port of a URL inside text", () => {
+    expect(redactUrlsInText("https://h.example:8443/k")).toBe("h.example:8443");
+  });
+
+  it("falls back to <rpc> when the match has no valid host", () => {
+    expect(redactUrlsInText("https://)x")).toBe("<rpc>");
+  });
+
+  it("scrubs a URL glued directly to a preceding letter", () => {
+    expect(redactUrlsInText("xhttps://node.example/rpc/SECRETKEY")).toBe("xnode.example");
   });
 
   it("leaves a message without URLs untouched, so UI substring matching still works", () => {
@@ -100,6 +139,17 @@ describe("redactUrlsInText", () => {
     const output = redactUrlsInText(text);
     expect(performance.now() - started).toBeLessThan(200);
     expect(output).not.toContain("[");
+  });
+
+  it.each([
+    ["an unterminated IPv6 host", "http://[".repeat(500)],
+    ["a URL followed by closing parens", "https://a.example/" + ")".repeat(3900)],
+    ["a 3990 character single-label host", "https://" + "a".repeat(3990)],
+    ["a 3990 character dotted host", "https://a" + ".a".repeat(1990) + "a"],
+  ])("scrubs %s in under 50 ms", (_label, text) => {
+    const started = performance.now();
+    redactUrlsInText(text);
+    expect(performance.now() - started).toBeLessThan(50);
   });
 
   it("drops the path of an IPv6 URL with a zone id", () => {

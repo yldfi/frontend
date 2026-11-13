@@ -1,9 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Mock } from "vitest";
 
 import { useBlockNumber } from "wagmi";
 
 import { TokenSelector } from "@/components/TokenSelector";
+import { VAULTS, isVaultHiddenUnlessHolder } from "@/config/vaults";
 import { useEnsoTokens } from "@/hooks/useEnsoTokens";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
 import { useTokenMetadata } from "@/hooks/useTokenMetadata";
@@ -457,5 +459,237 @@ describe("TokenSelector balance refresh", () => {
 
     expect(onSelect).toHaveBeenCalledWith(tokens[1]);
     expect(screen.queryByRole("button", { name: /BBB Token BBB/ })).toBeNull();
+  });
+});
+
+describe("TokenSelector import by address", () => {
+  const importedToken: EnsoToken = {
+    address: "0x3333333333333333333333333333333333333333",
+    chainId: 1,
+    name: "Custom Token",
+    symbol: "CUS",
+    decimals: 18,
+    type: "base",
+  };
+
+  type SetSearchQuery = ReturnType<typeof useEnsoTokens>["setSearchQuery"];
+
+  let onSelect: Mock<(token: EnsoToken) => void>;
+  let importToken: Mock<(token: EnsoToken) => void>;
+  let setSearchQuery: Mock<SetSearchQuery>;
+  let refetchBalances: ReturnType<typeof vi.fn>;
+  let refetchOnchain: ReturnType<typeof vi.fn>;
+  let balanceMap: Map<string, bigint>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    onSelect = vi.fn<(token: EnsoToken) => void>();
+    importToken = vi.fn<(token: EnsoToken) => void>();
+    setSearchQuery = vi.fn<SetSearchQuery>();
+    refetchBalances = vi.fn();
+    refetchOnchain = vi.fn();
+    balanceMap = new Map();
+
+    mockUseBlockNumber.mockImplementation(() => ({ data: 100n }) as ReturnType<typeof useBlockNumber>);
+  });
+
+  type SetupOptions = {
+    tokens?: EnsoToken[];
+    searchQuery?: string;
+    token?: EnsoToken | null;
+    isLoading?: boolean;
+  };
+
+  function setUp({ tokens = [], searchQuery = "", token = null, isLoading = false }: SetupOptions = {}) {
+    mockUseEnsoTokens.mockReturnValue({
+      tokens,
+      allTokens: tokens,
+      searchQuery,
+      setSearchQuery,
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+      importToken,
+      isImported: vi.fn(() => false),
+    });
+    mockUseTokenMetadata.mockReturnValue({
+      token,
+      isLoading,
+      error: null,
+      isValidAddress: true,
+    } as ReturnType<typeof useTokenMetadata>);
+    mockUseTokenBalances.mockReturnValue({
+      sortedTokens: tokens,
+      balanceMap,
+      priceMap: new Map(),
+      refetch: refetchBalances,
+      refetchOnchain,
+      isLoading: false,
+    } as ReturnType<typeof useTokenBalances>);
+  }
+
+  function openSelector() {
+    render(<TokenSelector selectedToken={null} onSelect={onSelect} />);
+    fireEvent.click(screen.getByRole("button", { name: "Select" }));
+  }
+
+  it("shows an Import Token row for a pasted address with metadata, without selecting it", () => {
+    setUp({ searchQuery: importedToken.address, token: importedToken });
+    openSelector();
+
+    expect(screen.getByText("Import Token")).toBeTruthy();
+    const row = screen.getByRole("button", { name: /CUS/ });
+    expect(row.textContent).toContain("Custom Token");
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(importToken).not.toHaveBeenCalled();
+  });
+
+  it("opens the Import token? dialog from the row without selecting the token", () => {
+    setUp({ searchQuery: importedToken.address, token: importedToken });
+    openSelector();
+
+    fireEvent.click(screen.getByRole("button", { name: /CUS/ }));
+
+    expect(screen.getByText("Import token?")).toBeTruthy();
+    expect(screen.getByText(importedToken.address)).toBeTruthy();
+    expect(screen.getByRole("link").getAttribute("href")).toBe(
+      `https://etherscan.io/address/${importedToken.address}`,
+    );
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(importToken).not.toHaveBeenCalled();
+  });
+
+  it("imports the token on confirmation, then closes the dialog and the dropdown", () => {
+    setUp({ searchQuery: importedToken.address, token: importedToken });
+    openSelector();
+
+    fireEvent.click(screen.getByRole("button", { name: /CUS/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+
+    expect(importToken).toHaveBeenCalledTimes(1);
+    expect(importToken).toHaveBeenCalledWith(importedToken);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith(importedToken);
+    expect(setSearchQuery).toHaveBeenCalledWith("");
+    expect(importToken.mock.invocationCallOrder[0]).toBeLessThan(
+      onSelect.mock.invocationCallOrder[0],
+    );
+    expect(screen.queryByText("Import token?")).toBeNull();
+    expect(screen.queryByPlaceholderText("Search by name or address")).toBeNull();
+  });
+
+  it("closes only the dialog on Cancel and keeps the dropdown open", () => {
+    setUp({ searchQuery: importedToken.address, token: importedToken });
+    openSelector();
+
+    fireEvent.click(screen.getByRole("button", { name: /CUS/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByText("Import token?")).toBeNull();
+    expect(screen.getByPlaceholderText("Search by name or address")).toBeTruthy();
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(importToken).not.toHaveBeenCalled();
+    expect(setSearchQuery).not.toHaveBeenCalled();
+  });
+
+  it("closes the dialog on Escape before the dropdown", () => {
+    setUp({ searchQuery: importedToken.address, token: importedToken });
+    openSelector();
+
+    fireEvent.click(screen.getByRole("button", { name: /CUS/ }));
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(screen.queryByText("Import token?")).toBeNull();
+    expect(screen.getByPlaceholderText("Search by name or address")).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(screen.queryByPlaceholderText("Search by name or address")).toBeNull();
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(importToken).not.toHaveBeenCalled();
+  });
+
+  it("closes only the dialog on a backdrop click", () => {
+    setUp({ searchQuery: importedToken.address, token: importedToken });
+    openSelector();
+
+    fireEvent.click(screen.getByRole("button", { name: /CUS/ }));
+    const backdrop = screen
+      .getByText("Import token?")
+      .closest(".fixed")
+      ?.querySelector(".absolute.inset-0");
+    expect(backdrop).not.toBeNull();
+
+    fireEvent.click(backdrop!);
+
+    expect(screen.queryByText("Import token?")).toBeNull();
+    expect(screen.getByPlaceholderText("Search by name or address")).toBeTruthy();
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(importToken).not.toHaveBeenCalled();
+  });
+
+  it("shows only loading dots while the address metadata is loading", () => {
+    setUp({ searchQuery: importedToken.address, token: null, isLoading: true });
+    openSelector();
+
+    expect(screen.queryByText("Import Token")).toBeNull();
+    expect(screen.queryByText("No token found at this address")).toBeNull();
+    expect(screen.queryByRole("button", { name: /CUS/ })).toBeNull();
+    expect(document.querySelectorAll(".animate-bounce")).toHaveLength(3);
+  });
+
+  it("reports when no token metadata exists for the pasted address", () => {
+    setUp({ searchQuery: importedToken.address, token: null, isLoading: false });
+    openSelector();
+
+    expect(screen.getByText("No token found at this address")).toBeTruthy();
+    expect(screen.queryByText("Import Token")).toBeNull();
+  });
+
+  it("does not offer an import for an address that is already listed in another letter case", () => {
+    const listed: EnsoToken = {
+      address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      chainId: 1,
+      name: "Wrapped Ether",
+      symbol: "WETH",
+      decimals: 18,
+      type: "base",
+    };
+    setUp({ tokens: [listed], searchQuery: listed.address.toLowerCase(), token: listed });
+    openSelector();
+
+    expect(screen.queryByText("Import Token")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /WETH/ }));
+
+    expect(onSelect).toHaveBeenCalledWith(listed);
+    expect(importToken).not.toHaveBeenCalled();
+  });
+
+  it("does not fetch metadata or offer an import for a query that is not an address", () => {
+    setUp({ searchQuery: "cus", token: importedToken });
+    openSelector();
+
+    expect(mockUseTokenMetadata).toHaveBeenLastCalledWith(undefined);
+    expect(screen.queryByText("Import Token")).toBeNull();
+  });
+
+  it("does not offer an import for a holder-only vault the wallet does not hold", () => {
+    const holderOnlyVault = Object.values(VAULTS).find((vault) => isVaultHiddenUnlessHolder(vault));
+    expect(holderOnlyVault).toBeDefined();
+    const holderOnlyToken: EnsoToken = {
+      address: holderOnlyVault!.address,
+      chainId: 1,
+      name: holderOnlyVault!.name,
+      symbol: holderOnlyVault!.symbol,
+      decimals: holderOnlyVault!.decimals,
+      type: "base",
+    };
+    setUp({ searchQuery: holderOnlyToken.address, token: holderOnlyToken });
+    openSelector();
+
+    expect(screen.queryByText("Import Token")).toBeNull();
+    expect(screen.queryByText("No token found at this address")).toBeNull();
   });
 });

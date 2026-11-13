@@ -1,6 +1,6 @@
 import { fetchPricesInBatches } from "@/lib/enso-price-batches";
 import { redactRpcUrl } from "@/lib/rpc-redact";
-import { logRpcAttempt, markRpcTimedOut, orderRpcUrls } from "@/lib/rpc-health";
+import { logRpcAttempt, markRpcHealthy, markRpcTimedOut, orderRpcUrls } from "@/lib/rpc-health";
 import type {
   EnsoBundleAction,
   EnsoBundleResponse,
@@ -553,6 +553,7 @@ export async function rpcWithFallback<T = unknown>(body: unknown): Promise<T> {
       }
       const reply = (await response.json()) as unknown;
       if (!rpcReplyNeedsRetry(reply)) {
+        markRpcHealthy(rpcUrl);
         logRpcAttempt(rpcUrl, startedAt, "ok", "rpcWithFallback");
         return reply as T;
       }

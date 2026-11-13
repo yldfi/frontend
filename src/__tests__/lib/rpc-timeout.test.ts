@@ -169,6 +169,206 @@ describe("server-side RPC timeouts", () => {
       }
     });
 
+    it("a provider that answers after its cooldown resets to a 60 second cooldown", async () => {
+      vi.useFakeTimers();
+      try {
+        let privateFails = true;
+        const result = "0x" + (1234n).toString(16).padStart(64, "0");
+        const flaggedFetch = flaggedRpcMock((url, init) => {
+          if (url.startsWith(PRIVATE) && privateFails) throw timeoutError();
+          const body = JSON.parse(String(init?.body)) as { id: number } | Array<{ id: number }>;
+          return {
+            ok: true,
+            json: async () =>
+              Array.isArray(body)
+                ? body.map((entry) => ({ id: entry.id, result }))
+                : { id: body.id, result },
+          } as unknown as Response;
+        });
+        globalThis.fetch = flaggedFetch as unknown as typeof fetch;
+
+        // First read: the private node times out.
+        await rpc.batchRpcCalls(CALLS);
+        expect(attemptedUrls(flaggedFetch, 0)).toContain(PRIVATE);
+
+        // Inside the cooldown it is tried last.
+        const afterFirst = flaggedFetch.mock.calls.length;
+        await rpc.batchRpcCalls(CALLS);
+        expect(attemptedUrls(flaggedFetch, afterFirst)[0].startsWith(PRIVATE)).toBe(false);
+
+        // After the cooldown it is first again, and this time it answers.
+        vi.advanceTimersByTime(health.RPC_COOLDOWN_MS);
+        privateFails = false;
+        const afterCooldown = flaggedFetch.mock.calls.length;
+        await rpc.batchRpcCalls(CALLS);
+        expect(attemptedUrls(flaggedFetch, afterCooldown)[0]).toBe(PRIVATE);
+
+        // A new timeout after that success starts at 60 s, not at 120 s.
+        privateFails = true;
+        const afterSuccess = flaggedFetch.mock.calls.length;
+        await rpc.batchRpcCalls(CALLS);
+        expect(attemptedUrls(flaggedFetch, afterSuccess)[0]).toBe(PRIVATE);
+
+        vi.advanceTimersByTime(health.RPC_COOLDOWN_MS);
+        const afterSecondTimeout = flaggedFetch.mock.calls.length;
+        await rpc.batchRpcCalls(CALLS);
+        expect(attemptedUrls(flaggedFetch, afterSecondTimeout)[0]).toBe(PRIVATE);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("two timeouts with no success between grow the cooldown past a minute", async () => {
+      vi.useFakeTimers();
+      try {
+        const result = "0x" + (1234n).toString(16).padStart(64, "0");
+        const flaggedFetch = flaggedRpcMock((url, init) => {
+          if (url.startsWith(PRIVATE)) throw timeoutError();
+          const body = JSON.parse(String(init?.body)) as { id: number } | Array<{ id: number }>;
+          return {
+            ok: true,
+            json: async () =>
+              Array.isArray(body)
+                ? body.map((entry) => ({ id: entry.id, result }))
+                : { id: body.id, result },
+          } as unknown as Response;
+        });
+        globalThis.fetch = flaggedFetch as unknown as typeof fetch;
+
+        // First read: timeout, so a 60 s cooldown.
+        await rpc.batchRpcCalls(CALLS);
+
+        // After the first cooldown the node is first and times out again, with
+        // no successful attempt in between.
+        vi.advanceTimersByTime(health.RPC_COOLDOWN_MS);
+        const afterFirstCooldown = flaggedFetch.mock.calls.length;
+        await rpc.batchRpcCalls(CALLS);
+        expect(attemptedUrls(flaggedFetch, afterFirstCooldown)[0]).toBe(PRIVATE);
+
+        // The second cooldown is 120 s: still last a minute and a second later.
+        vi.advanceTimersByTime(health.RPC_COOLDOWN_MS + 1_000);
+        const afterSecondTimeout = flaggedFetch.mock.calls.length;
+        await rpc.batchRpcCalls(CALLS);
+        expect(attemptedUrls(flaggedFetch, afterSecondTimeout)[0].startsWith(PRIVATE)).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("a batch whose per-entry retries all time out at once cools the node for 60 seconds, not 10 minutes", async () => {
+      vi.useFakeTimers();
+      try {
+        const N = 6;
+        const calls = Array.from({ length: N }, (_, index) => ({
+          to: "0x" + (index + 1).toString(16).padStart(40, "0"),
+          data: "0x",
+        }));
+        const expected = calls.map(() => 1234n);
+        const result = "0x" + (1234n).toString(16).padStart(64, "0");
+        const flaggedFetch = flaggedRpcMock((url, init) => {
+          const body = JSON.parse(String(init?.body)) as { id: number } | Array<{ id: number }>;
+          if (url.startsWith(PRIVATE)) {
+            // The batch answers with empty entries, then every per-entry retry times out.
+            if (Array.isArray(body)) {
+              return {
+                ok: true,
+                json: async () => body.map((entry) => ({ id: entry.id, result: "0x" })),
+              } as unknown as Response;
+            }
+            throw timeoutError();
+          }
+          return {
+            ok: true,
+            json: async () =>
+              Array.isArray(body)
+                ? body.map((entry) => ({ id: entry.id, result }))
+                : { id: body.id, result },
+          } as unknown as Response;
+        });
+        globalThis.fetch = flaggedFetch as unknown as typeof fetch;
+
+        await expect(rpc.batchRpcCalls(calls)).resolves.toEqual(expected);
+        // The node is retried once, and each attempt retries every entry alone.
+        const privateAttempts = attemptedUrls(flaggedFetch, 0).filter((url) => url.startsWith(PRIVATE));
+        expect(privateAttempts.length).toBeGreaterThanOrEqual(N + 1);
+
+        // Inside the cooldown the node is tried last, so the public providers answer.
+        const afterFirst = flaggedFetch.mock.calls.length;
+        await expect(rpc.batchRpcCalls(calls)).resolves.toEqual(expected);
+        expect(attemptedUrls(flaggedFetch, afterFirst)[0].startsWith(PRIVATE)).toBe(false);
+
+        // One minute later it is first again: the strikes did not add up to the cap.
+        vi.advanceTimersByTime(health.RPC_COOLDOWN_MS);
+        const afterCooldown = flaggedFetch.mock.calls.length;
+        await expect(rpc.batchRpcCalls(calls)).resolves.toEqual(expected);
+        expect(attemptedUrls(flaggedFetch, afterCooldown)[0]).toBe(PRIVATE);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    const RESET_READS = ["getCurveGetDy", "getCurveGetDyFactory", "rpcWithFallback"] as const;
+
+    it.each(RESET_READS)(
+      "%s resets the strikes when the node answers after its cooldown",
+      async (fnName) => {
+        vi.useFakeTimers();
+        try {
+          const ensoRpc = await import("@/lib/enso/api");
+          const result = "0x" + (1234n).toString(16).padStart(64, "0");
+          let privateFails = true;
+          const flaggedFetch = flaggedRpcMock((url, init) => {
+            const body = JSON.parse(String(init?.body)) as { id: number } | Array<{ id: number }>;
+            if (url.startsWith(PRIVATE) && privateFails) throw timeoutError();
+            return {
+              ok: true,
+              json: async () =>
+                Array.isArray(body)
+                  ? body.map((entry) => ({ id: entry.id, result }))
+                  : { id: body.id, result },
+            } as unknown as Response;
+          });
+          globalThis.fetch = flaggedFetch as unknown as typeof fetch;
+          const read = async (): Promise<unknown> => {
+            if (fnName === "rpcWithFallback") return ensoRpc.rpcWithFallback(single);
+            if (fnName === "getCurveGetDy") return rpc.getCurveGetDy(POOL, 0, 1, "1000");
+            return rpc.getCurveGetDyFactory(POOL, 0, 1, "1000");
+          };
+
+          // First timeout: a 60 s cooldown.
+          await read();
+          const afterTimeout = flaggedFetch.mock.calls.length;
+          await read();
+          expect(attemptedUrls(flaggedFetch, afterTimeout)[0].startsWith(PRIVATE)).toBe(false);
+
+          // After the cooldown the node is first again and answers through this function.
+          vi.advanceTimersByTime(health.RPC_COOLDOWN_MS);
+          privateFails = false;
+          const afterCooldown = flaggedFetch.mock.calls.length;
+          await read();
+          expect(attemptedUrls(flaggedFetch, afterCooldown)[0]).toBe(PRIVATE);
+
+          // A timeout after that success starts at 60 s, not at 120 s.
+          privateFails = true;
+          const afterSuccess = flaggedFetch.mock.calls.length;
+          await read();
+          expect(attemptedUrls(flaggedFetch, afterSuccess)[0]).toBe(PRIVATE);
+
+          vi.advanceTimersByTime(health.RPC_COOLDOWN_MS - 1);
+          const afterSecondTimeout = flaggedFetch.mock.calls.length;
+          await read();
+          expect(attemptedUrls(flaggedFetch, afterSecondTimeout)[0].startsWith(PRIVATE)).toBe(false);
+
+          vi.advanceTimersByTime(1);
+          const afterSecondCooldown = flaggedFetch.mock.calls.length;
+          await read();
+          expect(attemptedUrls(flaggedFetch, afterSecondCooldown)[0]).toBe(PRIVATE);
+        } finally {
+          vi.useRealTimers();
+        }
+      },
+    );
+
     it("rpcWithFallback skips a node that just timed out on its previous read", async () => {
       const ensoRpc = await import("@/lib/enso/api");
 

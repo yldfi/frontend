@@ -8,6 +8,7 @@
 import { redactRpcUrl } from "@/lib/rpc-redact";
 import {
   logRpcAttempt,
+  markRpcHealthy,
   markRpcTimedOut,
   orderRpcUrls,
   type RpcAttemptOutcome,
@@ -170,17 +171,19 @@ export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]
             }
           }));
 
-          // If individual retries still have nulls, try next RPC URL
+          // A single-call retry still came back empty: this attempt failed (the loop retries this URL once, then moves on).
           if (singleResults.some((value) => value === null)) {
             lastError = new Error(`RPC ${redactRpcUrl(rpcUrl)}: ${singleResults.filter(v => v === null).length}/${calls.length} calls returned null`);
             logRpcAttempt(rpcUrl, startedAt, "rpc_error", "batchRpcCalls");
             continue;
           }
 
+          markRpcHealthy(rpcUrl);
           logRpcAttempt(rpcUrl, startedAt, "ok", "batchRpcCalls");
           return singleResults;
         }
 
+        markRpcHealthy(rpcUrl);
         logRpcAttempt(rpcUrl, startedAt, "ok", "batchRpcCalls");
         return parsed;
       } catch (error) {
@@ -289,6 +292,7 @@ export async function getCurveGetDy(
           if (result.result && result.result !== "0x") {
             value = BigInt(result.result);
           }
+          markRpcHealthy(rpcUrl);
           logRpcAttempt(rpcUrl, startedAt, "ok", "getCurveGetDy");
           return value;
         } catch (error) {
@@ -360,6 +364,7 @@ export async function getCurveGetDyFactory(
           if (result.result && result.result !== "0x") {
             value = BigInt(result.result);
           }
+          markRpcHealthy(rpcUrl);
           logRpcAttempt(rpcUrl, startedAt, "ok", "getCurveGetDyFactory");
           return value;
         } catch (error) {
