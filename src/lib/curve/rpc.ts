@@ -6,6 +6,12 @@
  */
 
 import { redactRpcUrl } from "@/lib/rpc-redact";
+import {
+  logRpcAttempt,
+  markRpcTimedOut,
+  orderRpcUrls,
+  type RpcAttemptOutcome,
+} from "@/lib/rpc-health";
 import { getAllRpcUrls, isRpcTimeout, RPC_TIMEOUT_MS, rpcAuthHeaderFor } from "@/config/rpc";
 import { CURVE_CVX_ETH_POOL } from "@/config/addresses";
 
@@ -79,7 +85,7 @@ const isLiveIntegrationTest = isTestEnv && typeof process !== "undefined" &&
 export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]> {
   if (calls.length === 0) return [];
 
-  const rpcUrls = getRpcUrls();
+  const rpcUrls = orderRpcUrls(getRpcUrls());
 
   const batch = calls.map((call, id) => ({
     jsonrpc: "2.0",
@@ -98,6 +104,8 @@ export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]
   // Try each RPC URL with retries before moving to the next
   for (const rpcUrl of rpcUrls) {
     for (let attempt = 0; attempt < retriesPerUrl; attempt++) {
+      const startedAt = Date.now();
+      let outcome: RpcAttemptOutcome | undefined;
       try {
         const headers: Record<string, string> = { "Content-Type": "application/json", ...rpcAuthHeaderFor(rpcUrl) };
 
@@ -109,6 +117,7 @@ export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]
         });
 
         if (!response || !response.ok) {
+          outcome = "http_error";
           throw new Error(`RPC batch request failed: ${response?.status ?? 'no response'}`);
         }
 
@@ -116,6 +125,7 @@ export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]
 
         // Handle case where response is not an array (RPC error, invalid response, etc.)
         if (!Array.isArray(json)) {
+          outcome = "rpc_error";
           throw new Error("RPC batch response is not an array");
         }
 
@@ -154,7 +164,8 @@ export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]
                 return null;
               }
               return BigInt(jsonSingle.result);
-            } catch {
+            } catch (error) {
+              if (isRpcTimeout(error)) markRpcTimedOut(rpcUrl);
               return null;
             }
           }));
@@ -162,15 +173,21 @@ export async function batchRpcCalls(calls: RpcCall[]): Promise<(bigint | null)[]
           // If individual retries still have nulls, try next RPC URL
           if (singleResults.some((value) => value === null)) {
             lastError = new Error(`RPC ${redactRpcUrl(rpcUrl)}: ${singleResults.filter(v => v === null).length}/${calls.length} calls returned null`);
+            logRpcAttempt(rpcUrl, startedAt, "rpc_error", "batchRpcCalls");
             continue;
           }
 
+          logRpcAttempt(rpcUrl, startedAt, "ok", "batchRpcCalls");
           return singleResults;
         }
 
+        logRpcAttempt(rpcUrl, startedAt, "ok", "batchRpcCalls");
         return parsed;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
+        const failed = outcome ?? (isRpcTimeout(error) ? "timeout" : "error");
+        if (failed === "timeout") markRpcTimedOut(rpcUrl);
+        logRpcAttempt(rpcUrl, startedAt, failed, "batchRpcCalls");
         // A timed-out node is not retried; move on to the next RPC URL.
         if (isRpcTimeout(error)) break;
         if (attempt < retriesPerUrl - 1) {
@@ -230,7 +247,7 @@ export async function getCurveGetDy(
   j: number,
   dx: string
 ): Promise<bigint | null> {
-  const rpcUrls = getRpcUrls();
+  const rpcUrls = orderRpcUrls(getRpcUrls());
 
   const data =
     SELECTORS.GET_DY_INT128 +
@@ -241,32 +258,45 @@ export async function getCurveGetDy(
   for (const rpcUrl of rpcUrls) {
     try {
       return await withRetry(async () => {
-        const headers: Record<string, string> = { "Content-Type": "application/json", ...rpcAuthHeaderFor(rpcUrl) };
+        const startedAt = Date.now();
+        let outcome: RpcAttemptOutcome | undefined;
+        try {
+          const headers: Record<string, string> = { "Content-Type": "application/json", ...rpcAuthHeaderFor(rpcUrl) };
 
-        const response = await fetch(rpcUrl, {
-          method: "POST",
-          signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
-          headers,
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            method: "eth_call",
-            params: [{ to: poolAddress, data }, "latest"],
-            id: 1,
-          }),
-        });
+          const response = await fetch(rpcUrl, {
+            method: "POST",
+            signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
+            headers,
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              method: "eth_call",
+              params: [{ to: poolAddress, data }, "latest"],
+              id: 1,
+            }),
+          });
 
-        if (!response || !response.ok) {
-          throw new Error(`RPC request failed: ${response?.status ?? 'no response'}`);
-        }
+          if (!response || !response.ok) {
+            outcome = "http_error";
+            throw new Error(`RPC request failed: ${response?.status ?? 'no response'}`);
+          }
 
-        const result = (await response.json()) as { result?: string; error?: { message: string } };
-        if (result.error) {
-          throw new Error(`RPC error: ${result.error.message}`);
+          const result = (await response.json()) as { result?: string; error?: { message: string } };
+          if (result.error) {
+            outcome = "rpc_error";
+            throw new Error(`RPC error: ${result.error.message}`);
+          }
+          let value: bigint | null = null;
+          if (result.result && result.result !== "0x") {
+            value = BigInt(result.result);
+          }
+          logRpcAttempt(rpcUrl, startedAt, "ok", "getCurveGetDy");
+          return value;
+        } catch (error) {
+          const failed = outcome ?? (isRpcTimeout(error) ? "timeout" : "error");
+          if (failed === "timeout") markRpcTimedOut(rpcUrl);
+          logRpcAttempt(rpcUrl, startedAt, failed, "getCurveGetDy");
+          throw error;
         }
-        if (result.result && result.result !== "0x") {
-          return BigInt(result.result);
-        }
-        return null;
       }, 2);
     } catch {
       // Try next RPC URL
@@ -288,7 +318,7 @@ export async function getCurveGetDyFactory(
   j: number,
   dx: string
 ): Promise<bigint | null> {
-  const rpcUrls = getRpcUrls();
+  const rpcUrls = orderRpcUrls(getRpcUrls());
 
   const data =
     SELECTORS.GET_DY_UINT256 +
@@ -299,32 +329,45 @@ export async function getCurveGetDyFactory(
   for (const rpcUrl of rpcUrls) {
     try {
       return await withRetry(async () => {
-        const headers: Record<string, string> = { "Content-Type": "application/json", ...rpcAuthHeaderFor(rpcUrl) };
+        const startedAt = Date.now();
+        let outcome: RpcAttemptOutcome | undefined;
+        try {
+          const headers: Record<string, string> = { "Content-Type": "application/json", ...rpcAuthHeaderFor(rpcUrl) };
 
-        const response = await fetch(rpcUrl, {
-          method: "POST",
-          signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
-          headers,
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            method: "eth_call",
-            params: [{ to: poolAddress, data }, "latest"],
-            id: 1,
-          }),
-        });
+          const response = await fetch(rpcUrl, {
+            method: "POST",
+            signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
+            headers,
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              method: "eth_call",
+              params: [{ to: poolAddress, data }, "latest"],
+              id: 1,
+            }),
+          });
 
-        if (!response || !response.ok) {
-          throw new Error(`RPC request failed: ${response?.status ?? 'no response'}`);
-        }
+          if (!response || !response.ok) {
+            outcome = "http_error";
+            throw new Error(`RPC request failed: ${response?.status ?? 'no response'}`);
+          }
 
-        const result = (await response.json()) as { result?: string; error?: { message: string } };
-        if (result.error) {
-          throw new Error(`RPC error: ${result.error.message}`);
+          const result = (await response.json()) as { result?: string; error?: { message: string } };
+          if (result.error) {
+            outcome = "rpc_error";
+            throw new Error(`RPC error: ${result.error.message}`);
+          }
+          let value: bigint | null = null;
+          if (result.result && result.result !== "0x") {
+            value = BigInt(result.result);
+          }
+          logRpcAttempt(rpcUrl, startedAt, "ok", "getCurveGetDyFactory");
+          return value;
+        } catch (error) {
+          const failed = outcome ?? (isRpcTimeout(error) ? "timeout" : "error");
+          if (failed === "timeout") markRpcTimedOut(rpcUrl);
+          logRpcAttempt(rpcUrl, startedAt, failed, "getCurveGetDyFactory");
+          throw error;
         }
-        if (result.result && result.result !== "0x") {
-          return BigInt(result.result);
-        }
-        return null;
       }, 2);
     } catch {
       // Try next RPC URL

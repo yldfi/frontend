@@ -20,6 +20,9 @@ describe("rpcWithFallback: a JSON-RPC error body retries the next provider", () 
     vi.stubEnv("DEBUG_RPC_URL", PRIVATE);
     vi.stubEnv("DEBUG_RPC_AUTH", "user:pass");
     vi.resetModules();
+    // The same fresh module instance rpcWithFallback imports (module-level provider cooldowns).
+    const health = await import("@/lib/rpc-health");
+    health.resetRpcHealth();
     rpc = await import("@/lib/enso/api");
   });
 

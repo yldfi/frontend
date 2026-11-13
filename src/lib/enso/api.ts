@@ -1,5 +1,6 @@
 import { fetchPricesInBatches } from "@/lib/enso-price-batches";
 import { redactRpcUrl } from "@/lib/rpc-redact";
+import { logRpcAttempt, markRpcTimedOut, orderRpcUrls } from "@/lib/rpc-health";
 import type {
   EnsoBundleAction,
   EnsoBundleResponse,
@@ -7,7 +8,7 @@ import type {
   EnsoRouteResponse,
   EnsoToken,
 } from "@/types/enso";
-import { RPC_TIMEOUT_MS, getAllRpcUrls, rpcAuthHeaderFor } from "@/config/rpc";
+import { RPC_TIMEOUT_MS, getAllRpcUrls, isRpcTimeout, rpcAuthHeaderFor } from "@/config/rpc";
 import { fetchEnsoIntent, shouldUsePlainTokenSwapIntent } from "@/lib/enso-intents";
 import {
   assertProtectedEnsoBundleActions,
@@ -528,12 +529,13 @@ function rpcReplyNeedsRetry(reply: unknown): boolean {
  * Read methods only: a request is repeated against other providers.
  */
 export async function rpcWithFallback<T = unknown>(body: unknown): Promise<T> {
-  const rpcUrls = getRpcUrls();
+  const rpcUrls = orderRpcUrls(getRpcUrls());
   let lastError: Error | undefined;
   let firstErrorReply: unknown;
   let errorReplies = 0;
 
   for (const rpcUrl of rpcUrls) {
+    const startedAt = Date.now();
     try {
       const response = await fetch(rpcUrl, {
         method: "POST",
@@ -546,12 +548,17 @@ export async function rpcWithFallback<T = unknown>(body: unknown): Promise<T> {
       });
       if (!response || !response.ok) {
         lastError = new Error(`RPC ${redactRpcUrl(rpcUrl)} returned ${response?.status}`);
+        logRpcAttempt(rpcUrl, startedAt, "http_error", "rpcWithFallback");
         continue;
       }
       const reply = (await response.json()) as unknown;
-      if (!rpcReplyNeedsRetry(reply)) return reply as T;
+      if (!rpcReplyNeedsRetry(reply)) {
+        logRpcAttempt(rpcUrl, startedAt, "ok", "rpcWithFallback");
+        return reply as T;
+      }
       if (firstErrorReply === undefined) firstErrorReply = reply;
       lastError = new Error(`RPC ${redactRpcUrl(rpcUrl)} returned a JSON-RPC error`);
+      logRpcAttempt(rpcUrl, startedAt, "rpc_error", "rpcWithFallback");
       // Cap the extra calls: a provider that answers an error body may do so for
       // every request, and the caller still gets the first error body to decide on.
       errorReplies += 1;
@@ -559,6 +566,9 @@ export async function rpcWithFallback<T = unknown>(body: unknown): Promise<T> {
       continue;
     } catch (e) {
       lastError = e instanceof Error ? e : new Error(String(e));
+      const failed = isRpcTimeout(e) ? "timeout" : "error";
+      if (failed === "timeout") markRpcTimedOut(rpcUrl);
+      logRpcAttempt(rpcUrl, startedAt, failed, "rpcWithFallback");
       continue;
     }
   }

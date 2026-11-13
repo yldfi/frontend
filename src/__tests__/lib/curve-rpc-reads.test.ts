@@ -47,6 +47,9 @@ describe("server-side curve pool/vault read helpers", () => {
     vi.stubEnv("DEBUG_RPC_AUTH", "user:pass");
     vi.useFakeTimers();
     vi.resetModules();
+    // The same fresh module instance the helpers import (module-level provider cooldowns).
+    const health = await import("@/lib/rpc-health");
+    health.resetRpcHealth();
     // The helpers log every exhausted fallback; keep the output clean and let
     // the one test that cares assert on the call count.
     vi.spyOn(console, "error").mockImplementation(() => {});

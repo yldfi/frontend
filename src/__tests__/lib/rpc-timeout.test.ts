@@ -9,6 +9,7 @@ type RpcModule = typeof import("@/lib/curve/rpc");
 
 describe("server-side RPC timeouts", () => {
   let rpc: RpcModule;
+  let health: typeof import("@/lib/rpc-health");
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -17,6 +18,9 @@ describe("server-side RPC timeouts", () => {
     vi.stubEnv("DEBUG_RPC_URL", PRIVATE);
     vi.stubEnv("DEBUG_RPC_AUTH", "user:pass");
     vi.resetModules();
+    // The same fresh module instance the loops above import (module-level state).
+    health = await import("@/lib/rpc-health");
+    health.resetRpcHealth();
     fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.startsWith(PRIVATE)) throw timeoutError();
       if (url.includes("chainid.network")) return { ok: false, json: async () => [] } as unknown as Response;
@@ -74,5 +78,295 @@ describe("server-side RPC timeouts", () => {
     const publicCall = headers.find(([url]) => !url.startsWith(PRIVATE));
     expect(publicCall).toBeDefined();
     expect(publicCall![1]).not.toHaveProperty("Authorization");
+  });
+
+  describe("provider cooldown", () => {
+    const CALLS = [{ to: "0x0000000000000000000000000000000000000001", data: "0x" }];
+    const single = { jsonrpc: "2.0", id: 1, method: "eth_chainId", params: [] };
+
+    /** URL of the first non-probe request since `from`. */
+    const firstRpcUrlSince = (from: number) =>
+      String(fetchMock.mock.calls.slice(from).find(([url]) => !String(url).includes("chainid.network"))?.[0]);
+
+    it("skips a just-timed-out node on the next batch read", async () => {
+      await rpc.batchRpcCalls(CALLS);
+      expect(privateCalls()).toHaveLength(1);
+
+      const afterFirst = fetchMock.mock.calls.length;
+      await rpc.batchRpcCalls(CALLS);
+
+      expect(firstRpcUrlSince(afterFirst).startsWith(PRIVATE)).toBe(false);
+      // The cooled-down node was not needed this time.
+      expect(privateCalls()).toHaveLength(1);
+    });
+
+    it("still tries a cooled-down node, last, when every public provider fails", async () => {
+      vi.useFakeTimers();
+      try {
+        let privateFails = true;
+        let publicFails = false;
+        const result = "0x" + (1234n).toString(16).padStart(64, "0");
+        const flaggedFetch = vi.fn(async (url: string, init?: RequestInit) => {
+          const target = String(url);
+          if (target.includes("chainid.network")) return { ok: false, json: async () => [] } as unknown as Response;
+          if (target.startsWith(PRIVATE)) {
+            if (privateFails) throw timeoutError();
+          } else if (publicFails) {
+            return { ok: false, status: 500, json: async () => ({}) } as unknown as Response;
+          }
+          const body = JSON.parse(String(init?.body)) as { id: number } | Array<{ id: number }>;
+          return {
+            ok: true,
+            json: async () =>
+              Array.isArray(body)
+                ? body.map((entry) => ({ id: entry.id, result }))
+                : { id: body.id, result },
+          } as unknown as Response;
+        });
+        globalThis.fetch = flaggedFetch as unknown as typeof fetch;
+
+        // First read: the private node times out and a public provider answers.
+        await rpc.batchRpcCalls(CALLS);
+        expect(flaggedFetch.mock.calls.some(([url]) => String(url).startsWith(PRIVATE))).toBe(true);
+
+        // From now on every public provider fails and only the private node answers.
+        privateFails = false;
+        publicFails = true;
+        const afterFirst = flaggedFetch.mock.calls.length;
+
+        const pending = rpc.batchRpcCalls(CALLS);
+        await vi.runAllTimersAsync();
+        await expect(pending).resolves.toEqual([1234n]);
+
+        const attempted = flaggedFetch.mock.calls
+          .slice(afterFirst)
+          .map(([url]) => String(url))
+          .filter((url) => !url.includes("chainid.network"));
+        expect(attempted[attempted.length - 1]).toBe(PRIVATE);
+        expect(attempted.slice(0, -1).every((url) => !url.startsWith(PRIVATE))).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("tries the private node first again after the cooldown", async () => {
+      vi.useFakeTimers();
+      try {
+        await rpc.batchRpcCalls(CALLS);
+        expect(privateCalls()).toHaveLength(1);
+
+        const afterFirst = fetchMock.mock.calls.length;
+        await rpc.batchRpcCalls(CALLS);
+        expect(firstRpcUrlSince(afterFirst).startsWith(PRIVATE)).toBe(false);
+
+        vi.advanceTimersByTime(health.RPC_COOLDOWN_MS);
+
+        const afterSecond = fetchMock.mock.calls.length;
+        await rpc.batchRpcCalls(CALLS);
+        expect(firstRpcUrlSince(afterSecond).startsWith(PRIVATE)).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("rpcWithFallback skips a node that just timed out on its previous read", async () => {
+      const ensoRpc = await import("@/lib/enso/api");
+
+      await ensoRpc.rpcWithFallback(single);
+      expect(privateCalls()).toHaveLength(1);
+
+      const afterFirst = fetchMock.mock.calls.length;
+      await ensoRpc.rpcWithFallback(single);
+
+      expect(firstRpcUrlSince(afterFirst).startsWith(PRIVATE)).toBe(false);
+    });
+
+    it("a timeout in rpcWithFallback reorders the curve batch list", async () => {
+      const ensoRpc = await import("@/lib/enso/api");
+
+      await ensoRpc.rpcWithFallback(single);
+      const afterFirst = fetchMock.mock.calls.length;
+
+      await rpc.batchRpcCalls(CALLS);
+
+      expect(firstRpcUrlSince(afterFirst).startsWith(PRIVATE)).toBe(false);
+    });
+
+    it("a timeout in batchRpcCalls reorders rpcWithFallback", async () => {
+      const ensoRpc = await import("@/lib/enso/api");
+
+      await rpc.batchRpcCalls(CALLS);
+      const afterFirst = fetchMock.mock.calls.length;
+
+      await ensoRpc.rpcWithFallback(single);
+
+      expect(firstRpcUrlSince(afterFirst).startsWith(PRIVATE)).toBe(false);
+    });
+
+    // The two pool-rate reads (get_dy on old-style and factory pools) build
+    // their URL list the same way, so both are covered by every case below.
+    const POOL_RATE_READS = ["getCurveGetDy", "getCurveGetDyFactory"] as const;
+    const POOL = "0x0000000000000000000000000000000000000002";
+    const readPoolRate = (fnName: (typeof POOL_RATE_READS)[number]) => rpc[fnName](POOL, 0, 1, "1000");
+
+    /** Every RPC URL a flagged mock was asked for, in order, minus the chainlist probe. */
+    const attemptedUrls = (mock: ReturnType<typeof vi.fn>, from: number) =>
+      mock.mock.calls
+        .slice(from)
+        .map(([url]) => String(url))
+        .filter((url) => !url.includes("chainid.network"));
+
+    const flaggedRpcMock = (
+      respond: (url: string, init?: RequestInit) => Promise<Response> | Response,
+    ) =>
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (String(url).includes("chainid.network")) return { ok: false, json: async () => [] } as unknown as Response;
+        return respond(String(url), init);
+      });
+
+    it.each(POOL_RATE_READS)("%s skips a just-timed-out node on the next read", async (fnName) => {
+      await expect(readPoolRate(fnName)).resolves.toBe(1234n);
+      expect(privateCalls()).toHaveLength(1);
+
+      const afterFirst = fetchMock.mock.calls.length;
+      await expect(readPoolRate(fnName)).resolves.toBe(1234n);
+
+      expect(firstRpcUrlSince(afterFirst).startsWith(PRIVATE)).toBe(false);
+      // The cooled-down node was not needed this time.
+      expect(privateCalls()).toHaveLength(1);
+    });
+
+    it.each(POOL_RATE_READS)("%s reorders batchRpcCalls after a timeout", async (fnName) => {
+      await readPoolRate(fnName);
+      const afterFirst = fetchMock.mock.calls.length;
+
+      await rpc.batchRpcCalls(CALLS);
+
+      expect(firstRpcUrlSince(afterFirst).startsWith(PRIVATE)).toBe(false);
+      expect(privateCalls()).toHaveLength(1);
+    });
+
+    it.each(POOL_RATE_READS)("%s is itself reordered by a timeout in batchRpcCalls", async (fnName) => {
+      await rpc.batchRpcCalls(CALLS);
+      const afterFirst = fetchMock.mock.calls.length;
+
+      await readPoolRate(fnName);
+
+      expect(firstRpcUrlSince(afterFirst).startsWith(PRIVATE)).toBe(false);
+      expect(privateCalls()).toHaveLength(1);
+    });
+
+    it.each(POOL_RATE_READS)(
+      "%s still tries a cooled-down node, last, when every public provider fails",
+      async (fnName) => {
+        vi.useFakeTimers();
+        try {
+          let privateFails = true;
+          let publicFails = false;
+          const result = "0x" + (1234n).toString(16).padStart(64, "0");
+          const flaggedFetch = flaggedRpcMock((url) => {
+            if (url.startsWith(PRIVATE)) {
+              if (privateFails) throw timeoutError();
+            } else if (publicFails) {
+              return { ok: false, status: 500, json: async () => ({}) } as unknown as Response;
+            }
+            return { ok: true, json: async () => ({ id: 1, result }) } as unknown as Response;
+          });
+          globalThis.fetch = flaggedFetch as unknown as typeof fetch;
+
+          // First read: the private node times out and a public provider answers.
+          await expect(readPoolRate(fnName)).resolves.toBe(1234n);
+          expect(attemptedUrls(flaggedFetch, 0).some((url) => url.startsWith(PRIVATE))).toBe(true);
+
+          // From now on every public provider fails and only the private node answers.
+          privateFails = false;
+          publicFails = true;
+          const afterFirst = flaggedFetch.mock.calls.length;
+
+          const pending = readPoolRate(fnName);
+          await vi.runAllTimersAsync();
+          await expect(pending).resolves.toBe(1234n);
+
+          const attempted = attemptedUrls(flaggedFetch, afterFirst);
+          expect(attempted[attempted.length - 1]).toBe(PRIVATE);
+          expect(attempted.slice(0, -1).every((url) => !url.startsWith(PRIVATE))).toBe(true);
+        } finally {
+          vi.useRealTimers();
+        }
+      },
+    );
+
+    it.each(POOL_RATE_READS)("%s tries the private node first again after the cooldown", async (fnName) => {
+      vi.useFakeTimers();
+      try {
+        await readPoolRate(fnName);
+        expect(privateCalls()).toHaveLength(1);
+
+        const afterFirst = fetchMock.mock.calls.length;
+        await readPoolRate(fnName);
+        expect(firstRpcUrlSince(afterFirst).startsWith(PRIVATE)).toBe(false);
+
+        vi.advanceTimersByTime(health.RPC_COOLDOWN_MS);
+
+        const afterSecond = fetchMock.mock.calls.length;
+        await readPoolRate(fnName);
+        expect(firstRpcUrlSince(afterSecond).startsWith(PRIVATE)).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("a timed-out single-call retry puts the node in cooldown", async () => {
+      const result = "0x" + (1234n).toString(16).padStart(64, "0");
+      const flaggedFetch = flaggedRpcMock((url, init) => {
+        const body = JSON.parse(String(init?.body)) as unknown;
+        if (url.startsWith(PRIVATE)) {
+          // The batch answers with a null entry, so the helper retries that call alone.
+          if (Array.isArray(body)) return { ok: true, json: async () => [{ id: 0, result: "0x" }] } as unknown as Response;
+          throw timeoutError();
+        }
+        return {
+          ok: true,
+          json: async () => (Array.isArray(body) ? [{ id: 0, result }] : { id: 0, result }),
+        } as unknown as Response;
+      });
+      globalThis.fetch = flaggedFetch as unknown as typeof fetch;
+
+      await expect(rpc.batchRpcCalls(CALLS)).resolves.toEqual([1234n]);
+
+      const afterFirst = flaggedFetch.mock.calls.length;
+      await expect(rpc.batchRpcCalls(CALLS)).resolves.toEqual([1234n]);
+
+      expect(attemptedUrls(flaggedFetch, afterFirst)[0].startsWith(PRIVATE)).toBe(false);
+    });
+
+    it.each(POOL_RATE_READS)("%s logs no ok line when the result cannot be parsed", async (fnName) => {
+      vi.useFakeTimers();
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const result = "0x" + (1234n).toString(16).padStart(64, "0");
+        const flaggedFetch = flaggedRpcMock((url) => {
+          if (url.startsWith(PRIVATE)) {
+            // Slow enough that a successful attempt would be logged.
+            vi.setSystemTime(Date.now() + health.RPC_SLOW_LOG_MS);
+            return { ok: true, json: async () => ({ id: 1, result: "0xnot-hex" }) } as unknown as Response;
+          }
+          return { ok: true, json: async () => ({ id: 1, result }) } as unknown as Response;
+        });
+        globalThis.fetch = flaggedFetch as unknown as typeof fetch;
+
+        const pending = readPoolRate(fnName);
+        await vi.runAllTimersAsync();
+        await expect(pending).resolves.toBe(1234n);
+
+        const lines = logSpy.mock.calls.map((parts) => parts.map((part) => String(part)).join(" "));
+        const privateLines = lines.filter((line) => line.includes("private.node.example"));
+        expect(privateLines.some((line) => line.includes('"outcome":"ok"'))).toBe(false);
+        expect(privateLines.some((line) => line.includes('"outcome":"error"'))).toBe(true);
+      } finally {
+        logSpy.mockRestore();
+        vi.useRealTimers();
+      }
+    });
   });
 });
