@@ -1,5 +1,6 @@
 import { fetchPricesInBatches } from "@/lib/enso-price-batches";
 import { redactRpcUrl } from "@/lib/rpc-redact";
+import { safeLogData, upstreamErrorBody } from "@/lib/safe-log";
 import { logRpcAttempt, markRpcHealthy, markRpcTimedOut, orderRpcUrls } from "@/lib/rpc-health";
 import type {
   EnsoBundleAction,
@@ -674,8 +675,11 @@ export async function fetchBundle(params: {
     }
   } catch (error: unknown) {
     if (isDev) {
-      const errData = (error as { response?: { data?: unknown } })?.response?.data;
-      console.error("[Enso Bundle] Error:", errData ?? error);
+      console.error(
+        "[Enso Bundle] Error:",
+        safeLogData(upstreamErrorBody(error)) ??
+          safeLogData(error instanceof Error ? error.message : String(error))
+      );
     }
     throw error;
   }

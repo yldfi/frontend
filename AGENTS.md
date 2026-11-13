@@ -31,7 +31,7 @@ Run these in order and stop at the first failure:
 
 **`pnpm test:integration` calls live upstreams.** The integration project talks to live, rate-limited and billed upstream services (the Enso routing API, an archive RPC and token-holder APIs). It runs nightly in CI (`.github/workflows/nightly.yml`). Do not run it locally unless the maintainer asks, and never loop it.
 
-`pnpm test:e2e` runs in CI on every pull request and push to main (`.github/workflows/ci.yml`): it starts the app server (`pnpm dev` locally, `pnpm start` on CI after the build); it mocks `/api/vaults`, `/api/history`, `/api/enso/tokens` and `/api/enso/prices`, and replays `/api/kong/*` and `/api/merkl/*` from `e2e/fixtures/upstream-responses.json`, calling live for anything unrecorded; every other request (other `/api/*` routes, browser RPC) goes to the real service. Do not run it locally unless the maintainer asks.
+`pnpm test:e2e` runs in CI on every pull request and push to main (`.github/workflows/ci.yml`): it starts the app server (`pnpm dev` locally, `pnpm start` on CI after the build); it mocks `/api/vaults`, `/api/history`, `/api/enso/tokens` and `/api/enso/prices`, and replays `/api/kong/*` and `/api/merkl/*` from `e2e/fixtures/upstream-responses.json`, calling live for anything unrecorded; every other request (other `/api/*` routes, browser RPC) goes to the real service. Do not run it locally unless the maintainer asks. A failing e2e job blocks the site deploy.
 
 `pnpm test` runs the unit project only; it does not reach the network.
 The pre-commit hook runs `pnpm lint-staged`, and CI always names its projects, so no workflow or hook depends on bare `pnpm test`.
@@ -48,7 +48,7 @@ Optional cache-worker variables are listed in `workers/.dev.vars.example`.
 
 | Worker | Config | Entry | Deployed by |
 |---|---|---|---|
-| `yldfi` (the site, routes `yldfi.co/*`, `www.yldfi.co/*`) | `wrangler.jsonc` | `workers/yldfi-edge.ts` wrapping the OpenNext build in `.open-next/` | CI job `deploy` on push to `main`, after lint, type-check, unit and sweep tests and the Cloudflare build |
+| `yldfi` (the site, routes `yldfi.co/*`, `www.yldfi.co/*`) | `wrangler.jsonc` | `workers/yldfi-edge.ts` wrapping the OpenNext build in `.open-next/` | CI job `deploy` on push to `main`, after lint, type-check, unit, sweep and browser (e2e) tests and the Cloudflare build |
 | `yldfi-cache` (cron vault cache to KV, D1 and R2) | `workers/wrangler.toml` | `workers/vault-cache.ts` | CI job `deploy-cache-worker` on push to `main` |
 | `yldfi-x-weekly-apy` (weekly X post) | `workers/wrangler.x-weekly-apy.toml` | `workers/x-weekly-apy.ts` | by hand; see `workers/README-x-weekly-apy.md` |
 

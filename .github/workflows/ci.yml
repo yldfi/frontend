@@ -275,7 +275,7 @@ jobs:
   deploy:
     name: Deploy to Cloudflare
     runs-on: ubuntu-latest
-    needs: [lint, type-check, test-unit, test-sweep, build-cloudflare]
+    needs: [lint, type-check, test-unit, test-sweep, e2e, build-cloudflare]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

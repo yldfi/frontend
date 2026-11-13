@@ -32,6 +32,7 @@ vi.mock("@/lib/curve-lending", () => ({
 
 import { POST } from "@/app/api/enso/[method]/route";
 import { ENSO_ROUTER_V2 } from "@/lib/enso/constants";
+import { SAFE_LOG_MAX_LENGTH } from "@/lib/safe-log";
 import { TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 
 const USER = "0x1000000000000000000000000000000000000001";
@@ -97,12 +98,19 @@ const postPlainSwap = () => post("intent", plainSwapBody);
 
 type UpstreamError = Error & {
   statusCode?: number;
+  responseData?: unknown;
   response?: { data?: unknown };
+};
+
+type ErrorLogFields = {
+  status?: number;
+  message?: string;
+  upstream?: unknown;
 };
 
 const upstreamError = (
   message: string,
-  extra: { statusCode?: number; response?: { data?: unknown } } = {},
+  extra: { statusCode?: number; responseData?: unknown; response?: { data?: unknown } } = {},
 ): UpstreamError => Object.assign(new Error(message), extra);
 
 const COULD_NOT_QUOTE = "API Error: Could not quote shortcuts for route";
@@ -130,6 +138,11 @@ describe("Enso proxy error mapping", () => {
     infoLog.mockRestore();
     vi.unstubAllEnvs();
   });
+
+  const loggedFields = (): ErrorLogFields => {
+    expect(errorLog).toHaveBeenCalledTimes(1);
+    return errorLog.mock.calls[0][1] as ErrorLogFields;
+  };
 
   it("keeps an upstream 429 status and passes a plain message through", async () => {
     mockFetchRoute.mockRejectedValueOnce(
@@ -216,8 +229,98 @@ describe("Enso proxy error mapping", () => {
     expect(Object.keys(payload)).toEqual(["error"]);
     expect(JSON.stringify(payload)).not.toContain("do-not-return");
     expect(errorLog).toHaveBeenCalledWith("[Enso Proxy] intent error:", {
-      secret: "do-not-return",
+      status: 500,
+      message: "builder boom",
+      upstream: expect.stringContaining("do-not-return"),
     });
+  });
+
+  it("logs an SDK error's responseData while returning only its message", async () => {
+    mockFetchRoute.mockRejectedValueOnce(
+      Object.assign(new Error("API Error: boom"), {
+        statusCode: 400,
+        responseData: { message: "boom", detail: "why" },
+      }),
+    );
+
+    const response = await postPlainSwap();
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload).toEqual({ error: "API Error: boom" });
+    expect(errorLog).toHaveBeenCalledTimes(1);
+    expect(errorLog).toHaveBeenCalledWith("[Enso Proxy] intent error:", {
+      status: 400,
+      message: "API Error: boom",
+      upstream: expect.stringContaining("why"),
+    });
+  });
+
+  it("reduces a URL in the upstream body to its host before logging", async () => {
+    mockFetchRoute.mockRejectedValueOnce(
+      upstreamError("builder boom", {
+        responseData: { message: "upstream https://private.node.example/rpc/secret-key refused" },
+      }),
+    );
+
+    await postPlainSwap();
+    const { upstream } = loggedFields();
+
+    expect(upstream).toContain("private.node.example");
+    expect(upstream).not.toContain("secret-key");
+  });
+
+  it("reduces a URL in the error message to its host before logging", async () => {
+    mockFetchRoute.mockRejectedValueOnce(
+      upstreamError("upstream https://private.node.example/rpc/secret-key refused"),
+    );
+
+    await postPlainSwap();
+    const { message } = loggedFields();
+
+    expect(message).toContain("private.node.example");
+    expect(message).not.toContain("secret-key");
+    expect(message).not.toContain("/rpc/");
+  });
+
+  it("bounds a very long error message in the log", async () => {
+    mockFetchRoute.mockRejectedValueOnce(upstreamError("x".repeat(5000)));
+
+    await postPlainSwap();
+    const { message } = loggedFields();
+
+    expect(typeof message).toBe("string");
+    expect((message as string).length).toBeLessThanOrEqual(SAFE_LOG_MAX_LENGTH);
+  });
+
+  it("logs no upstream field when the error carries no upstream body", async () => {
+    mockFetchRoute.mockRejectedValueOnce(upstreamError("builder boom"));
+
+    await postPlainSwap();
+
+    expect(loggedFields().upstream).toBeUndefined();
+  });
+
+  it("answers could-not-quote with advice but logs the upstream message", async () => {
+    mockFetchRoute.mockRejectedValueOnce(upstreamError(COULD_NOT_QUOTE, { statusCode: 400 }));
+
+    const response = await postPlainSwap();
+    const payload = (await response.json()) as { error: string };
+
+    expect(payload.error).toBe(GENERIC_ADVICE);
+    expect(loggedFields().message).toBe(COULD_NOT_QUOTE);
+  });
+
+  it("bounds a long upstream body in the log", async () => {
+    mockFetchRoute.mockRejectedValueOnce(
+      upstreamError("builder boom", { response: { data: { detail: "x".repeat(5000) } } }),
+    );
+
+    await postPlainSwap();
+    const { upstream } = loggedFields();
+
+    expect(typeof upstream).toBe("string");
+    expect((upstream as string).length).toBeLessThanOrEqual(500);
   });
 
   it("answers an unknown method with 404", async () => {

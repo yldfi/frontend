@@ -17,6 +17,7 @@ import {
 } from "@/lib/enso-prices-cache";
 import { redactUrlsInText } from "@/lib/rpc-redact";
 import { isCrossSiteBrowserRequest } from "@/lib/request-origin";
+import { safeLogData, upstreamErrorBody } from "@/lib/safe-log";
 import { getExternalVaultConfig, LLAMA_AIRFORCE, TOKENS } from "@/config/vaults";
 
 export const dynamic = "force-dynamic";
@@ -610,10 +611,14 @@ export async function POST(
         );
     }
   } catch (error: unknown) {
-    const err = error as { statusCode?: number; message?: string; response?: { data?: unknown } };
+    const err = error as { statusCode?: number; message?: string };
     const status = err.statusCode || 500;
     const message = redactUrlsInText(getFriendlyEnsoError(err.message || "Enso API error", body));
-    console.error(`[Enso Proxy] ${method} error:`, err.response?.data ?? message);
+    console.error(`[Enso Proxy] ${method} error:`, {
+      status,
+      message: safeLogData(err.message) ?? message,
+      upstream: safeLogData(upstreamErrorBody(error)),
+    });
     return NextResponse.json({ error: message }, { status, headers: cors });
   }
 }
