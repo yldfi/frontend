@@ -9,13 +9,7 @@
  */
 
 import type { SimulationResult, SimulationAssetChange } from "@/types/enso";
-import { CURVE_CONTROLLERS, getVaultByAddress } from "@/config/vaults";
-import { CRVUSD_ADDRESS } from "@/config/addresses";
-
-// Build sets of known addresses for asset change classification
-const CURVE_CONTROLLER_ADDRESSES = new Set(
-  Object.values(CURVE_CONTROLLERS).map((a) => a.toLowerCase())
-);
+import { getVaultByAddress } from "@/config/vaults";
 
 // --- RPC response types (camelCase, hex amounts) ---
 
@@ -153,14 +147,9 @@ function processVNetAssetChanges(
     const from = change.from?.toLowerCase() ?? "";
     const to = change.to?.toLowerCase() ?? "";
     const tokenAddress = change.assetInfo?.contractAddress?.toLowerCase() ?? "";
-    const isCrvUsd = tokenAddress === CRVUSD_ADDRESS.toLowerCase();
 
     const isUserSending = from === normalizedUser;
     const isUserReceiving = to === normalizedUser;
-    const isToController = CURVE_CONTROLLER_ADDRESSES.has(to);
-    const isFromController = CURVE_CONTROLLER_ADDRESSES.has(from);
-    // Curve controllers mint crvUSD (from=0x0) rather than transferring from their balance
-    const isMint = from === "0x0000000000000000000000000000000000000000";
 
     // Convert hex rawAmount to decimal string
     const rawAmount = hexToDecimal(change.rawAmount);
@@ -174,22 +163,6 @@ function processVNetAssetChanges(
       logo: change.assetInfo?.logo,
       dollarValue: change.dollarValue ?? change.assetInfo?.dollarValue,
     };
-
-    // crvUSD to controller = repay
-    if (isCrvUsd && isToController && !isFromController) {
-      result.push({ ...baseChange, type: "repay" });
-      continue;
-    }
-
-    // crvUSD from controller or minted = borrow (create_loan/borrow_more mint crvUSD)
-    // May go to user directly or to ENSO_SHORTCUTS for output swap
-    if (isCrvUsd && (isFromController || isMint)) {
-      if (process.env.NODE_ENV === "development") {
-        console.log("[VNet Simulation] crvUSD borrow detected:", { from, to, isMint, isFromController, amount: change.amount });
-      }
-      result.push({ ...baseChange, type: "borrow" });
-      continue;
-    }
 
     // Vault collateral token → detected via getVaultByAddress
     const isVaultCollateral = getVaultByAddress(tokenAddress) !== undefined;

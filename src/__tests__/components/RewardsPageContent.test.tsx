@@ -12,7 +12,6 @@ import {
   type MerklReward,
   type MerklRewardsResponse,
 } from "@/hooks/useMerklRewards";
-import { useCurveLendingPosition } from "@/hooks/useCurveLendingPosition";
 import { useTxReceipt } from "@/hooks/useTxReceipt";
 import { useVaultBalance } from "@/hooks/useVaultBalance";
 import { toast } from "sonner";
@@ -60,10 +59,6 @@ vi.mock("@/hooks/useVaultBalance", () => ({
   useVaultBalance: vi.fn(),
 }));
 
-vi.mock("@/hooks/useCurveLendingPosition", () => ({
-  useCurveLendingPosition: vi.fn(),
-}));
-
 // Keep the real campaign helpers so the page's yld/other split is exercised.
 vi.mock("@/hooks/useMerklRewards", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/hooks/useMerklRewards")>();
@@ -86,7 +81,6 @@ const mockUseAccount = vi.mocked(useAccount);
 const mockUseWriteContract = vi.mocked(useWriteContract);
 const mockUseTxReceipt = vi.mocked(useTxReceipt);
 const mockUseVaultBalance = vi.mocked(useVaultBalance);
-const mockUseCurveLendingPosition = vi.mocked(useCurveLendingPosition);
 const mockUseMerklRewards = vi.mocked(useMerklRewards);
 const mockUseMerklOpportunities = vi.mocked(useMerklOpportunities);
 
@@ -185,9 +179,6 @@ beforeEach(() => {
   mockUseVaultBalance.mockReturnValue({
     balance: 0n,
   } as unknown as ReturnType<typeof useVaultBalance>);
-  mockUseCurveLendingPosition.mockReturnValue({
-    position: null,
-  } as unknown as ReturnType<typeof useCurveLendingPosition>);
   mockUseMerklOpportunities.mockReturnValue({
     data: [],
   } as unknown as ReturnType<typeof useMerklOpportunities>);

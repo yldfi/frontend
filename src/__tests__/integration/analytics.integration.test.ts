@@ -15,20 +15,11 @@ import {
   trackTransactionCancelled,
   trackZapInitiated,
   trackZapSuccess,
-  trackLendingBorrowInitiated,
-  trackLendingBorrowSuccess,
-  trackLendingRepayInitiated,
-  trackLendingRepaySuccess,
-  trackLendingCollateralAddInitiated,
-  trackLendingCollateralAddSuccess,
-  trackLendingSelfLiquidateInitiated,
-  trackLendingSelfLiquidateSuccess,
   trackRewardsPageView,
   trackRewardsClaimClick,
   trackRewardsEligibilityCheck,
   trackCtaClick,
   trackExternalLinkClick,
-  trackLendingTabSwitch,
   categorizeError,
   isUserRejection,
 } from "@/lib/analytics";
@@ -274,21 +265,6 @@ describe("analytics.ts integration", () => {
         vault_id: "0x123",
       });
     });
-
-    it("accepts lending action types", () => {
-      trackTransactionError("borrow", "0x123", new Error("execution reverted"), "revert");
-      expect(mockGtag).toHaveBeenCalledWith("event", "transaction_error", {
-        action: "borrow",
-        vault_id: "0x123",
-        error_type: "revert",
-      });
-
-      trackTransactionCancelled("self_liquidate", "0x456");
-      expect(mockGtag).toHaveBeenCalledWith("event", "transaction_cancelled", {
-        action: "self_liquidate",
-        vault_id: "0x456",
-      });
-    });
   });
 
   describe("categorizeError", () => {
@@ -318,73 +294,6 @@ describe("analytics.ts integration", () => {
     });
   });
 
-  describe("lending events", () => {
-    const VAULT_ID = "ycvxcrv";
-
-    it("tracks borrow initiated", () => {
-      trackLendingBorrowInitiated(VAULT_ID, "1000", "crvUSD");
-      expect(mockGtag).toHaveBeenCalledWith("event", "lending_borrow_initiated", {
-        vault_id: VAULT_ID,
-        amount_bucket: "1K-10K",
-        token_symbol: "crvUSD",
-      });
-    });
-
-    it("tracks borrow success and sets user property", () => {
-      trackLendingBorrowSuccess(VAULT_ID, "1000", "crvUSD");
-      expect(mockGtag).toHaveBeenCalledWith("event", "lending_borrow_success", {
-        vault_id: VAULT_ID,
-        amount_bucket: "1K-10K",
-        token_symbol: "crvUSD",
-      });
-      expect(mockGtag).toHaveBeenCalledWith("set", "user_properties", {
-        has_borrowed: true,
-      });
-    });
-
-    it("tracks repay initiated and success", () => {
-      trackLendingRepayInitiated(VAULT_ID, "500");
-      expect(mockGtag).toHaveBeenCalledWith("event", "lending_repay_initiated", {
-        vault_id: VAULT_ID,
-        amount_bucket: "100-1K",
-      });
-
-      trackLendingRepaySuccess(VAULT_ID, "500");
-      expect(mockGtag).toHaveBeenCalledWith("event", "lending_repay_success", {
-        vault_id: VAULT_ID,
-        amount_bucket: "100-1K",
-      });
-    });
-
-    it("tracks collateral add initiated and success", () => {
-      trackLendingCollateralAddInitiated(VAULT_ID, "100", "ycvxCRV");
-      expect(mockGtag).toHaveBeenCalledWith("event", "lending_collateral_add_initiated", {
-        vault_id: VAULT_ID,
-        amount_bucket: "100-1K",
-        token_symbol: "ycvxCRV",
-      });
-
-      trackLendingCollateralAddSuccess(VAULT_ID, "100", "ycvxCRV");
-      expect(mockGtag).toHaveBeenCalledWith("event", "lending_collateral_add_success", {
-        vault_id: VAULT_ID,
-        amount_bucket: "100-1K",
-        token_symbol: "ycvxCRV",
-      });
-    });
-
-    it("tracks self-liquidate initiated and success", () => {
-      trackLendingSelfLiquidateInitiated(VAULT_ID);
-      expect(mockGtag).toHaveBeenCalledWith("event", "lending_self_liquidate_initiated", {
-        vault_id: VAULT_ID,
-      });
-
-      trackLendingSelfLiquidateSuccess(VAULT_ID);
-      expect(mockGtag).toHaveBeenCalledWith("event", "lending_self_liquidate_success", {
-        vault_id: VAULT_ID,
-      });
-    });
-  });
-
   describe("rewards events", () => {
     it("tracks rewards page view", () => {
       trackRewardsPageView();
@@ -397,10 +306,9 @@ describe("analytics.ts integration", () => {
     });
 
     it("tracks rewards eligibility check", () => {
-      trackRewardsEligibilityCheck(true, false);
+      trackRewardsEligibilityCheck(true);
       expect(mockGtag).toHaveBeenCalledWith("event", "rewards_eligibility_check", {
         has_ycvxcrv: true,
-        has_borrow_position: false,
       });
     });
   });
@@ -419,13 +327,6 @@ describe("analytics.ts integration", () => {
       expect(mockGtag).toHaveBeenCalledWith("event", "external_link_click", {
         url: "https://docs.yldfi.co",
         link_name: "docs",
-      });
-    });
-
-    it("tracks lending tab switch", () => {
-      trackLendingTabSwitch("borrow");
-      expect(mockGtag).toHaveBeenCalledWith("event", "lending_tab_switch", {
-        tab_name: "borrow",
       });
     });
   });

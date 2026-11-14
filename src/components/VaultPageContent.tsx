@@ -7,7 +7,7 @@ import { useAccount, useBalance, useBlockNumber, useGasPrice, usePublicClient } 
 import { parseUnits, formatUnits, maxUint256 } from "viem";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { MaxButton } from "@/components/MaxButton";
-import { ArrowUpRight, ExternalLink, Search, Route, RouteOff, Copy, ChevronDown, ChevronRight, Check, X, Clock, ArrowRightLeft, Wallet, Banknote, TrendingUp, Coins, Gift } from "lucide-react";
+import { ArrowUpRight, ExternalLink, Search, Route, RouteOff, Copy, ChevronDown, ChevronRight, Check, X, Clock, ArrowRightLeft, Wallet, Banknote, TrendingUp, Coins } from "lucide-react";
 import { RouteDisplay } from "@/components/RouteDisplay";
 import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
@@ -20,7 +20,7 @@ import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { PriceImpactConfirmModal, needsPriceImpactConfirm } from "@/components/PriceImpactConfirmModal";
 import { parseQuoteError } from "@/lib/quote-errors";
-import { sanitizeAmount } from "@/lib/sanitize";
+import { isSameAmount, sanitizeAmount } from "@/lib/sanitize";
 import { fillMissingSimulationUsd } from "@/lib/simulation-pricing";
 import { useSettings } from "@/hooks/useSettings";
 import {
@@ -33,10 +33,6 @@ import {
 import { formatDisplayAmount, formatUsd } from "@/lib/utils";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
-import { useCurveLendingVault, formatCurveVaultData } from "@/hooks/useCurveLendingData";
-import { useCurveLendingPosition, formatHealth } from "@/hooks/useCurveLendingPosition";
-import { useCurveMarketRates } from "@/hooks/useCurveMarketRates";
-import { buildLendingPositionDisplay } from "@/lib/lending";
 import { useYearnVault, formatYearnVaultData } from "@/hooks/useYearnVault";
 import { useVaultBalance } from "@/hooks/useVaultBalance";
 import { useVaultData, formatFee } from "@/hooks/useVaultData";
@@ -67,10 +63,8 @@ import {
   VAULT_UNDERLYING_TOKENS,
   VAULTS,
   EXTERNAL_VAULT_TOKENS,
-  CURVE_CONTROLLERS,
   CURVE_SAVINGS,
   isExitOnlyVault,
-  isLendingDisabledWithoutPosition,
   isVaultEntryDisabled,
 } from "@/config/vaults";
 import { VaultInfoCard } from "@/components/VaultInfoCard";
@@ -526,14 +520,6 @@ export function VaultPageContent({ id }: { id: string }) {
   const { data: currentBlock } = useBlockNumber({ watch: true });
   const simulationBlock = useRef<bigint>(0n);
 
-  // Lending interface modal state (kept for backwards compatibility, but page is preferred)
-  // Handle "Use as Collateral" button click - navigate to lending page
-  const handleCollateralClick = () => {
-    if (vault) {
-      router.push(`/vaults/${vault.id}/lending`);
-    }
-  };
-
   // Get current gas price for gas cost calculation
   const { data: gasPrice } = useGasPrice();
   const publicClient = usePublicClient();
@@ -623,27 +609,6 @@ export function VaultPageContent({ id }: { id: string }) {
   const yearnVault = formatYearnVaultData(yearnData?.vault, yearnData?.vaultStrategies);
 
   const displayApyFormatted = yearnVault?.apyFormatted ?? "—"; // Replaced below after vaultCache loads
-
-  // Fetch Curve lending market data (only for vault type)
-  const { vault: curveVault } = useCurveLendingVault(
-    vault?.type === "vault" ? vault?.address ?? "" : ""
-  );
-  const curveData = formatCurveVaultData(curveVault);
-
-  // Fetch user's lending position (only for vault type with LlamaLend market)
-  const controllerAddress = vault?.address
-    ? (CURVE_CONTROLLERS[vault.address as keyof typeof CURVE_CONTROLLERS] as `0x${string}` | undefined)
-    : undefined;
-  const { position: lendingPosition } = useCurveLendingPosition(
-    controllerAddress ? (vault?.address as `0x${string}`) : undefined,
-    userAddress
-  );
-  const onChainRates = useCurveMarketRates(controllerAddress);
-  const showLendingEntry =
-    !!vault &&
-    vault.type === "vault" &&
-    !!controllerAddress &&
-    (!isLendingDisabledWithoutPosition(vault) || Boolean(lendingPosition?.hasLoan));
 
   // Merkl rewards earnings
   const { data: merklData } = useMerklRewards(1);
@@ -772,7 +737,7 @@ export function VaultPageContent({ id }: { id: string }) {
   // re-quote after 3 idle minutes; hidden tabs are already paused.
   const isZapIdle = useIdle(QUOTE_IDLE_MS);
   const {
-    quote: zapQuote,
+    quote: rawZapQuote,
     quoteUpdatedAt: zapQuoteUpdatedAt,
     isLoading: zapQuoteLoading,
     error: zapQuoteError,
@@ -789,6 +754,23 @@ export function VaultPageContent({ id }: { id: string }) {
     paused: showSimulationModal || isSimulatingPreview || pendingImpactAction !== null || explorerOpen || zapInProgress || (exitOnlyVault && zapDirection === "in"),
     autoRefresh: !isZapIdle,
   });
+  // Only the quote built for the amount and token on screen may be previewed or sent; the
+  // previous amount's quote stays returned until the debounced re-quote arrives.
+  const zapQuoteInputAddress = zapDirection === "in" ? zapInputToken?.address : vault?.address;
+  const zapQuoteIsCurrent = !!(
+    rawZapQuote &&
+    zapAmount &&
+    zapAmount === debouncedZapAmount &&
+    zapQuoteInputAddress &&
+    rawZapQuote.inputToken.address.toLowerCase() === zapQuoteInputAddress.toLowerCase() &&
+    isSameAmount(rawZapQuote.inputAmount, debouncedZapAmount, rawZapQuote.inputToken.decimals)
+  );
+  const zapQuote = zapQuoteIsCurrent ? rawZapQuote : null;
+  const zapQuoteSettling = !!zapAmount && (
+    zapAmount !== debouncedZapAmount ||
+    zapQuoteLoading ||
+    (!!rawZapQuote && !zapQuoteIsCurrent)
+  );
   const isZapQuoteTooOld = useCallback(() => isQuoteOlderThan(zapQuoteUpdatedAt), [zapQuoteUpdatedAt]);
   // Back from idle: re-quote right away if the one on screen has aged.
   const wasZapIdleRef = useRef(false);
@@ -1170,18 +1152,8 @@ export function VaultPageContent({ id }: { id: string }) {
       } else if (showSimulationPreview) {
         const result = await runVaultSimulationPreview();
         if (result) return; // Modal opened — bail
-        // No simulation data (e.g. Anvil) — fall through to execute
-        trackDepositInitiated(id, amount, vault.assetSymbol);
-        const outputAmt = pricePerShare ? (inputAmount / pricePerShare).toFixed(4) : inputAmount.toFixed(4);
-        setPendingTxDetails({
-          fromAmount: inputAmount.toFixed(4),
-          fromSymbol: vault.assetSymbol,
-          fromLogo: `/tokens/${vault.assetSymbol.toLowerCase()}.png`,
-          toAmount: outputAmt,
-          toSymbol: vault.symbol,
-          toLogo: vault.logo,
-        });
-        deposit(amount);
+        // Never send without a preview while previews are on.
+        return;
       } else {
         trackDepositInitiated(id, amount, vault.assetSymbol);
         // Set pending tx details for display
@@ -1200,7 +1172,8 @@ export function VaultPageContent({ id }: { id: string }) {
       if (showSimulationPreview) {
         const result = await runVaultSimulationPreview();
         if (result) return; // Modal opened — bail
-        // No simulation data (e.g. Anvil) — fall through to execute
+        // Never send without a preview while previews are on.
+        return;
       }
       trackWithdrawInitiated(id, amount, vault.assetSymbol);
       // Set pending tx details for display
@@ -1581,92 +1554,6 @@ export function VaultPageContent({ id }: { id: string }) {
                 </div>
               )}
 
-              {/* Lending Position / Borrow CTA */}
-              {showLendingEntry && (() => {
-                if (lendingPosition?.hasLoan && (onChainRates || curveVault)) {
-                  const collateralApy = cachedApy ?? yearnVault?.apy ?? 0;
-                  const borrowApy = onChainRates?.borrowApy ?? (curveVault ? (Math.exp(curveVault.rates.borrowApr) - 1) * 100 : 0);
-                  const display = buildLendingPositionDisplay(
-                    lendingPosition.collateral,
-                    lendingPosition.debt,
-                    underlyingPrice * pricePerShare,
-                    collateralApy,
-                    borrowApy,
-                    18,
-                    lendingPosition.stablecoin,
-                  );
-                  return (
-                    <Link
-                      href={`/vaults/${vault.id}/lending`}
-                      className="lending-card block group"
-                    >
-                      <div className="px-4 py-3">
-                        <div className="flex items-center gap-2 mb-3">
-                          <Image src="/curve-logo.png" alt="Curve" width={14} height={14} className="rounded-full" />
-                          <span className="text-sm font-medium">Lending Position</span>
-                          <span className="text-xs text-[var(--muted-foreground)]">Curve LlamaLend</span>
-                          <ArrowUpRight size={14} className="ml-auto text-[var(--muted-foreground)] group-hover:text-[var(--foreground)] transition-colors" />
-                        </div>
-                        <div className="grid grid-cols-4 gap-3">
-                          <div>
-                            <p className="text-xs text-[var(--muted-foreground)] mb-0.5">Collateral</p>
-                            <div className="flex items-center gap-1">
-                              {vault.logo && <Image src={vault.logo} alt={vault.symbol} width={12} height={12} className="rounded-full" />}
-                              <span className="mono text-sm font-medium">{display.collateralFormatted}</span>
-                            </div>
-                            <p className="text-xs text-green-500 mono">{display.collateralApyFormatted} APY</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-[var(--muted-foreground)] mb-0.5">Debt</p>
-                            <div className="flex items-center gap-1">
-                              <Image src="/tokens/crvusd.png" alt="crvUSD" width={12} height={12} className="rounded-full" />
-                              <span className="mono text-sm font-medium">{display.debtFormatted}</span>
-                            </div>
-                            <p className="text-xs text-red-500 mono">{display.borrowApyFormatted} APY</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-[var(--muted-foreground)] mb-0.5">Leverage</p>
-                            <p className="mono text-sm font-medium">{display.leverageFormatted}</p>
-                            <p className={cn("text-xs mono", display.netApy >= 0 ? "text-green-500" : "text-red-500")}>
-                              {display.netApyFormatted} NET
-                              {vault.id === "ycvxcrv" && isCampaignLive && rewardApr != null && (
-                                <span className="inline-flex items-center gap-0.5 text-green-400 ml-1">
-                                  <Gift size={9} />+{rewardApr.toFixed(1)}%
-                                </span>
-                              )}
-                            </p>
-                          </div>
-                          <div>
-                            {(() => {
-                              const h = formatHealth(lendingPosition.health); return (<>
-                                <p className="text-xs text-[var(--muted-foreground)] mb-0.5">Health</p>
-                                <p className={`mono text-sm font-medium ${h.color}`}>{h.value.toFixed(0)}%</p>
-                              </>);
-                            })()}
-                          </div>
-                        </div>
-                      </div>
-                    </Link>
-                  );
-                }
-                return (
-                  <Link
-                    href={`/vaults/${vault.id}/lending`}
-                    className="collateral-link block w-full"
-                    style={{ display: "flex" }}
-                  >
-                    <span className="w-full flex items-center gap-2 !justify-start !px-4" style={{ height: 44 }}>
-                      <Image src="/curve-logo.png" alt="Curve" width={16} height={16} className="rounded-full flex-shrink-0" />
-                      <span className="text-sm font-medium whitespace-nowrap">Borrow against {vault.symbol}</span>
-                      <span className="text-xs font-normal text-[var(--muted-foreground)] hidden sm:inline">
-                        Borrow crvUSD on Curve LlamaLend
-                      </span>
-                      <ArrowUpRight size={14} className="ml-auto flex-shrink-0" />
-                    </span>
-                  </Link>
-                );
-              })()}
-
               {/* Rewards Banner */}
               {vault.id === "ycvxcrv" && (!vault.deprecated || totalEarnedUsd > 0) && (isCampaignLive || totalEarnedUsd > 0) && (
                 <Link
@@ -1680,7 +1567,7 @@ export function VaultPageContent({ id }: { id: string }) {
                     {isCampaignLive && rewardApr != null && <span className="text-green-400/40">·</span>}
                     <span className="text-sm font-medium text-green-400">crvUSD Rewards</span>
                     <span className="text-xs text-[var(--muted-foreground)]">
-                      {totalEarnedUsd > 0 ? `Earning ${formatUsd(totalEarnedUsd)}` : `Earn crvUSD by borrowing against ${vault.symbol}`}
+                      {totalEarnedUsd > 0 ? `Earning ${formatUsd(totalEarnedUsd)}` : "View rewards"}
                     </span>
                     <ArrowUpRight size={14} className="ml-auto text-green-400/60 group-hover:text-green-400 transition-colors" />
                   </div>
@@ -1795,49 +1682,6 @@ export function VaultPageContent({ id }: { id: string }) {
                   </table>
                 }
               />
-
-              {/* LlamaLend Market Stats */}
-              {curveData && (
-                <div className="p-5 rounded-xl bg-gradient-to-br from-[#121212] to-transparent border border-[#222] shadow-sm relative overflow-hidden">
-                  <div className="relative z-10 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <Image src="/curve-logo.png" alt="Curve" width={24} height={24} className="rounded-full" />
-                        <h3 className="text-base font-medium text-[var(--foreground)]">ycvxCRV LlamaLend Market</h3>
-                      </div>
-                      <a
-                        href={curveData.depositUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs font-medium flex items-center gap-1 text-[var(--foreground)] hover:text-[var(--accent)] transition-colors group"
-                      >
-                        <span>View Market</span>
-                        <ExternalLink size={12} className="opacity-50 group-hover:opacity-100" />
-                      </a>
-                    </div>
-
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
-                      <div className="bg-[var(--background)]/40 backdrop-blur-sm border border-[var(--border)]/50 rounded-lg p-3 group hover:border-[var(--muted-foreground)]/30 transition-colors">
-                        <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--muted-foreground)] mb-1">Borrow APY</p>
-                        <p className="mono font-medium text-lg text-[#F24E4E]">{curveData.borrowApyFormatted}</p>
-                      </div>
-                      <div className="bg-[var(--background)]/40 backdrop-blur-sm border border-[var(--border)]/50 rounded-lg p-3 group hover:border-[var(--muted-foreground)]/30 transition-colors">
-                        <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--muted-foreground)] mb-1">Total Borrowed</p>
-                        <p className="mono font-medium text-lg">{curveData.totalBorrowedFormatted}</p>
-                      </div>
-                      <div className="bg-[var(--background)]/40 backdrop-blur-sm border border-[var(--border)]/50 rounded-lg p-3 group hover:border-[var(--muted-foreground)]/30 transition-colors">
-                        <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--muted-foreground)] mb-1">Available to Borrow</p>
-                        <p className="mono font-medium text-lg text-[var(--success)]">{curveData.availableToBorrowFormatted}</p>
-                      </div>
-                      <div className="bg-[var(--background)]/40 backdrop-blur-sm border border-[var(--border)]/50 rounded-lg p-3 group hover:border-[var(--muted-foreground)]/30 transition-colors">
-                        <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--muted-foreground)] mb-1">Total Collateral</p>
-                        <p className="mono font-medium text-lg">{curveData.collateralInAmm.toFixed(2)} ycvxCRV</p>
-                        <p className="text-[10px] text-[var(--muted-foreground)] mt-0.5">${(curveData.collateralInAmm * pricePerShare * underlyingPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
 
             {/* Right column - Action Card */}
@@ -1865,19 +1709,6 @@ export function VaultPageContent({ id }: { id: string }) {
                           })()}
                         </div>
                       </div>
-                      {/* Borrow button - only for vault type with LlamaLend market */}
-                      {showLendingEntry && (
-                        <button
-                          onClick={handleCollateralClick}
-                          className="collateral-link shrink-0"
-                        >
-                          <span className="whitespace-nowrap">
-                            <Image src="/curve-logo.png" alt="Curve" width={14} height={14} className="inline-block rounded-full" />
-                            Borrow
-                            <ArrowUpRight size={12} />
-                          </span>
-                        </button>
-                      )}
                     </div>
                   </div>
                 )}
@@ -2422,7 +2253,7 @@ export function VaultPageContent({ id }: { id: string }) {
                             </div>
                             <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2">
                               <span className="mono text-base text-[var(--foreground)] flex-1">
-                                {zapQuoteLoading ? "—" : zapQuote ? formatDisplayAmount(zapQuote.outputAmountFormatted) : "0.00"}
+                                {zapQuoteSettling ? "—" : zapQuote ? formatDisplayAmount(zapQuote.outputAmountFormatted) : "0.00"}
                               </span>
                               <span className="mono text-sm font-medium shrink-0">{vault.symbol}</span>
                             </div>
@@ -2472,7 +2303,7 @@ export function VaultPageContent({ id }: { id: string }) {
                             </div>
                             <div className="bg-[var(--muted)] border border-[var(--border)] rounded-lg p-3 flex items-center gap-2">
                               <span className="mono text-base text-[var(--foreground)] flex-1">
-                                {zapQuoteLoading ? "—" : zapQuote ? formatDisplayAmount(zapQuote.outputAmountFormatted) : "0.00"}
+                                {zapQuoteSettling ? "—" : zapQuote ? formatDisplayAmount(zapQuote.outputAmountFormatted) : "0.00"}
                               </span>
                               <TokenSelector
                                 selectedToken={zapOutputToken}
@@ -2545,7 +2376,7 @@ export function VaultPageContent({ id }: { id: string }) {
                         onApprove={(exact) => guardHighImpact("Approve & zap", () => zapApprove(exact))}
                       />
 
-                      {isZapIdle && zapQuote && !zapQuoteLoading && !isZapTxPending && (
+                      {isZapIdle && zapQuote && !zapQuoteSettling && !isZapTxPending && (
                         <div className="mb-3 flex items-center justify-between text-xs text-[var(--muted-foreground)]">
                           <span>Quote may be out of date</span>
                           <button
@@ -2568,24 +2399,21 @@ export function VaultPageContent({ id }: { id: string }) {
                             } else if (showSimulationPreview) {
                               // Preview mode - run simulation first
                               const result = await runSimulationPreview();
-                              if (result) return; // Modal opened — bail
-                              // executeZap may have returned null because approval is needed
-                              // (approval card now showing, auto-execute will handle the rest)
-                              if (zapNeedsApproval()) return;
-                              // No simulation data (e.g. Anvil) — fall through to execute
-                              setZapPendingDetails();
-                              if (vault && zapAmount) trackZapInitiated(vault.id, zapDirection, zapDirection === "in" ? (zapInputToken?.symbol ?? "") : vault.symbol, zapDirection === "in" ? vault.symbol : (zapOutputToken?.symbol ?? ""), zapAmount);
-                              executeZap();
+                              // The modal opened, or approval is pending (the approval card now
+                              // shows and the post-approval preview takes over), or the preview
+                              // failed. Never send without a preview while previews are on.
+                              void result;
+                              return;
                             } else {
                               setZapPendingDetails();
                               if (vault && zapAmount) trackZapInitiated(vault.id, zapDirection, zapDirection === "in" ? (zapInputToken?.symbol ?? "") : vault.symbol, zapDirection === "in" ? vault.symbol : (zapOutputToken?.symbol ?? ""), zapAmount);
                               executeZap();
                             }
                           })}
-                          disabled={showZapApprovalCard || !zapQuote || zapIsLoading || zapQuoteLoading || isSimulatingPreview || showSimulationModal || hasZapInsufficientBalance || (exitOnlyVault && zapDirection === "in")}
+                          disabled={showZapApprovalCard || !zapQuote || zapIsLoading || zapQuoteSettling || isSimulatingPreview || showSimulationModal || hasZapInsufficientBalance || (exitOnlyVault && zapDirection === "in")}
                           className={cn(
                             "w-full py-4 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-base",
-                            showZapApprovalCard || !zapQuote || zapIsLoading || zapQuoteLoading || isSimulatingPreview || showSimulationModal || (zapAmount && hasZapInsufficientBalance) || (exitOnlyVault && zapDirection === "in")
+                            showZapApprovalCard || !zapQuote || zapIsLoading || zapQuoteSettling || isSimulatingPreview || showSimulationModal || (zapAmount && hasZapInsufficientBalance) || (exitOnlyVault && zapDirection === "in")
                               ? "bg-[var(--muted)] text-[var(--muted-foreground)] cursor-not-allowed"
                               : "bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 cursor-pointer"
                           )}
@@ -2594,7 +2422,7 @@ export function VaultPageContent({ id }: { id: string }) {
                             <>Simulating<LoadingDots /></>
                           ) : zapIsLoading ? (
                             <>Confirm in wallet<LoadingDots /></>
-                          ) : zapQuoteLoading ? (
+                          ) : zapQuoteSettling ? (
                             <>Getting quote<LoadingDots /></>
                           ) : exitOnlyVault && zapDirection === "in" ? (
                             "Zap in disabled"
@@ -2664,7 +2492,7 @@ export function VaultPageContent({ id }: { id: string }) {
                       {/* Route details panel */}
                       <div
                         className="grid transition-[grid-template-rows] duration-300 ease-in-out"
-                        style={{ gridTemplateRows: showRoute && zapAmount && Number(zapAmount) > 0 && (zapQuote || zapQuoteLoading) ? "1fr" : "0fr" }}
+                        style={{ gridTemplateRows: showRoute && zapAmount && Number(zapAmount) > 0 && (zapQuote || zapQuoteSettling) ? "1fr" : "0fr" }}
                       >
                         <div className="overflow-hidden">
                           <div className="pt-3 mt-3 border-t border-[var(--border)]">
@@ -2675,7 +2503,7 @@ export function VaultPageContent({ id }: { id: string }) {
                               outputSymbol={zapDirection === "in" ? vault?.symbol : zapOutputToken?.symbol}
                               inputAmount={zapAmount ? Number(zapAmount).toFixed(4) : undefined}
                               outputAmount={zapQuote?.outputAmountFormatted ? Number(zapQuote.outputAmountFormatted).toFixed(4) : undefined}
-                              isLoading={zapQuoteLoading}
+                              isLoading={zapQuoteSettling}
                             />
                           </div>
                         </div>

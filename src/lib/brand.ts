@@ -45,7 +45,7 @@ export const URLS = {
 } as const;
 
 export const CONTRACTS = {
-  /** yCVXCRV vault - auto-compounding cvxCRV with LlamaLend collateral */
+  /** yCVXCRV vault - auto-compounding cvxCRV */
   YCVXCRV: "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86" as const,
 
   /** yscvxCRV strategy - auto-compounding cvxCRV (lower fee, no collateral) */

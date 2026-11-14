@@ -123,11 +123,6 @@ const eslintConfig = defineConfig([
   // Unit tests must exercise real source code, not a copy of it.
   {
     files: ["src/**/*.{test,spec}.ts", "src/**/*.{test,spec}.tsx"],
-    // Deprecated lending tests are exempt; they are deleted with the lending code.
-    ignores: [
-      "src/__tests__/hooks/useCurveLendingData.test.ts",
-      "src/__tests__/components/LendingInterface.test.ts",
-    ],
     plugins: { "yld-tests": { rules: { "imports-source": testImportsSource } } },
     rules: { "yld-tests/imports-source": "error" },
   },

@@ -19,7 +19,6 @@ import {
   type MerklReward,
 } from "@/hooks/useMerklRewards";
 import { useVaultBalance } from "@/hooks/useVaultBalance";
-import { useCurveLendingPosition } from "@/hooks/useCurveLendingPosition";
 import { VAULT_ADDRESSES, VAULTS } from "@/config/vaults";
 import { formatUsd } from "@/lib/utils";
 import { toast } from "sonner";
@@ -204,7 +203,7 @@ function RewardRow({ reward, claimReward = reward }: { reward: MerklReward; clai
 
 export function RewardsPageContent() {
   const [currentTimestamp, setCurrentTimestamp] = useState<number | null>(null);
-  const { isConnected, address } = useAccount();
+  const { isConnected } = useAccount();
   const { data, isLoading, error } = useMerklRewards(1);
   const { data: opportunities } = useMerklOpportunities();
   const yldOpportunity = opportunities?.find((o) => o.name === "Yld Borrow crvUSD");
@@ -214,18 +213,9 @@ export function RewardsPageContent() {
 
   // Check eligibility: user holds ycvxCRV
   const { balance: ycvxcrvBalance } = useVaultBalance(VAULT_ADDRESSES.YCVXCRV as `0x${string}`);
-  // Check eligibility: user has a borrow position
-  const { position } = useCurveLendingPosition(
-    VAULT_ADDRESSES.YCVXCRV as `0x${string}`,
-    address
-  );
-  const hasBorrowPosition = position?.hasLoan ?? false;
 
-  // Step 1 complete if user holds ycvxCRV OR has a lending position (collateral is in Curve's custody)
-  const hasYcvxcrv = ycvxcrvBalance > 0n || hasBorrowPosition;
-
-  // Is the user actively earning rewards?
-  const isEarning = hasBorrowPosition;
+  // Step 1 complete if the user holds ycvxCRV
+  const hasYcvxcrv = ycvxcrvBalance > 0n;
 
   // Track page view on mount
   useEffect(() => {
@@ -242,9 +232,9 @@ export function RewardsPageContent() {
   // Track eligibility when data is loaded
   useEffect(() => {
     if (isConnected && !isLoading) {
-      trackRewardsEligibilityCheck(hasYcvxcrv, hasBorrowPosition);
+      trackRewardsEligibilityCheck(hasYcvxcrv);
     }
-  }, [isConnected, isLoading, hasYcvxcrv, hasBorrowPosition]);
+  }, [isConnected, isLoading, hasYcvxcrv]);
 
   // Flatten all rewards across chains. `useMerklRewards` already applies the
   // on-chain claimed override so `r.claimed` reflects the authoritative value.
@@ -268,17 +258,6 @@ export function RewardsPageContent() {
   }, 0);
 
   const totalPendingUsd = rewards.reduce((sum, r) => {
-    return sum + parseFloat(formatUnits(BigInt(r.pending), r.token.decimals)) * getPrice(r);
-  }, 0);
-
-  const yldClaimableUsd = yldRewards.reduce((sum, r) => {
-    const amount = BigInt(r.amount);
-    const claimed = BigInt(r.claimed);
-    const claimable = amount > claimed ? amount - claimed : 0n;
-    return sum + parseFloat(formatUnits(claimable, r.token.decimals)) * getPrice(r);
-  }, 0);
-
-  const yldPendingUsd = yldRewards.reduce((sum, r) => {
     return sum + parseFloat(formatUnits(BigInt(r.pending), r.token.decimals)) * getPrice(r);
   }, 0);
 
@@ -365,18 +344,10 @@ export function RewardsPageContent() {
                 <div className="flex-1">
                   <h3 className="font-medium leading-normal">
                     ycvxCRV borrow rewards{" "}
-                    {hasBorrowPosition ? (
-                      <Link href="/vaults/ycvxcrv/lending" className="hover:text-[var(--accent)] transition-colors">
-                        <Image src="/curve-logo.png" alt="Curve" width={14} height={14} className="rounded-full inline align-middle" />
-                        {" "}Manage loan{" "}
-                        <ArrowUpRight className="w-3 h-3 inline align-middle" />
-                      </Link>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-[var(--muted-foreground)]">
-                        <Image src="/curve-logo.png" alt="Curve" width={14} height={14} className="rounded-full inline align-middle" />
-                        {" "}Curve LlamaLend
-                      </span>
-                    )}
+                    <span className="inline-flex items-center gap-1 text-[var(--muted-foreground)]">
+                      <Image src="/curve-logo.png" alt="Curve" width={14} height={14} className="rounded-full inline align-middle" />
+                      {" "}Curve LlamaLend
+                    </span>
                   </h3>
                   <div className="flex items-center gap-2 mt-0.5">
                     {ycvxDeprecated && ycvxVault.deprecated && (
@@ -402,7 +373,7 @@ export function RewardsPageContent() {
               <div className="flex items-center gap-2 flex-wrap text-sm text-[var(--muted-foreground)] mb-5">
                 <span>
                   {ycvxDeprecated
-                    ? "Existing positions and claims remain available. New ycvxCRV deposits and LlamaLend loans are hidden."
+                    ? "Claims remain available. New ycvxCRV deposits are closed."
                     : "Earn crvUSD by borrowing against ycvxCRV. The more you borrow, the more you earn."}
                 </span>
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[var(--muted)] text-[var(--foreground)] mono">
@@ -439,76 +410,9 @@ export function RewardsPageContent() {
                       </div>
                     </div>
                   </Link>
-                  {ycvxDeprecated && !hasBorrowPosition ? (
-                    <div className="flex items-start gap-3">
-                      <span className="flex-shrink-0 w-6 h-6 rounded-full bg-yellow-500/15 flex items-center justify-center">
-                        <AlertTriangle className="w-3.5 h-3.5 text-yellow-500" />
-                      </span>
-                      <div className="flex-1">
-                        <div className="text-sm font-medium text-yellow-500">
-                          New ycvxCRV loans are disabled
-                        </div>
-                        <div className="text-xs text-[var(--muted-foreground)]">
-                          Holders without an existing LlamaLend position can withdraw or exchange to yscvxCRV, but cannot open a new borrow position.
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <Link href="/vaults/ycvxcrv/lending" className="flex items-start gap-3 group">
-                      {hasBorrowPosition ? (
-                        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-green-400/20 flex items-center justify-center">
-                          <Check className="w-3.5 h-3.5 text-green-400" />
-                        </span>
-                      ) : (
-                        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-[var(--muted)] flex items-center justify-center text-xs font-medium">
-                          2
-                        </span>
-                      )}
-                      <div className="flex-1">
-                        <div className="text-sm font-medium group-hover:text-[var(--accent)] transition-colors flex items-center gap-1.5">
-                          {ycvxDeprecated ? "Manage existing LlamaLend loan" : "Open a LlamaLend loan and borrow crvUSD"}
-                          <ArrowUpRight className="w-3 h-3" />
-                        </div>
-                        <div className="text-xs text-[var(--muted-foreground)]">
-                          {ycvxDeprecated
-                            ? "Repay, close, or manage collateral for your existing ycvxCRV position."
-                            : "Use your ycvxCRV as collateral to borrow crvUSD. The more you borrow, the more you earn."}
-                        </div>
-                      </div>
-                    </Link>
-                  )}
                 </div>
               </div>
             </div>
-            {isConnected && isEarning && isUpcoming && (
-              <div className="border-t border-yellow-400/20 bg-yellow-400/5 px-5 py-3">
-                <div className="flex items-center gap-2">
-                  <Check className="w-4 h-4 text-yellow-400" />
-                  <span className="text-sm text-yellow-400">You&apos;re all set — rewards will start accumulating when the campaign goes live</span>
-                </div>
-              </div>
-            )}
-            {isConnected && isEarning && isLive && (
-              <div className="border-t border-green-400/20 bg-green-400/5 px-5 py-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                    <span className="text-xs font-medium text-green-400 uppercase tracking-wider">Active Rewards</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-sm">
-                    <span className="text-[var(--muted-foreground)]">Your earnings</span>
-                    <span className="font-medium mono text-green-400">
-                      {yldClaimableUsd + yldPendingUsd > 0 ? formatUsd(yldClaimableUsd + yldPendingUsd) : "$0.00"}
-                    </span>
-                    {yldClaimableUsd > 0 && yldPendingUsd > 0 && (
-                      <span className="text-xs text-[var(--muted-foreground)]">
-                        ({formatUsd(yldClaimableUsd)} claimable)
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
           </>);
           })()}

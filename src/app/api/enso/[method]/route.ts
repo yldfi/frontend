@@ -47,12 +47,9 @@ function getCorsHeaders(request: NextRequest): Record<string, string> {
   };
 }
 
-function getFriendlyEnsoError(message: string, body?: Record<string, unknown>): string {
+function getFriendlyEnsoError(message: string): string {
   const lower = message.toLowerCase();
   if (lower.includes("could not quote shortcuts") || lower.includes("could not quote")) {
-    if (body?.closeLoan === true) {
-      return "No swap route could produce enough crvUSD for this close. Increase the amount, increase slippage, or use crvUSD.";
-    }
     return "No swap route could be quoted for this transaction. Increase the amount, increase slippage, or use a different token.";
   }
   return message;
@@ -143,10 +140,6 @@ export async function POST(
           fetchZapOutRoute,
           fetchVaultToVaultRoute,
         } = await import("@/lib/enso");
-        const {
-          fetchRepayBundle,
-          fetchRepayWithSwapBundle,
-        } = await import("@/lib/curve-lending");
 
         try {
         switch (body.intent) {
@@ -432,29 +425,6 @@ export async function POST(
             return respond(bundle);
           }
 
-          case "curveLendingRepay": {
-            const bundle = await fetchRepayBundle({
-              fromAddress: body.fromAddress,
-              vaultAddress: body.vaultAddress as `0x${string}`,
-              repayAmount: body.amountIn,
-            });
-            return respond(bundle);
-          }
-
-          case "curveLendingRepayWithSwap": {
-            const bundle = await fetchRepayWithSwapBundle({
-              fromAddress: body.fromAddress,
-              vaultAddress: body.vaultAddress as `0x${string}`,
-              tokenIn: body.tokenIn,
-              amountIn: body.amountIn,
-              slippage: Number(body.slippage),
-              inSoftLiquidation: body.inSoftLiquidation,
-              closeLoan: body.closeLoan,
-              maxRepayAmount: body.maxRepayAmount,
-            });
-            return respond(bundle);
-          }
-
           case "yldVaultToVault": {
             const sourceVault = getIntentVault(body.sourceVault);
             const targetVault = getIntentVault(body.targetVault);
@@ -613,7 +583,7 @@ export async function POST(
   } catch (error: unknown) {
     const err = error as { statusCode?: number; message?: string };
     const status = err.statusCode || 500;
-    const message = redactUrlsInText(getFriendlyEnsoError(err.message || "Enso API error", body));
+    const message = redactUrlsInText(getFriendlyEnsoError(err.message || "Enso API error"));
     console.error(`[Enso Proxy] ${method} error:`, {
       status,
       message: safeLogData(err.message) ?? message,

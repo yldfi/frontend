@@ -9,16 +9,11 @@
  * - approval_initiated / approval_success: Token approvals
  * - vault_view: When user views a vault page
  * - zap_initiated / zap_success: Zap operations
- * - lending_borrow_initiated / lending_borrow_success: Borrow operations
- * - lending_repay_initiated / lending_repay_success: Repay operations
- * - lending_collateral_add_initiated / lending_collateral_add_success: Add collateral
- * - lending_self_liquidate_initiated / lending_self_liquidate_success: Self-liquidation
  * - rewards_page_view: Rewards page viewed
  * - rewards_claim_click: Claim button clicked
  * - rewards_eligibility_check: Eligibility state tracked
  * - cta_click: CTA buttons clicked
  * - external_link_click: External links clicked
- * - lending_tab_switch: Lending tab changed
  * - transaction_error: Transaction errors with categorized error_type
  * - transaction_cancelled: User rejected in wallet
  */
@@ -295,7 +290,7 @@ export function categorizeError(error: Error | string | unknown): TransactionErr
 
 // Error Events
 export function trackTransactionError(
-  action: "deposit" | "withdraw" | "approval" | "zap" | "borrow" | "repay" | "collateral" | "self_liquidate",
+  action: "deposit" | "withdraw" | "approval" | "zap",
   vaultId: string,
   errorOrMessage: Error | string | unknown,
   errorType?: TransactionErrorType
@@ -309,7 +304,7 @@ export function trackTransactionError(
 
 // Cancelled Events (user rejected in wallet)
 export function trackTransactionCancelled(
-  action: "deposit" | "withdraw" | "approval" | "zap" | "borrow" | "repay" | "collateral" | "self_liquidate",
+  action: "deposit" | "withdraw" | "approval" | "zap",
   vaultId: string
 ): void {
   trackEvent("transaction_cancelled", {
@@ -368,95 +363,6 @@ export function trackZapSuccess(
   setUserProperty("has_used_zap", true);
 }
 
-// Lending Events — Borrow
-export function trackLendingBorrowInitiated(
-  vaultId: string,
-  amount: string,
-  tokenSymbol: string
-): void {
-  trackEvent("lending_borrow_initiated", {
-    vault_id: vaultId,
-    amount_bucket: bucketAmount(amount),
-    token_symbol: tokenSymbol,
-  });
-}
-
-export function trackLendingBorrowSuccess(
-  vaultId: string,
-  amount: string,
-  tokenSymbol: string
-): void {
-  trackEvent("lending_borrow_success", {
-    vault_id: vaultId,
-    amount_bucket: bucketAmount(amount),
-    token_symbol: tokenSymbol,
-  });
-  setUserProperty("has_borrowed", true);
-}
-
-// Lending Events — Repay
-export function trackLendingRepayInitiated(
-  vaultId: string,
-  amount: string
-): void {
-  trackEvent("lending_repay_initiated", {
-    vault_id: vaultId,
-    amount_bucket: bucketAmount(amount),
-  });
-}
-
-export function trackLendingRepaySuccess(
-  vaultId: string,
-  amount: string
-): void {
-  trackEvent("lending_repay_success", {
-    vault_id: vaultId,
-    amount_bucket: bucketAmount(amount),
-  });
-}
-
-// Lending Events — Collateral
-export function trackLendingCollateralAddInitiated(
-  vaultId: string,
-  amount: string,
-  tokenSymbol: string
-): void {
-  trackEvent("lending_collateral_add_initiated", {
-    vault_id: vaultId,
-    amount_bucket: bucketAmount(amount),
-    token_symbol: tokenSymbol,
-  });
-}
-
-export function trackLendingCollateralAddSuccess(
-  vaultId: string,
-  amount: string,
-  tokenSymbol: string
-): void {
-  trackEvent("lending_collateral_add_success", {
-    vault_id: vaultId,
-    amount_bucket: bucketAmount(amount),
-    token_symbol: tokenSymbol,
-  });
-}
-
-// Lending Events — Self-Liquidate
-export function trackLendingSelfLiquidateInitiated(
-  vaultId: string
-): void {
-  trackEvent("lending_self_liquidate_initiated", {
-    vault_id: vaultId,
-  });
-}
-
-export function trackLendingSelfLiquidateSuccess(
-  vaultId: string
-): void {
-  trackEvent("lending_self_liquidate_success", {
-    vault_id: vaultId,
-  });
-}
-
 // Rewards Events
 export function trackRewardsPageView(): void {
   trackEvent("rewards_page_view");
@@ -466,13 +372,9 @@ export function trackRewardsClaimClick(): void {
   trackEvent("rewards_claim_click");
 }
 
-export function trackRewardsEligibilityCheck(
-  hasYcvxcrv: boolean,
-  hasBorrowPosition: boolean
-): void {
+export function trackRewardsEligibilityCheck(hasYcvxcrv: boolean): void {
   trackEvent("rewards_eligibility_check", {
     has_ycvxcrv: hasYcvxcrv,
-    has_borrow_position: hasBorrowPosition,
   });
 }
 
@@ -488,12 +390,6 @@ export function trackExternalLinkClick(url: string, linkName: string): void {
   trackEvent("external_link_click", {
     url,
     link_name: linkName,
-  });
-}
-
-export function trackLendingTabSwitch(tabName: string): void {
-  trackEvent("lending_tab_switch", {
-    tab_name: tabName,
   });
 }
 

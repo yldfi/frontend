@@ -19,12 +19,13 @@ describe("VaultPageContent logic", () => {
     });
 
     it("sends zaps only from the gated button or the post-simulation confirm", () => {
-      // The simulation preview used to fall through to executeZap() with no impact check.
+      // The simulation preview path never sends: only the preview-off branch in the
+      // button and the post-simulation confirm call executeZap().
       const sends = source.match(/executeZap\((?!\{ previewOnly: true \})/g) ?? [];
       const gatedButton = source.match(/guardHighImpact\(`Zap[\s\S]*?\n {26}\}\)\}/)?.[0] ?? "";
-      expect(gatedButton.match(/executeZap\(\)/g)).toHaveLength(2);
+      expect(gatedButton.match(/executeZap\(\)/g)).toHaveLength(1);
       expect(source).toMatch(/High price impact was already confirmed before the simulation ran\.\n\s+setZapPendingDetails\(\);\n\s+executeZap\(\{ skipSimulation: true \}\)/);
-      expect(sends).toHaveLength(3);
+      expect(sends).toHaveLength(2);
     });
 
     it("never leaves the right column blank: the forms hide only while another card renders (item 40)", () => {

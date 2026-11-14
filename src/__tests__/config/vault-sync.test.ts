@@ -14,7 +14,6 @@ import {
   TOKENS,
   VAULTS,
   isExitOnlyVault,
-  isLendingDisabledWithoutPosition,
   isVaultEntryDisabled,
   isVaultHiddenUnlessHolder,
 } from "@/config/vaults";
@@ -55,13 +54,11 @@ describe("vault lifecycle flags", () => {
     expect(isExitOnlyVault(VAULTS.ycvxcrv)).toBe(true);
     expect(isVaultEntryDisabled(VAULTS.ycvxcrv)).toBe(true);
     expect(isVaultHiddenUnlessHolder(VAULTS.ycvxcrv)).toBe(true);
-    expect(isLendingDisabledWithoutPosition(VAULTS.ycvxcrv)).toBe(true);
   });
 
   it("keeps active cvxCRV strategy vault enterable", () => {
     expect(isExitOnlyVault(VAULTS.yscvxcrv)).toBe(false);
     expect(isVaultEntryDisabled(VAULTS.yscvxcrv)).toBe(false);
     expect(isVaultHiddenUnlessHolder(VAULTS.yscvxcrv)).toBe(false);
-    expect(isLendingDisabledWithoutPosition(VAULTS.yscvxcrv)).toBe(false);
   });
 });

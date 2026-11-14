@@ -4,7 +4,6 @@ import {
   formatTxAssetAmount,
   getPendingTxCopy,
   isSameTxAssetPair,
-  isLendingTxPendingVisible,
   isVaultTxPendingVisible,
   isZapTxPendingVisible,
   TX_REVERTED_VISIBLE_MS,
@@ -23,12 +22,6 @@ describe("transaction-ui", () => {
     expect(isZapTxPendingVisible("zapping")).toBe(true);
     expect(isZapTxPendingVisible("waitingTx")).toBe(true);
     expect(isZapTxPendingVisible("idle")).toBe(false);
-  });
-
-  it("shows lending pending UI while the wallet is returning the tx hash", () => {
-    expect(isLendingTxPendingVisible("executing")).toBe(true);
-    expect(isLendingTxPendingVisible("waitingTx")).toBe(true);
-    expect(isLendingTxPendingVisible("simulating")).toBe(false);
   });
 
   it("uses concise wallet confirmation copy before the tx hash exists", () => {

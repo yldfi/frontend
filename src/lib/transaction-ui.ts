@@ -21,10 +21,6 @@ export function isZapTxPendingVisible(status: string): boolean {
   return status === "zapping" || status === "waitingTx";
 }
 
-export function isLendingTxPendingVisible(status: string): boolean {
-  return status === "executing" || status === "waitingTx";
-}
-
 export type SafePendingInfo = { confirmations: number; confirmationsRequired: number | null };
 
 export function getSafePendingMessage(safe: SafePendingInfo): string {

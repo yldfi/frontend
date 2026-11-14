@@ -1,5 +1,4 @@
 import {
-  CURVE_CONTROLLERS,
   getExternalVaultConfig,
   getVaultByAddress,
   TOKENS,
@@ -18,7 +17,6 @@ import {
   MORPHO_BUNDLER3,
   MORPHO_TOKEN,
 } from "@/lib/enso-addresses";
-import { CRVUSD_ADDRESS } from "@/config/addresses";
 import {
   EMPTY_CALLDATA_SELECTOR,
   ENSO_ROUTE_MULTI_SELECTOR,
@@ -30,7 +28,6 @@ import {
   assertEnsoIntentTxTargetForIntent,
   assertNoForbiddenFields,
   assertOnlyFields,
-  assertPositiveAmount,
   assertTokenAddress,
   failResponse,
   failValidation,
@@ -73,9 +70,7 @@ export type EnsoIntentName =
   | "illiquidToAny"
   | "anyToIlliquid"
   | "legacyMorphoWrap"
-  | "legacyMorphoZapIn"
-  | "curveLendingRepay"
-  | "curveLendingRepayWithSwap";
+  | "legacyMorphoZapIn";
 
 type BaseIntentRequest = {
   fromAddress: string;
@@ -198,20 +193,6 @@ export type LegacyMorphoZapInIntentRequest = BaseIntentRequest & {
   vaultAddress: string;
 };
 
-export type CurveLendingRepayIntentRequest = BaseIntentRequest & {
-  intent: "curveLendingRepay";
-  vaultAddress: string;
-};
-
-export type CurveLendingRepayWithSwapIntentRequest = BaseIntentRequest & {
-  intent: "curveLendingRepayWithSwap";
-  vaultAddress: string;
-  tokenIn: string;
-  inSoftLiquidation?: boolean;
-  closeLoan?: boolean;
-  maxRepayAmount?: string;
-};
-
 export type EnsoIntentRequest =
   | PlainTokenSwapIntentRequest
   | YldVaultZapInIntentRequest
@@ -231,9 +212,7 @@ export type EnsoIntentRequest =
   | IlliquidToAnyIntentRequest
   | AnyToIlliquidIntentRequest
   | LegacyMorphoWrapIntentRequest
-  | LegacyMorphoZapInIntentRequest
-  | CurveLendingRepayIntentRequest
-  | CurveLendingRepayWithSwapIntentRequest;
+  | LegacyMorphoZapInIntentRequest;
 
 export type YldVaultToVaultIntentName =
   | YldVaultToVaultIntentRequest["intent"]
@@ -290,8 +269,6 @@ const INTENT_TX_TARGET_ALLOWLIST: Record<EnsoIntentName, readonly string[]> = {
   anyToIlliquid: COMMON_INTENT_TX_TARGETS,
   legacyMorphoWrap: [MORPHO_BUNDLER3],
   legacyMorphoZapIn: [MORPHO_BUNDLER3],
-  curveLendingRepay: COMMON_INTENT_TX_TARGETS,
-  curveLendingRepayWithSwap: COMMON_INTENT_TX_TARGETS,
 };
 const INTENT_CALLDATA_SELECTOR_ALLOWLIST: Record<EnsoIntentName, readonly `0x${string}`[]> = {
   plainTokenSwap: COMMON_INTENT_CALLDATA_SELECTORS,
@@ -314,8 +291,6 @@ const INTENT_CALLDATA_SELECTOR_ALLOWLIST: Record<EnsoIntentName, readonly `0x${s
   anyToIlliquid: SERVER_BUNDLE_CALLDATA_SELECTORS,
   legacyMorphoWrap: [EMPTY_CALLDATA_SELECTOR],
   legacyMorphoZapIn: [EMPTY_CALLDATA_SELECTOR],
-  curveLendingRepay: SERVER_BUNDLE_CALLDATA_SELECTORS,
-  curveLendingRepayWithSwap: SERVER_BUNDLE_CALLDATA_SELECTORS,
 };
 
 function assertOnlyIntentFields(
@@ -378,12 +353,6 @@ function assertSpecialInputToken(
   assertAddress(value, field);
   if (!getExternalVaultConfig(value) && !SPECIAL_INPUT_TOKENS.has(normalizeAddress(value))) {
     failValidation(`${field} must be a known external vault or supported illiquid token`);
-  }
-}
-
-function assertOptionalBoolean(value: unknown, field: string) {
-  if (value !== undefined && typeof value !== "boolean") {
-    failValidation(`${field} must be a boolean`);
   }
 }
 
@@ -616,36 +585,6 @@ function assertLegacyMorphoZapIn(request: Record<string, unknown>): asserts requ
   assertYldVault(request.vaultAddress, "vaultAddress");
 }
 
-function assertCurveLendingVault(value: unknown, field: string): asserts value is `0x${string}` {
-  assertAddress(value, field);
-  const normalized = normalizeAddress(value);
-  const known = Object.keys(CURVE_CONTROLLERS).some(
-    (address) => normalizeAddress(address) === normalized,
-  );
-  if (!known) {
-    failValidation(`${field} must be a Curve lending collateral vault`);
-  }
-}
-
-function assertCurveLendingRepay(request: Record<string, unknown>): asserts request is CurveLendingRepayIntentRequest {
-  assertBaseIntentFields(request);
-  assertCurveLendingVault(request.vaultAddress, "vaultAddress");
-}
-
-function assertCurveLendingRepayWithSwap(request: Record<string, unknown>): asserts request is CurveLendingRepayWithSwapIntentRequest {
-  assertBaseIntentFields(request, { requireSlippage: true });
-  assertCurveLendingVault(request.vaultAddress, "vaultAddress");
-  assertTokenAddress(request.tokenIn, "tokenIn");
-  assertOptionalBoolean(request.inSoftLiquidation, "inSoftLiquidation");
-  assertOptionalBoolean(request.closeLoan, "closeLoan");
-  if (request.maxRepayAmount !== undefined) {
-    if (request.closeLoan !== true) {
-      failValidation("maxRepayAmount requires closeLoan");
-    }
-    assertPositiveAmount(request.maxRepayAmount);
-  }
-}
-
 export function assertValidEnsoIntentRequest(value: unknown): asserts value is EnsoIntentRequest {
   if (!isRecord(value)) {
     failValidation("Intent request body must be an object");
@@ -730,20 +669,6 @@ export function assertValidEnsoIntentRequest(value: unknown): asserts value is E
     case "legacyMorphoZapIn":
       assertOnlyIntentFields(value, ["vaultAddress"]);
       assertLegacyMorphoZapIn(value);
-      return;
-    case "curveLendingRepay":
-      assertOnlyIntentFields(value, ["vaultAddress"]);
-      assertCurveLendingRepay(value);
-      return;
-    case "curveLendingRepayWithSwap":
-      assertOnlyIntentFields(value, [
-        "vaultAddress",
-        "tokenIn",
-        "inSoftLiquidation",
-        "closeLoan",
-        "maxRepayAmount",
-      ]);
-      assertCurveLendingRepayWithSwap(value);
       return;
     default:
       failValidation("Unknown Enso intent");
@@ -934,10 +859,6 @@ function getIntentInputToken(request: EnsoIntentRequest): string {
     case "legacyMorphoWrap":
     case "legacyMorphoZapIn":
       return LEGACY_MORPHO;
-    case "curveLendingRepay":
-      return CRVUSD_ADDRESS;
-    case "curveLendingRepayWithSwap":
-      return request.tokenIn;
   }
 }
 
@@ -969,9 +890,6 @@ function getIntentOutputToken(request: EnsoIntentRequest): string | undefined {
       return request.externalVaultAddress;
     case "specialTokenToExternalVault":
       return request.outputVault;
-    case "curveLendingRepay":
-    case "curveLendingRepayWithSwap":
-      return undefined;
   }
 }
 

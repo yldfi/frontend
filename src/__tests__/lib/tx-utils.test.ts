@@ -3,7 +3,6 @@ import {
   parseEnsoError,
   extractStringFromHex,
   CUSTOM_ERROR_SELECTORS,
-  CURVE_DEBT_TOO_HIGH_MESSAGE,
   parseErrorMessage,
   checkAllowance,
   runTenderlySimulation,
@@ -240,10 +239,6 @@ describe("parseErrorMessage", () => {
   // Health check
   it("detects 'health'", () => {
     expect(parseErrorMessage("health check failed")).toBe("Position would be unhealthy");
-  });
-
-  it("surfaces Curve Debt too high as an actionable repay error", () => {
-    expect(parseErrorMessage("execution reverted: Debt too high")).toBe(CURVE_DEBT_TOO_HIGH_MESSAGE);
   });
 
   it("preserves close-specific Enso quote failures", () => {

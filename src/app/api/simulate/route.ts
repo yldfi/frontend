@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPublicClient, encodeAbiParameters, fallback, formatUnits, http, keccak256, pad, parseAbiParameters, toHex, type Chain } from "viem";
 import { getAllRpcUrls, rpcAuthHeaderFor, RPC_URL_LIST } from "@/config/rpc";
-import { TOKENS, VAULT_ADDRESSES, CURVE_CONTROLLERS, getVaultByAddress, LLAMA_AIRFORCE, CONCENTRATOR, CURVE_SAVINGS, ASYMMETRY } from "@/config/vaults";
+import { TOKENS, VAULT_ADDRESSES, getVaultByAddress, LLAMA_AIRFORCE, CONCENTRATOR, CURVE_SAVINGS, ASYMMETRY } from "@/config/vaults";
 import { fetchTokenPricesDirect, ENSO_ROUTER_V2, MORPHO_BUNDLER3_ADDRESS } from "@/lib/enso";
 import { CRVUSD_ADDRESS, USDC_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
 import { ERC4626_ABI } from "@/lib/abis";
@@ -267,21 +267,6 @@ interface AssetChange {
   dollarValue?: string;
 }
 
-// Known Curve controller addresses for lending operations
-const CURVE_CONTROLLER_ADDRESSES = new Set([
-  "0x24174143ccf438f0a1f6dcf93b468c127123a96e", // ycvxCRV controller
-]);
-
-// Known Curve AMM addresses (controller.amm()) — collateral is deposited/withdrawn here
-const CURVE_AMM_ADDRESSES = new Set([
-  "0xf1b03586c03ebfec014238d105148a15102a282f", // ycvxCRV controller AMM
-]);
-
-// Known vault token addresses (collateral tokens for lending)
-const VAULT_COLLATERAL_TOKENS = new Set([
-  "0x95f19b19aff698169a1a0bbc28a2e47b14cb9a86", // ycvxCRV
-]);
-
 // crvUSD address imported from @/config/addresses
 
 // Canonical casing for well-known token symbols — Tenderly's own token_info.symbol
@@ -306,7 +291,6 @@ function processAssetChanges(
     const from = change.from?.toLowerCase() ?? "";
     const to = change.to?.toLowerCase() ?? "";
     const tokenAddress = change.token_info?.contract_address?.toLowerCase() ?? "";
-    const isCrvUsd = tokenAddress === CRVUSD_ADDRESS.toLowerCase();
     const symbol = KNOWN_TOKEN_SYMBOLS[tokenAddress] ?? getVaultByAddress(tokenAddress)?.symbol ?? change.token_info?.symbol;
 
     // Derive amount from raw_amount/decimals ourselves rather than trusting
@@ -325,76 +309,6 @@ function processAssetChanges(
 
     const isUserSending = from === normalizedUser;
     const isUserReceiving = to === normalizedUser;
-    const isToController = CURVE_CONTROLLER_ADDRESSES.has(to);
-    const isFromController = CURVE_CONTROLLER_ADDRESSES.has(from);
-    // Curve controllers mint crvUSD (from=0x0) rather than transferring from their balance
-    const isMint = from === "0x0000000000000000000000000000000000000000";
-
-    // Detect lending operations
-    // crvUSD to controller = repay
-    if (isCrvUsd && isToController && !isFromController) {
-      result.push({
-        type: "repay",
-        symbol: symbol ?? "crvUSD",
-        amount,
-        rawAmount: change.raw_amount ?? "0",
-        address: change.token_info?.contract_address ?? "",
-        decimals: change.token_info?.decimals ?? 18,
-        logo: change.token_info?.logo,
-        dollarValue: change.dollar_value,
-      });
-      continue;
-    }
-
-    // crvUSD from controller or minted = borrow (create_loan/borrow_more mint crvUSD)
-    // May go to user directly or to ENSO_SHORTCUTS for output swap
-    if (isCrvUsd && (isFromController || isMint)) {
-      result.push({
-        type: "borrow",
-        symbol: symbol ?? "crvUSD",
-        amount,
-        rawAmount: change.raw_amount ?? "0",
-        address: change.token_info?.contract_address ?? "",
-        decimals: change.token_info?.decimals ?? 18,
-        logo: change.token_info?.logo,
-        dollarValue: change.dollar_value,
-      });
-      continue;
-    }
-
-    // Collateral token → AMM = deposit (add_collateral)
-    const isVaultCollateral = VAULT_COLLATERAL_TOKENS.has(tokenAddress);
-    const isToAmm = CURVE_AMM_ADDRESSES.has(to);
-    const isFromAmm = CURVE_AMM_ADDRESSES.has(from);
-
-    if (isVaultCollateral && isToAmm) {
-      result.push({
-        type: "deposit",
-        symbol: symbol ?? "???",
-        amount,
-        rawAmount: change.raw_amount ?? "0",
-        address: change.token_info?.contract_address ?? "",
-        decimals: change.token_info?.decimals ?? 18,
-        logo: change.token_info?.logo,
-        dollarValue: change.dollar_value,
-      });
-      continue;
-    }
-
-    // Collateral token ← AMM = withdraw (remove_collateral)
-    if (isVaultCollateral && isFromAmm) {
-      result.push({
-        type: "receive",
-        symbol: symbol ?? "???",
-        amount,
-        rawAmount: change.raw_amount ?? "0",
-        address: change.token_info?.contract_address ?? "",
-        decimals: change.token_info?.decimals ?? 18,
-        logo: change.token_info?.logo,
-        dollarValue: change.dollar_value,
-      });
-      continue;
-    }
 
     // Regular user send/receive
     if (!isUserSending && !isUserReceiving) continue;
@@ -670,12 +584,11 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Build allowlist of simulation targets: Enso router + Morpho bundler + vaults + controllers
+  // Build allowlist of simulation targets: Enso router + Morpho bundler + vaults
   const allowedTargets = new Set<string>([
     ENSO_ROUTER_V2.toLowerCase(),
     MORPHO_BUNDLER3_ADDRESS.toLowerCase(),
     ...Object.values(VAULT_ADDRESSES).map((a) => a.toLowerCase()),
-    ...Object.values(CURVE_CONTROLLERS).map((a) => a.toLowerCase()),
   ]);
 
   if (!allowedTargets.has(body.to.toLowerCase())) {

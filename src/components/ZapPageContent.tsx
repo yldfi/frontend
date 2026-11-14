@@ -510,7 +510,7 @@ export function ZapPageContent() {
   // Action kind captured at submit: the live quote is cleared once the amount resets on success.
   const [submittedActionKind, setSubmittedActionKind] = useState<TxActionKind | null>(null);
 
-  // DEBUG (dev only) — TX State Preview panel. Mirrors VaultPageContent/LendingInterface.
+  // DEBUG (dev only) — TX State Preview panel. Mirrors VaultPageContent.
   type DebugTxState = "none" | "deposit-pending" | "deposit-success" | "deposit-reverted" | "withdraw-pending" | "withdraw-success" | "withdraw-reverted" | "swap-pending" | "swap-success" | "swap-reverted";
   const [debugTxState, setDebugTxState] = useState<DebugTxState>("none");
   const [debugPanelPos, setDebugPanelPos] = useState<{ x: number; y: number } | null>(() => {

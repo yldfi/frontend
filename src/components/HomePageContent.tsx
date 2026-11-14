@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useAccount } from "wagmi";
 import { formatUnits } from "viem";
 import { useRouter } from "next/navigation";
-import { ArrowUpRight, ChevronDown, ChevronUp, HeartPulse, Gift } from "lucide-react";
+import { ArrowUpRight, ChevronDown, ChevronUp, Gift } from "lucide-react";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import Link from "next/link";
@@ -17,11 +17,9 @@ import { useMultiplePricePerShare } from "@/hooks/usePricePerShare";
 import { useVaultCache } from "@/hooks/useVaultCache";
 import { useCvxCrvPrice } from "@/hooks/useCvxCrvPrice";
 import { useCvxPrice } from "@/hooks/useCvxPrice";
-import { useCurveLendingPosition, formatHealth } from "@/hooks/useCurveLendingPosition";
 import {
   VAULTS,
   VAULT_ADDRESSES,
-  CURVE_CONTROLLERS,
   isVaultHiddenUnlessHolder,
 } from "@/config/vaults";
 import {
@@ -52,7 +50,6 @@ const vaultConfigs = Object.values(VAULTS)
     fee: vault.fees.performance,
     feeBreakdown: vault.feeBreakdown,
     logo: vault.logoSmall,
-    hasLending: vault.type === "vault" && vault.address in CURVE_CONTROLLERS,
     hasRewards: vault.id === "ycvxcrv", // Active Merkl campaign
   }));
 
@@ -99,7 +96,7 @@ function getInitialHeroCollapsed(): boolean {
 }
 
 export function HomePageContent() {
-  const { isConnected, address } = useAccount();
+  const { isConnected } = useAccount();
   const router = useRouter();
   const [sortBy, setSortBy] = useState<SortOption>(getInitialSortValue);
   const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
@@ -159,12 +156,6 @@ export function HomePageContent() {
   const cvxPrice = cvxPriceOnChain || cacheData?.cvxPrice || 0;
   // pxCVX still has no on-chain oracle hook
   const pxCvxPrice = 0; // TODO: uncomment when yspxcvx is live — cacheData?.pxCvxPrice ?? 0
-
-  // Fetch lending position for vaults with LlamaLend markets
-  const { position: ycvxcrvLendingPosition } = useCurveLendingPosition(
-    VAULT_ADDRESSES.YCVXCRV as `0x${string}`,
-    address
-  );
 
   // Fetch Merkl rewards for earnings display
   const { data: merklData } = useMerklRewards(1);
@@ -269,11 +260,6 @@ export function HomePageContent() {
     [VAULT_ADDRESSES.YSCVX.toLowerCase()]: balances[3],
   };
 
-  // Lending position lookup by vault ID
-  const lendingPositionByVaultId: Record<string, typeof ycvxcrvLendingPosition> = {
-    ycvxcrv: ycvxcrvLendingPosition,
-  };
-
   const vaultsUnsorted = vaultConfigs.map((config) => {
     const balance = balanceByAddress[config.contractAddress.toLowerCase()];
     const hasVaultBalance = (balance?.balance ?? 0n) > 0n;
@@ -284,11 +270,10 @@ export function HomePageContent() {
       holdings: balance?.formattedUsd ?? "$0",
       holdingsUsd: balance?.usdValue ?? 0,
       hasHoldings: hasVaultBalance || (balance?.usdValue ?? 0) > 0,
-      lendingPosition: lendingPositionByVaultId[config.id] ?? null,
     };
   }).filter((vault) => {
     if (!isVaultHiddenUnlessHolder(vault)) return true;
-    return vault.hasHoldings || Boolean(vault.lendingPosition?.hasLoan);
+    return vault.hasHoldings;
   });
 
   // Sort vaults based on selected option (descending - highest first)
@@ -520,36 +505,9 @@ export function HomePageContent() {
                         </span>
                       )}
                       {vault.badges?.filter((b) => b !== "Compounder").map((badge) => (
-                        badge === "Collateral (LlamaLend)" ? (
-                          vault.deprecated && !vault.lendingPosition?.hasLoan ? null : (
-                          <button
-                            key={badge}
-                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); trackCtaClick("borrow_against_vault", "home"); router.push(`/vaults/${vault.id}/lending`); }}
-                            className="group/badge collateral-badge inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium bg-[var(--muted)] text-white rounded whitespace-nowrap hover:text-[var(--foreground)] transition-colors max-w-full"
-                          >
-                            <Image src="/curve-logo.png" alt="Curve" width={12} height={12} className="rounded-full" />
-                            {vault.lendingPosition?.hasLoan ? (
-                              <>
-                                <span>Loan</span>
-                                <span className="mx-0.5">·</span>
-                                <Image src="/tokens/crvusd.png" alt="crvUSD" width={12} height={12} className="rounded-full hidden lg:inline" />
-                                <span className="mono">{Number(formatUnits(vault.lendingPosition.debt, 18)).toFixed(0)}<span className="hidden lg:inline"> crvUSD</span></span>
-                                <span className="hidden lg:inline">/</span>
-                                <Image src={vault.logo} alt={vault.name} width={12} height={12} className="rounded-full hidden lg:inline" />
-                                <span className="mono hidden lg:inline">{Number(formatUnits(vault.lendingPosition.collateral, 18)).toFixed(0)} {vault.name}</span>
-                                {(() => { const h = formatHealth(vault.lendingPosition.health); const hoverColor = h.status === "healthy" ? "group-hover/badge:text-green-500" : h.status === "warning" ? "group-hover/badge:text-yellow-500" : "group-hover/badge:text-red-400"; return <span className={`hidden lg:inline-flex items-center gap-0.5 ${h.color} ${hoverColor} transition-colors`}><HeartPulse size={10} /><span className="mono">{h.value.toFixed(0)}%</span></span>; })()}
-                              </>
-                            ) : (
-                              <span>{vault.deprecated ? "Manage loan" : "Borrow"}</span>
-                            )}
-                            <ArrowUpRight size={10} />
-                          </button>
-                          )
-                        ) : (
-                          <span key={badge} className="inline-flex items-center px-2 py-1 text-[11px] font-medium bg-[var(--muted)] text-white rounded border border-transparent whitespace-nowrap">
-                            {badge}
-                          </span>
-                        )
+                        <span key={badge} className="inline-flex items-center px-2 py-1 text-[11px] font-medium bg-[var(--muted)] text-white rounded border border-transparent whitespace-nowrap">
+                          {badge}
+                        </span>
                       ))}
                       {vault.hasRewards && (!vault.deprecated || totalEarnedUsd > 0) && (isCampaignLive || totalEarnedUsd > 0) && (
                         <button
@@ -608,36 +566,9 @@ export function HomePageContent() {
                             </span>
                           )}
                           {vault.badges?.filter((b) => b !== "Compounder").map((badge) => (
-                            badge === "Collateral (LlamaLend)" ? (
-                              vault.deprecated && !vault.lendingPosition?.hasLoan ? null : (
-                              <button
-                                key={badge}
-                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); trackCtaClick("borrow_against_vault", "home"); router.push(`/vaults/${vault.id}/lending`); }}
-                                className="group/badge collateral-badge inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium bg-[var(--muted)] text-white rounded whitespace-nowrap hover:text-[var(--foreground)] transition-colors max-w-full"
-                              >
-                                <Image src="/curve-logo.png" alt="Curve" width={10} height={10} className="rounded-full" />
-                                {vault.lendingPosition?.hasLoan ? (
-                                  <>
-                                    <span>Loan</span>
-                                    <span>·</span>
-                                    <Image src="/tokens/crvusd.png" alt="crvUSD" width={10} height={10} className="rounded-full hidden lg:inline" />
-                                    <span className="mono">{Number(formatUnits(vault.lendingPosition.debt, 18)).toFixed(0)}<span className="hidden lg:inline"> crvUSD</span></span>
-                                    <span className="hidden lg:inline">/</span>
-                                    <Image src={vault.logo} alt={vault.name} width={10} height={10} className="rounded-full hidden lg:inline" />
-                                    <span className="mono hidden lg:inline">{Number(formatUnits(vault.lendingPosition.collateral, 18)).toFixed(0)} {vault.name}</span>
-                                    {(() => { const h = formatHealth(vault.lendingPosition.health); const hoverColor = h.status === "healthy" ? "group-hover/badge:text-green-500" : h.status === "warning" ? "group-hover/badge:text-yellow-500" : "group-hover/badge:text-red-400"; return <span className={`hidden lg:inline-flex items-center gap-0.5 ${h.color} ${hoverColor} transition-colors`}><HeartPulse size={10} /><span className="mono">{h.value.toFixed(0)}%</span></span>; })()}
-                                  </>
-                                ) : (
-                                  <span>{vault.deprecated ? "Manage loan" : `Borrow against ${vault.name}`}</span>
-                                )}
-                                <ArrowUpRight size={10} />
-                              </button>
-                              )
-                            ) : (
-                              <span key={badge} className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-[var(--muted)] text-white rounded border border-transparent whitespace-nowrap">
-                                {badge}
-                              </span>
-                            )
+                            <span key={badge} className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-[var(--muted)] text-white rounded border border-transparent whitespace-nowrap">
+                              {badge}
+                            </span>
                           ))}
                           {vault.hasRewards && (!vault.deprecated || totalEarnedUsd > 0) && (isCampaignLive || totalEarnedUsd > 0) && (
                             <button

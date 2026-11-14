@@ -12,10 +12,6 @@ import { useMultiplePricePerShare } from "@/hooks/usePricePerShare";
 import { useCvxCrvPrice } from "@/hooks/useCvxCrvPrice";
 import { useCvxPrice } from "@/hooks/useCvxPrice";
 import {
-  useCurveLendingPosition,
-  type LendingPosition,
-} from "@/hooks/useCurveLendingPosition";
-import {
   getYldMerklCampaignIds,
   useMerklOpportunities,
   useMerklRewards,
@@ -33,7 +29,6 @@ const mocks = vi.hoisted(() => ({
   useMultiplePricePerShare: vi.fn(),
   useCvxCrvPrice: vi.fn(),
   useCvxPrice: vi.fn(),
-  useCurveLendingPosition: vi.fn(),
   useMerklRewards: vi.fn(),
   useMerklOpportunities: vi.fn(),
 }));
@@ -104,13 +99,6 @@ vi.mock("@/hooks/useCvxPrice", () => ({
   useCvxPrice: mocks.useCvxPrice,
 }));
 
-vi.mock("@/hooks/useCurveLendingPosition", async () => {
-  const actual = await vi.importActual<typeof import("@/hooks/useCurveLendingPosition")>(
-    "@/hooks/useCurveLendingPosition",
-  );
-  return { ...actual, useCurveLendingPosition: mocks.useCurveLendingPosition };
-});
-
 vi.mock("@/hooks/useMerklRewards", async () => {
   const actual = await vi.importActual<typeof import("@/hooks/useMerklRewards")>(
     "@/hooks/useMerklRewards",
@@ -143,7 +131,6 @@ interface SetupOptions {
   yearn?: Partial<Record<YearnId, YearnSpec>>;
   yearnLoading?: Partial<Record<YearnId, boolean>>;
   balances?: Partial<Record<VaultId, BalanceSpec>>;
-  lendingPosition?: LendingPosition | null;
   merklRewards?: MerklReward[];
   merklOpportunities?: MerklOpportunity[];
   connected?: boolean;
@@ -296,14 +283,6 @@ function installMocks(options: SetupOptions = {}) {
     isLoading: false,
     error: null,
   } as unknown as ReturnType<typeof useCvxPrice>);
-
-  vi.mocked(useCurveLendingPosition).mockReturnValue({
-    position: options.lendingPosition ?? null,
-    isLoading: false,
-    isError: false,
-    error: null,
-    refetch: vi.fn(),
-  } as unknown as ReturnType<typeof useCurveLendingPosition>);
 
   vi.mocked(useMerklRewards).mockReturnValue({
     data: options.merklRewards
@@ -460,7 +439,7 @@ describe("HomePageContent vault list", () => {
     expect(rowIds(container)).toHaveLength(listedByDefault.length);
   });
 
-  it("hides a hidden-unless-holder vault without a balance or loan", () => {
+  it("hides a hidden-unless-holder vault without a balance", () => {
     expect(hiddenUnlessHolderVault).toBeDefined();
     const { container } = setup();
 
@@ -481,27 +460,23 @@ describe("HomePageContent vault list", () => {
     expect(statValue("Vaults")).toBe(String(listedByDefault.length + 1));
   });
 
-  it("shows a hidden-unless-holder vault when the user has an open loan", () => {
-    expect(hiddenUnlessHolderVault).toBeDefined();
-    const id = hiddenUnlessHolderVault?.id as VaultId;
-    const position: LendingPosition = {
-      collateral: 1_000n,
-      stablecoin: 0n,
-      debt: 500n,
-      N: 10,
-      health: 80,
-      healthFull: 80,
-      liquidationPriceUpper: 0n,
-      liquidationPriceLower: 0n,
-      maxWithdrawable: 0n,
-      hasLoan: true,
-      inSoftLiquidation: false,
-    };
-    const { container } = setup({ lendingPosition: position });
+  it("does not render a borrow or manage-loan control", () => {
+    // yscvxcrv carries the "Collateral (LlamaLend)" badge and is listed by
+    // default; ycvxcrv is the hidden-unless-holder vault.
+    const { container } = setup({
+      balances: {
+        [hiddenUnlessHolderVault?.id as string]: {
+          balance: 1n,
+          formattedUsd: "$1.00",
+          usdValue: 1,
+        },
+      },
+    });
 
-    const row = vaultRow(container, id);
-    expect(row).not.toBeNull();
-    expect(within(row as HTMLElement).getAllByText("Loan").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/^Borrow/)).toBeNull();
+    expect(screen.queryByText("Manage loan")).toBeNull();
+    expect(screen.queryByText("Loan")).toBeNull();
+    expect(container.textContent).not.toContain("LlamaLend");
   });
 });
 

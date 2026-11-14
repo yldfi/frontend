@@ -64,9 +64,6 @@ const DISCOVERY_RPC_CONNECT_SRC: readonly string[] = [...PRIVACY_SAFE_DOMAINS]
 const BROWSER_FETCH_CONNECT_SRC: readonly string[] = [
   "https://chainid.network", // Dynamic RPC discovery, src/config/rpc.ts:46.
   "https://api.safe.global", // Safe Transaction Service, src/lib/safe-tx-service.ts:12.
-  "https://api.curve.finance", // src/hooks/useCurveLendingData.ts:91.
-  "https://prices.curve.finance", // src/hooks/useOraclePriceHistory.ts:9.
-  "https://data.yldfi.co", // src/hooks/useVolumeProfile.ts:6, src/hooks/useR2PriceHistory.ts:6.
   "https://api.coingecko.com", // src/hooks/useTokenMetadata.ts:39.
   // HEAD probes, so `img-src` does not cover them: src/hooks/useTokenMetadata.ts:22,24.
   "https://raw.githubusercontent.com",

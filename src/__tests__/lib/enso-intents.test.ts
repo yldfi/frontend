@@ -11,14 +11,14 @@ import {
   assertProtectedEnsoIntentResponse,
   assertEnsoIntentTxTarget,
   assertValidEnsoIntentRequest,
+  EnsoIntentValidationError,
   getIntentVault,
   getYldVaultToVaultIntentName,
   isStandardYldVaultIntentVault,
   protectEnsoIntentResponse,
   shouldUsePlainTokenSwapIntent,
 } from "@/lib/enso-intents";
-import { CURVE_CONTROLLERS, LLAMA_AIRFORCE, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
-import { CRVUSD_ADDRESS } from "@/config/addresses";
+import { LLAMA_AIRFORCE, TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
 import type { EnsoRouteResponse } from "@/types/enso";
 
 const USER = "0x1000000000000000000000000000000000000001";
@@ -285,28 +285,11 @@ describe("Enso intent validation", () => {
         amountIn: ONE_ETHER,
         slippage: "100",
       },
-      {
-        intent: "curveLendingRepay",
-        fromAddress: USER,
-        vaultAddress: VAULT_ADDRESSES.YCVXCRV,
-        amountIn: ONE_ETHER,
-      },
-      {
-        intent: "curveLendingRepayWithSwap",
-        fromAddress: USER,
-        vaultAddress: VAULT_ADDRESSES.YCVXCRV,
-        tokenIn: TOKENS.CVX,
-        amountIn: ONE_ETHER,
-        slippage: "100",
-        inSoftLiquidation: false,
-      },
     ] as const;
 
     for (const request of cases) {
       expect(() => assertValidEnsoIntentRequest(request)).not.toThrow();
     }
-
-    expect(CURVE_CONTROLLERS[VAULT_ADDRESSES.YCVXCRV]).toBeTruthy();
   });
 
   it("keeps standard zap intents limited to standard vaults", () => {
@@ -339,39 +322,36 @@ describe("Enso intent validation", () => {
     })).toThrow("pxCVX-backed");
   });
 
-  it("keeps curve repay-with-swap intent limited to repay semantics", () => {
-    expect(() => assertValidEnsoIntentRequest({
-      intent: "curveLendingRepayWithSwap",
+  it("rejects the retired curveLendingRepay intent like any unknown intent", () => {
+    const retiredRequest = {
+      intent: "curveLendingRepay",
       fromAddress: USER,
       vaultAddress: VAULT_ADDRESSES.YCVXCRV,
-      tokenIn: TOKENS.CVX,
       amountIn: ONE_ETHER,
-      slippage: "100",
-      closeLoan: true,
-      maxRepayAmount: ONE_ETHER,
-    })).not.toThrow();
-
-    expect(() => assertValidEnsoIntentRequest({
-      intent: "curveLendingRepayWithSwap",
+    };
+    const unknownRequest = {
+      intent: "notARealIntent",
       fromAddress: USER,
-      vaultAddress: VAULT_ADDRESSES.YCVXCRV,
-      tokenIn: TOKENS.CVX,
       amountIn: ONE_ETHER,
-      slippage: "100",
-      maxRepayAmount: ONE_ETHER,
-    })).toThrow("maxRepayAmount requires closeLoan");
+    };
 
-    for (const field of ["withdrawAmount", "withdrawTokenOut"]) {
-      expect(() => assertValidEnsoIntentRequest({
-        intent: "curveLendingRepayWithSwap",
-        fromAddress: USER,
-        vaultAddress: VAULT_ADDRESSES.YCVXCRV,
-        tokenIn: TOKENS.CVX,
-        amountIn: ONE_ETHER,
-        slippage: "100",
-        [field]: field === "withdrawTokenOut" ? TOKENS.CVX : ONE_ETHER,
-      })).toThrow(`${field} is not accepted`);
+    let retiredError: unknown;
+    let unknownError: unknown;
+    try {
+      assertValidEnsoIntentRequest(retiredRequest);
+    } catch (error) {
+      retiredError = error;
     }
+    try {
+      assertValidEnsoIntentRequest(unknownRequest);
+    } catch (error) {
+      unknownError = error;
+    }
+
+    expect(retiredError).toBeInstanceOf(EnsoIntentValidationError);
+    expect(unknownError).toBeInstanceOf(EnsoIntentValidationError);
+    expect(retiredError).toEqual(unknownError);
+    expect((retiredError as Error).message).toBe("Unknown Enso intent");
   });
 
   it("selects and validates special vault-to-vault intent names", () => {
@@ -522,13 +502,6 @@ describe("Enso intent validation", () => {
       amountIn: ONE_ETHER,
       slippage: "100",
     })).toThrow("supported illiquid token");
-
-    expect(() => assertValidEnsoIntentRequest({
-      intent: "curveLendingRepay",
-      fromAddress: USER,
-      vaultAddress: VAULT_ADDRESSES.YSCVXCRV,
-      amountIn: ONE_ETHER,
-    })).toThrow("Curve lending collateral vault");
   });
 
   it("looks up migrated vault metadata without accepting the zero address", () => {
@@ -593,18 +566,6 @@ describe("Enso intent validation", () => {
       amountsOut: {
         [LLAMA_AIRFORCE.UCRV]: "1",
       },
-      route: [],
-    })).not.toThrow();
-
-    expect(() => assertEnsoIntentTxTarget("curveLendingRepayWithSwap", {
-      tx: {
-        to: ENSO_ROUTER_V2,
-        data: ROUTE_SINGLE_CALLDATA,
-        value: "0",
-        from: USER,
-      },
-      gas: "1",
-      amountsOut: {},
       route: [],
     })).not.toThrow();
 
@@ -1030,33 +991,5 @@ describe("Enso intent response protection", () => {
         ],
       },
     })).toThrow("unexpected post-permit calls");
-  });
-
-  it("uses a safe multi wrapper with no token-output claim for repayment state changes", () => {
-    const repayRequest = {
-      intent: "curveLendingRepay" as const,
-      fromAddress: USER,
-      vaultAddress: VAULT_ADDRESSES.YCVXCRV,
-      amountIn: ONE_ETHER,
-    };
-    const rawData = encodeFunctionData({
-      abi: ENSO_ROUTER_ENTRYPOINT_ABI,
-      functionName: "routeSingle",
-      args: [{ tokenType: 1, data: encodeTokenAmount(CRVUSD_ADDRESS) }, "0x1234"],
-    });
-    const protectedResponse = protectEnsoIntentResponse(repayRequest, {
-      tx: { to: ENSO_ROUTER_V2, data: rawData, value: "0", from: USER },
-      gas: "100000",
-      amountsOut: {},
-      route: [],
-    });
-    const decoded = decodeFunctionData({
-      abi: ENSO_ROUTER_ENTRYPOINT_ABI,
-      data: protectedResponse.tx.data as `0x${string}`,
-    });
-    expect(decoded.functionName).toBe("safeRouteMulti");
-    if (decoded.functionName !== "safeRouteMulti") throw new Error("unexpected selector");
-    expect(decoded.args[1]).toEqual([]);
-    expect(() => assertProtectedEnsoIntentResponse(repayRequest, protectedResponse)).not.toThrow();
   });
 });

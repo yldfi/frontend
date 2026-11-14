@@ -5,9 +5,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ============================================================================
 
 vi.mock("@/config/vaults", () => ({
-  CURVE_CONTROLLERS: {
-    "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86": "0x24174143cCF438f0A1F6dCF93B468C127123A96E",
-  },
   getVaultByAddress: (addr: string) => {
     const vaults: Record<string, { address: string }> = {
       "0x95f19b19aff698169a1a0bbc28a2e47b14cb9a86": {
@@ -18,10 +15,6 @@ vi.mock("@/config/vaults", () => ({
   },
 }));
 
-vi.mock("@/config/addresses", () => ({
-  CRVUSD_ADDRESS: "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E",
-}));
-
 import { runVNetSimulation } from "@/lib/vnet-simulation";
 
 // ============================================================================
@@ -29,8 +22,6 @@ import { runVNetSimulation } from "@/lib/vnet-simulation";
 // ============================================================================
 
 const USER_ADDRESS = "0xUserAddress1234567890abcdef1234567890abcdef";
-const CONTROLLER_ADDRESS = "0x24174143cCF438f0A1F6dCF93B468C127123A96E";
-const CRVUSD = "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E";
 const VAULT_COLLATERAL = "0x95f19B19aff698169a1A0BBC28a2e47B14CB9a86";
 const RANDOM_TOKEN = "0xdEADbeEF00000000000000000000000000000001";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -166,49 +157,6 @@ describe("processVNetAssetChanges (via runVNetSimulation)", () => {
     });
     return runVNetSimulation(mockTransport, TX_PARAMS, USER_ADDRESS);
   }
-
-  it("classifies crvUSD sent to controller as 'repay'", async () => {
-    const res = await simulateWithAssetChanges([
-      makeAssetChange({
-        contractAddress: CRVUSD,
-        symbol: "crvUSD",
-        from: USER_ADDRESS,
-        to: CONTROLLER_ADDRESS,
-      }),
-    ]);
-
-    expect(res.result!.assetChanges).toHaveLength(1);
-    expect(res.result!.assetChanges[0].type).toBe("repay");
-    expect(res.result!.assetChanges[0].symbol).toBe("crvUSD");
-  });
-
-  it("classifies crvUSD from controller as 'borrow'", async () => {
-    const res = await simulateWithAssetChanges([
-      makeAssetChange({
-        contractAddress: CRVUSD,
-        symbol: "crvUSD",
-        from: CONTROLLER_ADDRESS,
-        to: USER_ADDRESS,
-      }),
-    ]);
-
-    expect(res.result!.assetChanges).toHaveLength(1);
-    expect(res.result!.assetChanges[0].type).toBe("borrow");
-  });
-
-  it("classifies crvUSD minted (from=0x0) as 'borrow'", async () => {
-    const res = await simulateWithAssetChanges([
-      makeAssetChange({
-        contractAddress: CRVUSD,
-        symbol: "crvUSD",
-        from: ZERO_ADDRESS,
-        to: USER_ADDRESS,
-      }),
-    ]);
-
-    expect(res.result!.assetChanges).toHaveLength(1);
-    expect(res.result!.assetChanges[0].type).toBe("borrow");
-  });
 
   it("classifies vault collateral token sent by user as 'deposit'", async () => {
     const res = await simulateWithAssetChanges([

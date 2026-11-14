@@ -270,11 +270,6 @@ export const VAULT_ADDRESSES = {
   YSPXCVX: "0xB246DB2A73EEE3ee026153660c74657C123f8E42" as const,
 } as const;
 
-// Curve LlamaLend controller for ycvxCRV
-export const CURVE_CONTROLLERS = {
-  [VAULT_ADDRESSES.YCVXCRV]: "0x24174143cCF438f0A1F6dCF93B468C127123A96E" as const,
-} as const;
-
 // Vault type
 export type VaultType = "vault" | "strategy";
 
@@ -315,7 +310,6 @@ export interface VaultConfig {
   // External links
   links: {
     etherscan: string;
-    curve?: string;
   };
 
   // Protocol
@@ -332,7 +326,6 @@ export interface VaultConfig {
     voteUrl?: string;
     exitOnly: boolean;
     hideUnlessHolder: boolean;
-    disableLendingWithoutPosition: boolean;
   };
 
   // Visibility
@@ -359,14 +352,13 @@ export const VAULTS: Record<string, VaultConfig> = {
     longDescription:
       "Deposits are allocated to the yscvx strategy, which stakes CVX on Convex Finance to earn cvxCRV rewards. Rewards are automatically auctioned for more CVX and re-deposited to compound your position. Use as collateral on Curve LlamaLend to borrow crvUSD.",
     strategy: "Convex CVX Compounder",
-    badges: ["Convex", "CVX", "Compounder", "Collateral (LlamaLend)"],
+    badges: ["Convex", "CVX", "Compounder"],
     logo: "/ycvx-128.png",
     logoSmall: "/ycvx-64.png",
     fees: { management: 0, performance: 20 },
     feeBreakdown: "15% to LlamaLend lenders + 5% strategy",
     links: {
       etherscan: `https://etherscan.io/address/${VAULT_ADDRESSES.YCVX}`,
-      // curve: TBD when LlamaLend market is created
     },
     chain: "Ethereum",
     version: "v3",
@@ -416,14 +408,13 @@ export const VAULTS: Record<string, VaultConfig> = {
     longDescription:
       "Due to the Curve DAO decision to sunset ycvxCRV collateral on LlamaLend v1, yld has disabled deposits and zap-ins to this vault via the UI. To continue earning yield from staked cvxCRV, exchange to the yld yscvxCRV vault.",
     strategy: "cvxCRV Compounder",
-    badges: ["Convex", "cvxCRV", "Compounder", "Collateral (LlamaLend)"],
+    badges: ["Convex", "cvxCRV", "Compounder"],
     logo: "/ycvxcrv-128.png",
     logoSmall: "/ycvxcrv-64.png",
     fees: { management: 0, performance: 20 },
     feeBreakdown: "15% to LlamaLend lenders + 5% strategy",
     links: {
       etherscan: `https://etherscan.io/address/${VAULT_ADDRESSES.YCVXCRV}`,
-      curve: "https://www.curve.finance/lend/ethereum/markets/one-way-market-35/create",
     },
     chain: "Ethereum",
     version: "v3",
@@ -437,7 +428,6 @@ export const VAULTS: Record<string, VaultConfig> = {
       voteUrl: "https://www.curve.finance/dao/ethereum/proposals/1422-ownership",
       exitOnly: true,
       hideUnlessHolder: true,
-      disableLendingWithoutPosition: true,
     },
   },
   yscvxcrv: {
@@ -518,10 +508,6 @@ export function isExitOnlyVault(vault: VaultLifecycleInput): boolean {
 
 export function isVaultHiddenUnlessHolder(vault: VaultLifecycleInput): boolean {
   return Boolean(vault?.deprecated?.hideUnlessHolder);
-}
-
-export function isLendingDisabledWithoutPosition(vault: VaultLifecycleInput): boolean {
-  return Boolean(vault?.deprecated?.disableLendingWithoutPosition);
 }
 
 export function isVaultEntryDisabled(vault: VaultLifecycleInput): boolean {

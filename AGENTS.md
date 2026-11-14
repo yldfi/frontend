@@ -62,6 +62,6 @@ Rollback is `wrangler rollback` or the Cloudflare dashboard's deployment list; m
 - Commit subjects are "Area: plain sentence"; branches are `fix/...`, `feat/...`, `perf/...`.
 - The generated `cloudflare-runtime.d.ts`, `workers/worker-runtime.d.ts` and `workers/*-env.d.ts` files are committed; regenerate them with `pnpm typegen`, never edit by hand.
 - Read `node_modules/next/dist/docs/` before using a Next.js API — this version differs from older docs.
-- The lending market (`src/components/lending/`, `useCurveLending*`, `curve-lending*.ts`) is deprecated: no new loans, do not invest in it.
+- The lending market was removed in November 2026 (it had no open loans); old `/vaults/[id]/lending` URLs redirect to the vault page. Do not reintroduce lending code without the maintainer.
 - Do not re-enable Workers Caching in `wrangler.jsonc`: a cached page once leaked past the regulatory geo-block in `src/middleware.ts`.
 - Risky money-path changes get a dated validation record in `docs/validation/`.

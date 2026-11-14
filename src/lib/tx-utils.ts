@@ -59,8 +59,6 @@ export const CUSTOM_ERROR_SELECTORS: Record<string, string> = {
   "0x7939f424": "Transfer failed",
 };
 
-export const CURVE_DEBT_TOO_HIGH_MESSAGE =
-  "Curve rejected this partial repay: Debt too high. Repay more debt or close the loan.";
 export const SWAP_OUTPUT_BELOW_MINIMUM_MESSAGE =
   "Swap output below minimum. Increase the amount or slippage.";
 export const RPC_UNREACHABLE_MESSAGE =
@@ -75,10 +73,6 @@ export function parseErrorMessage(error: unknown, defaultMsg?: string): string {
 
   const errorStr = String(error);
   const lower = errorStr.toLowerCase();
-
-  if (lower.includes("debt too high")) {
-    return CURVE_DEBT_TOO_HIGH_MESSAGE;
-  }
 
   if (lower.includes("no swap route could produce enough")) {
     return "No swap route could produce enough crvUSD for this close. Increase the amount, increase slippage, or use crvUSD.";
@@ -146,7 +140,7 @@ export function parseErrorMessage(error: unknown, defaultMsg?: string): string {
     return "Insufficient balance";
   }
 
-  // Health check (Curve lending)
+  // Health check (generic: the action would leave a position unhealthy)
   if (lower.includes("health")) {
     return "Position would be unhealthy";
   }

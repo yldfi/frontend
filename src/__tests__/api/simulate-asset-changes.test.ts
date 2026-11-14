@@ -34,11 +34,6 @@ import { simulationNonceBinding } from "@/lib/simulation-nonce";
 const FROM = "0x1234567890123456789012345678901234567890";
 const TO = "0xf75584ef6673ad213a685a1b58cc0330b8ea22cf";
 const DATA = "0x21025a06";
-const CONTROLLER = "0x24174143ccf438f0a1f6dcf93b468c127123a96e";
-const AMM = "0xf1b03586c03ebfec014238d105148a15102a282f";
-const VAULT_COLLATERAL = "0x95f19b19aff698169a1a0bbc28a2e47b14cb9a86";
-const CRVUSD = "0xf939e0a03fb07f59a73314e73794be0e57ac1b4e";
-const ZERO = "0x0000000000000000000000000000000000000000";
 const CVX = "0x4e3fbd56cd56c3e72c1403e103b45db9da5b9d2b";
 const SIMULATION_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 
@@ -123,38 +118,6 @@ function stubTenderly(assetChanges: unknown[] | undefined) {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.clearAllMocks(); });
 
 describe("POST /api/simulate asset changes", () => {
-  it("classifies crvUSD into the controller as a repay and out of it as a borrow", async () => {
-    stubTenderly([
-      change({ tokenAddress: CRVUSD, symbol: "crvUSD", from: FROM, to: CONTROLLER }),
-      change({ tokenAddress: CRVUSD, symbol: "crvUSD", from: CONTROLLER, to: FROM }),
-    ]);
-
-    const changes = await simulateAssetChanges();
-
-    expect(changes.map((c) => c.type)).toEqual(["repay", "borrow"]);
-    expect(changes.map((c) => c.symbol)).toEqual(["crvUSD", "crvUSD"]);
-  });
-
-  it("classifies crvUSD minted from the zero address as a borrow", async () => {
-    stubTenderly([change({ tokenAddress: CRVUSD, symbol: "crvUSD", from: ZERO, to: FROM })]);
-
-    const changes = await simulateAssetChanges();
-
-    expect(changes).toHaveLength(1);
-    expect(changes[0].type).toBe("borrow");
-  });
-
-  it("classifies vault collateral moved to and from the lending AMM", async () => {
-    stubTenderly([
-      change({ tokenAddress: VAULT_COLLATERAL, symbol: "ycvxCRV", from: FROM, to: AMM }),
-      change({ tokenAddress: VAULT_COLLATERAL, symbol: "ycvxCRV", from: AMM, to: FROM }),
-    ]);
-
-    const changes = await simulateAssetChanges();
-
-    expect(changes.map((c) => c.type)).toEqual(["deposit", "receive"]);
-  });
-
   it("classifies user sends and receives and drops changes that do not involve the user", async () => {
     stubTenderly([
       change({ tokenAddress: "0x0000000000000000000000000000000000000010", from: FROM, to: "0x0000000000000000000000000000000000000011" }),

@@ -12,12 +12,6 @@ import {
   trackDepositSuccess,
   trackEvent,
   trackExternalLinkClick,
-  trackLendingBorrowInitiated,
-  trackLendingBorrowSuccess,
-  trackLendingCollateralAddSuccess,
-  trackLendingRepaySuccess,
-  trackLendingSelfLiquidateSuccess,
-  trackLendingTabSwitch,
   trackRewardsClaimClick,
   trackTransactionCancelled,
   trackTransactionError,
@@ -242,37 +236,6 @@ describe("tracked events", () => {
     expect(gtag()).toHaveBeenCalledWith("set", "user_properties", { has_used_zap: true });
   });
 
-  it("tracks lending events", () => {
-    trackLendingBorrowInitiated("ycvxcrv", "1500", "crvUSD");
-    expect(gtag()).toHaveBeenCalledWith("event", "lending_borrow_initiated", {
-      vault_id: "ycvxcrv",
-      amount_bucket: "1K-10K",
-      token_symbol: "crvUSD",
-    });
-
-    trackLendingBorrowSuccess("ycvxcrv", "1500", "crvUSD");
-    expect(gtag()).toHaveBeenCalledWith("event", "lending_borrow_success", expect.objectContaining({
-      amount_bucket: "1K-10K",
-    }));
-    expect(gtag()).toHaveBeenCalledWith("set", "user_properties", { has_borrowed: true });
-
-    trackLendingRepaySuccess("ycvxcrv", "900");
-    expect(gtag()).toHaveBeenCalledWith("event", "lending_repay_success", {
-      vault_id: "ycvxcrv",
-      amount_bucket: "100-1K",
-    });
-
-    trackLendingCollateralAddSuccess("ycvxcrv", "20", "ycvxCRV");
-    expect(gtag()).toHaveBeenCalledWith("event", "lending_collateral_add_success", {
-      vault_id: "ycvxcrv",
-      amount_bucket: "<100",
-      token_symbol: "ycvxCRV",
-    });
-
-    trackLendingSelfLiquidateSuccess("ycvxcrv");
-    expect(gtag()).toHaveBeenCalledWith("event", "lending_self_liquidate_success", { vault_id: "ycvxcrv" });
-  });
-
   it("tracks rewards and navigation events", () => {
     trackRewardsClaimClick();
     expect(gtag()).toHaveBeenCalledWith("event", "rewards_claim_click", undefined);
@@ -285,9 +248,6 @@ describe("tracked events", () => {
       url: "https://curve.fi",
       link_name: "Curve",
     });
-
-    trackLendingTabSwitch("borrow");
-    expect(gtag()).toHaveBeenCalledWith("event", "lending_tab_switch", { tab_name: "borrow" });
   });
 });
 

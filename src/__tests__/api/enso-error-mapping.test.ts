@@ -3,9 +3,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { encodeAbiParameters, encodeFunctionData, parseAbi, parseAbiParameters } from "viem";
 
-const { mockFetchRoute, mockFetchRepayWithSwapBundle } = vi.hoisted(() => ({
+const { mockFetchRoute } = vi.hoisted(() => ({
   mockFetchRoute: vi.fn(),
-  mockFetchRepayWithSwapBundle: vi.fn(),
 }));
 
 const { mockGetCloudflareContext } = vi.hoisted(() => ({
@@ -25,15 +24,10 @@ vi.mock("@/lib/enso", async (importOriginal) => {
   return { ...actual, fetchRoute: mockFetchRoute };
 });
 
-vi.mock("@/lib/curve-lending", () => ({
-  fetchRepayBundle: vi.fn(),
-  fetchRepayWithSwapBundle: mockFetchRepayWithSwapBundle,
-}));
-
 import { POST } from "@/app/api/enso/[method]/route";
 import { ENSO_ROUTER_V2 } from "@/lib/enso/constants";
 import { SAFE_LOG_MAX_LENGTH } from "@/lib/safe-log";
-import { TOKENS, VAULT_ADDRESSES } from "@/config/vaults";
+import { TOKENS } from "@/config/vaults";
 
 const USER = "0x1000000000000000000000000000000000000001";
 const ONE_ETHER = "1000000000000000000";
@@ -74,16 +68,6 @@ const plainSwapBody = {
   slippage: "100",
 };
 
-const closeLoanBody = {
-  intent: "curveLendingRepayWithSwap",
-  fromAddress: USER,
-  vaultAddress: VAULT_ADDRESSES.YCVXCRV,
-  tokenIn: TOKENS.CVX,
-  amountIn: ONE_ETHER,
-  slippage: "100",
-  closeLoan: true,
-};
-
 const post = (method: string, body: unknown) =>
   POST(
     new Request(`https://yldfi.co/api/enso/${method}`, {
@@ -116,8 +100,6 @@ const upstreamError = (
 const COULD_NOT_QUOTE = "API Error: Could not quote shortcuts for route";
 const GENERIC_ADVICE =
   "No swap route could be quoted for this transaction. Increase the amount, increase slippage, or use a different token.";
-const CRVUSD_ADVICE =
-  "No swap route could produce enough crvUSD for this close. Increase the amount, increase slippage, or use crvUSD.";
 
 describe("Enso proxy error mapping", () => {
   let errorLog: ReturnType<typeof vi.spyOn>;
@@ -182,17 +164,6 @@ describe("Enso proxy error mapping", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: GENERIC_ADVICE });
-  });
-
-  it("uses the crvUSD advice when the request body closes a loan", async () => {
-    mockFetchRepayWithSwapBundle.mockRejectedValueOnce(
-      upstreamError(COULD_NOT_QUOTE, { statusCode: 400 }),
-    );
-
-    const response = await post("intent", closeLoanBody);
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: CRVUSD_ADVICE });
   });
 
   it("rewrites a could-not-quote message written in mixed case", async () => {

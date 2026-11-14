@@ -61,7 +61,7 @@ vi.mock("@/lib/curve", () => ({
 import { POST } from "@/app/api/enso/[method]/route";
 import { assertValidEnsoIntentRequest } from "@/lib/enso-intents";
 import { cryptoswap, findPegPoint, getCurveGetDy, getCurveGetDyFactory } from "@/lib/curve";
-import { ASYMMETRY, BEEFY, CONCENTRATOR, CURVE_CONTROLLERS, CURVE_SAVINGS, LLAMA_AIRFORCE, TOKENS, VAULT_ADDRESSES, YEARN } from "@/config/vaults";
+import { ASYMMETRY, BEEFY, CONCENTRATOR, CURVE_SAVINGS, LLAMA_AIRFORCE, TOKENS, VAULT_ADDRESSES, YEARN } from "@/config/vaults";
 import { CRVUSD_ADDRESS, USDC_ADDRESS } from "@/config/addresses";
 
 /**
@@ -102,17 +102,16 @@ const INTENTS: Array<[string, (a: string, b: string) => Body]> = [
   ["externalVaultToAny", (a, b) => ({ externalVaultAddress: a, outputToken: b })],
   ["illiquidToAny", (a, b) => ({ inputToken: a, outputToken: b })],
   ["anyToIlliquid", (a, b) => ({ inputToken: a, outputToken: b })],
-  ["curveLendingRepayWithSwap", (a, b) => ({ tokenIn: a, vaultAddress: b })],
 ];
 
 /** Input token, output token and the intent body, for every combination the validator accepts. */
 function acceptedCases(): Array<{ label: string; input: string; output: string; body: Body }> {
   const cases: Array<{ label: string; input: string; output: string; body: Body }> = [];
   for (const [intent, make] of INTENTS) {
-    for (const [a, b] of pairsOf(ALL, [...ALL, ...Object.keys(CURVE_CONTROLLERS)])) {
+    for (const [a, b] of pairsOf(ALL, ALL)) {
       const body: Body = { intent, fromAddress: USER, amountIn: ONE.toString(), slippage: "100", receiver: USER, ...make(a, b) };
       try { assertValidEnsoIntentRequest(body); } catch { continue; }
-      const output = intent === "curveLendingRepayWithSwap" ? CRVUSD_ADDRESS : b;
+      const output = b;
       cases.push({ label: `${intent} ${a.slice(0, 8)}->${b.slice(0, 8)}`, input: a, output, body });
     }
   }
@@ -177,13 +176,7 @@ const MODES = [
 ];
 
 // Known open violations. Each must still reproduce, so fixing one forces its removal here.
-const KNOWN_ISSUES: Array<{ intent: string; violation: RegExp; note: string }> = [
-  {
-    intent: "curveLendingRepayWithSwap",
-    violation: /references #\d+ \(call withdraw\) which returns nothing/,
-    note: "uCRV/Beefy repay tokens: route refs a void withdraw (uCRV also withdraws to the user). Enso rejects the build, so it fails closed. Won't fix: the lending market is deprecated (no open loans, new loans disabled).",
-  },
-];
+const KNOWN_ISSUES: Array<{ intent: string; violation: RegExp; note: string }> = [];
 
 function applyMode(mode: (typeof MODES)[number]): void {
   vi.clearAllMocks();

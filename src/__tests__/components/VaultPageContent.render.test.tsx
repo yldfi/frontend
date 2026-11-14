@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { formatUnits, parseUnits } from "viem";
 
 import { useConnectModal } from "@rainbow-me/rainbowkit";
@@ -21,9 +21,7 @@ import {
 } from "@/config/vaults";
 import { useCvxCrvPrice } from "@/hooks/useCvxCrvPrice";
 import { useCvxPrice } from "@/hooks/useCvxPrice";
-import { useCurveLendingVault } from "@/hooks/useCurveLendingData";
-import { useCurveLendingPosition } from "@/hooks/useCurveLendingPosition";
-import { useCurveMarketRates } from "@/hooks/useCurveMarketRates";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
   useMerklOpportunities,
   useMerklRewards,
@@ -190,16 +188,6 @@ vi.mock("@/hooks/useYearnVault", async (importOriginal) => {
   return { ...actual, useYearnVault: vi.fn() };
 });
 
-vi.mock("@/hooks/useCurveLendingData", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/hooks/useCurveLendingData")>();
-  return { ...actual, useCurveLendingVault: vi.fn() };
-});
-
-vi.mock("@/hooks/useCurveLendingPosition", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/hooks/useCurveLendingPosition")>();
-  return { ...actual, useCurveLendingPosition: vi.fn() };
-});
-
 vi.mock("@/hooks/useMerklRewards", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/hooks/useMerklRewards")>();
   return {
@@ -208,10 +196,6 @@ vi.mock("@/hooks/useMerklRewards", async (importOriginal) => {
     useMerklOpportunities: vi.fn(),
   };
 });
-
-vi.mock("@/hooks/useCurveMarketRates", () => ({
-  useCurveMarketRates: vi.fn(),
-}));
 
 vi.mock("@/hooks/useCvxCrvPrice", () => ({
   useCvxCrvPrice: vi.fn(),
@@ -250,7 +234,7 @@ vi.mock("@/hooks/useZapActions", () => ({
 }));
 
 vi.mock("@/hooks/useDebouncedValue", () => ({
-  useDebouncedValue: (value: unknown) => value,
+  useDebouncedValue: vi.fn((value: unknown) => value),
 }));
 
 vi.mock("@/hooks/useIdle", () => ({
@@ -278,15 +262,13 @@ const mockUsePricePerShare = vi.mocked(usePricePerShare);
 const mockUseVaultCache = vi.mocked(useVaultCache);
 const mockUseVaultData = vi.mocked(useVaultData);
 const mockUseYearnVault = vi.mocked(useYearnVault);
-const mockUseCurveLendingVault = vi.mocked(useCurveLendingVault);
-const mockUseCurveLendingPosition = vi.mocked(useCurveLendingPosition);
-const mockUseCurveMarketRates = vi.mocked(useCurveMarketRates);
 const mockUseMerklRewards = vi.mocked(useMerklRewards);
 const mockUseMerklOpportunities = vi.mocked(useMerklOpportunities);
 const mockUseCvxCrvPrice = vi.mocked(useCvxCrvPrice);
 const mockUseCvxPrice = vi.mocked(useCvxPrice);
 const mockUseZapQuote = vi.mocked(useZapQuote);
 const mockUseZapActions = vi.mocked(useZapActions);
+const mockUseDebouncedValue = vi.mocked(useDebouncedValue);
 const mockNotFound = vi.mocked(notFound);
 
 const vaultUnderTest = Object.values(VAULTS).find(
@@ -430,19 +412,6 @@ function installDefaultHooks(options: SetupOptions = {}) {
     data: undefined,
     isLoading: false,
   } as unknown as ReturnType<typeof useYearnVault>);
-  mockUseCurveLendingVault.mockReturnValue({
-    vault: undefined,
-    isLoading: false,
-    error: null,
-  } as unknown as ReturnType<typeof useCurveLendingVault>);
-  mockUseCurveLendingPosition.mockReturnValue({
-    position: null,
-    isLoading: false,
-    isError: false,
-    error: null,
-    refetch: vi.fn(),
-  } as unknown as ReturnType<typeof useCurveLendingPosition>);
-  mockUseCurveMarketRates.mockReturnValue(null);
   mockUseMerklRewards.mockReturnValue({
     data: options.merklRewards ? [{ rewards: options.merklRewards }] : undefined,
   } as unknown as ReturnType<typeof useMerklRewards>);
@@ -685,7 +654,7 @@ describe("VaultPageContent deposit and withdraw form", () => {
     expect(screen.getByRole("button", { name: "Confirm Deposit" })).toBeTruthy();
   });
 
-  it("falls through to a direct deposit when the preview returns nothing", async () => {
+  it("never sends a deposit after an empty simulation preview", async () => {
     settingsState.showSimulationPreview = true;
     setup({ depositResult: null });
 
@@ -694,9 +663,10 @@ describe("VaultPageContent deposit and withdraw form", () => {
       fireEvent.click(actionButton("Deposit"));
     });
 
-    expect(deposit).toHaveBeenCalledTimes(2);
-    expect(deposit.mock.calls[0]).toEqual(["10", expect.objectContaining({ previewOnly: true })]);
-    expect(deposit.mock.calls[1]).toEqual(["10"]);
+    expect(deposit).toHaveBeenCalledTimes(1);
+    expect(deposit).toHaveBeenCalledWith("10", expect.objectContaining({ previewOnly: true }));
+    expect(deposit.mock.calls.some((call) => call.length === 1)).toBe(false);
+    expect(screen.queryByTestId("simulation-modal")).toBeNull();
   });
 
   it("executes the stored preview from the confirm modal when the preview still matches", async () => {
@@ -775,6 +745,25 @@ describe("VaultPageContent deposit and withdraw form", () => {
     });
 
     expect(withdraw).toHaveBeenCalledWith("40", expect.objectContaining({ previewOnly: true }));
+    expect(deposit).not.toHaveBeenCalled();
+  });
+
+  it("never sends a withdrawal after an empty simulation preview", async () => {
+    vi.mocked(localStorage.getItem).mockImplementation((key: string) =>
+      key === "yldfi-active-tab" ? "withdraw" : null,
+    );
+    settingsState.showSimulationPreview = true;
+    setup({ withdrawResult: null });
+
+    typeAmount("40");
+    await act(async () => {
+      fireEvent.click(actionButton("Withdraw"));
+    });
+
+    expect(withdraw).toHaveBeenCalledTimes(1);
+    expect(withdraw).toHaveBeenCalledWith("40", expect.objectContaining({ previewOnly: true }));
+    expect(withdraw.mock.calls.some((call) => call.length === 1)).toBe(false);
+    expect(screen.queryByTestId("simulation-modal")).toBeNull();
     expect(deposit).not.toHaveBeenCalled();
   });
 
@@ -960,12 +949,136 @@ describe("VaultPageContent rewards banner", () => {
       render(<FreshVaultPageContent id={rewardsVault.id} />);
 
       expect(screen.getByText("12.3% APR")).toBeTruthy();
-      expect(
-        screen.getByText("Earn crvUSD by borrowing against ycvxCRV"),
-      ).toBeTruthy();
+      expect(screen.getByText("View rewards")).toBeTruthy();
     } finally {
       vi.doUnmock("@/config/vaults");
       vi.resetModules();
     }
+  });
+});
+
+describe("zap tab quote gate and preview", () => {
+  beforeEach(() => {
+    vi.mocked(localStorage.getItem).mockImplementation((key: string) =>
+      key === "yldfi-active-tab" ? "zap" : null,
+    );
+  });
+
+  afterEach(() => {
+    mockUseDebouncedValue.mockImplementation((value: unknown) => value);
+  });
+
+  /** Render the zap tab with a quote built from the amount the hook was given. */
+  function renderZapTab(
+    quoteInputAmount: (debouncedAmount: string) => string = (amount) => amount,
+    executeZap?: (...args: unknown[]) => Promise<unknown>,
+  ) {
+    installDefaultHooks();
+    if (executeZap) installZapActions(executeZap);
+    mockUseZapQuote.mockImplementation(((params) => {
+      const quote = params.inputToken
+        ? {
+            inputToken: params.inputToken,
+            inputAmount: quoteInputAmount(params.inputAmount),
+            outputAmount: "0",
+            outputAmountFormatted: "0.4",
+            exchangeRate: 0.8,
+            inputUsdValue: 0,
+            outputUsdValue: 0,
+            priceImpact: 0,
+            gasEstimate: "",
+            tx: { to: "0x0000000000000000000000000000000000000001", data: "0x", value: "0" },
+            route: [],
+          }
+        : null;
+      return {
+        quote,
+        quoteUpdatedAt: Date.now(),
+        isLoading: false,
+        error: null,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useZapQuote>;
+    }) as typeof useZapQuote);
+    render(<VaultPageContent id={vaultUnderTest.id} />);
+  }
+
+  function installZapActions(executeZap: (...args: unknown[]) => Promise<unknown>) {
+    mockUseZapActions.mockReturnValue({
+      needsApproval: () => false,
+      approve: vi.fn(),
+      executeZap,
+      reset: vi.fn(),
+      status: "idle",
+      error: null,
+      isLoading: false,
+      isSuccess: false,
+      isReverted: false,
+      zapHash: undefined,
+      pendingApproval: null,
+      approvalProgress: null,
+      isApproving: false,
+      isFlashbotsEnabled: false,
+      isFlashbotsSupported: false,
+      toggleFlashbots: vi.fn(),
+      simulationResult: null,
+      isSimulationForCurrentQuote: () => true,
+      safePending: null,
+      batchesApproval: false,
+    } as unknown as ReturnType<typeof useZapActions>);
+  }
+
+  /** The action button, not the identical "Zap In"/"Zap Out" direction toggle. */
+  function zapActionButton(name: string | RegExp): HTMLButtonElement {
+    const button = screen
+      .getAllByRole("button", { name })
+      .find((candidate) => candidate.className.includes("w-full"));
+    if (!button) throw new Error("zap action button not found");
+    return button as HTMLButtonElement;
+  }
+
+  it("previews and sends only the quote built for the typed amount", () => {
+    renderZapTab();
+
+    typeAmount("0.5");
+
+    expect(mockUseZapActions.mock.calls.at(-1)?.[0]).toMatchObject({ inputAmount: "0.5" });
+    expect(mockUseZapActions.mock.calls.at(-1)?.[0]).not.toBeNull();
+    expect(zapActionButton("Zap In").disabled).toBe(false);
+  });
+
+  it("withholds a quote built for a different amount and disables the button", () => {
+    renderZapTab(() => "0.25");
+
+    typeAmount("0.5");
+
+    expect(mockUseZapActions.mock.calls.at(-1)?.[0]).toBeNull();
+    expect(zapActionButton(/Getting quote/).disabled).toBe(true);
+  });
+
+  it("disables the button while the typed amount is not yet debounced", () => {
+    mockUseDebouncedValue.mockReturnValue("0.25");
+    renderZapTab();
+
+    typeAmount("0.5");
+
+    expect(mockUseZapActions.mock.calls.at(-1)?.[0]).toBeNull();
+    expect(zapActionButton(/Getting quote/).disabled).toBe(true);
+  });
+
+  it("never sends after an empty simulation preview", async () => {
+    settingsState.showSimulationPreview = true;
+    const executeZap = vi.fn(async (...args: unknown[]) => {
+      const options = args[0] as { previewOnly?: boolean } | undefined;
+      return options?.previewOnly ? null : "0xhash";
+    });
+    renderZapTab(undefined, executeZap);
+
+    typeAmount("0.5");
+    await act(async () => {
+      fireEvent.click(zapActionButton("Zap In"));
+    });
+
+    expect(executeZap.mock.calls).toEqual([[{ previewOnly: true }]]);
+    expect(executeZap.mock.calls.some((call) => call.length === 0)).toBe(false);
   });
 });
