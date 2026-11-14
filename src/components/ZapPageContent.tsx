@@ -18,13 +18,14 @@ import { LoadingDots } from "@/components/LoadingDots";
 import { RouteDisplay } from "@/components/RouteDisplay";
 import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
-import { PriceImpactConfirmModal, needsPriceImpactConfirm } from "@/components/PriceImpactConfirmModal";
+import { PriceImpactConfirmModal } from "@/components/PriceImpactConfirmModal";
 import { TxPendingCard } from "@/components/TxPendingCard";
 
 import { useUniversalZap } from "@/hooks/useUniversalZap";
 import { useZapActions } from "@/hooks/useZapActions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useIdle } from "@/hooks/useIdle";
+import { useQuoteGuards } from "@/hooks/useQuoteGuards";
 import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { useSettings } from "@/hooks/useSettings";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
@@ -32,7 +33,7 @@ import { useTokenBalances } from "@/hooks/useTokenBalances";
 import { ETH_ADDRESS, applyKnownTokenMetadata, getCustomTokenMetadata } from "@/lib/enso";
 import { cn, formatDisplayAmount } from "@/lib/utils";
 import { parseQuoteError } from "@/lib/quote-errors";
-import { QUOTE_IDLE_MS, isQuoteOlderThan } from "@/lib/quote-freshness";
+import { QUOTE_IDLE_MS } from "@/lib/quote-freshness";
 import { aboveMarketWarning, priceImpactClassName } from "@/lib/price-impact";
 import { isSameAmount, sanitizeAmount } from "@/lib/sanitize";
 import { fillMissingSimulationUsd } from "@/lib/simulation-pricing";
@@ -386,25 +387,6 @@ export function ZapPageContent() {
     paused: sameToken || showSimulationModal || isSimulatingPreview || pendingImpactAction !== null,
     autoRefresh: !isIdle,
   });
-  const isQuoteTooOld = useCallback(
-    () => isQuoteOlderThan(quoteUpdatedAt),
-    [quoteUpdatedAt],
-  );
-  // The hook refuses to execute an old quote (e.g. when an approval took minutes to mine).
-  const handleStaleQuote = useCallback(({ afterApproval }: { afterApproval: boolean }) => {
-    void refetchQuote();
-    toast.info(
-      afterApproval
-        ? "Approval confirmed. The quote was refreshed while it was pending — check the new amounts, then zap."
-        : "Quote refreshed. Check the new amounts, then try again.",
-    );
-  }, [refetchQuote]);
-  // Back from idle: re-quote right away if the one on screen has aged.
-  const wasIdleRef = useRef(false);
-  useEffect(() => {
-    if (wasIdleRef.current && !isIdle && isQuoteTooOld()) void refetchQuote();
-    wasIdleRef.current = isIdle;
-  }, [isIdle, isQuoteTooOld, refetchQuote]);
   const quoteIsCurrent = !!(
     rawQuote &&
     amount &&
@@ -426,6 +408,14 @@ export function ZapPageContent() {
     (!!rawQuote && !quoteIsCurrent) ||
     targetQuoteNeedsAdjustment
   );
+
+  const { isQuoteTooOld, refreshIfQuoteTooOld, handleStaleQuote, guardHighImpact } = useQuoteGuards({
+    quoteUpdatedAt,
+    refetch: refetchQuote,
+    isIdle,
+    priceImpact: quote?.priceImpact,
+    setPendingImpactAction,
+  });
 
   useEffect(() => {
     if (!requestedOutputAmount || !quoteIsCurrent || !rawQuote || targetQuoteAdjustments >= 2) return;
@@ -660,21 +650,6 @@ export function ZapPageContent() {
       setIsSimulatingPreview(false);
     }
   }, [quote, executeZap, setShowSimulationModal]);
-
-  // Approving also auto-executes the zap once the approval mines, so both entry points are gated.
-  // Never send a transaction built from an old quote (auto-refresh pauses while
-  // idle): refresh it and let the user check the new numbers first.
-  const refreshIfQuoteTooOld = (): boolean => {
-    if (!isQuoteTooOld()) return false;
-    void refetchQuote();
-    toast.info("Quote refreshed. Check the new amounts, then try again.");
-    return true;
-  };
-  const guardHighImpact = (label: string, run: () => void) => {
-    if (refreshIfQuoteTooOld()) return;
-    if (needsPriceImpactConfirm(quote?.priceImpact)) setPendingImpactAction({ label, run });
-    else run();
-  };
 
   const handleExecuteZap = useCallback(async () => {
     clearCompletionResetTimer();

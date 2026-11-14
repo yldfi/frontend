@@ -18,7 +18,7 @@ import { TxPendingCard } from "@/components/TxPendingCard";
 import { ContractExplorer, useContractExplorer, type ExplorerContract } from "@/components/ContractExplorer";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
-import { PriceImpactConfirmModal, needsPriceImpactConfirm } from "@/components/PriceImpactConfirmModal";
+import { PriceImpactConfirmModal } from "@/components/PriceImpactConfirmModal";
 import { parseQuoteError } from "@/lib/quote-errors";
 import { isSameAmount, sanitizeAmount } from "@/lib/sanitize";
 import { fillMissingSimulationUsd } from "@/lib/simulation-pricing";
@@ -46,7 +46,8 @@ import { useZapQuote } from "@/hooks/useZapQuote";
 import { useZapActions } from "@/hooks/useZapActions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useIdle } from "@/hooks/useIdle";
-import { QUOTE_IDLE_MS, isQuoteOlderThan } from "@/lib/quote-freshness";
+import { useQuoteGuards } from "@/hooks/useQuoteGuards";
+import { QUOTE_IDLE_MS } from "@/lib/quote-freshness";
 import { aboveMarketWarning, priceImpactClassName } from "@/lib/price-impact";
 import { useClearOnNavigation } from "@/hooks/useClearOnNavigation";
 import { useAutoContinueAfterApproval } from "@/hooks/useAutoContinueAfterApproval";
@@ -54,8 +55,8 @@ import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS, applyKnownTokenMetadata } from "@/lib/enso";
 import { getMaxEthAmount } from "@/lib/eth-gas";
+import { readEthUsdPrice } from "@/lib/eth-usd-price";
 import { getVaultFormBalanceAddresses } from "@/lib/vault-form-balances";
-import { CHAINLINK_ETH_USD } from "@/config/addresses";
 import {
   getVault,
   getVaultByAddress,
@@ -771,37 +772,21 @@ export function VaultPageContent({ id }: { id: string }) {
     zapQuoteLoading ||
     (!!rawZapQuote && !zapQuoteIsCurrent)
   );
-  const isZapQuoteTooOld = useCallback(() => isQuoteOlderThan(zapQuoteUpdatedAt), [zapQuoteUpdatedAt]);
-  // Back from idle: re-quote right away if the one on screen has aged.
-  const wasZapIdleRef = useRef(false);
-  useEffect(() => {
-    if (wasZapIdleRef.current && !isZapIdle && isZapQuoteTooOld()) void refetchZapQuote();
-    wasZapIdleRef.current = isZapIdle;
-  }, [isZapIdle, isZapQuoteTooOld, refetchZapQuote]);
-  // Zap sends the on-screen quote's calldata as-is: never send an old one.
-  const refreshIfZapQuoteTooOld = (): boolean => {
-    if (!isZapQuoteTooOld()) return false;
-    void refetchZapQuote();
-    toast.info("Quote refreshed. Check the new amounts, then try again.");
-    return true;
-  };
-  // The hook refuses to execute an old quote too (e.g. when an approval took minutes to mine).
-  const handleStaleZapQuote = useCallback(({ afterApproval }: { afterApproval: boolean }) => {
-    void refetchZapQuote();
-    toast.info(
-      afterApproval
-        ? "Approval confirmed. The quote was refreshed while it was pending — check the new amounts, then zap."
-        : "Quote refreshed. Check the new amounts, then try again.",
-    );
-  }, [refetchZapQuote]);
+  const {
+    isQuoteTooOld: isZapQuoteTooOld,
+    refreshIfQuoteTooOld: refreshIfZapQuoteTooOld,
+    handleStaleQuote: handleStaleZapQuote,
+    guardHighImpact,
+  } = useQuoteGuards({
+    quoteUpdatedAt: zapQuoteUpdatedAt,
+    refetch: refetchZapQuote,
+    isIdle: isZapIdle,
+    priceImpact: zapQuote?.priceImpact,
+    setPendingImpactAction,
+  });
 
-  // Every zap entry point (button, simulation preview fall-through, approve -> auto-execute)
-  // runs through this, so a high-impact zap cannot start without the typed confirmation.
-  const guardHighImpact = (label: string, run: () => void) => {
-    if (refreshIfZapQuoteTooOld()) return;
-    if (needsPriceImpactConfirm(zapQuote?.priceImpact)) setPendingImpactAction({ label, run });
-    else run();
-  };
+  // Every zap entry point (button, approve -> auto-execute) runs through this,
+  // so a high-impact zap cannot start without the typed confirmation.
 
   // Zap actions (approve + execute)
   const {
@@ -923,11 +908,7 @@ export function VaultPageContent({ id }: { id: string }) {
       simulationBlock.current = currentBlock ?? 0n;
       setShowSimulationModal(true);
       if (publicClient) {
-        publicClient.readContract({
-          address: CHAINLINK_ETH_USD,
-          abi: [{ name: "latestRoundData", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "roundId", type: "uint80" }, { name: "answer", type: "int256" }, { name: "startedAt", type: "uint256" }, { name: "updatedAt", type: "uint256" }, { name: "answeredInRound", type: "uint80" }] }],
-          functionName: "latestRoundData",
-        }).then(data => { setEthPrice(Number(data[1] as bigint) / 1e8); }).catch(() => {});
+        readEthUsdPrice(publicClient).then(setEthPrice).catch(() => {});
       }
     }
     prevZapSimResult.current = simulationResult;
@@ -945,26 +926,7 @@ export function VaultPageContent({ id }: { id: string }) {
         setShowSimulationModal(true);
         // Fetch ETH price for gas cost display
         if (publicClient) {
-          publicClient.readContract({
-            address: CHAINLINK_ETH_USD,
-            abi: [{
-              name: "latestRoundData",
-              type: "function",
-              stateMutability: "view",
-              inputs: [],
-              outputs: [
-                { name: "roundId", type: "uint80" },
-                { name: "answer", type: "int256" },
-                { name: "startedAt", type: "uint256" },
-                { name: "updatedAt", type: "uint256" },
-                { name: "answeredInRound", type: "uint80" },
-              ],
-            }],
-            functionName: "latestRoundData",
-          }).then(resultData => {
-            const answer = resultData[1] as bigint;
-            setEthPrice(Number(answer) / 1e8);
-          }).catch(() => { });
+          readEthUsdPrice(publicClient).then(setEthPrice).catch(() => {});
         }
       }
       return result;
@@ -1020,26 +982,7 @@ export function VaultPageContent({ id }: { id: string }) {
         setShowSimulationModal(true);
         // Fetch ETH price for gas cost display
         if (publicClient) {
-          publicClient.readContract({
-            address: CHAINLINK_ETH_USD,
-            abi: [{
-              name: "latestRoundData",
-              type: "function",
-              stateMutability: "view",
-              inputs: [],
-              outputs: [
-                { name: "roundId", type: "uint80" },
-                { name: "answer", type: "int256" },
-                { name: "startedAt", type: "uint256" },
-                { name: "updatedAt", type: "uint256" },
-                { name: "answeredInRound", type: "uint80" },
-              ],
-            }],
-            functionName: "latestRoundData",
-          }).then(resultData => {
-            const answer = resultData[1] as bigint;
-            setEthPrice(Number(answer) / 1e8);
-          }).catch(() => { });
+          readEthUsdPrice(publicClient).then(setEthPrice).catch(() => {});
         }
       }
       return result;
