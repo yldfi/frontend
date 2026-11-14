@@ -57,3 +57,29 @@ yldfi.co/vaults/yscvxcrv
 ```
 
 Image: `public/social/yscvxcrv-promo.png`
+
+## yscvxCRV/CRV Curve Gauge Proposal
+
+Posted with the on-chain vote (Curve ownership vote 1523, created 13 Nov 2026).
+
+```text
+The yscvxCRV/CRV gauge vote is live on @CurveFinance
+
+yld is proposing to add the pool to the Gauge Controller. The yscvxCRV side keeps compounding cvxCRV staked on @ConvexFinance, so LPs earn staking yield on that side plus swap fees.
+
+Vote: https://www.curve.finance/dao/ethereum/proposals/1523-ownership
+```
+
+Forum-only variant (before the vote exists):
+
+```text
+yld is heading to @CurveFinance governance
+
+We're proposing to add the yscvxCRV/CRV pool on Ethereum to the Gauge Controller.
+
+The yscvxCRV side keeps compounding, so LPs earn staking yield on that side plus swap fees.
+
+Read it and weigh in: https://gov.curve.finance/t/proposal-to-add-yscvxcrv-crv-to-the-gauge-controller/11210
+```
+
+Image: `public/social/yscvxcrv-gauge-promo.png`
