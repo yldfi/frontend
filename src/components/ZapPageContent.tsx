@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useAccount, useBalance, useBlockNumber, useGasPrice } from "wagmi";
+import { useAccount, useBalance, useBlockNumber, useGasPrice, usePublicClient } from "wagmi";
 import { parseUnits, formatUnits, isAddress } from "viem";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { ArrowUpDown, ArrowRightLeft, Check, ChevronRight, ExternalLink, Route, RouteOff, X, Zap } from "lucide-react";
@@ -38,6 +38,8 @@ import { aboveMarketWarning, priceImpactClassName } from "@/lib/price-impact";
 import { isSameAmount, sanitizeAmount } from "@/lib/sanitize";
 import { fillMissingSimulationUsd } from "@/lib/simulation-pricing";
 import { getMaxEthAmount } from "@/lib/eth-gas";
+import { readEthUsdPrice } from "@/lib/eth-usd-price";
+import { parseStoredToken } from "@/lib/stored-token";
 import { TOKENS, VAULTS, isVaultEntryDisabled } from "@/config/vaults";
 import {
   getPendingTxCopy,
@@ -116,36 +118,6 @@ function loadImportedToken(address: string): EnsoToken | undefined {
   }
 }
 
-// Shape check only: an entry under the versioned prefix was written by this
-// build from a token the user picked, so its metadata can be shown. A URL
-// never writes here.
-function toStoredToken(parsed: unknown): EnsoToken | undefined {
-  if (typeof parsed !== "object" || parsed === null) return undefined;
-  const candidate = parsed as Record<string, unknown>;
-  if (typeof candidate.address !== "string" || !isAddress(candidate.address)) return undefined;
-  if (
-    typeof candidate.symbol !== "string" ||
-    candidate.symbol.length === 0 ||
-    candidate.symbol.length > 32
-  ) {
-    return undefined;
-  }
-  const decimals = candidate.decimals;
-  if (typeof decimals !== "number" || !Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
-    return undefined;
-  }
-  if (candidate.chainId !== undefined && candidate.chainId !== 1) return undefined;
-  return {
-    address: candidate.address,
-    chainId: 1,
-    name: typeof candidate.name === "string" && candidate.name ? candidate.name : candidate.symbol,
-    symbol: candidate.symbol,
-    decimals,
-    logoURI: typeof candidate.logoURI === "string" ? candidate.logoURI : undefined,
-    type: candidate.type === "defi" ? "defi" : "base",
-  };
-}
-
 // A rejected entry must not leave an amount behind: applying a stored amount to
 // a different token would quote a number the user never typed for it.
 function clearStoredAmount() {
@@ -162,7 +134,7 @@ function loadToken(key: string, fallback: EnsoToken): EnsoToken {
   try {
     const saved = sessionStorage.getItem(`${STORAGE_PREFIX}-${key}`);
     if (!saved) return normalizedFallback;
-    const stored = toStoredToken(JSON.parse(saved));
+    const stored = parseStoredToken(saved);
     if (!stored) {
       clearStoredAmount();
       return normalizedFallback;
@@ -229,6 +201,7 @@ export function ZapPageContent() {
   const { openConnectModal } = useConnectModal();
   const { data: gasPrice } = useGasPrice();
   const { data: currentBlock } = useBlockNumber({ watch: true });
+  const publicClient = usePublicClient();
 
   const {
     slippage,
@@ -243,6 +216,7 @@ export function ZapPageContent() {
     toggleRoute,
   } = useSettings();
   const [isSimulatingPreview, setIsSimulatingPreview] = useState(false);
+  const [ethPrice, setEthPrice] = useState<number | null>(null);
   const [rateInverted, setRateInverted] = useState(false);
   const [requestedInput] = useState(() =>
     loadRequestedToken("input", loadToken("input", DEFAULT_ETH_TOKEN)),
@@ -409,7 +383,7 @@ export function ZapPageContent() {
     targetQuoteNeedsAdjustment
   );
 
-  const { isQuoteTooOld, refreshIfQuoteTooOld, handleStaleQuote, guardHighImpact } = useQuoteGuards({
+  const { refreshIfQuoteTooOld, handleStaleQuote, guardHighImpact } = useQuoteGuards({
     quoteUpdatedAt,
     refetch: refetchQuote,
     isIdle,
@@ -633,9 +607,12 @@ export function ZapPageContent() {
       !showSimulationModal
     ) {
       setShowSimulationModal(true);
+      if (publicClient) {
+        readEthUsdPrice(publicClient).then(setEthPrice).catch(() => {});
+      }
     }
     prevSimulationResultRef.current = simulationResult;
-  }, [showSimulationPreview, simulationResult, status, showSimulationModal, setShowSimulationModal]);
+  }, [showSimulationPreview, simulationResult, status, showSimulationModal, setShowSimulationModal, publicClient]);
 
   const runSimulationPreview = useCallback(async () => {
     if (!quote) return null;
@@ -644,12 +621,16 @@ export function ZapPageContent() {
       const result = await executeZap({ previewOnly: true });
       if (result) {
         setShowSimulationModal(true);
+        // Fetch ETH price for gas cost display
+        if (publicClient) {
+          readEthUsdPrice(publicClient).then(setEthPrice).catch(() => {});
+        }
       }
       return result;
     } finally {
       setIsSimulatingPreview(false);
     }
-  }, [quote, executeZap, setShowSimulationModal]);
+  }, [quote, executeZap, publicClient, setShowSimulationModal]);
 
   const handleExecuteZap = useCallback(async () => {
     clearCompletionResetTimer();
@@ -730,7 +711,7 @@ export function ZapPageContent() {
       : (isTxStateVisible && submittedActionKind) || quote?.directVault?.action || "zap";
   const effectiveHash = isDebugActive ? debugHash : zapHash;
   const effectivePendingDetails = isDebugActive ? debugTxDetails : pendingTxDetails;
-  const pendingCopy = getPendingTxCopy(Boolean(effectiveHash), actionKind);
+  const pendingCopy = getPendingTxCopy(Boolean(effectiveHash), actionKind, safePending);
   const successCopy = getSuccessTxCopy(actionKind);
   const revertedCopy = getRevertedTxCopy(actionKind);
 
@@ -1226,6 +1207,7 @@ export function ZapPageContent() {
             simulationUnavailableReason: simulationResult.simulationUnavailableReason,
           }}
           gasPrice={gasPrice}
+          ethPrice={ethPrice}
           routePriceImpact={quote?.priceImpact ?? null}
           confirmText={actionKind === "zap" ? "Confirm Zap" : actionKind === "deposit" ? "Confirm Deposit" : "Confirm Withdraw"}
         />

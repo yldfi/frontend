@@ -143,18 +143,44 @@ vi.mock("@/components/SimulationModal", () => ({
     onConfirm,
     onClose,
     confirmText,
+    ethPrice,
+    simulationResult,
   }: {
     isOpen: boolean;
     onConfirm: () => void;
     onClose: () => void;
     confirmText?: string;
+    ethPrice?: number | null;
+    simulationResult?: { simulationUnavailable?: boolean; simulationUnavailableReason?: string };
   }) =>
     isOpen ? (
-      <div data-testid="simulation-modal">
+      <div
+        data-testid="simulation-modal"
+        data-eth-price={ethPrice ?? ""}
+        data-simulation-unavailable={simulationResult?.simulationUnavailable ? "true" : "false"}
+        data-simulation-unavailable-reason={simulationResult?.simulationUnavailableReason ?? ""}
+      >
         <button type="button" onClick={onConfirm}>{confirmText ?? "Confirm"}</button>
         <button type="button" onClick={onClose}>Close simulation</button>
       </div>
     ) : null,
+}));
+
+vi.mock("@/components/TxPendingCard", () => ({
+  TxPendingCard: ({
+    title,
+    message,
+    details,
+  }: {
+    title: string;
+    message: string;
+    details?: { fromSymbol?: string } | null;
+  }) => (
+    <div data-testid="tx-pending-card" data-details-symbol={details?.fromSymbol ?? ""}>
+      <span>{title}</span>
+      <span>{message}</span>
+    </div>
+  ),
 }));
 
 vi.mock("@/hooks/useSettings", async () => {
@@ -1106,6 +1132,11 @@ describe("zap tab send paths", () => {
     status?: ReturnType<typeof useZapActions>["status"];
     executeZap?: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
     getSimulationResult?: () => unknown;
+    direction?: "in" | "out";
+    vaultDecimals?: number;
+    zapBalanceUnknown?: boolean;
+    vaultBalanceUnknown?: boolean;
+    zapActions?: Partial<ReturnType<typeof useZapActions>>;
   };
 
   /** Render the zap tab with a current quote and the zap action hook under test. */
@@ -1117,33 +1148,79 @@ describe("zap tab send paths", () => {
       pendingApproval = null,
       status = "idle",
       getSimulationResult = () => null,
+      direction = "in",
+      vaultDecimals,
+      zapBalanceUnknown = false,
+      vaultBalanceUnknown = false,
     } = options;
     const executeZap = options.executeZap ?? vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => null);
     const zapApprove = vi.fn(async () => undefined);
     const refetch = vi.fn();
 
+    if (direction === "out") {
+      sessionStorage.setItem(`yldfi-zap-direction-${vaultUnderTest.id}`, "out");
+    }
+
     installDefaultHooks();
-    mockUseZapQuote.mockImplementation(((params) => ({
-      quote: params.inputToken
-        ? {
-            inputToken: params.inputToken,
-            inputAmount: params.inputAmount,
-            outputAmount: "0",
-            outputAmountFormatted: "0.4",
-            exchangeRate: 0.8,
-            inputUsdValue: 0,
-            outputUsdValue: 0,
-            priceImpact,
-            gasEstimate: "",
-            tx: { to: "0x0000000000000000000000000000000000000001", data: "0x", value: "0" },
-            route: [],
-          }
-        : null,
-      quoteUpdatedAt,
-      isLoading: false,
-      error: null,
-      refetch,
-    })) as typeof useZapQuote);
+    if (zapBalanceUnknown) {
+      mockUseBalance.mockReturnValue({
+        data: undefined,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useBalance>);
+    }
+    if (vaultDecimals !== undefined) {
+      mockUseVaultBalance.mockReturnValue({
+        balance: DEFAULT_SHARE_BALANCE,
+        decimals: vaultDecimals,
+        formatted: formatUnits(DEFAULT_SHARE_BALANCE, vaultDecimals),
+        formattedUsd: "$0",
+        isLoading: false,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useVaultBalance>);
+    }
+    if (vaultBalanceUnknown) {
+      mockUseVaultBalance.mockReturnValue({
+        balance: undefined as unknown as bigint,
+        decimals: vaultDecimals ?? TOKEN_DECIMALS,
+        formatted: "0",
+        formattedUsd: "$0",
+        isLoading: false,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useVaultBalance>);
+    }
+
+    mockUseZapQuote.mockImplementation(((params) => {
+      const hasQuote = !!(params.inputToken || params.outputToken);
+      const quoteInputToken = params.inputToken ?? {
+        address: vaultUnderTest.address,
+        chainId: 1,
+        name: vaultUnderTest.name,
+        symbol: vaultUnderTest.symbol,
+        decimals: TOKEN_DECIMALS,
+        type: "defi",
+      };
+      return {
+        quote: hasQuote
+          ? {
+              inputToken: quoteInputToken,
+              inputAmount: params.inputAmount,
+              outputAmount: "0",
+              outputAmountFormatted: "0.4",
+              exchangeRate: 0.8,
+              inputUsdValue: 0,
+              outputUsdValue: 0,
+              priceImpact,
+              gasEstimate: "",
+              tx: { to: "0x0000000000000000000000000000000000000001", data: "0x", value: "0" },
+              route: [],
+            }
+          : null,
+        quoteUpdatedAt,
+        isLoading: false,
+        error: null,
+        refetch,
+      };
+    }) as typeof useZapQuote);
     mockUseZapActions.mockImplementation((() => ({
       needsApproval: () => needsApproval,
       approve: zapApprove,
@@ -1165,6 +1242,7 @@ describe("zap tab send paths", () => {
       isSimulationForCurrentQuote: () => true,
       safePending: null,
       batchesApproval: false,
+      ...options.zapActions,
     })) as unknown as typeof useZapActions);
     const utils = render(<VaultPageContent id={vaultUnderTest.id} />);
     return { ...utils, executeZap, zapApprove, refetch };
@@ -1367,5 +1445,152 @@ describe("zap tab send paths", () => {
     renderZapTab();
 
     expect(mockUseZapQuote.mock.calls.at(-1)?.[0]).toMatchObject({ autoRefresh: true });
+  });
+
+  /** Swap the zap action hook's state without re-rendering the whole page setup. */
+  function installZapState(overrides: Partial<ReturnType<typeof useZapActions>>) {
+    mockUseZapActions.mockReturnValue({
+      needsApproval: () => false,
+      approve: vi.fn(),
+      executeZap: vi.fn(async () => null),
+      reset: vi.fn(),
+      status: "idle",
+      error: null,
+      isLoading: false,
+      isSuccess: false,
+      isReverted: false,
+      zapHash: undefined,
+      pendingApproval: null,
+      approvalProgress: null,
+      isApproving: false,
+      isFlashbotsEnabled: false,
+      isFlashbotsSupported: false,
+      toggleFlashbots: vi.fn(),
+      simulationResult: null,
+      isSimulationForCurrentQuote: () => true,
+      safePending: null,
+      batchesApproval: false,
+      ...overrides,
+    } as unknown as ReturnType<typeof useZapActions>);
+  }
+
+  it("blocks a zap-in until the input balance is known", () => {
+    renderZapTab({ zapBalanceUnknown: true });
+
+    typeAmount("0.5");
+
+    const button = zapActionButton("Insufficient balance");
+    expect(button.disabled).toBe(true);
+  });
+
+  it("blocks a zap-out until the vault share balance is known", () => {
+    renderZapTab({ direction: "out", vaultBalanceUnknown: true });
+
+    typeAmount("0.5");
+
+    const button = zapActionButton("Insufficient balance");
+    expect(button.disabled).toBe(true);
+  });
+
+  it("uses the vault decimals for the zap-out approval amount", () => {
+    const pendingApproval: PendingApproval = {
+      token: "0x0000000000000000000000000000000000000002",
+      tokenSymbol: vaultUnderTest.symbol,
+      spender: "0x0000000000000000000000000000000000000003",
+      amount: 1_500_000n,
+    };
+    renderZapTab({
+      direction: "out",
+      vaultDecimals: 6,
+      needsApproval: true,
+      pendingApproval,
+      status: "needsApproval",
+    });
+
+    expect(screen.getByText(/Exact · 1\.5/)).toBeTruthy();
+    expect(screen.queryByText(/Exact · 0 /)).toBeNull();
+  });
+
+  it("clears the zap pending details when the zap action errors", async () => {
+    const { rerender, executeZap } = renderZapTab();
+
+    typeAmount("0.5");
+    await act(async () => {
+      fireEvent.click(zapActionButton("Zap In"));
+    });
+    expect(executeZap).toHaveBeenCalled();
+
+    const pending = { status: "zapping" as const, isLoading: true };
+    installZapState(pending);
+    rerender(<VaultPageContent id={vaultUnderTest.id} />);
+    expect(screen.getByTestId("tx-pending-card").getAttribute("data-details-symbol")).toBe("ETH");
+
+    installZapState({ status: "error", error: "Zap failed", isLoading: false });
+    rerender(<VaultPageContent id={vaultUnderTest.id} />);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    installZapState(pending);
+    rerender(<VaultPageContent id={vaultUnderTest.id} />);
+    expect(screen.getByTestId("tx-pending-card").getAttribute("data-details-symbol")).toBe("");
+  });
+
+  it("shows the checking and waiting approval labels on the zap button", () => {
+    const checking = renderZapTab({ status: "checkingApproval" });
+    typeAmount("0.5");
+    expect(zapActionButton(/Checking approval/).disabled).toBe(false);
+    checking.unmount();
+
+    renderZapTab({ status: "waitingApproval" });
+    typeAmount("0.5");
+    expect(zapActionButton(/Waiting for approval/).disabled).toBe(false);
+  });
+
+  it("shows the Safe signature count on the zap button", () => {
+    renderZapTab({
+      status: "waitingApproval",
+      zapActions: {
+        safePending: {
+          isAwaitingExecution: true,
+          confirmations: 2,
+          confirmationsRequired: 3,
+          executedHash: null,
+          outcome: null,
+        },
+      },
+    });
+
+    const button = zapActionButton(/Waiting for Safe/);
+    expect(button.textContent).toContain("(2/3 signed)");
+  });
+
+  it("labels a batched zap approval as Approve & zap", () => {
+    renderZapTab({ needsApproval: true, zapActions: { batchesApproval: true } });
+
+    typeAmount("0.5");
+
+    expect(zapActionButton("Approve & zap").disabled).toBe(false);
+  });
+
+  it("passes the ETH price and simulation-unavailable copy to the zap preview", async () => {
+    settingsState.showSimulationPreview = true;
+    const simulationResult = {
+      success: true,
+      gasUsed: 100,
+      errorMessage: null,
+      tenderlyUrl: null,
+      assetChanges: [],
+      simulationUnavailable: true,
+      simulationUnavailableReason: "Tenderly key missing",
+    };
+    renderZapTab({ getSimulationResult: () => simulationResult });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simulation-modal").getAttribute("data-eth-price")).toBe("1");
+    });
+    const modal = screen.getByTestId("simulation-modal");
+    expect(modal.getAttribute("data-simulation-unavailable")).toBe("true");
+    expect(modal.getAttribute("data-simulation-unavailable-reason")).toBe("Tenderly key missing");
   });
 });

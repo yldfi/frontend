@@ -56,6 +56,7 @@ import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS, applyKnownTokenMetadata } from "@/lib/enso";
 import { getMaxEthAmount } from "@/lib/eth-gas";
 import { readEthUsdPrice } from "@/lib/eth-usd-price";
+import { parseStoredToken } from "@/lib/stored-token";
 import { getVaultFormBalanceAddresses } from "@/lib/vault-form-balances";
 import {
   getVault,
@@ -165,6 +166,8 @@ export function VaultPageContent({ id }: { id: string }) {
     errorMessage?: string;
     tenderlyUrl?: string;
     assetChanges: { type: "send" | "receive"; symbol: string; amount: string; logo?: string; dollarValue?: number }[];
+    simulationUnavailable?: boolean;
+    simulationUnavailableReason?: string;
   } | null>(null);
 
   // DEBUG: Draggable panel position (persisted to localStorage)
@@ -371,7 +374,9 @@ export function VaultPageContent({ id }: { id: string }) {
     if (typeof window === "undefined") return applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     try {
       const saved = sessionStorage.getItem(`yldfi-zap-input-token-${id}`);
-      return saved ? applyKnownTokenMetadata(JSON.parse(saved) as EnsoToken) : applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
+      return saved
+        ? applyKnownTokenMetadata(parseStoredToken(saved) ?? DEFAULT_ETH_TOKEN)
+        : applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     } catch {
       return applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     }
@@ -393,7 +398,9 @@ export function VaultPageContent({ id }: { id: string }) {
     if (typeof window === "undefined") return applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     try {
       const saved = sessionStorage.getItem(`yldfi-zap-output-token-${id}`);
-      return saved ? applyKnownTokenMetadata(JSON.parse(saved) as EnsoToken) : applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
+      return saved
+        ? applyKnownTokenMetadata(parseStoredToken(saved) ?? DEFAULT_ETH_TOKEN)
+        : applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     } catch {
       return applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     }
@@ -773,7 +780,6 @@ export function VaultPageContent({ id }: { id: string }) {
     (!!rawZapQuote && !zapQuoteIsCurrent)
   );
   const {
-    isQuoteTooOld: isZapQuoteTooOld,
     refreshIfQuoteTooOld: refreshIfZapQuoteTooOld,
     handleStaleQuote: handleStaleZapQuote,
     guardHighImpact,
@@ -957,12 +963,16 @@ export function VaultPageContent({ id }: { id: string }) {
     if (!zapAmount || Number(zapAmount) === 0) return false;
     try {
       if (zapDirection === "in") {
-        if (!zapInputBalance) return false;
+        // An unknown input balance is not a balance of zero-plus: wait until it
+        // is known before letting the user send (same as the zap page).
+        if (!zapInputBalance) return true;
         const inputBigInt = parseUnits(zapAmount, zapInputBalance.decimals);
         return inputBigInt > zapInputBalance.value;
       } else {
+        const shareBalance = vaultBalanceRaw as bigint | undefined;
+        if (shareBalance === undefined) return true;
         const inputBigInt = parseUnits(zapAmount, vaultDecimals);
-        return inputBigInt > vaultBalanceRaw;
+        return inputBigInt > shareBalance;
       }
     } catch {
       return zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance;
@@ -1309,7 +1319,7 @@ export function VaultPageContent({ id }: { id: string }) {
       resetZapActions();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zapAmount, zapDirection, zapInputToken?.address, zapOutputToken?.address]);
+  }, [debouncedZapAmount, zapDirection, zapInputToken?.address, zapOutputToken?.address]);
 
   // Show toast notifications for errors
   useEffect(() => {
@@ -1323,6 +1333,7 @@ export function VaultPageContent({ id }: { id: string }) {
     if (zapActionError) {
       console.log("[TOAST ERROR] zapActionError:", zapActionError);
       toast.error(zapActionError);
+      setTimeout(() => setPendingTxDetails(null), 0);
     }
   }, [zapActionError]);
 
@@ -2314,7 +2325,7 @@ export function VaultPageContent({ id }: { id: string }) {
                         show={showZapApprovalCard}
                         pendingApproval={zapPendingApproval}
                         approvalProgress={zapApprovalProgress}
-                        decimals={zapDirection === "in" ? (zapInputToken?.decimals ?? 18) : 18}
+                        decimals={zapDirection === "in" ? (zapInputToken?.decimals ?? 18) : vaultDecimals}
                         isApproving={zapIsApproving}
                         onApprove={(exact) => guardHighImpact("Approve & zap", () => zapApprove(exact))}
                       />
@@ -2363,6 +2374,18 @@ export function VaultPageContent({ id }: { id: string }) {
                         >
                           {isSimulatingPreview || showSimulationModal ? (
                             <>Simulating<LoadingDots /></>
+                          ) : zapSafePending ? (
+                            <>
+                              Waiting for Safe
+                              {zapSafePending.confirmationsRequired
+                                ? ` (${zapSafePending.confirmations}/${zapSafePending.confirmationsRequired} signed)`
+                                : ""}
+                              <LoadingDots />
+                            </>
+                          ) : zapStatus === "checkingApproval" ? (
+                            <>Checking approval<LoadingDots /></>
+                          ) : zapStatus === "waitingApproval" ? (
+                            <>Waiting for approval<LoadingDots /></>
                           ) : zapIsLoading ? (
                             <>Confirm in wallet<LoadingDots /></>
                           ) : zapQuoteSettling ? (
@@ -2375,6 +2398,8 @@ export function VaultPageContent({ id }: { id: string }) {
                             "Insufficient balance"
                           ) : !zapQuote ? (
                             "No route found"
+                          ) : zapNeedsApproval() ? (
+                            "Approve & zap"
                           ) : (
                             `Zap ${zapDirection === "in" ? "In" : "Out"}`
                           )}
@@ -2531,6 +2556,8 @@ export function VaultPageContent({ id }: { id: string }) {
                   },
                 })
               : effectiveSimulationResult.assetChanges as SimulationAssetChange[],
+            simulationUnavailable: effectiveSimulationResult.simulationUnavailable,
+            simulationUnavailableReason: effectiveSimulationResult.simulationUnavailableReason,
           }}
           gasPrice={gasPrice}
           ethPrice={ethPrice}
