@@ -1,5 +1,5 @@
 /* eslint-disable */
-// Runtime types generated with workerd@1.20261101.1 2026-09-02 no_nodejs_compat,no_nodejs_compat_v2
+// Runtime types generated with workerd@1.20261104.1 2026-09-02 no_nodejs_compat,no_nodejs_compat_v2
 // Begin runtime types
 /*! *****************************************************************************
 Copyright (c) Cloudflare. All rights reserved.
@@ -527,8 +527,13 @@ type DurableObjectRoutingMode = "primary-only";
 interface DurableObjectNamespaceGetDurableObjectOptions {
     locationHint?: DurableObjectLocationHint;
     routingMode?: DurableObjectRoutingMode;
+    retry?: DurableObjectRetryOptions;
 }
 interface DurableObjectClass<_T extends Rpc.DurableObjectBranded | undefined = undefined> {
+}
+interface DurableObjectRetryOptions {
+    maxRetries?: number;
+    timeoutMs?: number;
 }
 interface DurableObjectState<Props = unknown> {
     waitUntil(promise: Promise<any>): void;
