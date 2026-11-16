@@ -5,7 +5,7 @@ import type {
   RouteStep,
 } from "@/types/enso";
 import { WETH_ADDRESS } from "@/config/addresses";
-import { TOKENS } from "@/config/vaults";
+import { getVaultByAddress, PIREX, TOKENS } from "@/config/vaults";
 import {
   calculateMinDy,
   getEthToCvxEstimate,
@@ -73,7 +73,6 @@ export async function fetchLpxCvxZapInRoute(params: {
     });
   }
 
-  const { PIREX, getVaultByAddress } = await import("@/config/vaults");
   const slippageBps = validateSlippage(params.slippage);
 
   // Get target vault's underlying token
@@ -276,7 +275,6 @@ export async function fetchPxCvxTokenZapInRoute(params: {
     });
   }
 
-  const { PIREX, getVaultByAddress } = await import("@/config/vaults");
   const slippageBps = validateSlippage(params.slippage);
 
   // Get target vault's underlying token
@@ -451,7 +449,6 @@ export async function fetchAnyToPxCvxRoute(params: {
     });
   }
 
-  const { PIREX } = await import("@/config/vaults");
   const inputSymbol = getTokenSymbol(params.inputToken);
   const inputIsCvx = params.inputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
   const inputIsEth = params.inputToken.toLowerCase() === ETH_ADDRESS.toLowerCase();
@@ -790,7 +787,6 @@ export async function fetchAnyToLpxCvxRoute(params: {
     });
   }
 
-  const { PIREX } = await import("@/config/vaults");
   const inputSymbol = getTokenSymbol(params.inputToken);
   const inputIsCvx = params.inputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
   const inputIsEth = params.inputToken.toLowerCase() === ETH_ADDRESS.toLowerCase();
@@ -1078,7 +1074,6 @@ export async function fetchAnyFromLpxCvxRoute(params: {
     });
   }
 
-  const { PIREX } = await import("@/config/vaults");
   const outputSymbol = getTokenSymbol(params.outputToken);
   const outputIsCvx = params.outputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
   const slippageBps = validateSlippage(params.slippage);
@@ -1231,7 +1226,6 @@ export async function fetchAnyFromPxCvxRoute(params: {
     });
   }
 
-  const { PIREX } = await import("@/config/vaults");
   const outputSymbol = getTokenSymbol(params.outputToken);
   const outputIsCvx = params.outputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
   const slippageBps = validateSlippage(params.slippage);

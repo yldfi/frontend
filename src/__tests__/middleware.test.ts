@@ -419,6 +419,58 @@ describe("debug page 404", () => {
   });
 });
 
+describe("retired lending URLs", () => {
+  async function middlewareResponseFor(pathname: string, country = "DE") {
+    vi.resetModules();
+    const { NextRequest } = await import("next/server");
+    const { middleware } = await import("@/middleware");
+    return middleware(
+      new NextRequest(`https://yldfi.co${pathname}`, { headers: { "cf-ipcountry": country } })
+    );
+  }
+
+  it("redirects the old lending path to the vault page", async () => {
+    const response = await middlewareResponseFor("/vaults/ycvxcrv/lending");
+
+    expect(response.status).toBe(308);
+    expect(response.headers.get("Location")?.endsWith("/vaults/ycvxcrv")).toBe(true);
+  });
+
+  it("redirects the old lending path with a trailing slash", async () => {
+    const response = await middlewareResponseFor("/vaults/ycvxcrv/lending/");
+
+    expect(response.status).toBe(308);
+    expect(new URL(response.headers.get("Location")!).pathname).toBe("/vaults/ycvxcrv");
+  });
+
+  it("drops the query string from the redirect target", async () => {
+    const response = await middlewareResponseFor("/vaults/ycvxcrv/lending?x=1");
+
+    expect(response.status).toBe(308);
+    const location = new URL(response.headers.get("Location")!);
+    expect(location.pathname).toBe("/vaults/ycvxcrv");
+    expect(location.search).toBe("");
+  });
+
+  it("leaves a deeper path under the retired prefix alone", async () => {
+    const response = await middlewareResponseFor("/vaults/ycvxcrv/lending/extra");
+
+    expect(response.status).not.toBe(308);
+  });
+
+  it("leaves the vault page itself alone", async () => {
+    const response = await middlewareResponseFor("/vaults/ycvxcrv");
+
+    expect(response.status).not.toBe(308);
+  });
+
+  it("redirects in a blocked region; the vault page is then geo-blocked as usual", async () => {
+    const response = await middlewareResponseFor("/vaults/ycvxcrv/lending", "US");
+
+    expect(response.status).toBe(308);
+  });
+});
+
 describe("middleware framing headers (Safe App support)", () => {
   it("allows framing only by the site itself and Safe{Wallet}", async () => {
     const { NextRequest } = await import("next/server");

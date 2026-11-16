@@ -1,4 +1,5 @@
 import type { TwocryptoParams } from "@yldfi/curve-amm-math";
+import { PIREX } from "@/config/vaults";
 import { cryptoswap, getCryptoSwapParams } from "@/lib/curve";
 import { rpcWithFallback } from "./api";
 
@@ -17,8 +18,6 @@ const PEG_RECHECK_TIMEOUT_MS = 2_500;
  * Falls back to on-chain RPC call if off-chain calculation fails.
  */
 export async function getPxCvxSwapRate(amountIn: string): Promise<bigint> {
-  const { PIREX } = await import("@/config/vaults");
-
   try {
     // Use cached pool params + off-chain math (more reliable, no RPC rate limits)
     const params = await getCryptoSwapParams(PIREX.LPXCVX_CVX_POOL);
@@ -46,8 +45,6 @@ export async function getPxCvxSwapRate(amountIn: string): Promise<bigint> {
  * Falls back to on-chain RPC call if off-chain calculation fails.
  */
 export async function getLpxCvxToCvxSwapRate(amountIn: string): Promise<bigint> {
-  const { PIREX } = await import("@/config/vaults");
-
   try {
     // Use cached pool params + off-chain math (more reliable, no RPC rate limits)
     const params = await getCryptoSwapParams(PIREX.LPXCVX_CVX_POOL);
@@ -94,7 +91,6 @@ export function findPegPointOffchainCryptoSwap(params: TwocryptoParams): bigint 
 /** Read get_dy(i, j, dx) from the pool contract itself. Rejects when the node
  *  returns no usable result. */
 async function getPoolDyOnChain(i: number, j: number, amountIn: bigint): Promise<bigint> {
-  const { PIREX } = await import("@/config/vaults");
   const selector = "0x556d6e9f"; // get_dy(uint256,uint256,uint256)
   const word = (n: bigint) => n.toString(16).padStart(64, "0");
   const result = await rpcWithFallback<{ result?: string }>({
@@ -122,8 +118,6 @@ export async function getOptimalPxCvxSwapAmount(totalCvxAmount: string): Promise
   }
 
   try {
-    const { PIREX } = await import("@/config/vaults");
-
     // RPC call 1: Get all pool parameters in single batch (with caching)
     const params = await getCryptoSwapParams(PIREX.LPXCVX_CVX_POOL);
 

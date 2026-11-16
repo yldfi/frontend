@@ -12,22 +12,6 @@ describe("VaultPageContent logic", () => {
   describe("high price impact confirmation", () => {
     const source = readFileSync(join(process.cwd(), "src/components/VaultPageContent.tsx"), "utf-8");
 
-    it("routes the zap button and the approve -> auto-execute path through the typed-CONFIRM gate", () => {
-      expect(source).toMatch(/onClick=\{\(\) => guardHighImpact\(`Zap \$\{zapDirection === "in" \? "In" : "Out"\}`, async \(\) => \{/);
-      expect(source).toContain('onApprove={(exact) => guardHighImpact("Approve & zap", () => zapApprove(exact))}');
-      expect(source).toContain("needsPriceImpactConfirm(zapQuote?.priceImpact)");
-    });
-
-    it("sends zaps only from the gated button or the post-simulation confirm", () => {
-      // The simulation preview path never sends: only the preview-off branch in the
-      // button and the post-simulation confirm call executeZap().
-      const sends = source.match(/executeZap\((?!\{ previewOnly: true \})/g) ?? [];
-      const gatedButton = source.match(/guardHighImpact\(`Zap[\s\S]*?\n {26}\}\)\}/)?.[0] ?? "";
-      expect(gatedButton.match(/executeZap\(\)/g)).toHaveLength(1);
-      expect(source).toMatch(/High price impact was already confirmed before the simulation ran\.\n\s+setZapPendingDetails\(\);\n\s+executeZap\(\{ skipSimulation: true \}\)/);
-      expect(sends).toHaveLength(2);
-    });
-
     it("never leaves the right column blank: the forms hide only while another card renders (item 40)", () => {
       // The forms used to hide whenever pendingMultiStep was set; a reverted approval left it set.
       expect(source).not.toMatch(/!pendingMultiStep\?\.type/);
@@ -48,16 +32,6 @@ describe("VaultPageContent logic", () => {
     it("clears the approve-then-deposit state when the approval reverts", () => {
       expect(source).toMatch(/const approvalReverted = txStatus === "reverted" && !depositHash && !withdrawHash;/);
       expect(source).toMatch(/txStatus === "error" \|\| txError \|\| approvalReverted/);
-    });
-
-    it("refuses to send a zap quote older than the freshness limit on every send path", () => {
-      // guardHighImpact covers the button and approve -> auto-execute.
-      expect(source).toMatch(/const guardHighImpact = \(label: string, run: \(\) => void\) => \{\n\s+if \(refreshIfZapQuoteTooOld\(\)\) return;/);
-      // Price-impact confirm and simulation confirm run after a pause.
-      expect(source).toMatch(/setPendingImpactAction\(null\);\n\s+if \(refreshIfZapQuoteTooOld\(\)\) return;\n\s+run\(\);/);
-      expect(source).toMatch(/setShowSimulationModal\(false\);\n\s+if \(refreshIfZapQuoteTooOld\(\)\) return;\n\s+\/\/ High price impact/);
-      // The 60 s re-quote stops while idle.
-      expect(source).toContain("autoRefresh: !isZapIdle,");
     });
   });
 

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { formatUnits, parseUnits } from "viem";
 
@@ -22,6 +22,7 @@ import {
 import { useCvxCrvPrice } from "@/hooks/useCvxCrvPrice";
 import { useCvxPrice } from "@/hooks/useCvxPrice";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useIdle } from "@/hooks/useIdle";
 import {
   useMerklOpportunities,
   useMerklRewards,
@@ -37,6 +38,7 @@ import { useVaultData } from "@/hooks/useVaultData";
 import { useYearnVault } from "@/hooks/useYearnVault";
 import { useZapActions } from "@/hooks/useZapActions";
 import { useZapQuote } from "@/hooks/useZapQuote";
+import type { PendingApproval } from "@/types/approval";
 import { notFound } from "next/navigation";
 import { toast } from "sonner";
 
@@ -238,7 +240,7 @@ vi.mock("@/hooks/useDebouncedValue", () => ({
 }));
 
 vi.mock("@/hooks/useIdle", () => ({
-  useIdle: () => false,
+  useIdle: vi.fn(() => false),
 }));
 
 vi.mock("@/hooks/useClearOnNavigation", () => ({
@@ -269,6 +271,7 @@ const mockUseCvxPrice = vi.mocked(useCvxPrice);
 const mockUseZapQuote = vi.mocked(useZapQuote);
 const mockUseZapActions = vi.mocked(useZapActions);
 const mockUseDebouncedValue = vi.mocked(useDebouncedValue);
+const mockUseIdle = vi.mocked(useIdle);
 const mockNotFound = vi.mocked(notFound);
 
 const vaultUnderTest = Object.values(VAULTS).find(
@@ -544,6 +547,7 @@ beforeEach(() => {
   vi.mocked(localStorage.getItem).mockReset();
   sessionStorage.clear();
   settingsState.showSimulationPreview = false;
+  mockUseIdle.mockReturnValue(false);
 });
 
 describe("VaultPageContent deposit and withdraw form", () => {
@@ -1080,5 +1084,288 @@ describe("zap tab quote gate and preview", () => {
 
     expect(executeZap.mock.calls).toEqual([[{ previewOnly: true }]]);
     expect(executeZap.mock.calls.some((call) => call.length === 0)).toBe(false);
+  });
+});
+
+describe("zap tab send paths", () => {
+  beforeEach(() => {
+    vi.mocked(localStorage.getItem).mockImplementation((key: string) =>
+      key === "yldfi-active-tab" ? "zap" : null,
+    );
+  });
+
+  afterEach(() => {
+    mockUseDebouncedValue.mockImplementation((value: unknown) => value);
+  });
+
+  type ZapSetupOptions = {
+    priceImpact?: number;
+    quoteUpdatedAt?: number;
+    needsApproval?: boolean;
+    pendingApproval?: PendingApproval | null;
+    status?: ReturnType<typeof useZapActions>["status"];
+    executeZap?: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
+    getSimulationResult?: () => unknown;
+  };
+
+  /** Render the zap tab with a current quote and the zap action hook under test. */
+  function renderZapTab(options: ZapSetupOptions = {}) {
+    const {
+      priceImpact = 0,
+      quoteUpdatedAt = Date.now(),
+      needsApproval = false,
+      pendingApproval = null,
+      status = "idle",
+      getSimulationResult = () => null,
+    } = options;
+    const executeZap = options.executeZap ?? vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => null);
+    const zapApprove = vi.fn(async () => undefined);
+    const refetch = vi.fn();
+
+    installDefaultHooks();
+    mockUseZapQuote.mockImplementation(((params) => ({
+      quote: params.inputToken
+        ? {
+            inputToken: params.inputToken,
+            inputAmount: params.inputAmount,
+            outputAmount: "0",
+            outputAmountFormatted: "0.4",
+            exchangeRate: 0.8,
+            inputUsdValue: 0,
+            outputUsdValue: 0,
+            priceImpact,
+            gasEstimate: "",
+            tx: { to: "0x0000000000000000000000000000000000000001", data: "0x", value: "0" },
+            route: [],
+          }
+        : null,
+      quoteUpdatedAt,
+      isLoading: false,
+      error: null,
+      refetch,
+    })) as typeof useZapQuote);
+    mockUseZapActions.mockImplementation((() => ({
+      needsApproval: () => needsApproval,
+      approve: zapApprove,
+      executeZap,
+      reset: vi.fn(),
+      status,
+      error: null,
+      isLoading: false,
+      isSuccess: false,
+      isReverted: false,
+      zapHash: undefined,
+      pendingApproval,
+      approvalProgress: null,
+      isApproving: false,
+      isFlashbotsEnabled: false,
+      isFlashbotsSupported: false,
+      toggleFlashbots: vi.fn(),
+      simulationResult: getSimulationResult(),
+      isSimulationForCurrentQuote: () => true,
+      safePending: null,
+      batchesApproval: false,
+    })) as unknown as typeof useZapActions);
+    const utils = render(<VaultPageContent id={vaultUnderTest.id} />);
+    return { ...utils, executeZap, zapApprove, refetch };
+  }
+
+  /** The action button, not the identical "Zap In"/"Zap Out" direction toggle. */
+  function zapActionButton(name: string | RegExp): HTMLButtonElement {
+    const button = screen
+      .getAllByRole("button", { name })
+      .find((candidate) => candidate.className.includes("w-full"));
+    if (!button) throw new Error("zap action button not found");
+    return button as HTMLButtonElement;
+  }
+
+  /** Type CONFIRM into the price-impact modal and click its confirm button. */
+  function confirmHighImpact(label: string) {
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Type CONFIRM to proceed"), {
+      target: { value: "CONFIRM" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: label }));
+  }
+
+  it("opens the typed-CONFIRM modal for a high-impact zap and sends only after CONFIRM", () => {
+    const { executeZap } = renderZapTab({ priceImpact: 5 });
+
+    typeAmount("0.5");
+    fireEvent.click(zapActionButton("Zap In"));
+
+    expect(screen.getByText("High Price Impact Warning")).toBeTruthy();
+    expect(executeZap).not.toHaveBeenCalled();
+
+    confirmHighImpact("Zap In");
+
+    expect(executeZap).toHaveBeenCalledTimes(1);
+    expect(executeZap.mock.calls[0]).toEqual([]);
+  });
+
+  it("gates the zap approval button behind the same typed CONFIRM modal", () => {
+    const pendingApproval: PendingApproval = {
+      token: "0x0000000000000000000000000000000000000002",
+      tokenSymbol: "CVX",
+      spender: "0x0000000000000000000000000000000000000003",
+      amount: parseUnits("0.5", TOKEN_DECIMALS),
+      decimals: TOKEN_DECIMALS,
+    };
+    const { zapApprove } = renderZapTab({
+      priceImpact: 5,
+      needsApproval: true,
+      pendingApproval,
+      status: "needsApproval",
+    });
+
+    typeAmount("0.5");
+    fireEvent.click(screen.getByRole("button", { name: /^Exact/ }));
+
+    expect(screen.getByText("High Price Impact Warning")).toBeTruthy();
+    expect(zapApprove).not.toHaveBeenCalled();
+
+    confirmHighImpact("Approve & zap");
+
+    expect(zapApprove).toHaveBeenCalledTimes(1);
+    expect(zapApprove).toHaveBeenCalledWith(true);
+  });
+
+  it("sends once with no arguments when previews are off", () => {
+    const { executeZap } = renderZapTab();
+
+    typeAmount("0.5");
+    fireEvent.click(zapActionButton("Zap In"));
+
+    expect(executeZap).toHaveBeenCalledTimes(1);
+    expect(executeZap.mock.calls[0]).toEqual([]);
+  });
+
+  it("sends only from the simulation confirm with skipSimulation when previews are on", async () => {
+    settingsState.showSimulationPreview = true;
+    const simulationResult = {
+      success: true,
+      gasUsed: null,
+      errorMessage: null,
+      simulationId: null,
+      tenderlyUrl: null,
+      assetChanges: [],
+    };
+    let previewResult: unknown = null;
+    const executeZap = vi.fn(async (...args: unknown[]) => {
+      const options = args[0] as { previewOnly?: boolean } | undefined;
+      if (options?.previewOnly) {
+        previewResult = simulationResult;
+        return simulationResult;
+      }
+      return null;
+    });
+    renderZapTab({ executeZap, getSimulationResult: () => previewResult });
+
+    typeAmount("0.5");
+    await act(async () => {
+      fireEvent.click(zapActionButton("Zap In"));
+    });
+
+    expect(executeZap).toHaveBeenCalledWith({ previewOnly: true });
+    expect(screen.getByTestId("simulation-modal")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Zap" }));
+
+    expect(executeZap).toHaveBeenCalledWith({ skipSimulation: true });
+    expect(executeZap.mock.calls.some((call) => call.length === 0)).toBe(false);
+  });
+
+  it("refreshes instead of sending when the quote is older than the freshness limit", () => {
+    const { executeZap, refetch } = renderZapTab({
+      quoteUpdatedAt: Date.now() - 120_000,
+    });
+
+    typeAmount("0.5");
+    fireEvent.click(zapActionButton("Zap In"));
+
+    expect(refetch).toHaveBeenCalled();
+    expect(executeZap).not.toHaveBeenCalled();
+    expect(toast.info).toHaveBeenCalled();
+  });
+
+  it("refreshes instead of running the impact action when the quote aged while the modal was open", () => {
+    const now = Date.now();
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const { executeZap, refetch } = renderZapTab({ priceImpact: 5, quoteUpdatedAt: now });
+
+      typeAmount("0.5");
+      fireEvent.click(zapActionButton("Zap In"));
+      expect(screen.getByText("High Price Impact Warning")).toBeTruthy();
+
+      nowSpy.mockReturnValue(now + 120_000);
+      confirmHighImpact("Zap In");
+
+      expect(refetch).toHaveBeenCalled();
+      expect(executeZap).not.toHaveBeenCalled();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("refreshes instead of sending from the simulation confirm when the quote aged", async () => {
+    settingsState.showSimulationPreview = true;
+    const now = Date.now();
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const simulationResult = {
+        success: true,
+        gasUsed: null,
+        errorMessage: null,
+        simulationId: null,
+        tenderlyUrl: null,
+        assetChanges: [],
+      };
+      let previewResult: unknown = null;
+      const executeZap = vi.fn(async (...args: unknown[]) => {
+        const options = args[0] as { previewOnly?: boolean } | undefined;
+        if (options?.previewOnly) {
+          previewResult = simulationResult;
+          return simulationResult;
+        }
+        return null;
+      });
+      const { refetch } = renderZapTab({
+        quoteUpdatedAt: now,
+        executeZap,
+        getSimulationResult: () => previewResult,
+      });
+
+      typeAmount("0.5");
+      await act(async () => {
+        fireEvent.click(zapActionButton("Zap In"));
+      });
+      expect(screen.getByTestId("simulation-modal")).toBeTruthy();
+
+      nowSpy.mockReturnValue(now + 120_000);
+      fireEvent.click(screen.getByRole("button", { name: "Confirm Zap" }));
+
+      expect(refetch).toHaveBeenCalled();
+      expect(executeZap).toHaveBeenCalledWith({ previewOnly: true });
+      expect(executeZap).toHaveBeenCalledTimes(1);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("stops the 60 s re-quote while idle", () => {
+    mockUseIdle.mockReturnValue(true);
+
+    renderZapTab();
+
+    expect(mockUseZapQuote.mock.calls.at(-1)?.[0]).toMatchObject({ autoRefresh: false });
+  });
+
+  it("keeps the 60 s re-quote while active", () => {
+    mockUseIdle.mockReturnValue(false);
+
+    renderZapTab();
+
+    expect(mockUseZapQuote.mock.calls.at(-1)?.[0]).toMatchObject({ autoRefresh: true });
   });
 });

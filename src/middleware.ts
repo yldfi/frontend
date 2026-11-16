@@ -291,6 +291,9 @@ const GEO_EXEMPT_PATHS = [
 export const NEVER_A_ROUTE =
   /(?:^|\/)\.(?:env|git|svn|hg|aws|ssh|ds_store|htaccess|htpasswd)(?:$|\/)|\.(?:php|phtml|asp|aspx|jsp|jspx|cgi|pl|py|rb|sql|bak|backup|old|orig|save|swp|swo|log|ini|cfg|conf|key|pem|crt|sh|bash|yml|yaml|toml|lock)$/i;
 
+// The lending market was removed; its old per-vault URLs move to the vault page.
+const RETIRED_LENDING_PATH = /^\/vaults\/([^/]+)\/lending\/?$/;
+
 // The debug page is off in production builds unless enabled at build time.
 const DEBUG_PAGE_ENABLED =
   process.env.NODE_ENV !== "production" ||
@@ -347,6 +350,15 @@ export function middleware(request: NextRequest) {
   // runs, so a rendered 404 would reach the client as 200 with not-found content.
   if (!DEBUG_PAGE_ENABLED && (pathname === "/debug" || pathname.startsWith("/debug/"))) {
     return notFoundResponse();
+  }
+
+  // Answer before rendering, as for /debug: a page-level redirect would reach the client as 200.
+  const retiredLending = RETIRED_LENDING_PATH.exec(pathname);
+  if (retiredLending) {
+    // Built from the path alone: a clone of the request URL would carry the request's
+    // trailing-slash flag and its query string into the redirect target.
+    const target = new URL(`/vaults/${retiredLending[1]}`, request.nextUrl.origin);
+    return NextResponse.redirect(target, 308);
   }
 
   // MAINTENANCE MODE — block everything except static assets and exempt APIs

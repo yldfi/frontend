@@ -10,7 +10,13 @@ import {
   WETH_ADDRESS,
   YVUSDC1_ADDRESS,
 } from "@/config/addresses";
-import { TOKENS } from "@/config/vaults";
+import {
+  getExternalVaultConfig,
+  isExternalVaultToken,
+  LLAMA_AIRFORCE,
+  PIREX,
+  TOKENS,
+} from "@/config/vaults";
 import {
   calculateMinDy,
   getCurveGetDy,
@@ -84,7 +90,6 @@ export async function appendCvxToPxCvxConversion(
   ctx: ConversionContext,
   routeSteps: RouteStep[],
 ): Promise<ConversionState> {
-  const { PIREX } = await import("@/config/vaults");
   const conservativeCvxAmount = applySlippageBuffer(state.expectedAmount, ctx.slippageBps);
   const cvxIsDynamic = isDynamicAmountRef(state.amountRef);
   const { swapAmount, mintAmount } = await getOptimalPxCvxSwapAmount(conservativeCvxAmount);
@@ -214,7 +219,6 @@ async function appendCvxToLpxCvxConversion(
   ctx: ConversionContext,
   routeSteps: RouteStep[],
 ): Promise<ConversionState> {
-  const { PIREX } = await import("@/config/vaults");
   const conservativeCvxAmount = applySlippageBuffer(state.expectedAmount, ctx.slippageBps);
   const cvxIsDynamic = isDynamicAmountRef(state.amountRef);
   const { swapAmount, mintAmount } = await getOptimalPxCvxSwapAmount(conservativeCvxAmount);
@@ -611,7 +615,6 @@ async function appendConversionToCvx(
   }
 
   if (isPxCvxAddress(state.token)) {
-    const { PIREX } = await import("@/config/vaults");
     // The legs spend the runtime balance (state.amountRef), so quote the unbuffered amount.
     const expectedCvx = await getLpxCvxToCvxSwapRate(state.expectedAmount.toString());
     if (!expectedCvx || expectedCvx === 0n) {
@@ -683,7 +686,6 @@ async function appendConversionToCvx(
   }
 
   if (isLpxCvxAddress(state.token)) {
-    const { PIREX } = await import("@/config/vaults");
     const expectedCvx = await getLpxCvxToCvxSwapRate(state.expectedAmount.toString());
     if (!expectedCvx || expectedCvx === 0n) {
       throw new Error("Failed to estimate Curve lpxCVX→CVX swap output");
@@ -750,7 +752,6 @@ export async function convertStateToToken(
     if (isLpxCvxAddress(state.token)) {
       // Unwrap lpxCVX → pxCVX (1:1). A fixed amount is the wallet input, so declare it on the raw
       // call; relabelling the amount as pxCVX made Enso pull pxCVX from the wallet instead.
-      const { PIREX } = await import("@/config/vaults");
       // unwrap() returns nothing, so read the produced pxCVX with a balance action.
       actions.push(rawCallConsumingInput(state.amountRef, TOKENS.LPXCVX, {
         address: PIREX.LPXCVX,
@@ -769,7 +770,6 @@ export async function convertStateToToken(
 
   if (isLpxCvxAddress(targetToken)) {
     if (isPxCvxAddress(state.token)) {
-      const { PIREX } = await import("@/config/vaults");
       actions.push(
         {
           protocol: "erc20",
@@ -830,7 +830,6 @@ export async function buildInitialConversionState(params: {
 }): Promise<{ actions: EnsoBundleAction[]; state: ConversionState; steps: RouteStep[] }> {
   const actions: EnsoBundleAction[] = [];
   const steps: RouteStep[] = [];
-  const { getExternalVaultConfig, isExternalVaultToken, LLAMA_AIRFORCE } = await import("@/config/vaults");
 
   if (!isExternalVaultToken(params.inputToken)) {
     return {

@@ -8,7 +8,13 @@ import type {
   RouteInfo,
   RouteStep,
 } from "@/types/enso";
-import { TOKENS } from "@/config/vaults";
+import {
+  getExternalVaultConfig,
+  getVaultByAddress,
+  LLAMA_AIRFORCE,
+  PIREX,
+  TOKENS,
+} from "@/config/vaults";
 import {
   calculateMinDy,
   previewRedeem,
@@ -38,8 +44,6 @@ import { fetchComposableZapInRoute } from "./external-vault-routes";
  * Formula: shares * totalUnderlying / totalSupply
  */
 export async function previewUCrvWithdraw(shares: string): Promise<string> {
-  const { LLAMA_AIRFORCE } = await import("@/config/vaults");
-
   // Batch RPC calls: totalUnderlying() and totalSupply()
   const batch = [
     { jsonrpc: "2.0", id: 0, method: "eth_call", params: [{ to: LLAMA_AIRFORCE.UCRV, data: "0xc70920bc" }, "latest"] }, // totalUnderlying()
@@ -81,7 +85,6 @@ export async function fetchUCrvZapInRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
-  const { LLAMA_AIRFORCE, getVaultByAddress } = await import("@/config/vaults");
   const slippageBps = validateSlippage(params.slippage);
 
   // Get target vault's underlying token
@@ -91,7 +94,6 @@ export async function fetchUCrvZapInRoute(params: {
   }
   const targetUnderlying = targetVault.assetAddress;
   if (targetUnderlying.toLowerCase() === TOKENS.PXCVX.toLowerCase()) {
-    const { LLAMA_AIRFORCE } = await import("@/config/vaults");
     return fetchComposableZapInRoute({
       fromAddress: params.fromAddress,
       inputToken: LLAMA_AIRFORCE.UCRV,
@@ -220,7 +222,6 @@ export async function fetchUCvxZapInRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
-  const { LLAMA_AIRFORCE, getVaultByAddress } = await import("@/config/vaults");
   const slippageBps = validateSlippage(params.slippage);
 
   // Get target vault's underlying token
@@ -273,8 +274,6 @@ export async function fetchUCvxZapInRoute(params: {
 
     // Use the existing pxCVX out routing infrastructure
     // First, we need to exit pxCVX to CVX, then route CVX to target underlying
-    const { PIREX } = await import("@/config/vaults");
-
     // Calculate expected CVX output from lpxCVX → CVX swap
     // The legs spend the runtime redeem output (useOutputOfCallAt: 0), so quote the unbuffered amount.
     const expectedCvxOutput = await getLpxCvxToCvxSwapRate(BigInt(expectedPxCvxOutput).toString());
@@ -488,7 +487,6 @@ export async function fetchErc4626ExternalVaultZapInRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
-  const { getVaultByAddress } = await import("@/config/vaults");
   const slippageBps = validateSlippage(params.slippage);
 
   // Get target vault's underlying token
@@ -634,7 +632,6 @@ export async function fetchBeefyZapInRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
-  const { getVaultByAddress } = await import("@/config/vaults");
   const slippageBps = validateSlippage(params.slippage);
 
   // Get target vault's underlying token
@@ -787,8 +784,6 @@ export async function fetchExternalVaultZapInRoute(params: {
       receiver: params.fromAddress,
     });
   }
-
-  const { getExternalVaultConfig, LLAMA_AIRFORCE } = await import("@/config/vaults");
 
   const config = getExternalVaultConfig(params.externalVaultAddress);
   if (!config) {

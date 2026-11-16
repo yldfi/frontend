@@ -8,7 +8,14 @@ import type {
   RouteStep,
 } from "@/types/enso";
 import { WETH_ADDRESS, YVUSDC1_ADDRESS } from "@/config/addresses";
-import { LLAMA_AIRFORCE as STATIC_LLAMA_AIRFORCE, TOKENS } from "@/config/vaults";
+import {
+  getExternalVaultConfig,
+  getVaultByAddress,
+  isExternalVaultToken,
+  LLAMA_AIRFORCE,
+  PIREX,
+  TOKENS,
+} from "@/config/vaults";
 import {
   calculateMinDy,
   previewRedeem,
@@ -64,7 +71,7 @@ export async function fetchAnyFromUCvxRoute(params: {
     return fetchEnsoIntent<CustomBundleResponse>({
       intent: "externalVaultToAny",
       fromAddress: params.fromAddress,
-      externalVaultAddress: STATIC_LLAMA_AIRFORCE.UCVX,
+      externalVaultAddress: LLAMA_AIRFORCE.UCVX,
       outputToken: params.outputToken,
       amountIn: params.amountIn,
       slippage: params.slippage ?? "100",
@@ -72,7 +79,6 @@ export async function fetchAnyFromUCvxRoute(params: {
     });
   }
 
-  const { PIREX, LLAMA_AIRFORCE } = await import("@/config/vaults");
   const outputSymbol = getTokenSymbol(params.outputToken);
   const outputIsCvx = params.outputToken.toLowerCase() === TOKENS.CVX.toLowerCase();
   const slippageBps = validateSlippage(params.slippage);
@@ -399,7 +405,7 @@ export async function fetchAnyFromUCrvRoute(params: {
     return fetchEnsoIntent<CustomBundleResponse>({
       intent: "externalVaultToAny",
       fromAddress: params.fromAddress,
-      externalVaultAddress: STATIC_LLAMA_AIRFORCE.UCRV,
+      externalVaultAddress: LLAMA_AIRFORCE.UCRV,
       outputToken: params.outputToken,
       amountIn: params.amountIn,
       slippage: params.slippage ?? "100",
@@ -407,7 +413,6 @@ export async function fetchAnyFromUCrvRoute(params: {
     });
   }
 
-  const { LLAMA_AIRFORCE } = await import("@/config/vaults");
   const outputSymbol = getTokenSymbol(params.outputToken);
 
   const expectedCvxCrv = await previewUCrvWithdraw(params.amountIn);
@@ -653,7 +658,6 @@ export async function fetchAnyToExternalVaultRoute(params: {
     });
   }
 
-  const { getExternalVaultConfig } = await import("@/config/vaults");
   const config = getExternalVaultConfig(params.externalVaultAddress);
   if (!config) {
     throw new Error(`Unknown external vault: ${params.externalVaultAddress}`);
@@ -816,7 +820,6 @@ export async function fetchAnyToUCrvRoute(params: {
   amountIn: string;
   slippage?: string;
 }): Promise<CustomBundleResponse> {
-  const { LLAMA_AIRFORCE } = await import("@/config/vaults");
   const inputSymbol = getTokenSymbol(params.inputToken);
   const inputIsCvxCrv =
     params.inputToken.toLowerCase() === LLAMA_AIRFORCE.UCRV_UNDERLYING.toLowerCase();
@@ -1132,7 +1135,6 @@ export async function fetchComposableZapInRoute(params: {
     });
   }
 
-  const { getVaultByAddress } = await import("@/config/vaults");
   const targetVault = getVaultByAddress(params.vaultAddress);
   if (!targetVault) {
     throw new Error(`Unknown target vault: ${params.vaultAddress}`);
@@ -1254,7 +1256,6 @@ export async function fetchSpecialTokenToIlliquidRoute(params: {
     });
   }
 
-  const { isExternalVaultToken, getExternalVaultConfig } = await import("@/config/vaults");
   const slippageBps = validateSlippage(params.slippage);
   const ctx: ConversionContext = {
     fromAddress: params.fromAddress,
@@ -1351,7 +1352,6 @@ export async function fetchSpecialTokenToExternalVaultRoute(params: {
     });
   }
 
-  const { getExternalVaultConfig } = await import("@/config/vaults");
   const outputConfig = getExternalVaultConfig(params.outputVault);
   if (!outputConfig) {
     throw new Error(`Unknown external vault: ${params.outputVault}`);
@@ -1679,7 +1679,6 @@ export async function fetchYldVaultToExternalVaultRoute(params: {
     });
   }
 
-  const { PIREX, LLAMA_AIRFORCE } = await import("@/config/vaults");
   const slippageBps = validateSlippage(params.slippage);
   const totalSlippageBps = getBufferedSlippageBps(slippageBps);
   const sourceUnderlyingLower = params.sourceUnderlying.toLowerCase();

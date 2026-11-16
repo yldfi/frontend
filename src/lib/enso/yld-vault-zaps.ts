@@ -5,7 +5,7 @@ import type {
   RouteInfo,
   RouteStep,
 } from "@/types/enso";
-import { TOKENS, VAULTS } from "@/config/vaults";
+import { PIREX, TOKENS, VAULTS } from "@/config/vaults";
 import {
   calculateMinDy,
   getEthToCvxEstimate,
@@ -453,8 +453,6 @@ async function fetchPxCvxVaultToVaultRoute(params: {
   targetUnderlyingToken: string;
   slippage: string;
 }): Promise<EnsoBundleResponse> {
-  const { PIREX } = await import("@/config/vaults");
-
   // Validate slippage parameter
   const slippageBps = validateSlippage(params.slippage);
 
@@ -726,8 +724,6 @@ export async function fetchPxCvxZapOutRoute(params: {
     });
   }
 
-  const { PIREX } = await import("@/config/vaults");
-
   // Validate slippage parameter
   const slippageBps = validateSlippage(params.slippage);
 
@@ -886,7 +882,6 @@ export async function fetchPxCvxZapInRoute(params: {
     });
   }
 
-  const { PIREX } = await import("@/config/vaults");
   const vaultSymbol = getTokenSymbol(params.vaultAddress);
   const inputSymbol = getTokenSymbol(params.inputToken);
 
