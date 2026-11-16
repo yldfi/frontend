@@ -30,7 +30,7 @@ jobs:
     # Catches advisories published against the current lockfile on days with no
     # push to main. Not a gate: nothing depends on this job.
     # Ignored advisories (no fixed release yet) live in pnpm-workspace.yaml.
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -46,7 +46,7 @@ jobs:
 
   test-integration:
     name: Integration Tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     # Suites that need an external endpoint they cannot reach (simulation RPC,
     # Enso API key) skip loudly rather than fail.
     steps:
