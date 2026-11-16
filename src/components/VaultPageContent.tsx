@@ -501,28 +501,11 @@ export function VaultPageContent({ id }: { id: string }) {
     slippage: zapSlippage, updateSlippage, showSlippageModal, setShowSlippageModal,
     showSimulationPreview, refreshSimulationPreview,
     showSimulationModal, setShowSimulationModal,
+    showRoute, toggleRoute,
   } = useSettings();
   // An action held back until the user types CONFIRM for a high-price-impact zap quote.
   const [pendingImpactAction, setPendingImpactAction] = useState<{ label: string; run: () => void } | null>(null);
   const [zapInProgress, setZapInProgress] = useState(false);
-  // Route display toggle with localStorage persistence (vault uses different key: yldfi-show-route)
-  const [showRoute, setShowRoute] = useState(() => {
-    if (typeof window === "undefined") return false;
-    try {
-      return localStorage.getItem("yldfi-show-route") === "true";
-    } catch {
-      return false;
-    }
-  });
-  const toggleRoute = () => {
-    const newValue = !showRoute;
-    setShowRoute(newValue);
-    try {
-      localStorage.setItem("yldfi-show-route", String(newValue));
-    } catch {
-      // localStorage unavailable
-    }
-  };
   const [isSimulatingPreview, setIsSimulatingPreview] = useState(false);
   const [ethPrice, setEthPrice] = useState<number | null>(null);
   const { data: currentBlock } = useBlockNumber({ watch: true });
@@ -779,6 +762,11 @@ export function VaultPageContent({ id }: { id: string }) {
     zapQuoteLoading ||
     (!!rawZapQuote && !zapQuoteIsCurrent)
   );
+  // Keep the route panel mounted when a quote fails so it shows an error instead of vanishing.
+  const zapNoRoute = !zapQuoteSettling && !!zapQuoteError && !!zapAmount && Number(zapAmount) > 0;
+  const zapHasRouteContent = !!zapAmount && Number(zapAmount) > 0 && (!!zapQuote || zapQuoteSettling || zapNoRoute);
+  const zapRouteErrorMessage = zapNoRoute ? parseQuoteError(zapQuoteError) : undefined;
+  const retryZapQuote = () => void refetchZapQuote();
   const {
     refreshIfQuoteTooOld: refreshIfZapQuoteTooOld,
     handleStaleQuote: handleStaleZapQuote,
@@ -1263,11 +1251,11 @@ export function VaultPageContent({ id }: { id: string }) {
       };
       setTimeout(() => {
         setLastTxResult(txResult);
-        setAmount("");
-        setZapAmount("");
 
         // Show toast notification
         if (zapIsSuccess) {
+          setAmount("");
+          setZapAmount("");
           // Show success animation in form
           setShowTxSuccess({
             show: true,
@@ -1284,7 +1272,7 @@ export function VaultPageContent({ id }: { id: string }) {
           if (vault) trackZapSuccess(vault.id, zapDirection, zapDirection === "in" ? (zapInputToken?.symbol ?? "") : vault.symbol, zapDirection === "in" ? vault.symbol : (zapOutputToken?.symbol ?? ""), zapAmount || "0", zapQuote?.outputAmountFormatted ?? "0");
           toast.success("Zap successful!", {
             action: {
-              label: "View Tx",
+              label: "View",
               onClick: () => window.open(`https://etherscan.io/tx/${zapHash}`, "_blank"),
             },
           });
@@ -1302,9 +1290,9 @@ export function VaultPageContent({ id }: { id: string }) {
             TX_REVERTED_VISIBLE_MS,
           );
 
-          toast.error("Zap failed - transaction reverted", {
+          toast.error("Zap failed — transaction reverted", {
             action: {
-              label: "View Tx",
+              label: "View",
               onClick: () => window.open(`https://etherscan.io/tx/${zapHash}`, "_blank"),
             },
           });
@@ -1336,27 +1324,6 @@ export function VaultPageContent({ id }: { id: string }) {
       setTimeout(() => setPendingTxDetails(null), 0);
     }
   }, [zapActionError]);
-
-  // Show toast for quote errors (with friendly message and deduplication)
-  const lastQuoteErrorRef = useRef<string | null>(null);
-
-  // Clear error ref when inputs change (so new inputs can show the same error again)
-  useEffect(() => {
-    lastQuoteErrorRef.current = null;
-  }, [zapInputToken?.address, zapOutputToken?.address, debouncedZapAmount, zapDirection]);
-
-  useEffect(() => {
-    if (zapQuoteError) {
-      const friendlyMessage = parseQuoteError(zapQuoteError);
-      console.log("[TOAST ERROR] zapQuoteError:", zapQuoteError, "friendly:", friendlyMessage);
-      // Only show toast if it's a different error message
-      if (lastQuoteErrorRef.current !== friendlyMessage) {
-        lastQuoteErrorRef.current = friendlyMessage;
-        toast.error(friendlyMessage);
-      }
-    }
-    // Don't clear ref on success - prevents duplicate toasts when same error recurs during retries
-  }, [zapQuoteError]);
 
   return (
     <div className="min-h-screen bg-[var(--background)] overflow-x-hidden">
@@ -2303,19 +2270,16 @@ export function VaultPageContent({ id }: { id: string }) {
                             {aboveMarketWarning(zapQuote?.priceImpact)}
                           </p>
                         )}
-                        {/* Show value - for zap in, use output (vault shares) × underlying price */}
+                        {/* Value of the zap output, in USD, from the quote */}
                         <div className="flex items-center justify-between py-1">
                           <span className="text-[var(--muted-foreground)]">Value</span>
                           <span className="mono">
-                            {zapQuote ? (
-                              <>~${(
-                                zapDirection === "in"
-                                  ? Number(zapQuote.outputAmountFormatted) * pricePerShare * underlyingPrice
-                                  : Number(zapAmount) * pricePerShare * underlyingPrice
-                              ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</>
-                            ) : (
-                              "—"
-                            )}
+                            {zapQuote?.outputUsdValue != null
+                              ? `~$${zapQuote.outputUsdValue.toLocaleString(undefined, {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}`
+                              : "—"}
                           </span>
                         </div>
                       </div>
@@ -2396,7 +2360,9 @@ export function VaultPageContent({ id }: { id: string }) {
                             "Enter amount"
                           ) : hasZapInsufficientBalance ? (
                             "Insufficient balance"
-                          ) : !zapQuote ? (
+                          ) : zapNoRoute && zapQuoteError?.message.toLowerCase().includes("temporarily unavailable") ? (
+                            "Route temporarily unavailable"
+                          ) : zapNoRoute || !zapQuote ? (
                             "No route found"
                           ) : zapNeedsApproval() ? (
                             "Approve & zap"
@@ -2460,7 +2426,7 @@ export function VaultPageContent({ id }: { id: string }) {
                       {/* Route details panel */}
                       <div
                         className="grid transition-[grid-template-rows] duration-300 ease-in-out"
-                        style={{ gridTemplateRows: showRoute && zapAmount && Number(zapAmount) > 0 && (zapQuote || zapQuoteSettling) ? "1fr" : "0fr" }}
+                        style={{ gridTemplateRows: showRoute && zapHasRouteContent ? "1fr" : "0fr" }}
                       >
                         <div className="overflow-hidden">
                           <div className="pt-3 mt-3 border-t border-[var(--border)]">
@@ -2472,6 +2438,8 @@ export function VaultPageContent({ id }: { id: string }) {
                               inputAmount={zapAmount ? Number(zapAmount).toFixed(4) : undefined}
                               outputAmount={zapQuote?.outputAmountFormatted ? Number(zapQuote.outputAmountFormatted).toFixed(4) : undefined}
                               isLoading={zapQuoteSettling}
+                              errorMessage={zapRouteErrorMessage}
+                              onRetry={retryZapQuote}
                             />
                           </div>
                         </div>

@@ -545,6 +545,23 @@ describe("ZapPageContent", () => {
     expect(mockUseUniversalZap).toHaveBeenLastCalledWith(expect.objectContaining({ autoRefresh: true }));
   });
 
+  it("pauses the quote while the wallet prompt is open", async () => {
+    const { rerender } = render(<ZapPageContent />);
+    expect(mockUseUniversalZap).toHaveBeenLastCalledWith(expect.objectContaining({ paused: false }));
+
+    const idleZap = mockUseZapActions.mock.results.at(-1)?.value as ReturnType<typeof useZapActions>;
+    mockUseZapActions.mockReturnValue({
+      ...idleZap,
+      status: "zapping",
+      isLoading: true,
+    });
+    rerender(<ZapPageContent />);
+
+    await waitFor(() => {
+      expect(mockUseUniversalZap).toHaveBeenLastCalledWith(expect.objectContaining({ paused: true }));
+    });
+  });
+
   it("shows the pending tx card while preparing and awaiting on-chain confirmation", () => {
     sessionStorage.setItem("yldfi-universal-zap-v2-amount", "0.1");
     const preparingZap = {

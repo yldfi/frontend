@@ -338,6 +338,8 @@ export function ZapPageContent() {
 
   // An action held back until the user types CONFIRM for a high-price-impact quote.
   const [pendingImpactAction, setPendingImpactAction] = useState<{ label: string; run: () => void } | null>(null);
+  // Pause quote fetching while the wallet prompt is open (same as the vault zap tab).
+  const [zapInProgress, setZapInProgress] = useState(false);
 
   // Quote (debounced for rate-limit friendliness)
   const debouncedAmount = useDebouncedValue(amount, 500);
@@ -358,7 +360,7 @@ export function ZapPageContent() {
     outputToken,
     inputAmount: debouncedAmount,
     slippage,
-    paused: sameToken || showSimulationModal || isSimulatingPreview || pendingImpactAction !== null,
+    paused: sameToken || showSimulationModal || isSimulatingPreview || pendingImpactAction !== null || zapInProgress,
     autoRefresh: !isIdle,
   });
   const quoteIsCurrent = !!(
@@ -449,6 +451,12 @@ export function ZapPageContent() {
     safePending,
     batchesApproval,
   } = useZapActions(quote ?? null, { quoteUpdatedAt, onStaleQuote: handleStaleQuote });
+
+  // Sync zapInProgress with isLoading to pause quote fetching during the wallet prompt
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setZapInProgress(isLoading);
+  }, [isLoading]);
 
   const showApprovalCard = !!(
     pendingApproval &&
