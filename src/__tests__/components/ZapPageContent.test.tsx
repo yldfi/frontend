@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
+import { useState } from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useConnectModal } from "@rainbow-me/rainbowkit";
-import { useAccount, useBalance, useBlockNumber, useGasPrice } from "wagmi";
+import { useAccount, useBalance, useBlockNumber, useGasPrice, usePublicClient } from "wagmi";
 
 import { ZapPageContent } from "@/components/ZapPageContent";
 import { useSettings } from "@/hooks/useSettings";
@@ -25,6 +26,7 @@ vi.mock("wagmi", () => ({
   useBalance: vi.fn(),
   useBlockNumber: vi.fn(),
   useGasPrice: vi.fn(),
+  usePublicClient: vi.fn(),
 }));
 
 vi.mock("@rainbow-me/rainbowkit", () => ({
@@ -110,13 +112,22 @@ vi.mock("@/components/SimulationModal", () => ({
     onConfirm,
     onClose,
     confirmText,
+    ethPrice,
+    simulationResult,
   }: {
     isOpen: boolean;
     onConfirm: () => void;
     onClose: () => void;
     confirmText?: string;
+    ethPrice?: number | null;
+    simulationResult?: { simulationUnavailable?: boolean; simulationUnavailableReason?: string };
   }) => isOpen ? (
-    <div data-testid="simulation-modal">
+    <div
+      data-testid="simulation-modal"
+      data-eth-price={ethPrice ?? ""}
+      data-simulation-unavailable={simulationResult?.simulationUnavailable ? "true" : "false"}
+      data-simulation-unavailable-reason={simulationResult?.simulationUnavailableReason ?? ""}
+    >
       <button type="button" onClick={onConfirm}>{confirmText ?? "Confirm"}</button>
       <button type="button" onClick={onClose}>Close simulation</button>
     </div>
@@ -127,6 +138,7 @@ const mockUseAccount = vi.mocked(useAccount);
 const mockUseBalance = vi.mocked(useBalance);
 const mockUseBlockNumber = vi.mocked(useBlockNumber);
 const mockUseGasPrice = vi.mocked(useGasPrice);
+const mockUsePublicClient = vi.mocked(usePublicClient);
 const mockUseConnectModal = vi.mocked(useConnectModal);
 const mockUseSettings = vi.mocked(useSettings);
 const mockUseUniversalZap = vi.mocked(useUniversalZap);
@@ -202,6 +214,10 @@ describe("ZapPageContent", () => {
     mockUseBlockNumber.mockReturnValue({
       data: 1n,
     } as ReturnType<typeof useBlockNumber>);
+
+    mockUsePublicClient.mockReturnValue({
+      readContract: vi.fn(async () => [0n, 100_000_000n]),
+    } as unknown as ReturnType<typeof usePublicClient>);
 
     mockUseConnectModal.mockReturnValue({
       connectModalOpen: false,
@@ -527,6 +543,23 @@ describe("ZapPageContent", () => {
   it("passes autoRefresh to the quote hook (on while active)", () => {
     render(<ZapPageContent />);
     expect(mockUseUniversalZap).toHaveBeenLastCalledWith(expect.objectContaining({ autoRefresh: true }));
+  });
+
+  it("pauses the quote while the wallet prompt is open", async () => {
+    const { rerender } = render(<ZapPageContent />);
+    expect(mockUseUniversalZap).toHaveBeenLastCalledWith(expect.objectContaining({ paused: false }));
+
+    const idleZap = mockUseZapActions.mock.results.at(-1)?.value as ReturnType<typeof useZapActions>;
+    mockUseZapActions.mockReturnValue({
+      ...idleZap,
+      status: "zapping",
+      isLoading: true,
+    });
+    rerender(<ZapPageContent />);
+
+    await waitFor(() => {
+      expect(mockUseUniversalZap).toHaveBeenLastCalledWith(expect.objectContaining({ paused: true }));
+    });
   });
 
   it("shows the pending tx card while preparing and awaiting on-chain confirmation", () => {
@@ -1162,6 +1195,102 @@ describe("ZapPageContent", () => {
 
       expect(screen.queryByRole("dialog")).toBeNull();
       await waitFor(() => expect(executeZap).toHaveBeenCalledWith());
+    });
+  });
+
+  it("says the pending card is waiting for the Safe and its signatures", () => {
+    sessionStorage.setItem("yldfi-universal-zap-v2-amount", "0.1");
+    mockUseZapActions.mockReturnValue({
+      needsApproval: () => false,
+      approve,
+      executeZap,
+      reset,
+      status: "zapping",
+      error: null,
+      isLoading: true,
+      isSuccess: false,
+      isReverted: false,
+      zapHash: undefined,
+      pendingApproval: null,
+      approvalProgress: null,
+      isApproving: false,
+      refetchAllowance,
+      isFlashbotsEnabled: false,
+      isFlashbotsSupported: false,
+      toggleFlashbots,
+      safePending: {
+        isAwaitingExecution: true,
+        confirmations: 2,
+        confirmationsRequired: 3,
+        executedHash: null,
+        outcome: null,
+      },
+      batchesApproval: false,
+      isSimulationForCurrentQuote: () => true,
+      simulationResult: null,
+    } as ReturnType<typeof useZapActions>);
+
+    render(<ZapPageContent />);
+
+    expect(screen.getByText("Waiting for Safe")).toBeTruthy();
+    expect(
+      screen.getByText("2 of 3 signatures collected. Sign and execute it in your Safe. This page updates once it's on-chain."),
+    ).toBeTruthy();
+  });
+
+  it("reads the ETH/USD price when the simulation preview opens", async () => {
+    sessionStorage.setItem("yldfi-universal-zap-v2-amount", "0.1");
+    mockUseSettings.mockImplementation(() => {
+      const [showSimulationModal, setShowSimulationModal] = useState(false);
+      return {
+        slippage: "50",
+        updateSlippage,
+        showSlippageModal: false,
+        setShowSlippageModal,
+        showSimulationPreview: true,
+        refreshSimulationPreview,
+        showSimulationModal,
+        setShowSimulationModal,
+        showRoute: true,
+        toggleRoute,
+        setShowSimulationPreview: vi.fn(),
+      };
+    });
+    mockUseZapActions.mockReturnValue({
+      needsApproval: () => false,
+      approve,
+      executeZap,
+      reset,
+      status: "idle",
+      error: null,
+      isLoading: false,
+      isSuccess: false,
+      isReverted: false,
+      zapHash: undefined,
+      pendingApproval: null,
+      approvalProgress: null,
+      isApproving: false,
+      refetchAllowance,
+      isFlashbotsEnabled: false,
+      isFlashbotsSupported: false,
+      toggleFlashbots,
+      safePending: null,
+      batchesApproval: false,
+      isSimulationForCurrentQuote: () => true,
+      simulationResult: {
+        simulationId: "test-simulation",
+        success: true,
+        gasUsed: 123456,
+        errorMessage: null,
+        tenderlyUrl: null,
+        assetChanges: [],
+      } satisfies SimulationResult,
+    } as ReturnType<typeof useZapActions>);
+
+    render(<ZapPageContent />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simulation-modal").getAttribute("data-eth-price")).toBe("1");
     });
   });
 });

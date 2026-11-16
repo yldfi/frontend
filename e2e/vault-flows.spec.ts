@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures/api-mocks";
 import { mockZapIntent } from "./fixtures/intent-mocks";
-import { connectTestWallet, injectTestWallet } from "./fixtures/wallet";
+import { connectTestWallet, injectTestWallet, mockNativeBalance } from "./fixtures/wallet";
 import {
   mockZapInBundleResponse,
   mockZapOutBundleResponse,
@@ -113,6 +113,7 @@ test.describe("Zap In quotes (test wallet)", () => {
 
   test.beforeEach(async ({ page }) => {
     await injectTestWallet(page);
+    await mockNativeBalance(page);
     intentCalls = await mockZapIntent(page, mockZapInBundleResponse);
     await page.goto("/vaults/yscvxcrv");
     await connectTestWallet(page);

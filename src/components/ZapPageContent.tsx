@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useAccount, useBalance, useBlockNumber, useGasPrice } from "wagmi";
+import { useAccount, useBalance, useBlockNumber, useGasPrice, usePublicClient } from "wagmi";
 import { parseUnits, formatUnits, isAddress } from "viem";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { ArrowUpDown, ArrowRightLeft, Check, ChevronRight, ExternalLink, Route, RouteOff, X, Zap } from "lucide-react";
@@ -18,13 +18,14 @@ import { LoadingDots } from "@/components/LoadingDots";
 import { RouteDisplay } from "@/components/RouteDisplay";
 import { SlippageModal } from "@/components/SlippageModal";
 import { SimulationModal } from "@/components/SimulationModal";
-import { PriceImpactConfirmModal, needsPriceImpactConfirm } from "@/components/PriceImpactConfirmModal";
+import { PriceImpactConfirmModal } from "@/components/PriceImpactConfirmModal";
 import { TxPendingCard } from "@/components/TxPendingCard";
 
 import { useUniversalZap } from "@/hooks/useUniversalZap";
 import { useZapActions } from "@/hooks/useZapActions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useIdle } from "@/hooks/useIdle";
+import { useQuoteGuards } from "@/hooks/useQuoteGuards";
 import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { useSettings } from "@/hooks/useSettings";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
@@ -32,11 +33,13 @@ import { useTokenBalances } from "@/hooks/useTokenBalances";
 import { ETH_ADDRESS, applyKnownTokenMetadata, getCustomTokenMetadata } from "@/lib/enso";
 import { cn, formatDisplayAmount } from "@/lib/utils";
 import { parseQuoteError } from "@/lib/quote-errors";
-import { QUOTE_IDLE_MS, isQuoteOlderThan } from "@/lib/quote-freshness";
+import { QUOTE_IDLE_MS } from "@/lib/quote-freshness";
 import { aboveMarketWarning, priceImpactClassName } from "@/lib/price-impact";
 import { isSameAmount, sanitizeAmount } from "@/lib/sanitize";
 import { fillMissingSimulationUsd } from "@/lib/simulation-pricing";
 import { getMaxEthAmount } from "@/lib/eth-gas";
+import { readEthUsdPrice } from "@/lib/eth-usd-price";
+import { parseStoredToken } from "@/lib/stored-token";
 import { TOKENS, VAULTS, isVaultEntryDisabled } from "@/config/vaults";
 import {
   getPendingTxCopy,
@@ -115,36 +118,6 @@ function loadImportedToken(address: string): EnsoToken | undefined {
   }
 }
 
-// Shape check only: an entry under the versioned prefix was written by this
-// build from a token the user picked, so its metadata can be shown. A URL
-// never writes here.
-function toStoredToken(parsed: unknown): EnsoToken | undefined {
-  if (typeof parsed !== "object" || parsed === null) return undefined;
-  const candidate = parsed as Record<string, unknown>;
-  if (typeof candidate.address !== "string" || !isAddress(candidate.address)) return undefined;
-  if (
-    typeof candidate.symbol !== "string" ||
-    candidate.symbol.length === 0 ||
-    candidate.symbol.length > 32
-  ) {
-    return undefined;
-  }
-  const decimals = candidate.decimals;
-  if (typeof decimals !== "number" || !Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
-    return undefined;
-  }
-  if (candidate.chainId !== undefined && candidate.chainId !== 1) return undefined;
-  return {
-    address: candidate.address,
-    chainId: 1,
-    name: typeof candidate.name === "string" && candidate.name ? candidate.name : candidate.symbol,
-    symbol: candidate.symbol,
-    decimals,
-    logoURI: typeof candidate.logoURI === "string" ? candidate.logoURI : undefined,
-    type: candidate.type === "defi" ? "defi" : "base",
-  };
-}
-
 // A rejected entry must not leave an amount behind: applying a stored amount to
 // a different token would quote a number the user never typed for it.
 function clearStoredAmount() {
@@ -161,7 +134,7 @@ function loadToken(key: string, fallback: EnsoToken): EnsoToken {
   try {
     const saved = sessionStorage.getItem(`${STORAGE_PREFIX}-${key}`);
     if (!saved) return normalizedFallback;
-    const stored = toStoredToken(JSON.parse(saved));
+    const stored = parseStoredToken(saved);
     if (!stored) {
       clearStoredAmount();
       return normalizedFallback;
@@ -228,6 +201,7 @@ export function ZapPageContent() {
   const { openConnectModal } = useConnectModal();
   const { data: gasPrice } = useGasPrice();
   const { data: currentBlock } = useBlockNumber({ watch: true });
+  const publicClient = usePublicClient();
 
   const {
     slippage,
@@ -242,6 +216,7 @@ export function ZapPageContent() {
     toggleRoute,
   } = useSettings();
   const [isSimulatingPreview, setIsSimulatingPreview] = useState(false);
+  const [ethPrice, setEthPrice] = useState<number | null>(null);
   const [rateInverted, setRateInverted] = useState(false);
   const [requestedInput] = useState(() =>
     loadRequestedToken("input", loadToken("input", DEFAULT_ETH_TOKEN)),
@@ -363,6 +338,8 @@ export function ZapPageContent() {
 
   // An action held back until the user types CONFIRM for a high-price-impact quote.
   const [pendingImpactAction, setPendingImpactAction] = useState<{ label: string; run: () => void } | null>(null);
+  // Pause quote fetching while the wallet prompt is open (same as the vault zap tab).
+  const [zapInProgress, setZapInProgress] = useState(false);
 
   // Quote (debounced for rate-limit friendliness)
   const debouncedAmount = useDebouncedValue(amount, 500);
@@ -383,28 +360,9 @@ export function ZapPageContent() {
     outputToken,
     inputAmount: debouncedAmount,
     slippage,
-    paused: sameToken || showSimulationModal || isSimulatingPreview || pendingImpactAction !== null,
+    paused: sameToken || showSimulationModal || isSimulatingPreview || pendingImpactAction !== null || zapInProgress,
     autoRefresh: !isIdle,
   });
-  const isQuoteTooOld = useCallback(
-    () => isQuoteOlderThan(quoteUpdatedAt),
-    [quoteUpdatedAt],
-  );
-  // The hook refuses to execute an old quote (e.g. when an approval took minutes to mine).
-  const handleStaleQuote = useCallback(({ afterApproval }: { afterApproval: boolean }) => {
-    void refetchQuote();
-    toast.info(
-      afterApproval
-        ? "Approval confirmed. The quote was refreshed while it was pending — check the new amounts, then zap."
-        : "Quote refreshed. Check the new amounts, then try again.",
-    );
-  }, [refetchQuote]);
-  // Back from idle: re-quote right away if the one on screen has aged.
-  const wasIdleRef = useRef(false);
-  useEffect(() => {
-    if (wasIdleRef.current && !isIdle && isQuoteTooOld()) void refetchQuote();
-    wasIdleRef.current = isIdle;
-  }, [isIdle, isQuoteTooOld, refetchQuote]);
   const quoteIsCurrent = !!(
     rawQuote &&
     amount &&
@@ -426,6 +384,14 @@ export function ZapPageContent() {
     (!!rawQuote && !quoteIsCurrent) ||
     targetQuoteNeedsAdjustment
   );
+
+  const { refreshIfQuoteTooOld, handleStaleQuote, guardHighImpact } = useQuoteGuards({
+    quoteUpdatedAt,
+    refetch: refetchQuote,
+    isIdle,
+    priceImpact: quote?.priceImpact,
+    setPendingImpactAction,
+  });
 
   useEffect(() => {
     if (!requestedOutputAmount || !quoteIsCurrent || !rawQuote || targetQuoteAdjustments >= 2) return;
@@ -485,6 +451,12 @@ export function ZapPageContent() {
     safePending,
     batchesApproval,
   } = useZapActions(quote ?? null, { quoteUpdatedAt, onStaleQuote: handleStaleQuote });
+
+  // Sync zapInProgress with isLoading to pause quote fetching during the wallet prompt
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setZapInProgress(isLoading);
+  }, [isLoading]);
 
   const showApprovalCard = !!(
     pendingApproval &&
@@ -643,9 +615,12 @@ export function ZapPageContent() {
       !showSimulationModal
     ) {
       setShowSimulationModal(true);
+      if (publicClient) {
+        readEthUsdPrice(publicClient).then(setEthPrice).catch(() => {});
+      }
     }
     prevSimulationResultRef.current = simulationResult;
-  }, [showSimulationPreview, simulationResult, status, showSimulationModal, setShowSimulationModal]);
+  }, [showSimulationPreview, simulationResult, status, showSimulationModal, setShowSimulationModal, publicClient]);
 
   const runSimulationPreview = useCallback(async () => {
     if (!quote) return null;
@@ -654,27 +629,16 @@ export function ZapPageContent() {
       const result = await executeZap({ previewOnly: true });
       if (result) {
         setShowSimulationModal(true);
+        // Fetch ETH price for gas cost display
+        if (publicClient) {
+          readEthUsdPrice(publicClient).then(setEthPrice).catch(() => {});
+        }
       }
       return result;
     } finally {
       setIsSimulatingPreview(false);
     }
-  }, [quote, executeZap, setShowSimulationModal]);
-
-  // Approving also auto-executes the zap once the approval mines, so both entry points are gated.
-  // Never send a transaction built from an old quote (auto-refresh pauses while
-  // idle): refresh it and let the user check the new numbers first.
-  const refreshIfQuoteTooOld = (): boolean => {
-    if (!isQuoteTooOld()) return false;
-    void refetchQuote();
-    toast.info("Quote refreshed. Check the new amounts, then try again.");
-    return true;
-  };
-  const guardHighImpact = (label: string, run: () => void) => {
-    if (refreshIfQuoteTooOld()) return;
-    if (needsPriceImpactConfirm(quote?.priceImpact)) setPendingImpactAction({ label, run });
-    else run();
-  };
+  }, [quote, executeZap, publicClient, setShowSimulationModal]);
 
   const handleExecuteZap = useCallback(async () => {
     clearCompletionResetTimer();
@@ -755,7 +719,7 @@ export function ZapPageContent() {
       : (isTxStateVisible && submittedActionKind) || quote?.directVault?.action || "zap";
   const effectiveHash = isDebugActive ? debugHash : zapHash;
   const effectivePendingDetails = isDebugActive ? debugTxDetails : pendingTxDetails;
-  const pendingCopy = getPendingTxCopy(Boolean(effectiveHash), actionKind);
+  const pendingCopy = getPendingTxCopy(Boolean(effectiveHash), actionKind, safePending);
   const successCopy = getSuccessTxCopy(actionKind);
   const revertedCopy = getRevertedTxCopy(actionKind);
 
@@ -1251,6 +1215,7 @@ export function ZapPageContent() {
             simulationUnavailableReason: simulationResult.simulationUnavailableReason,
           }}
           gasPrice={gasPrice}
+          ethPrice={ethPrice}
           routePriceImpact={quote?.priceImpact ?? null}
           confirmText={actionKind === "zap" ? "Confirm Zap" : actionKind === "deposit" ? "Confirm Deposit" : "Confirm Withdraw"}
         />

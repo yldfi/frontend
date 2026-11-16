@@ -18,7 +18,7 @@ import { TxPendingCard } from "@/components/TxPendingCard";
 import { ContractExplorer, useContractExplorer, type ExplorerContract } from "@/components/ContractExplorer";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
-import { PriceImpactConfirmModal, needsPriceImpactConfirm } from "@/components/PriceImpactConfirmModal";
+import { PriceImpactConfirmModal } from "@/components/PriceImpactConfirmModal";
 import { parseQuoteError } from "@/lib/quote-errors";
 import { isSameAmount, sanitizeAmount } from "@/lib/sanitize";
 import { fillMissingSimulationUsd } from "@/lib/simulation-pricing";
@@ -46,7 +46,8 @@ import { useZapQuote } from "@/hooks/useZapQuote";
 import { useZapActions } from "@/hooks/useZapActions";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useIdle } from "@/hooks/useIdle";
-import { QUOTE_IDLE_MS, isQuoteOlderThan } from "@/lib/quote-freshness";
+import { useQuoteGuards } from "@/hooks/useQuoteGuards";
+import { QUOTE_IDLE_MS } from "@/lib/quote-freshness";
 import { aboveMarketWarning, priceImpactClassName } from "@/lib/price-impact";
 import { useClearOnNavigation } from "@/hooks/useClearOnNavigation";
 import { useAutoContinueAfterApproval } from "@/hooks/useAutoContinueAfterApproval";
@@ -54,8 +55,9 @@ import { DEFAULT_ETH_TOKEN } from "@/hooks/useEnsoTokens";
 import { TokenSelector } from "@/components/TokenSelector";
 import { ETH_ADDRESS, applyKnownTokenMetadata } from "@/lib/enso";
 import { getMaxEthAmount } from "@/lib/eth-gas";
+import { readEthUsdPrice } from "@/lib/eth-usd-price";
+import { parseStoredToken } from "@/lib/stored-token";
 import { getVaultFormBalanceAddresses } from "@/lib/vault-form-balances";
-import { CHAINLINK_ETH_USD } from "@/config/addresses";
 import {
   getVault,
   getVaultByAddress,
@@ -164,6 +166,8 @@ export function VaultPageContent({ id }: { id: string }) {
     errorMessage?: string;
     tenderlyUrl?: string;
     assetChanges: { type: "send" | "receive"; symbol: string; amount: string; logo?: string; dollarValue?: number }[];
+    simulationUnavailable?: boolean;
+    simulationUnavailableReason?: string;
   } | null>(null);
 
   // DEBUG: Draggable panel position (persisted to localStorage)
@@ -370,8 +374,22 @@ export function VaultPageContent({ id }: { id: string }) {
     if (typeof window === "undefined") return applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     try {
       const saved = sessionStorage.getItem(`yldfi-zap-input-token-${id}`);
-      return saved ? applyKnownTokenMetadata(JSON.parse(saved) as EnsoToken) : applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
+      const stored = saved ? parseStoredToken(saved) : null;
+      if (saved && !stored) {
+        // A rejected entry must not leave an amount behind: applying a stored amount to a different token would quote a number the user never typed for it.
+        try {
+          sessionStorage.removeItem(`yldfi-zap-amount-${id}`);
+        } catch {
+          // sessionStorage unavailable
+        }
+      }
+      return applyKnownTokenMetadata(stored ?? DEFAULT_ETH_TOKEN);
     } catch {
+      try {
+        sessionStorage.removeItem(`yldfi-zap-amount-${id}`);
+      } catch {
+        // sessionStorage unavailable
+      }
       return applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     }
   });
@@ -392,8 +410,22 @@ export function VaultPageContent({ id }: { id: string }) {
     if (typeof window === "undefined") return applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     try {
       const saved = sessionStorage.getItem(`yldfi-zap-output-token-${id}`);
-      return saved ? applyKnownTokenMetadata(JSON.parse(saved) as EnsoToken) : applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
+      const stored = saved ? parseStoredToken(saved) : null;
+      if (saved && !stored) {
+        // A rejected entry must not leave an amount behind: applying a stored amount to a different token would quote a number the user never typed for it.
+        try {
+          sessionStorage.removeItem(`yldfi-zap-amount-${id}`);
+        } catch {
+          // sessionStorage unavailable
+        }
+      }
+      return applyKnownTokenMetadata(stored ?? DEFAULT_ETH_TOKEN);
     } catch {
+      try {
+        sessionStorage.removeItem(`yldfi-zap-amount-${id}`);
+      } catch {
+        // sessionStorage unavailable
+      }
       return applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     }
   });
@@ -493,28 +525,11 @@ export function VaultPageContent({ id }: { id: string }) {
     slippage: zapSlippage, updateSlippage, showSlippageModal, setShowSlippageModal,
     showSimulationPreview, refreshSimulationPreview,
     showSimulationModal, setShowSimulationModal,
+    showRoute, toggleRoute,
   } = useSettings();
   // An action held back until the user types CONFIRM for a high-price-impact zap quote.
   const [pendingImpactAction, setPendingImpactAction] = useState<{ label: string; run: () => void } | null>(null);
   const [zapInProgress, setZapInProgress] = useState(false);
-  // Route display toggle with localStorage persistence (vault uses different key: yldfi-show-route)
-  const [showRoute, setShowRoute] = useState(() => {
-    if (typeof window === "undefined") return false;
-    try {
-      return localStorage.getItem("yldfi-show-route") === "true";
-    } catch {
-      return false;
-    }
-  });
-  const toggleRoute = () => {
-    const newValue = !showRoute;
-    setShowRoute(newValue);
-    try {
-      localStorage.setItem("yldfi-show-route", String(newValue));
-    } catch {
-      // localStorage unavailable
-    }
-  };
   const [isSimulatingPreview, setIsSimulatingPreview] = useState(false);
   const [ethPrice, setEthPrice] = useState<number | null>(null);
   const { data: currentBlock } = useBlockNumber({ watch: true });
@@ -771,37 +786,25 @@ export function VaultPageContent({ id }: { id: string }) {
     zapQuoteLoading ||
     (!!rawZapQuote && !zapQuoteIsCurrent)
   );
-  const isZapQuoteTooOld = useCallback(() => isQuoteOlderThan(zapQuoteUpdatedAt), [zapQuoteUpdatedAt]);
-  // Back from idle: re-quote right away if the one on screen has aged.
-  const wasZapIdleRef = useRef(false);
-  useEffect(() => {
-    if (wasZapIdleRef.current && !isZapIdle && isZapQuoteTooOld()) void refetchZapQuote();
-    wasZapIdleRef.current = isZapIdle;
-  }, [isZapIdle, isZapQuoteTooOld, refetchZapQuote]);
-  // Zap sends the on-screen quote's calldata as-is: never send an old one.
-  const refreshIfZapQuoteTooOld = (): boolean => {
-    if (!isZapQuoteTooOld()) return false;
-    void refetchZapQuote();
-    toast.info("Quote refreshed. Check the new amounts, then try again.");
-    return true;
-  };
-  // The hook refuses to execute an old quote too (e.g. when an approval took minutes to mine).
-  const handleStaleZapQuote = useCallback(({ afterApproval }: { afterApproval: boolean }) => {
-    void refetchZapQuote();
-    toast.info(
-      afterApproval
-        ? "Approval confirmed. The quote was refreshed while it was pending — check the new amounts, then zap."
-        : "Quote refreshed. Check the new amounts, then try again.",
-    );
-  }, [refetchZapQuote]);
+  // Keep the route panel mounted when a quote fails so it shows an error instead of vanishing.
+  const zapNoRoute = !zapQuoteSettling && !!zapQuoteError && !!zapAmount && Number(zapAmount) > 0;
+  const zapHasRouteContent = !!zapAmount && Number(zapAmount) > 0 && (!!zapQuote || zapQuoteSettling || zapNoRoute);
+  const zapRouteErrorMessage = zapNoRoute ? parseQuoteError(zapQuoteError) : undefined;
+  const retryZapQuote = () => void refetchZapQuote();
+  const {
+    refreshIfQuoteTooOld: refreshIfZapQuoteTooOld,
+    handleStaleQuote: handleStaleZapQuote,
+    guardHighImpact,
+  } = useQuoteGuards({
+    quoteUpdatedAt: zapQuoteUpdatedAt,
+    refetch: refetchZapQuote,
+    isIdle: isZapIdle,
+    priceImpact: zapQuote?.priceImpact,
+    setPendingImpactAction,
+  });
 
-  // Every zap entry point (button, simulation preview fall-through, approve -> auto-execute)
-  // runs through this, so a high-impact zap cannot start without the typed confirmation.
-  const guardHighImpact = (label: string, run: () => void) => {
-    if (refreshIfZapQuoteTooOld()) return;
-    if (needsPriceImpactConfirm(zapQuote?.priceImpact)) setPendingImpactAction({ label, run });
-    else run();
-  };
+  // Every zap entry point (button, approve -> auto-execute) runs through this,
+  // so a high-impact zap cannot start without the typed confirmation.
 
   // Zap actions (approve + execute)
   const {
@@ -923,11 +926,7 @@ export function VaultPageContent({ id }: { id: string }) {
       simulationBlock.current = currentBlock ?? 0n;
       setShowSimulationModal(true);
       if (publicClient) {
-        publicClient.readContract({
-          address: CHAINLINK_ETH_USD,
-          abi: [{ name: "latestRoundData", type: "function", stateMutability: "view", inputs: [], outputs: [{ name: "roundId", type: "uint80" }, { name: "answer", type: "int256" }, { name: "startedAt", type: "uint256" }, { name: "updatedAt", type: "uint256" }, { name: "answeredInRound", type: "uint80" }] }],
-          functionName: "latestRoundData",
-        }).then(data => { setEthPrice(Number(data[1] as bigint) / 1e8); }).catch(() => {});
+        readEthUsdPrice(publicClient).then(setEthPrice).catch(() => {});
       }
     }
     prevZapSimResult.current = simulationResult;
@@ -945,26 +944,7 @@ export function VaultPageContent({ id }: { id: string }) {
         setShowSimulationModal(true);
         // Fetch ETH price for gas cost display
         if (publicClient) {
-          publicClient.readContract({
-            address: CHAINLINK_ETH_USD,
-            abi: [{
-              name: "latestRoundData",
-              type: "function",
-              stateMutability: "view",
-              inputs: [],
-              outputs: [
-                { name: "roundId", type: "uint80" },
-                { name: "answer", type: "int256" },
-                { name: "startedAt", type: "uint256" },
-                { name: "updatedAt", type: "uint256" },
-                { name: "answeredInRound", type: "uint80" },
-              ],
-            }],
-            functionName: "latestRoundData",
-          }).then(resultData => {
-            const answer = resultData[1] as bigint;
-            setEthPrice(Number(answer) / 1e8);
-          }).catch(() => { });
+          readEthUsdPrice(publicClient).then(setEthPrice).catch(() => {});
         }
       }
       return result;
@@ -995,12 +975,16 @@ export function VaultPageContent({ id }: { id: string }) {
     if (!zapAmount || Number(zapAmount) === 0) return false;
     try {
       if (zapDirection === "in") {
-        if (!zapInputBalance) return false;
+        // An unknown input balance is not a balance of zero-plus: wait until it
+        // is known before letting the user send (same as the zap page).
+        if (!zapInputBalance) return true;
         const inputBigInt = parseUnits(zapAmount, zapInputBalance.decimals);
         return inputBigInt > zapInputBalance.value;
       } else {
+        const shareBalance = vaultBalanceRaw as bigint | undefined;
+        if (shareBalance === undefined) return true;
         const inputBigInt = parseUnits(zapAmount, vaultDecimals);
-        return inputBigInt > vaultBalanceRaw;
+        return inputBigInt > shareBalance;
       }
     } catch {
       return zapDirection === "in" ? Number(zapAmount) > zapInputBalanceNum : Number(zapAmount) > vaultBalance;
@@ -1020,26 +1004,7 @@ export function VaultPageContent({ id }: { id: string }) {
         setShowSimulationModal(true);
         // Fetch ETH price for gas cost display
         if (publicClient) {
-          publicClient.readContract({
-            address: CHAINLINK_ETH_USD,
-            abi: [{
-              name: "latestRoundData",
-              type: "function",
-              stateMutability: "view",
-              inputs: [],
-              outputs: [
-                { name: "roundId", type: "uint80" },
-                { name: "answer", type: "int256" },
-                { name: "startedAt", type: "uint256" },
-                { name: "updatedAt", type: "uint256" },
-                { name: "answeredInRound", type: "uint80" },
-              ],
-            }],
-            functionName: "latestRoundData",
-          }).then(resultData => {
-            const answer = resultData[1] as bigint;
-            setEthPrice(Number(answer) / 1e8);
-          }).catch(() => { });
+          readEthUsdPrice(publicClient).then(setEthPrice).catch(() => {});
         }
       }
       return result;
@@ -1310,11 +1275,11 @@ export function VaultPageContent({ id }: { id: string }) {
       };
       setTimeout(() => {
         setLastTxResult(txResult);
-        setAmount("");
-        setZapAmount("");
 
         // Show toast notification
         if (zapIsSuccess) {
+          setAmount("");
+          setZapAmount("");
           // Show success animation in form
           setShowTxSuccess({
             show: true,
@@ -1331,7 +1296,7 @@ export function VaultPageContent({ id }: { id: string }) {
           if (vault) trackZapSuccess(vault.id, zapDirection, zapDirection === "in" ? (zapInputToken?.symbol ?? "") : vault.symbol, zapDirection === "in" ? vault.symbol : (zapOutputToken?.symbol ?? ""), zapAmount || "0", zapQuote?.outputAmountFormatted ?? "0");
           toast.success("Zap successful!", {
             action: {
-              label: "View Tx",
+              label: "View",
               onClick: () => window.open(`https://etherscan.io/tx/${zapHash}`, "_blank"),
             },
           });
@@ -1349,9 +1314,9 @@ export function VaultPageContent({ id }: { id: string }) {
             TX_REVERTED_VISIBLE_MS,
           );
 
-          toast.error("Zap failed - transaction reverted", {
+          toast.error("Zap failed — transaction reverted", {
             action: {
-              label: "View Tx",
+              label: "View",
               onClick: () => window.open(`https://etherscan.io/tx/${zapHash}`, "_blank"),
             },
           });
@@ -1366,7 +1331,7 @@ export function VaultPageContent({ id }: { id: string }) {
       resetZapActions();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zapAmount, zapDirection, zapInputToken?.address, zapOutputToken?.address]);
+  }, [debouncedZapAmount, zapDirection, zapInputToken?.address, zapOutputToken?.address]);
 
   // Show toast notifications for errors
   useEffect(() => {
@@ -1380,29 +1345,9 @@ export function VaultPageContent({ id }: { id: string }) {
     if (zapActionError) {
       console.log("[TOAST ERROR] zapActionError:", zapActionError);
       toast.error(zapActionError);
+      setTimeout(() => setPendingTxDetails(null), 0);
     }
   }, [zapActionError]);
-
-  // Show toast for quote errors (with friendly message and deduplication)
-  const lastQuoteErrorRef = useRef<string | null>(null);
-
-  // Clear error ref when inputs change (so new inputs can show the same error again)
-  useEffect(() => {
-    lastQuoteErrorRef.current = null;
-  }, [zapInputToken?.address, zapOutputToken?.address, debouncedZapAmount, zapDirection]);
-
-  useEffect(() => {
-    if (zapQuoteError) {
-      const friendlyMessage = parseQuoteError(zapQuoteError);
-      console.log("[TOAST ERROR] zapQuoteError:", zapQuoteError, "friendly:", friendlyMessage);
-      // Only show toast if it's a different error message
-      if (lastQuoteErrorRef.current !== friendlyMessage) {
-        lastQuoteErrorRef.current = friendlyMessage;
-        toast.error(friendlyMessage);
-      }
-    }
-    // Don't clear ref on success - prevents duplicate toasts when same error recurs during retries
-  }, [zapQuoteError]);
 
   return (
     <div className="min-h-screen bg-[var(--background)] overflow-x-hidden">
@@ -2349,19 +2294,16 @@ export function VaultPageContent({ id }: { id: string }) {
                             {aboveMarketWarning(zapQuote?.priceImpact)}
                           </p>
                         )}
-                        {/* Show value - for zap in, use output (vault shares) × underlying price */}
+                        {/* Value of the zap output, in USD, from the quote */}
                         <div className="flex items-center justify-between py-1">
                           <span className="text-[var(--muted-foreground)]">Value</span>
                           <span className="mono">
-                            {zapQuote ? (
-                              <>~${(
-                                zapDirection === "in"
-                                  ? Number(zapQuote.outputAmountFormatted) * pricePerShare * underlyingPrice
-                                  : Number(zapAmount) * pricePerShare * underlyingPrice
-                              ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</>
-                            ) : (
-                              "—"
-                            )}
+                            {zapQuote?.outputUsdValue != null
+                              ? `~$${zapQuote.outputUsdValue.toLocaleString(undefined, {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}`
+                              : "—"}
                           </span>
                         </div>
                       </div>
@@ -2371,7 +2313,7 @@ export function VaultPageContent({ id }: { id: string }) {
                         show={showZapApprovalCard}
                         pendingApproval={zapPendingApproval}
                         approvalProgress={zapApprovalProgress}
-                        decimals={zapDirection === "in" ? (zapInputToken?.decimals ?? 18) : 18}
+                        decimals={zapDirection === "in" ? (zapInputToken?.decimals ?? 18) : vaultDecimals}
                         isApproving={zapIsApproving}
                         onApprove={(exact) => guardHighImpact("Approve & zap", () => zapApprove(exact))}
                       />
@@ -2420,6 +2362,18 @@ export function VaultPageContent({ id }: { id: string }) {
                         >
                           {isSimulatingPreview || showSimulationModal ? (
                             <>Simulating<LoadingDots /></>
+                          ) : zapSafePending ? (
+                            <>
+                              Waiting for Safe
+                              {zapSafePending.confirmationsRequired
+                                ? ` (${zapSafePending.confirmations}/${zapSafePending.confirmationsRequired} signed)`
+                                : ""}
+                              <LoadingDots />
+                            </>
+                          ) : zapStatus === "checkingApproval" ? (
+                            <>Checking approval<LoadingDots /></>
+                          ) : zapStatus === "waitingApproval" ? (
+                            <>Waiting for approval<LoadingDots /></>
                           ) : zapIsLoading ? (
                             <>Confirm in wallet<LoadingDots /></>
                           ) : zapQuoteSettling ? (
@@ -2430,8 +2384,12 @@ export function VaultPageContent({ id }: { id: string }) {
                             "Enter amount"
                           ) : hasZapInsufficientBalance ? (
                             "Insufficient balance"
-                          ) : !zapQuote ? (
+                          ) : zapNoRoute && zapQuoteError?.message.toLowerCase().includes("temporarily unavailable") ? (
+                            "Route temporarily unavailable"
+                          ) : zapNoRoute || !zapQuote ? (
                             "No route found"
+                          ) : zapNeedsApproval() ? (
+                            "Approve & zap"
                           ) : (
                             `Zap ${zapDirection === "in" ? "In" : "Out"}`
                           )}
@@ -2492,7 +2450,7 @@ export function VaultPageContent({ id }: { id: string }) {
                       {/* Route details panel */}
                       <div
                         className="grid transition-[grid-template-rows] duration-300 ease-in-out"
-                        style={{ gridTemplateRows: showRoute && zapAmount && Number(zapAmount) > 0 && (zapQuote || zapQuoteSettling) ? "1fr" : "0fr" }}
+                        style={{ gridTemplateRows: showRoute && zapHasRouteContent ? "1fr" : "0fr" }}
                       >
                         <div className="overflow-hidden">
                           <div className="pt-3 mt-3 border-t border-[var(--border)]">
@@ -2504,6 +2462,8 @@ export function VaultPageContent({ id }: { id: string }) {
                               inputAmount={zapAmount ? Number(zapAmount).toFixed(4) : undefined}
                               outputAmount={zapQuote?.outputAmountFormatted ? Number(zapQuote.outputAmountFormatted).toFixed(4) : undefined}
                               isLoading={zapQuoteSettling}
+                              errorMessage={zapRouteErrorMessage}
+                              onRetry={retryZapQuote}
                             />
                           </div>
                         </div>
@@ -2588,6 +2548,8 @@ export function VaultPageContent({ id }: { id: string }) {
                   },
                 })
               : effectiveSimulationResult.assetChanges as SimulationAssetChange[],
+            simulationUnavailable: effectiveSimulationResult.simulationUnavailable,
+            simulationUnavailableReason: effectiveSimulationResult.simulationUnavailableReason,
           }}
           gasPrice={gasPrice}
           ethPrice={ethPrice}

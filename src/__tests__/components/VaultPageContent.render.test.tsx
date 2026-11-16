@@ -39,10 +39,11 @@ import { useYearnVault } from "@/hooks/useYearnVault";
 import { useZapActions } from "@/hooks/useZapActions";
 import { useZapQuote } from "@/hooks/useZapQuote";
 import type { PendingApproval } from "@/types/approval";
+import { TX_REVERTED_VISIBLE_MS, TX_SUCCESS_VISIBLE_MS } from "@/lib/transaction-ui";
 import { notFound } from "next/navigation";
 import { toast } from "sonner";
 
-const settingsState = vi.hoisted(() => ({ showSimulationPreview: false }));
+const settingsState = vi.hoisted(() => ({ showSimulationPreview: false, toggleRoute: vi.fn() }));
 
 vi.mock("next/link", () => ({
   default: ({ href, children, ...props }: { href: string; children: ReactNode }) => (
@@ -126,7 +127,11 @@ vi.mock("@/components/ContractExplorer", () => ({
 }));
 
 vi.mock("@/components/RouteDisplay", () => ({
-  RouteDisplay: () => <div data-testid="route-display" />,
+  RouteDisplay: ({ errorMessage, onRetry }: { errorMessage?: string; onRetry?: () => void }) => (
+    <div data-testid="route-display" data-error={errorMessage ?? ""}>
+      {onRetry ? <button type="button" onClick={onRetry}>Retry route</button> : null}
+    </div>
+  ),
 }));
 
 vi.mock("@/components/TokenSelector", () => ({
@@ -143,18 +148,44 @@ vi.mock("@/components/SimulationModal", () => ({
     onConfirm,
     onClose,
     confirmText,
+    ethPrice,
+    simulationResult,
   }: {
     isOpen: boolean;
     onConfirm: () => void;
     onClose: () => void;
     confirmText?: string;
+    ethPrice?: number | null;
+    simulationResult?: { simulationUnavailable?: boolean; simulationUnavailableReason?: string };
   }) =>
     isOpen ? (
-      <div data-testid="simulation-modal">
+      <div
+        data-testid="simulation-modal"
+        data-eth-price={ethPrice ?? ""}
+        data-simulation-unavailable={simulationResult?.simulationUnavailable ? "true" : "false"}
+        data-simulation-unavailable-reason={simulationResult?.simulationUnavailableReason ?? ""}
+      >
         <button type="button" onClick={onConfirm}>{confirmText ?? "Confirm"}</button>
         <button type="button" onClick={onClose}>Close simulation</button>
       </div>
     ) : null,
+}));
+
+vi.mock("@/components/TxPendingCard", () => ({
+  TxPendingCard: ({
+    title,
+    message,
+    details,
+  }: {
+    title: string;
+    message: string;
+    details?: { fromSymbol?: string } | null;
+  }) => (
+    <div data-testid="tx-pending-card" data-details-symbol={details?.fromSymbol ?? ""}>
+      <span>{title}</span>
+      <span>{message}</span>
+    </div>
+  ),
 }));
 
 vi.mock("@/hooks/useSettings", async () => {
@@ -174,7 +205,7 @@ vi.mock("@/hooks/useSettings", async () => {
         showSimulationModal,
         setShowSimulationModal,
         showRoute: true,
-        toggleRoute: vi.fn(),
+        toggleRoute: settingsState.toggleRoute,
       };
     },
   };
@@ -1069,6 +1100,34 @@ describe("zap tab quote gate and preview", () => {
     expect(zapActionButton(/Getting quote/).disabled).toBe(true);
   });
 
+  it("drops a stored amount when the stored input token is rejected", () => {
+    sessionStorage.setItem(`yldfi-zap-input-token-${vaultUnderTest.id}`, "{not json");
+    sessionStorage.setItem(`yldfi-zap-amount-${vaultUnderTest.id}`, "0.5");
+
+    renderZapTab();
+
+    expect((screen.getByPlaceholderText("0.00") as HTMLInputElement).value).toBe("");
+    expect(sessionStorage.getItem(`yldfi-zap-amount-${vaultUnderTest.id}`)).toBeNull();
+  });
+
+  it("keeps the stored amount when the stored input token is valid", () => {
+    sessionStorage.setItem(
+      `yldfi-zap-input-token-${vaultUnderTest.id}`,
+      JSON.stringify({
+        address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        chainId: 1,
+        symbol: "USDC",
+        decimals: 6,
+      }),
+    );
+    sessionStorage.setItem(`yldfi-zap-amount-${vaultUnderTest.id}`, "0.5");
+
+    renderZapTab();
+
+    expect((screen.getByPlaceholderText("0.00") as HTMLInputElement).value).toBe("0.5");
+    expect(sessionStorage.getItem(`yldfi-zap-amount-${vaultUnderTest.id}`)).toBe("0.5");
+  });
+
   it("never sends after an empty simulation preview", async () => {
     settingsState.showSimulationPreview = true;
     const executeZap = vi.fn(async (...args: unknown[]) => {
@@ -1106,6 +1165,12 @@ describe("zap tab send paths", () => {
     status?: ReturnType<typeof useZapActions>["status"];
     executeZap?: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
     getSimulationResult?: () => unknown;
+    direction?: "in" | "out";
+    vaultDecimals?: number;
+    zapBalanceUnknown?: boolean;
+    vaultBalanceUnknown?: boolean;
+    outputUsdValue?: number | null;
+    zapActions?: Partial<ReturnType<typeof useZapActions>>;
   };
 
   /** Render the zap tab with a current quote and the zap action hook under test. */
@@ -1117,33 +1182,80 @@ describe("zap tab send paths", () => {
       pendingApproval = null,
       status = "idle",
       getSimulationResult = () => null,
+      direction = "in",
+      vaultDecimals,
+      zapBalanceUnknown = false,
+      vaultBalanceUnknown = false,
+      outputUsdValue = 0,
     } = options;
     const executeZap = options.executeZap ?? vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => null);
     const zapApprove = vi.fn(async () => undefined);
     const refetch = vi.fn();
 
+    if (direction === "out") {
+      sessionStorage.setItem(`yldfi-zap-direction-${vaultUnderTest.id}`, "out");
+    }
+
     installDefaultHooks();
-    mockUseZapQuote.mockImplementation(((params) => ({
-      quote: params.inputToken
-        ? {
-            inputToken: params.inputToken,
-            inputAmount: params.inputAmount,
-            outputAmount: "0",
-            outputAmountFormatted: "0.4",
-            exchangeRate: 0.8,
-            inputUsdValue: 0,
-            outputUsdValue: 0,
-            priceImpact,
-            gasEstimate: "",
-            tx: { to: "0x0000000000000000000000000000000000000001", data: "0x", value: "0" },
-            route: [],
-          }
-        : null,
-      quoteUpdatedAt,
-      isLoading: false,
-      error: null,
-      refetch,
-    })) as typeof useZapQuote);
+    if (zapBalanceUnknown) {
+      mockUseBalance.mockReturnValue({
+        data: undefined,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useBalance>);
+    }
+    if (vaultDecimals !== undefined) {
+      mockUseVaultBalance.mockReturnValue({
+        balance: DEFAULT_SHARE_BALANCE,
+        decimals: vaultDecimals,
+        formatted: formatUnits(DEFAULT_SHARE_BALANCE, vaultDecimals),
+        formattedUsd: "$0",
+        isLoading: false,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useVaultBalance>);
+    }
+    if (vaultBalanceUnknown) {
+      mockUseVaultBalance.mockReturnValue({
+        balance: undefined as unknown as bigint,
+        decimals: vaultDecimals ?? TOKEN_DECIMALS,
+        formatted: "0",
+        formattedUsd: "$0",
+        isLoading: false,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useVaultBalance>);
+    }
+
+    mockUseZapQuote.mockImplementation(((params) => {
+      const hasQuote = !!(params.inputToken || params.outputToken);
+      const quoteInputToken = params.inputToken ?? {
+        address: vaultUnderTest.address,
+        chainId: 1,
+        name: vaultUnderTest.name,
+        symbol: vaultUnderTest.symbol,
+        decimals: TOKEN_DECIMALS,
+        type: "defi",
+      };
+      return {
+        quote: hasQuote
+          ? {
+              inputToken: quoteInputToken,
+              inputAmount: params.inputAmount,
+              outputAmount: "0",
+              outputAmountFormatted: "0.4",
+              exchangeRate: 0.8,
+              inputUsdValue: 0,
+              outputUsdValue: outputUsdValue ?? undefined,
+              priceImpact,
+              gasEstimate: "",
+              tx: { to: "0x0000000000000000000000000000000000000001", data: "0x", value: "0" },
+              route: [],
+            }
+          : null,
+        quoteUpdatedAt,
+        isLoading: false,
+        error: null,
+        refetch,
+      };
+    }) as typeof useZapQuote);
     mockUseZapActions.mockImplementation((() => ({
       needsApproval: () => needsApproval,
       approve: zapApprove,
@@ -1165,6 +1277,7 @@ describe("zap tab send paths", () => {
       isSimulationForCurrentQuote: () => true,
       safePending: null,
       batchesApproval: false,
+      ...options.zapActions,
     })) as unknown as typeof useZapActions);
     const utils = render(<VaultPageContent id={vaultUnderTest.id} />);
     return { ...utils, executeZap, zapApprove, refetch };
@@ -1367,5 +1480,278 @@ describe("zap tab send paths", () => {
     renderZapTab();
 
     expect(mockUseZapQuote.mock.calls.at(-1)?.[0]).toMatchObject({ autoRefresh: true });
+  });
+
+  /** Swap the zap action hook's state without re-rendering the whole page setup. */
+  function installZapState(overrides: Partial<ReturnType<typeof useZapActions>>) {
+    mockUseZapActions.mockReturnValue({
+      needsApproval: () => false,
+      approve: vi.fn(),
+      executeZap: vi.fn(async () => null),
+      reset: vi.fn(),
+      status: "idle",
+      error: null,
+      isLoading: false,
+      isSuccess: false,
+      isReverted: false,
+      zapHash: undefined,
+      pendingApproval: null,
+      approvalProgress: null,
+      isApproving: false,
+      isFlashbotsEnabled: false,
+      isFlashbotsSupported: false,
+      toggleFlashbots: vi.fn(),
+      simulationResult: null,
+      isSimulationForCurrentQuote: () => true,
+      safePending: null,
+      batchesApproval: false,
+      ...overrides,
+    } as unknown as ReturnType<typeof useZapActions>);
+  }
+
+  it("blocks a zap-in until the input balance is known", () => {
+    renderZapTab({ zapBalanceUnknown: true });
+
+    typeAmount("0.5");
+
+    const button = zapActionButton("Insufficient balance");
+    expect(button.disabled).toBe(true);
+  });
+
+  it("blocks a zap-out until the vault share balance is known", () => {
+    renderZapTab({ direction: "out", vaultBalanceUnknown: true });
+
+    typeAmount("0.5");
+
+    const button = zapActionButton("Insufficient balance");
+    expect(button.disabled).toBe(true);
+  });
+
+  it("uses the vault decimals for the zap-out approval amount", () => {
+    const pendingApproval: PendingApproval = {
+      token: "0x0000000000000000000000000000000000000002",
+      tokenSymbol: vaultUnderTest.symbol,
+      spender: "0x0000000000000000000000000000000000000003",
+      amount: 1_500_000n,
+    };
+    renderZapTab({
+      direction: "out",
+      vaultDecimals: 6,
+      needsApproval: true,
+      pendingApproval,
+      status: "needsApproval",
+    });
+
+    expect(screen.getByText(/Exact · 1\.5/)).toBeTruthy();
+    expect(screen.queryByText(/Exact · 0 /)).toBeNull();
+  });
+
+  it("clears the zap pending details when the zap action errors", async () => {
+    const { rerender, executeZap } = renderZapTab();
+
+    typeAmount("0.5");
+    await act(async () => {
+      fireEvent.click(zapActionButton("Zap In"));
+    });
+    expect(executeZap).toHaveBeenCalled();
+
+    const pending = { status: "zapping" as const, isLoading: true };
+    installZapState(pending);
+    rerender(<VaultPageContent id={vaultUnderTest.id} />);
+    expect(screen.getByTestId("tx-pending-card").getAttribute("data-details-symbol")).toBe("ETH");
+
+    installZapState({ status: "error", error: "Zap failed", isLoading: false });
+    rerender(<VaultPageContent id={vaultUnderTest.id} />);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    installZapState(pending);
+    rerender(<VaultPageContent id={vaultUnderTest.id} />);
+    expect(screen.getByTestId("tx-pending-card").getAttribute("data-details-symbol")).toBe("");
+  });
+
+  it("shows the checking and waiting approval labels on the zap button", () => {
+    const checking = renderZapTab({ status: "checkingApproval" });
+    typeAmount("0.5");
+    expect(zapActionButton(/Checking approval/).disabled).toBe(false);
+    checking.unmount();
+
+    renderZapTab({ status: "waitingApproval" });
+    typeAmount("0.5");
+    expect(zapActionButton(/Waiting for approval/).disabled).toBe(false);
+  });
+
+  it("shows the Safe signature count on the zap button", () => {
+    renderZapTab({
+      status: "waitingApproval",
+      zapActions: {
+        safePending: {
+          isAwaitingExecution: true,
+          confirmations: 2,
+          confirmationsRequired: 3,
+          executedHash: null,
+          outcome: null,
+        },
+      },
+    });
+
+    const button = zapActionButton(/Waiting for Safe/);
+    expect(button.textContent).toContain("(2/3 signed)");
+  });
+
+  it("labels a batched zap approval as Approve & zap", () => {
+    renderZapTab({ needsApproval: true, zapActions: { batchesApproval: true } });
+
+    typeAmount("0.5");
+
+    expect(zapActionButton("Approve & zap").disabled).toBe(false);
+  });
+
+  it("passes the ETH price and simulation-unavailable copy to the zap preview", async () => {
+    settingsState.showSimulationPreview = true;
+    const simulationResult = {
+      success: true,
+      gasUsed: 100,
+      errorMessage: null,
+      tenderlyUrl: null,
+      assetChanges: [],
+      simulationUnavailable: true,
+      simulationUnavailableReason: "Tenderly key missing",
+    };
+    renderZapTab({ getSimulationResult: () => simulationResult });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simulation-modal").getAttribute("data-eth-price")).toBe("1");
+    });
+    const modal = screen.getByTestId("simulation-modal");
+    expect(modal.getAttribute("data-simulation-unavailable")).toBe("true");
+    expect(modal.getAttribute("data-simulation-unavailable-reason")).toBe("Tenderly key missing");
+  });
+
+  it("uses the zap page's completion toasts with a View action", async () => {
+    const success = renderZapTab();
+    typeAmount("0.5");
+    installZapState({ status: "success", isSuccess: true, zapHash: "0xabc" });
+    success.rerender(<VaultPageContent id={vaultUnderTest.id} />);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(toast.success).toHaveBeenCalledWith("Zap successful!", {
+      action: expect.objectContaining({ label: "View" }),
+    });
+    success.unmount();
+
+    const reverted = renderZapTab();
+    typeAmount("0.5");
+    installZapState({ status: "reverted", isReverted: true, zapHash: "0xdef" });
+    reverted.rerender(<VaultPageContent id={vaultUnderTest.id} />);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(toast.error).toHaveBeenCalledWith("Zap failed — transaction reverted", {
+      action: expect.objectContaining({ label: "View" }),
+    });
+  });
+
+  it("keeps the zap amount after a reverted zap and clears it on success", () => {
+    vi.useFakeTimers();
+    try {
+      const reverted = renderZapTab();
+      typeAmount("0.5");
+      installZapState({ status: "reverted", isReverted: true, zapHash: "0xdef" });
+      reverted.rerender(<VaultPageContent id={vaultUnderTest.id} />);
+      act(() => {
+        vi.advanceTimersByTime(0);
+      });
+      // The revert card shows for a while, then the form returns.
+      act(() => {
+        vi.advanceTimersByTime(TX_REVERTED_VISIBLE_MS);
+      });
+
+      expect((screen.getByPlaceholderText("0.00") as HTMLInputElement).value).toBe("0.5");
+      expect(sessionStorage.getItem(`yldfi-zap-amount-${vaultUnderTest.id}`)).toBe("0.5");
+      reverted.unmount();
+
+      const success = renderZapTab();
+      typeAmount("0.5");
+      installZapState({ status: "success", isSuccess: true, zapHash: "0xabc" });
+      success.rerender(<VaultPageContent id={vaultUnderTest.id} />);
+      act(() => {
+        vi.advanceTimersByTime(0);
+      });
+      act(() => {
+        vi.advanceTimersByTime(TX_SUCCESS_VISIBLE_MS);
+      });
+
+      expect((screen.getByPlaceholderText("0.00") as HTMLInputElement).value).toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows quote failures in the route panel with a retry instead of a toast", () => {
+    installDefaultHooks();
+    const refetch = vi.fn();
+    mockUseZapQuote.mockReturnValue({
+      quote: null,
+      quoteUpdatedAt: undefined,
+      isLoading: false,
+      error: new Error("Rate limit exceeded"),
+      refetch,
+    } as unknown as ReturnType<typeof useZapQuote>);
+    const { unmount } = render(<VaultPageContent id={vaultUnderTest.id} />);
+
+    typeAmount("0.5");
+
+    const route = screen.getByTestId("route-display");
+    expect(route.getAttribute("data-error")).toBe("Too many requests - please wait a moment");
+    fireEvent.click(screen.getByRole("button", { name: "Retry route" }));
+    expect(refetch).toHaveBeenCalled();
+    expect(zapActionButton(/No route found/).disabled).toBe(true);
+    expect(toast.error).not.toHaveBeenCalled();
+    unmount();
+
+    mockUseZapQuote.mockReturnValue({
+      quote: null,
+      quoteUpdatedAt: undefined,
+      isLoading: false,
+      error: new Error("Enso routing is temporarily unavailable"),
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useZapQuote>);
+    render(<VaultPageContent id={vaultUnderTest.id} />);
+
+    typeAmount("0.5");
+
+    expect(zapActionButton(/Route temporarily unavailable/).disabled).toBe(true);
+  });
+
+  it("values the zap from the quote's output USD value", () => {
+    const { unmount } = renderZapTab({ outputUsdValue: 18.35 });
+    typeAmount("0.5");
+    expect(screen.getByText("~$18.35")).toBeTruthy();
+    unmount();
+
+    renderZapTab({ outputUsdValue: null });
+    typeAmount("0.5");
+    expect(screen.queryByText(/~\$/)).toBeNull();
+  });
+
+  it("takes the route toggle from the shared settings", () => {
+    vi.mocked(localStorage.getItem).mockImplementation((key: string) => {
+      if (key === "yldfi-active-tab") return "zap";
+      if (key === "yldfi-show-route") return "false";
+      return null;
+    });
+    renderZapTab();
+
+    // The zap page's shared setting defaults to on; the vault's old key is ignored.
+    fireEvent.click(screen.getByTitle("Hide route"));
+
+    expect(settingsState.toggleRoute).toHaveBeenCalled();
+    expect(localStorage.getItem).not.toHaveBeenCalledWith("yldfi-show-route");
+    expect(localStorage.setItem).not.toHaveBeenCalledWith("yldfi-show-route", expect.anything());
   });
 });
