@@ -30,9 +30,9 @@ const MAX_PUBLIC_RPCS = 3;
 const HISTORY_CRON = "2,17,32,47 * * * *";
 
 /**
- * Resolve the private-node© archive RPC URL. RPC_URL comes from Secrets Store (a
- * SecretsStoreSecret read via .get()), but tests bind it as a plain string,
- * so both shapes are handled.
+ * Resolve the configured archive node's RPC URL. RPC_URL comes from Secrets
+ * Store (a SecretsStoreSecret read via .get()), but tests bind it as a plain
+ * string, so both shapes are handled.
  */
 async function resolveRpcUrl(env: Env): Promise<string | undefined> {
   const rpc = env.RPC_URL as string | SecretsStoreSecret | undefined;
@@ -951,9 +951,10 @@ export default {
 
       const logger = new Logger();
       try {
-        // Backfill needs archive-capable RPCs (historical eth_call). Use private-node©
-        // (RPC_URL) exclusively â€” it's the primary archive provider and the
-        // public/other nodes reject past-block reads and waste subrequests.
+        // Backfill needs archive-capable RPCs (historical eth_call). Use the
+        // configured archive node (RPC_URL) exclusively â€” it's the primary
+        // archive provider and the public/other nodes reject past-block reads
+        // and waste subrequests.
         const archiveRpcUrl = await resolveRpcUrl(env);
         if (!archiveRpcUrl) throw new Error("No archive RPC configured");
         const rpcUrls = [archiveRpcUrl];
