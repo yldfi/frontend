@@ -60,6 +60,43 @@ export async function injectTestWallet(page: Page, address: string = TEST_WALLET
   );
 }
 
+type JsonRpcRequest = { id?: unknown; method?: string };
+
+function isGetBalance(request: JsonRpcRequest): boolean {
+  return request.method === "eth_getBalance";
+}
+
+/** Answers JSON-RPC eth_getBalance from the browser with a fixed balance, so balance checks need no chain node. */
+export async function mockNativeBalance(page: Page, wei: bigint = 10n ** 19n): Promise<void> {
+  const balance = `0x${wei.toString(16)}`;
+  const answer = (request: JsonRpcRequest) => ({
+    jsonrpc: "2.0",
+    id: request.id,
+    result: balance,
+  });
+  await page.route("**/*", async (route) => {
+    const request = route.request();
+    if (request.method() !== "POST") return route.fallback();
+    let body: unknown;
+    try {
+      body = JSON.parse(request.postData() ?? "");
+    } catch {
+      return route.fallback();
+    }
+    if (Array.isArray(body)) {
+      const batch = body as JsonRpcRequest[];
+      if (batch.length > 0 && batch.every(isGetBalance)) {
+        return route.fulfill({ json: batch.map(answer) });
+      }
+      return route.fallback();
+    }
+    if (typeof body === "object" && body !== null && isGetBalance(body as JsonRpcRequest)) {
+      return route.fulfill({ json: answer(body as JsonRpcRequest) });
+    }
+    return route.fallback();
+  });
+}
+
 /**
  * Wait until the app shows the test account as connected. wagmi usually reconnects the announced
  * wallet on its own; otherwise go through the app's normal RainbowKit connect flow.

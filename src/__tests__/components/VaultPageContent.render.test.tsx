@@ -1100,6 +1100,34 @@ describe("zap tab quote gate and preview", () => {
     expect(zapActionButton(/Getting quote/).disabled).toBe(true);
   });
 
+  it("drops a stored amount when the stored input token is rejected", () => {
+    sessionStorage.setItem(`yldfi-zap-input-token-${vaultUnderTest.id}`, "{not json");
+    sessionStorage.setItem(`yldfi-zap-amount-${vaultUnderTest.id}`, "0.5");
+
+    renderZapTab();
+
+    expect((screen.getByPlaceholderText("0.00") as HTMLInputElement).value).toBe("");
+    expect(sessionStorage.getItem(`yldfi-zap-amount-${vaultUnderTest.id}`)).toBeNull();
+  });
+
+  it("keeps the stored amount when the stored input token is valid", () => {
+    sessionStorage.setItem(
+      `yldfi-zap-input-token-${vaultUnderTest.id}`,
+      JSON.stringify({
+        address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        chainId: 1,
+        symbol: "USDC",
+        decimals: 6,
+      }),
+    );
+    sessionStorage.setItem(`yldfi-zap-amount-${vaultUnderTest.id}`, "0.5");
+
+    renderZapTab();
+
+    expect((screen.getByPlaceholderText("0.00") as HTMLInputElement).value).toBe("0.5");
+    expect(sessionStorage.getItem(`yldfi-zap-amount-${vaultUnderTest.id}`)).toBe("0.5");
+  });
+
   it("never sends after an empty simulation preview", async () => {
     settingsState.showSimulationPreview = true;
     const executeZap = vi.fn(async (...args: unknown[]) => {

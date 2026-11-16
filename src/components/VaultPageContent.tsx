@@ -374,10 +374,22 @@ export function VaultPageContent({ id }: { id: string }) {
     if (typeof window === "undefined") return applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     try {
       const saved = sessionStorage.getItem(`yldfi-zap-input-token-${id}`);
-      return saved
-        ? applyKnownTokenMetadata(parseStoredToken(saved) ?? DEFAULT_ETH_TOKEN)
-        : applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
+      const stored = saved ? parseStoredToken(saved) : null;
+      if (saved && !stored) {
+        // A rejected entry must not leave an amount behind: applying a stored amount to a different token would quote a number the user never typed for it.
+        try {
+          sessionStorage.removeItem(`yldfi-zap-amount-${id}`);
+        } catch {
+          // sessionStorage unavailable
+        }
+      }
+      return applyKnownTokenMetadata(stored ?? DEFAULT_ETH_TOKEN);
     } catch {
+      try {
+        sessionStorage.removeItem(`yldfi-zap-amount-${id}`);
+      } catch {
+        // sessionStorage unavailable
+      }
       return applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     }
   });
@@ -398,10 +410,22 @@ export function VaultPageContent({ id }: { id: string }) {
     if (typeof window === "undefined") return applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     try {
       const saved = sessionStorage.getItem(`yldfi-zap-output-token-${id}`);
-      return saved
-        ? applyKnownTokenMetadata(parseStoredToken(saved) ?? DEFAULT_ETH_TOKEN)
-        : applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
+      const stored = saved ? parseStoredToken(saved) : null;
+      if (saved && !stored) {
+        // A rejected entry must not leave an amount behind: applying a stored amount to a different token would quote a number the user never typed for it.
+        try {
+          sessionStorage.removeItem(`yldfi-zap-amount-${id}`);
+        } catch {
+          // sessionStorage unavailable
+        }
+      }
+      return applyKnownTokenMetadata(stored ?? DEFAULT_ETH_TOKEN);
     } catch {
+      try {
+        sessionStorage.removeItem(`yldfi-zap-amount-${id}`);
+      } catch {
+        // sessionStorage unavailable
+      }
       return applyKnownTokenMetadata(DEFAULT_ETH_TOKEN);
     }
   });
