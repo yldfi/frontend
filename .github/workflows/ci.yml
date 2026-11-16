@@ -24,7 +24,7 @@ permissions:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -44,7 +44,7 @@ jobs:
   audit-changes:
     name: Audit Changes
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 5
     permissions:
       contents: read
@@ -77,7 +77,7 @@ jobs:
     # not block an unrelated production deploy.
     needs: audit-changes
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.audit-changes.result != 'success' || needs.audit-changes.outputs.deps == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -93,7 +93,7 @@ jobs:
 
   type-check:
     name: Type Check
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -112,7 +112,7 @@ jobs:
 
   test-unit:
     name: Unit Tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -145,7 +145,7 @@ jobs:
 
   test-sweep:
     name: Bundle Delivery Sweep
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -178,7 +178,7 @@ jobs:
 
   e2e:
     name: E2E Tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     needs: [lint, type-check, test-unit]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -194,7 +194,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install Playwright browsers
-        run: pnpm test:e2e:install
+        run: pnpm exec playwright install --with-deps chromium
 
       # Webpack's persistent cache: the compile is ~36s of the build on CI.
       # Measured before this step: build job 118s (cold, no cache available).
@@ -227,7 +227,7 @@ jobs:
 
   build-cloudflare:
     name: Build for Cloudflare
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.DEPLOY_RUNNER || 'ubuntu-latest' }}
     # Runs in parallel with the test jobs instead of after them, so the ~2m
     # OpenNext build is not added to the test gate's critical path. Not a gate:
     # `deploy` still waits for lint/type-check/test-unit before uploading.
@@ -274,7 +274,7 @@ jobs:
 
   deploy:
     name: Deploy to Cloudflare
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.DEPLOY_RUNNER || 'ubuntu-latest' }}
     needs: [lint, type-check, test-unit, test-sweep, e2e, build-cloudflare]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
@@ -319,7 +319,7 @@ jobs:
 
   deploy-cache-worker:
     name: Deploy cache worker to Cloudflare
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.DEPLOY_RUNNER || 'ubuntu-latest' }}
     needs: [lint, type-check, test-unit]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
