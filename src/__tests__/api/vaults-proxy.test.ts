@@ -111,4 +111,56 @@ describe("GET /api/vaults", () => {
     expect(response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledWith(CACHE_URL, expect.anything());
   });
+
+  describe("in local development", () => {
+    const payload = { ycvxcrv: { tvlUsd: 1 } };
+
+    beforeEach(() => {
+      vi.stubEnv("NODE_ENV", "development");
+    });
+
+    it("uses the url, not a present binding, when remote bindings are off", async () => {
+      const bindingFetch = vi.fn(async (_request: Request) => Response.json(payload));
+      mockGetCloudflareContext.mockReturnValue({ env: { CACHE_WORKER: { fetch: bindingFetch } } });
+      vi.stubEnv("YLDFI_DEV_REMOTE_BINDINGS", "");
+      const fetchMock = vi.fn(async () => Response.json(payload));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const response = await GET();
+
+      expect(response.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledWith(CACHE_URL, expect.anything());
+      expect(bindingFetch).not.toHaveBeenCalled();
+    });
+
+    it("uses the binding when remote bindings are on", async () => {
+      const bindingFetch = vi.fn(async (_request: Request) => Response.json(payload));
+      mockGetCloudflareContext.mockReturnValue({ env: { CACHE_WORKER: { fetch: bindingFetch } } });
+      vi.stubEnv("YLDFI_DEV_REMOTE_BINDINGS", "1");
+      vi.stubEnv("CACHE_WORKER_URL", "");
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const response = await GET();
+
+      expect(response.status).toBe(200);
+      expect(bindingFetch).toHaveBeenCalledTimes(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it("uses the binding in production even with the url set and remote bindings off", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("YLDFI_DEV_REMOTE_BINDINGS", "");
+    const bindingFetch = vi.fn(async (_request: Request) => Response.json({ ycvxcrv: { tvlUsd: 1 } }));
+    mockGetCloudflareContext.mockReturnValue({ env: { CACHE_WORKER: { fetch: bindingFetch } } });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await GET();
+
+    expect(response.status).toBe(200);
+    expect(bindingFetch).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

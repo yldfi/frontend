@@ -43,6 +43,7 @@ Ask the maintainer for real values.
 Never print, commit or paste a secret, and never read `.env.local` into a transcript.
 Production secrets are Cloudflare Worker secrets, not a committed file.
 Optional cache-worker variables are listed in `workers/.dev.vars.example`.
+In `pnpm dev` the site reaches the cache worker one of two ways: with `YLDFI_DEV_REMOTE_BINDINGS=1` (needs Cloudflare credentials), through a remote `CACHE_WORKER` binding to the deployed worker; without it, through `CACHE_WORKER_URL` pointing at a locally running cache worker. See `.env.example`; `pnpm dev` starts without credentials either way.
 
 ## Deploy map
 
