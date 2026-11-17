@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+const { mockGetCloudflareContext } = vi.hoisted(() => ({ mockGetCloudflareContext: vi.fn() }));
+vi.mock("@opennextjs/cloudflare", () => ({
+  getCloudflareContext: mockGetCloudflareContext,
+}));
+
 import { GET as getKong } from "@/app/api/kong/[op]/route";
 import { GET as getMerkl } from "@/app/api/merkl/[...path]/route";
 import { GET as getHistory } from "@/app/api/history/route";
@@ -45,6 +50,11 @@ describe("proxy route upstream cache", () => {
     fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     vi.stubEnv("CACHE_WORKER_URL", CACHE_WORKER_URL);
+    // Outside Cloudflare (local dev) there is no context, so no service binding.
+    mockGetCloudflareContext.mockReset();
+    mockGetCloudflareContext.mockImplementation(() => {
+      throw new Error("not running on Cloudflare");
+    });
   });
 
   afterEach(() => {
@@ -429,6 +439,38 @@ describe("proxy route upstream cache", () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "Missing key" });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("requests history from the url origin when there is no service binding", async () => {
+    fetchMock.mockImplementation(async () =>
+      jsonResponse({ data: { timeseries: [{ time: 1, value: 2 }] } })
+    );
+
+    await historyRequest("?key=yscvx&metric=pps");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://cache.example/api/history?key=yscvx&metric=pps&version=2",
+      expect.objectContaining({ headers: { "Content-Type": "application/json" } })
+    );
+  });
+
+  it("requests history through the service binding when it is bound", async () => {
+    const bindingFetch = vi.fn(async (_request: Request) =>
+      jsonResponse({ data: { timeseries: [{ time: 1, value: 2 }] } })
+    );
+    mockGetCloudflareContext.mockReturnValue({ env: { CACHE_WORKER: { fetch: bindingFetch } } });
+    vi.stubEnv("CACHE_WORKER_URL", undefined);
+
+    const first = await historyRequest("?key=yscvx&metric=pps");
+    const second = await historyRequest("?key=yscvx&metric=pps");
+
+    expect(first.status).toBe(200);
+    expect(second.headers.get("x-yld-cache")).toBe("memory");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(bindingFetch).toHaveBeenCalledTimes(1);
+    const url = new URL(bindingFetch.mock.calls[0][0].url);
+    expect(url.pathname).toBe("/api/history");
+    expect(Object.fromEntries(url.searchParams)).toEqual({ key: "yscvx", metric: "pps", version: "2" });
   });
 
   it("returns an empty history series without caching it", async () => {

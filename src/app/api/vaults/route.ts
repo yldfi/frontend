@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { CACHE_WORKER_VAULTS_PATH, getCacheWorkerFetch } from "@/lib/cache-worker";
 import { cachedUpstreamJson } from "@/lib/upstream-json-cache";
 
 export const dynamic = "force-dynamic";
@@ -33,10 +34,10 @@ function isCompleteVaultsBody(body: unknown): boolean {
 }
 
 export async function GET() {
-  // Get URL at runtime (Cloudflare secret in production, .env.local for dev)
-  const cacheWorkerUrl = process.env.CACHE_WORKER_URL;
+  // Service binding in production, CACHE_WORKER_URL (.env.local) in dev
+  const fetchCacheWorker = getCacheWorkerFetch();
 
-  if (!cacheWorkerUrl) {
+  if (!fetchCacheWorker) {
     console.error("CACHE_WORKER_URL environment variable is required");
     return NextResponse.json(
       { error: "Configuration error" },
@@ -50,7 +51,7 @@ export async function GET() {
       "all",
       VAULTS_TTL_SECONDS,
       async () => {
-        const response = await fetch(cacheWorkerUrl, {
+        const response = await fetchCacheWorker(CACHE_WORKER_VAULTS_PATH, {
           headers: { "Content-Type": "application/json" },
         });
 

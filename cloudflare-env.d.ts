@@ -2,4 +2,5 @@
 interface CloudflareEnv {
   VAULT_CACHE?: KVNamespace;
   EXPLORER_CACHE?: KVNamespace;
+  CACHE_WORKER?: Fetcher;
 }

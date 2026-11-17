@@ -67,6 +67,9 @@
       "simple": { "limit": 30, "period": 60 }
     }
   ],
+  // The site calls the cache worker directly through this binding, so no public
+  // hostname is needed for /api/vaults and /api/history (src/lib/cache-worker.ts).
+  "services": [{ "binding": "CACHE_WORKER", "service": "yldfi-cache" }],
   "d1_databases": [
     {
       "binding": "LOGS",
