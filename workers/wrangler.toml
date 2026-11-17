@@ -3,6 +3,14 @@ main = "vault-cache.ts"
 compatibility_date = "2026-09-02"
 compatibility_flags = ["no_nodejs_compat", "no_nodejs_compat_v2"]
 
+# No public address. The site reaches this worker through its CACHE_WORKER service
+# binding (wrangler.jsonc, src/lib/cache-worker.ts). The operator endpoints
+# (/api/vaults/refresh, /api/backfill, /api/logs) therefore have no public URL
+# either; to use one, temporarily set workers_dev = true and deploy, then set it
+# back.
+workers_dev = false
+preview_urls = false
+
 # NOTE: Workers on the Free plan are limited to 50 external subrequests per invocation
 # (and 1,000 to Cloudflare services); this cannot be raised on Free. The `[limits]`
 # block used to set `subrequest_limit`, which is not a valid key and was silently
