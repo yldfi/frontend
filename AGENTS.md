@@ -49,7 +49,7 @@ Optional cache-worker variables are listed in `workers/.dev.vars.example`.
 | Worker | Config | Entry | Deployed by |
 |---|---|---|---|
 | `yldfi` (the site, routes `yldfi.co/*`, `www.yldfi.co/*`) | `wrangler.jsonc` | `workers/yldfi-edge.ts` wrapping the OpenNext build in `.open-next/` | CI job `deploy` on push to `main`, after lint, type-check, unit, sweep and browser (e2e) tests and the Cloudflare build |
-| `yldfi-cache` (cron vault cache to KV, D1 and R2) | `workers/wrangler.toml` | `workers/vault-cache.ts` | CI job `deploy-cache-worker` on push to `main` |
+| `yldfi-cache` (cron vault cache to KV, D1 and R2; no public address, the site calls it through the `CACHE_WORKER` service binding) | `workers/wrangler.toml` | `workers/vault-cache.ts` | CI job `deploy-cache-worker` on push to `main` |
 | `yldfi-x-weekly-apy` (weekly X post) | `workers/wrangler.x-weekly-apy.toml` | `workers/x-weekly-apy.ts` | by hand; see `workers/README-x-weekly-apy.md` |
 
 Merging to `main` deploys the first two automatically.
