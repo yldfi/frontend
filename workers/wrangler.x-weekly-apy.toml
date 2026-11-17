@@ -11,7 +11,6 @@ preview_urls = false
 routes = [{ pattern = "x-bot.yldfi.co", custom_domain = true }]
 
 [vars]
-CLOUDFLARE_ACCOUNT_ID = "7f4f33bd3b9086164518eee1e9b8590a"
 SITE_URL = "https://yldfi.co"
 SOCIAL_RENDER_PATH = "/social/weekly-apy"
 X_WEEKLY_COPY = "Weekly yld vault yields are here\n\nAuto-compounding strategies for cvxCRV and CVX.\n\nyldfi.co"

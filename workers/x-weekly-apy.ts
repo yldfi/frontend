@@ -20,6 +20,7 @@ const POSTED_KEY_PREFIX = "x:weekly-apy:posted:";
 const LAST_RUN_KEY = "x:weekly-apy:last-run";
 
 interface Env extends XWeeklyApyEnv {
+  CLOUDFLARE_ACCOUNT_ID: string;
   CLOUDFLARE_API_TOKEN: string;
   SOCIAL_RUN_SECRET?: string;
   X_CLIENT_ID: string;
