@@ -1,6 +1,7 @@
 import { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
+import { CookieSettingsButton } from "@/components/CookieSettingsButton";
 
 export const metadata: Metadata = {
   title: "Privacy Policy | yld",
@@ -32,7 +33,7 @@ export default function PrivacyPage() {
       <main className="max-w-4xl mx-auto px-6 py-12">
         <h1 className="text-3xl font-semibold mb-2">Privacy Policy</h1>
         <p className="text-[var(--muted-foreground)] mb-8">
-          Last updated: March 2026
+          Last updated: November 2026
         </p>
 
         <div className="space-y-8">
@@ -73,6 +74,11 @@ export default function PrivacyPage() {
             </ul>
             <p className="text-[var(--muted-foreground)] leading-relaxed">
               If you do not consent to analytics cookies, we only receive aggregated, non-identifying data for basic service measurement.
+            </p>
+
+            <h3 className="text-lg font-medium mb-3 mt-6">Advertising Features (Google Signals)</h3>
+            <p className="text-[var(--muted-foreground)] leading-relaxed">
+              If you also accept advertising cookies (&quot;Accept all&quot; in our cookie banner), Google Analytics uses Google signals: the analytics data above is shared with Google&apos;s advertising services, and where you are signed in to a Google account with ads personalization turned on, Google may associate it with that account. We use this only to see aggregated reports about our audience, such as age range, interests and use across devices. Google never shares your identity with us. If you choose &quot;Analytics only&quot;, Google signals is not used for your visits.
             </p>
 
             <h3 className="text-lg font-medium mb-3 mt-6">Infrastructure Data</h3>
@@ -144,7 +150,7 @@ export default function PrivacyPage() {
             </p>
             <ul className="list-disc list-inside text-[var(--muted-foreground)] space-y-2 ml-4">
               <li>
-                <b>Consent:</b> We rely on your explicit consent, collected via our cookie consent banner, to process non-essential analytics data. You can withdraw your consent at any time.
+                <b>Consent:</b> We rely on your explicit consent, collected via our cookie consent banner, to process non-essential analytics data and, as a separate choice, to use Google&apos;s advertising features (Google signals). You can withdraw either consent at any time.
               </li>
               <li>
                 <b>Legitimate Interest:</b> We process certain technical data (e.g., from Cloudflare logs and transaction simulations) for the legitimate interests of securing our interface, preventing fraud, and ensuring its performance and reliability.
@@ -160,15 +166,19 @@ export default function PrivacyPage() {
             </p>
             <ul className="list-disc list-inside text-[var(--muted-foreground)] space-y-2 ml-4">
               <li>
-                <b>Essential:</b> These are necessary for the site to function and cannot be switched off. They include preferences such as your choice regarding analytics consent.
+                <b>Essential:</b> These are necessary for the site to function and cannot be switched off. They include preferences such as your choices regarding analytics and advertising consent.
               </li>
               <li>
                 <b>Analytics:</b> These are optional and are used to collect information about how you interact with our website. We use this information to improve our interface.
               </li>
+              <li>
+                <b>Advertising:</b> These are optional and set only if you choose &quot;Accept all&quot;. They let Google Analytics use Google signals, as described in section 2.
+              </li>
             </ul>
             <p className="text-[var(--muted-foreground)] leading-relaxed mt-4">
-              You can manage your cookie preferences at any time through our cookie consent banner. Disabling analytics cookies will not prevent you from using our core interface features.
+              You can change your cookie choices at any time: the button below withdraws your current consent and shows the cookie banner again. Declining analytics or advertising cookies will not prevent you from using our core interface features.
             </p>
+            <CookieSettingsButton />
           </section>
 
           {/* Third-Party Services */}
@@ -197,7 +207,7 @@ export default function PrivacyPage() {
                 <strong>RPC Providers</strong> (public Ethereum RPC endpoints) - used to read chain data
               </li>
               <li>
-                <strong>Google Analytics</strong> - usage analytics
+                <strong>Google Analytics</strong> - usage analytics, and Google signals advertising features if you accept them
               </li>
               <li>
                 <strong>Ethereum Network</strong> - all blockchain transactions are public and permanent

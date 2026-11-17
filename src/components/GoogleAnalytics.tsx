@@ -3,65 +3,20 @@
 import Script from "next/script";
 import { useMemo } from "react";
 
-// Cookie utility to check geo region
-function getCookie(name: string): string | null {
-  if (typeof document === "undefined") return null;
-  const value = `; ${document.cookie}`;
-  const parts = value.split(`; ${name}=`);
-  if (parts.length === 2) return parts.pop()?.split(";").shift() || null;
-  return null;
-}
-
-/**
- * Get consent status from cookie
- */
-function getConsentFromCookie(): "granted" | "denied" | null {
-  const consent = getCookie("analytics_consent");
-  if (consent === "accepted") return "granted";
-  if (consent === "rejected") return "denied";
-  return null;
-}
-
-/**
- * Check if user is in EEA based on geo_region cookie
- */
-function isEEAVisitor(): boolean {
-  const geoRegion = getCookie("geo_region");
-  return geoRegion === "EEA";
-}
-
-/**
- * Compute consent state based on region and cookie
- */
-function getConsentState(): "granted" | "denied" {
-  if (typeof window === "undefined") return "denied";
-
-  const isEEA = isEEAVisitor();
-  const cookieConsent = getConsentFromCookie();
-
-  if (!isEEA) {
-    // Non-EEA: consent granted by default
-    return "granted";
-  } else if (cookieConsent) {
-    // EEA with explicit choice
-    return cookieConsent;
-  } else {
-    // EEA without choice: deny by default
-    return "denied";
-  }
-}
+import { currentGoogleConsentState, googleConsentState } from "@/lib/consent";
 
 /**
  * Google Analytics component with Consent Mode v2
  * - Sets default consent states before initializing gtag
- * - Non-EEA visitors: consent granted by default
- * - EEA visitors: consent denied by default until user accepts
+ * - Non-EEA visitors: analytics and advertising granted by default
+ * - EEA visitors and unclassified visitors: denied until they choose; the
+ *   advertising switches (Google signals) follow their own choice
  */
 export function GoogleAnalytics({ gaId }: { gaId: string }) {
   // Compute consent script with embedded default state
   // This runs on client hydration when cookies are available
   const consentScript = useMemo(() => {
-    const consentState = getConsentState();
+    const consent = currentGoogleConsentState();
 
     return `
       window.dataLayer = window.dataLayer || [];
@@ -69,10 +24,10 @@ export function GoogleAnalytics({ gaId }: { gaId: string }) {
 
       // Set default consent state BEFORE config
       gtag('consent', 'default', {
-        'analytics_storage': '${consentState}',
-        'ad_storage': '${consentState}',
-        'ad_user_data': '${consentState}',
-        'ad_personalization': '${consentState}',
+        'analytics_storage': '${consent.analytics_storage}',
+        'ad_storage': '${consent.ad_storage}',
+        'ad_user_data': '${consent.ad_user_data}',
+        'ad_personalization': '${consent.ad_personalization}',
         'wait_for_update': 500
       });
 
@@ -104,19 +59,12 @@ function gtagConsent(...args: unknown[]): void {
 }
 
 /**
- * Update Google consent state - call this when user accepts/rejects
+ * Update Google consent state when the visitor chooses. Advertising (Google
+ * signals) is granted only together with analytics.
  */
-export function updateGoogleConsent(granted: boolean): void {
+export function updateGoogleConsent(analytics: boolean, ads: boolean): void {
   if (typeof window === "undefined") return;
-
-  const consentState = granted ? "granted" : "denied";
-
-  gtagConsent("consent", "update", {
-    analytics_storage: consentState,
-    ad_storage: consentState,
-    ad_user_data: consentState,
-    ad_personalization: consentState,
-  });
+  gtagConsent("consent", "update", { ...googleConsentState(analytics, ads) });
 }
 
 // Extend Window interface for dataLayer (avoids conflict with analytics.ts gtag type)

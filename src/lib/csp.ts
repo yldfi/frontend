@@ -76,6 +76,8 @@ const ANALYTICS_CONNECT_SRC: readonly string[] = [
   "https://www.google-analytics.com",
   "https://*.google-analytics.com",
   "https://*.analytics.google.com",
+  // Google signals beacon (gtag.js sends it when Google signals is on in GA).
+  "https://stats.g.doubleclick.net",
 ];
 
 /** WalletConnect / Reown. // seen in console walks */
