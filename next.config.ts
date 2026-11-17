@@ -1,8 +1,11 @@
 import type { NextConfig } from "next";
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
+import { devRemoteBindingsEnabled } from "./src/lib/dev-remote-bindings";
 
 // Initialize Cloudflare bindings for local development
-initOpenNextCloudflareForDev();
+// Remote bindings (the deployed cache worker) are opt-in: they need Cloudflare
+// credentials, and without them local dev must still start.
+initOpenNextCloudflareForDev({ remoteBindings: devRemoteBindingsEnabled() });
 
 const nextConfig: NextConfig = {
   images: {
