@@ -18,6 +18,7 @@ wrangler kv namespace create SOCIAL_CACHE
 
 ```bash
 wrangler secret put --config workers/wrangler.x-weekly-apy.toml SOCIAL_RUN_SECRET
+wrangler secret put --config workers/wrangler.x-weekly-apy.toml CLOUDFLARE_ACCOUNT_ID
 wrangler secret put --config workers/wrangler.x-weekly-apy.toml CLOUDFLARE_API_TOKEN
 wrangler secret put --config workers/wrangler.x-weekly-apy.toml X_CLIENT_ID
 wrangler secret put --config workers/wrangler.x-weekly-apy.toml X_CLIENT_SECRET
@@ -26,7 +27,7 @@ wrangler secret put --config workers/wrangler.x-weekly-apy.toml TELEGRAM_BOT_TOK
 wrangler secret put --config workers/wrangler.x-weekly-apy.toml TELEGRAM_CHAT_ID
 ```
 
-`CLOUDFLARE_ACCOUNT_ID` is a plain `[vars]` entry in `workers/wrangler.x-weekly-apy.toml`, not a secret.
+`CLOUDFLARE_ACCOUNT_ID` is a secret, so the account identifier stays out of the committed config.
 
 4. In the X Developer app settings, add this callback URL:
 
