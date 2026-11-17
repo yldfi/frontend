@@ -3,6 +3,13 @@ main = "x-weekly-apy.ts"
 compatibility_date = "2026-09-02"
 compatibility_flags = ["no_nodejs_compat", "no_nodejs_compat_v2"]
 
+# Reachable only on its own custom domain, with no workers.dev or preview address.
+# The OAuth callback registered with X must be https://x-bot.yldfi.co/oauth/callback
+# (the worker derives its redirect URI from the request URL).
+workers_dev = false
+preview_urls = false
+routes = [{ pattern = "x-bot.yldfi.co", custom_domain = true }]
+
 [vars]
 CLOUDFLARE_ACCOUNT_ID = "7f4f33bd3b9086164518eee1e9b8590a"
 SITE_URL = "https://yldfi.co"
