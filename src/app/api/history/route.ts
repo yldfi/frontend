@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getCacheWorkerFetch } from "@/lib/cache-worker";
 import { cachedUpstreamJson } from "@/lib/upstream-json-cache";
 
 export const dynamic = "force-dynamic";
@@ -35,9 +36,9 @@ function hasNonEmptyTimeseries(body: unknown): boolean {
 // cache worker's R2 bucket. Returns the same { data: { timeseries } } shape as
 // the Kong history endpoints so the frontend parses them identically.
 export async function GET(request: NextRequest) {
-  const cacheWorkerUrl = process.env.CACHE_WORKER_URL;
+  const fetchCacheWorker = getCacheWorkerFetch();
 
-  if (!cacheWorkerUrl) {
+  if (!fetchCacheWorker) {
     console.error("CACHE_WORKER_URL environment variable is required");
     return NextResponse.json({ error: "Configuration error" }, { status: 500 });
   }
@@ -49,11 +50,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Missing key" }, { status: 400 });
   }
 
-  const upstream = new URL("/api/history", cacheWorkerUrl);
-  upstream.searchParams.set("key", key);
-  upstream.searchParams.set("metric", metric);
-  upstream.searchParams.set("version", "2");
-  const upstreamUrl = upstream.toString();
+  const upstreamParams = new URLSearchParams({ key, metric, version: "2" });
+  const upstreamPath = `/api/history?${upstreamParams.toString()}`;
 
   try {
     const { value: data, status } = await cachedUpstreamJson(
@@ -61,7 +59,7 @@ export async function GET(request: NextRequest) {
       `${key}:${metric}`,
       HISTORY_TTL_SECONDS,
       async () => {
-        const response = await fetch(upstreamUrl, {
+        const response = await fetchCacheWorker(upstreamPath, {
           headers: { "Content-Type": "application/json" },
         });
         if (!response.ok) throw new UpstreamStatusError(response.status);
