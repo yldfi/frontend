@@ -105,7 +105,7 @@ Big thanks to @ConvexFinance, whose vote carried it.
 ```text
 Where to stake your LP:
 
-No veCRV of your own? Stake through a booster that uses its own boost:
+No veCRV? Let a booster stake for you:
 
 @yearnfi: https://yearn.fi/vaults/1/0x88032723E66407a7c94B470f0047Db484F02Fc68
 @StakeDAOHQ: https://app.stakedao.org/strategy?protocol=curve&vault=1-0xC87536F09b250D9cC06F48e7F3B68A1229A18eA1
