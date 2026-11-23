@@ -40,23 +40,23 @@
     ]
   },
   "dependencies": {
-    "@ensofinance/sdk": "2.7.0",
+    "@ensofinance/sdk": "2.7.1",
     "@rainbow-me/rainbowkit": "2.2.11",
     "@tanstack/react-query": "5.107.1",
     "@xyflow/react": "12.12.1",
     "@yldfi/curve-amm-math": "1.9.0",
     "clsx": "2.1.1",
-    "lightweight-charts": "5.2.1",
-    "lucide-react": "1.71.0",
+    "lightweight-charts": "5.3.0",
+    "lucide-react": "1.73.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "sonner": "2.0.8",
     "tailwind-merge": "3.7.0",
-    "viem": "2.57.17",
+    "viem": "2.57.20",
     "wagmi": "2.19.5"
   },
   "devDependencies": {
-    "@opennextjs/cloudflare": "1.20.16",
+    "@opennextjs/cloudflare": "1.20.17",
     "@playwright/test": "1.65.0",
     "@tailwindcss/postcss": "4.3.5",
     "@testing-library/dom": "10.4.2",
@@ -71,14 +71,14 @@
     "eslint": "9.39.2",
     "eslint-config-next": "16.4.6",
     "husky": "9.1.7",
-    "jsdom": "31.0.0",
-    "lint-staged": "17.6.0",
+    "jsdom": "31.0.1",
+    "lint-staged": "17.6.1",
     "next": "16.4.6",
     "tailwindcss": "4.3.5",
     "typescript": "6.0.3",
-    "vite": "8.3.7",
+    "vite": "8.3.8",
     "vitest": "5.1.0",
-    "wrangler": "4.159.0"
+    "wrangler": "4.163.0"
   },
   "pnpm": {
     "overrides": {
