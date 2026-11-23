@@ -83,3 +83,47 @@ Read it and weigh in: https://gov.curve.finance/t/proposal-to-add-yscvxcrv-crv-t
 ```
 
 Image: `public/social/yscvxcrv-gauge-promo.png`
+
+## yscvxCRV/CRV Curve Gauge Approved
+
+Curve ownership vote 1523 executed: the gauge is on the Gauge Controller. Convex's voter proxy cast essentially all of the 420.2M veCRV yes votes (0 against; quorum 30% of 772.2M). Its first non-zero weight is the epoch starting Thursday 26 Nov 2026 00:00 UTC, so CRV emissions begin then. Stake DAO's locker holds all staked LP so far; Convex has pool 599 and Yearn's factory vault yvCurve-yscvxCRVLP-f (0x88032723E66407a7c94B470f0047Db484F02Fc68), both empty so far. Quote-post the 13 Nov vote post.
+
+Thread. Attach the card to post 1, which quotes the 13 Nov vote post. Links checked 23 Nov 2026.
+
+1/
+
+```text
+The yscvxCRV/CRV gauge vote passed ✅
+
+The pool is now on the @CurveFinance Gauge Controller. CRV emissions start Thursday, on top of swap fees, while the yscvxCRV side keeps compounding staked cvxCRV.
+
+Big thanks to @ConvexFinance, whose vote carried it.
+```
+
+2/
+
+```text
+Where to stake your LP:
+
+No veCRV? Let a booster stake for you:
+
+@yearnfi: https://yearn.fi/vaults/1/0x88032723E66407a7c94B470f0047Db484F02Fc68
+@StakeDAOHQ: https://app.stakedao.org/strategy?protocol=curve&vault=1-0xC87536F09b250D9cC06F48e7F3B68A1229A18eA1
+@ConvexFinance: https://curve.convexfinance.com/stake/ethereum/599
+```
+
+3/
+
+```text
+Have your own veCRV boost? Add liquidity and stake straight in the Curve gauge:
+
+https://www.curve.finance/dex/ethereum/pools/0x3e6751c4Be3850bA5b4231339B3F3D3DB6D2FD74
+```
+
+From 26 Nov, replace the second paragraph of 1/ with:
+
+```text
+The pool is now on the @CurveFinance Gauge Controller and earning CRV emissions on top of swap fees, while the yscvxCRV side keeps compounding staked cvxCRV.
+```
+
+Image: `public/social/yscvxcrv-gauge-approved-promo.png`
