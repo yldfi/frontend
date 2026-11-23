@@ -83,3 +83,27 @@ Read it and weigh in: https://gov.curve.finance/t/proposal-to-add-yscvxcrv-crv-t
 ```
 
 Image: `public/social/yscvxcrv-gauge-promo.png`
+
+## yscvxCRV/CRV Curve Gauge Approved
+
+Curve ownership vote 1523 executed: the gauge is on the Gauge Controller and Convex added it as pool 599. Its first non-zero weight is the epoch starting Thursday 26 Nov 2026 00:00 UTC, so CRV emissions begin then. Quote-post the 13 Nov vote post.
+
+Before 26 Nov:
+
+```text
+The yscvxCRV/CRV gauge vote passed ✅
+
+The pool is now on the @CurveFinance Gauge Controller. CRV emissions start Thursday, on top of swap fees, while the yscvxCRV side keeps compounding cvxCRV staked on @ConvexFinance.
+
+Thanks to everyone who voted.
+
+Stake your LP on Convex: https://curve.convexfinance.com/stake/ethereum/599
+```
+
+From 26 Nov, replace the second paragraph with:
+
+```text
+The pool is now on the @CurveFinance Gauge Controller and earning CRV emissions on top of swap fees, while the yscvxCRV side keeps compounding cvxCRV staked on @ConvexFinance.
+```
+
+Image: `public/social/yscvxcrv-gauge-approved-promo.png`
