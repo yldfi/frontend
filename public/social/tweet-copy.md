@@ -86,7 +86,7 @@ Image: `public/social/yscvxcrv-gauge-promo.png`
 
 ## yscvxCRV/CRV Curve Gauge Approved
 
-Curve ownership vote 1523 executed: the gauge is on the Gauge Controller. Convex's voter proxy cast essentially all of the 420.2M veCRV yes votes (0 against; quorum 30% of 772.2M). Its first non-zero weight is the epoch starting Thursday 26 Nov 2026 00:00 UTC, so CRV emissions begin then. Stake DAO's locker holds all staked LP so far; Convex has pool 599 with no deposits yet. Quote-post the 13 Nov vote post. Mention Convex by handle once only.
+Curve ownership vote 1523 executed: the gauge is on the Gauge Controller. Convex's voter proxy cast essentially all of the 420.2M veCRV yes votes (0 against; quorum 30% of 772.2M). Its first non-zero weight is the epoch starting Thursday 26 Nov 2026 00:00 UTC, so CRV emissions begin then. Stake DAO's locker holds all staked LP so far; Convex has pool 599 and Yearn's factory vault yvCurve-yscvxCRVLP-f (0x88032723E66407a7c94B470f0047Db484F02Fc68), both empty so far. Quote-post the 13 Nov vote post. Mention Convex by handle once only.
 
 Before 26 Nov:
 
@@ -97,7 +97,7 @@ The pool is now on the @CurveFinance Gauge Controller. CRV emissions start Thurs
 
 Big thanks to @ConvexFinance, whose vote carried it.
 
-No veCRV boost? Stake your LP through @StakeDAOHQ or Convex. Have your own? Stake directly in the Curve gauge.
+No veCRV boost? Stake your LP through @yearnfi, @StakeDAOHQ or Convex. Have your own? Stake directly in the Curve gauge.
 ```
 
 From 26 Nov, replace the second paragraph with:
