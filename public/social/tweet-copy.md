@@ -103,7 +103,7 @@ Big thanks to @ConvexFinance, whose vote carried it.
 2/
 
 ```text
-Pick how you earn the CRV.
+Where to stake your LP:
 
 No veCRV of your own? Stake through a booster that uses its own boost:
 
