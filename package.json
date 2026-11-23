@@ -43,7 +43,7 @@
     "@ensofinance/sdk": "2.7.0",
     "@rainbow-me/rainbowkit": "2.2.11",
     "@tanstack/react-query": "5.107.1",
-    "@xyflow/react": "12.12.1",
+    "@xyflow/react": "13.0.0",
     "@yldfi/curve-amm-math": "1.9.0",
     "clsx": "2.1.1",
     "lightweight-charts": "5.2.1",
